@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(MYSQL_PWD='Schimanski!@#' mysql *)",
+      "Bash(php *)",
+      "Bash(node --input-type=module)",
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(node --check /var/www/financeiro/app.js)"
+    ]
+  }
+}

@@ -1,0 +1,158 @@
+<link rel="stylesheet" href="styles.css?v=1703"><!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ObraSync</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <section id="loginScreen" class="login-screen">
+      <form id="loginForm" class="login-card">
+        <div class="brand login-brand">
+          <div class="brand-mark">OS</div>
+          <div>
+            <strong>ObraSync</strong>
+            <span>Acesso ao sistema</span>
+          </div>
+        </div>
+        <label>
+          Usuário
+          <input id="loginUser" autocomplete="username" required />
+        </label>
+        <label>
+          Senha
+          <input id="loginPassword" type="password" autocomplete="current-password" required />
+        </label>
+        <p id="loginError" class="login-error" role="alert"></p>
+        <button class="primary" type="submit">Entrar</button>
+        <p class="login-help">Acesso validado pelo servidor MariaDB/MySQL.</p>
+      </form>
+    </section>
+
+    <div id="appShell" class="app-shell hidden">
+      <aside id="sidebar" class="sidebar">
+        <div class="sidebar-head">
+          <div class="brand">
+            <div class="brand-mark">OS</div>
+            <div class="brand-copy">
+              <strong>ObraSync</strong>
+              <span>Obras, financeiro e gestão</span>
+            </div>
+          </div>
+          <button id="sidebarToggle" class="sidebar-toggle" type="button" aria-label="Recolher menu">‹</button>
+        </div>
+        <nav id="moduleNav" class="nav" aria-label="Módulos"></nav>
+      </aside>
+      <button id="sidebarBackdrop" class="sidebar-backdrop hidden" type="button" aria-label="Fechar menu"></button>
+
+      <main class="workspace">
+        <header class="topbar">
+          <button id="mobileMenuBtn" class="icon-btn mobile-menu-btn" type="button" aria-label="Abrir menu">☰</button>
+          <div>
+            <p class="eyebrow">ObraSync</p>
+            <h1 id="pageTitle">Dashboard ObraSync</h1>
+          </div>
+          <div class="actions">
+            <span id="userBadge" class="user-badge"></span>
+            <button id="seedBtn" class="secondary" type="button">Restaurar exemplo</button>
+            <button id="excelBtn" class="secondary" type="button">Excel</button>
+            <button id="pdfBtn" class="primary" type="button">PDF</button>
+            <button id="logoutBtn" class="secondary" type="button">Sair</button>
+          </div>
+        </header>
+
+        <button id="filterToggle" class="secondary filter-toggle" type="button" aria-expanded="false">Mostrar filtros</button>
+        <section class="filters" aria-label="Filtros">
+          <label>
+            Período inicial
+            <input id="filterStart" type="date" />
+          </label>
+          <label>
+            Período final
+            <input id="filterEnd" type="date" />
+          </label>
+          <label>
+            Cliente
+            <select id="filterClient"></select>
+          </label>
+          <label>
+            Fornecedor
+            <select id="filterSupplier"></select>
+          </label>
+          <label>
+            Centro de custo
+            <select id="filterCostCenter"></select>
+          </label>
+          <label>
+            Obra/Projeto
+            <select id="filterProject"></select>
+          </label>
+          <label>
+            Status da obra
+            <select id="filterProjectStatus">
+              <option value="">Todos</option>
+              <option>Planejamento</option>
+              <option>Em andamento</option>
+              <option>Pausada</option>
+              <option>Concluída</option>
+              <option>Cancelada</option>
+            </select>
+          </label>
+          <label>
+            Status
+            <select id="filterStatus">
+              <option value="">Todos</option>
+              <option>Aberto</option>
+              <option>Pago</option>
+              <option>Recebido</option>
+              <option>Vencido</option>
+              <option>Parcial</option>
+              <option>Aprovado</option>
+              <option>Cancelado</option>
+            </select>
+          </label>
+          <label>
+            Categoria
+            <select id="filterCategory"></select>
+          </label>
+        </section>
+
+        <section id="content" class="content" aria-live="polite"></section>
+      </main>
+    </div>
+
+    <dialog id="recordDialog">
+      <form id="recordForm" method="dialog">
+        <div class="dialog-head">
+          <h2 id="dialogTitle">Novo registro</h2>
+          <button id="closeDialog" class="icon-btn" type="button" aria-label="Fechar">×</button>
+        </div>
+        <div id="formFields" class="form-grid"></div>
+        <menu>
+          <button class="secondary" value="cancel" type="button" id="cancelDialog">Cancelar</button>
+          <button class="primary" value="default" type="submit">Salvar</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <dialog id="proposalGeneratorDialog" class="proposal-dialog">
+      <form id="proposalGeneratorForm" method="dialog">
+        <div class="dialog-head">
+          <h2>Gerar Proposta Comercial</h2>
+          <button id="closeProposalDialog" class="icon-btn no-print" type="button" aria-label="Fechar">×</button>
+        </div>
+        <div id="proposalGeneratorFields" class="proposal-generator-grid"></div>
+        <section class="proposal-preview-toolbar no-print">
+          <button id="refreshProposalPreview" class="secondary" type="button">Atualizar prévia</button>
+          <button id="printProposalPreview" class="secondary" type="button">Exportar / Imprimir PDF</button>
+          <button id="saveProposalDraft" class="secondary" type="button">Salvar rascunho</button>
+          <button id="finalizeProposal" class="primary" type="button">Finalizar proposta</button>
+        </section>
+        <section id="proposalPreview" class="proposal-print" aria-label="Pré-visualização da proposta"></section>
+      </form>
+    </dialog>
+
+    <script src="app.js?v=1703"></script>
+  </body>
+</html>

@@ -1,0 +1,13 @@
+# Config sensível — NUNCA subir
+/api/config.php
+/api/config.sample.php
+
+# Uploads e backups
+/uploads/
+*.sql
+*.log
+
+# Sistema
+.DS_Store
+Thumbs.db
+*.tmp
