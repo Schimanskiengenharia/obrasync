@@ -509,10 +509,40 @@ function update_record(PDO $pdo, array $meta, int $id, array $payload): array
     if (!$data) {
         fail('Nenhum campo válido informado.', 400);
     }
-    $sets = array_map(fn ($field) => "`$field` = ?", array_keys($data));
-    $stmt = $pdo->prepare('UPDATE `' . $meta['table'] . '` SET ' . implode(',', $sets) . ' WHERE id = ?');
-    $stmt->execute([...array_values($data), $id]);
-    return get_record($pdo, $meta, $id);
+    $before = raw_record($pdo, $meta, $id);
+    $transactionalAutomation = in_array($meta['table'], ['obra_cronograma_marcos', 'purchase_orders'], true);
+    if ($transactionalAutomation) {
+        $pdo->beginTransaction();
+    }
+    try {
+        $sets = array_map(fn ($field) => "`$field` = ?", array_keys($data));
+        $stmt = $pdo->prepare('UPDATE `' . $meta['table'] . '` SET ' . implode(',', $sets) . ' WHERE id = ?');
+        $stmt->execute([...array_values($data), $id]);
+        $record = get_record($pdo, $meta, $id);
+        if ($transactionalAutomation && status_changed_to($before, $record, ['Concluido', 'Concluido', 'Aprovado', 'Aprovada'])) {
+            if ($meta['table'] === 'obra_cronograma_marcos') {
+                $record['automation'] = automate_approved_milestone($pdo, $id);
+            }
+            if ($meta['table'] === 'purchase_orders' && status_changed_to($before, $record, ['Aprovado', 'Aprovada'])) {
+                $record['automation'] = automate_approved_purchase_order($pdo, $id);
+            }
+        }
+        if ($transactionalAutomation) {
+            $pdo->commit();
+        }
+        return $record;
+    } catch (Throwable $error) {
+        if ($transactionalAutomation && $pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        if ($meta['table'] === 'obra_cronograma_marcos') {
+            log_automation_event($pdo, 'MARCO_APROVADO', 'MARCO', $id, null, null, 'ERRO', $error->getMessage(), null);
+        }
+        if ($meta['table'] === 'purchase_orders') {
+            log_automation_event($pdo, 'PEDIDO_APROVADO', 'PEDIDO_COMPRA', $id, null, null, 'ERRO', $error->getMessage(), null);
+        }
+        throw $error;
+    }
 }
 
 function delete_record(PDO $pdo, array $meta, int $id): void
@@ -1206,6 +1236,286 @@ function raw_record(PDO $pdo, array $meta, int $id): array
         fail('Registro não encontrado.', 404);
     }
     return $record;
+}
+
+function status_changed_to(array $before, array $after, array $targetStatuses): bool
+{
+    $previous = normalized_status((string) ($before['status'] ?? ''));
+    $current = normalized_status((string) ($after['status'] ?? ''));
+    if ($previous === $current) return false;
+    $targets = array_map('normalized_status', $targetStatuses);
+    return in_array($current, $targets, true);
+}
+
+function normalized_status(string $status): string
+{
+    $status = strtr($status, ['í' => 'i', 'Í' => 'i', 'ã' => 'a', 'Ã' => 'a', 'ç' => 'c', 'Ç' => 'c']);
+    return strtolower(trim($status));
+}
+
+function automate_approved_milestone(PDO $pdo, int $milestoneId): array
+{
+    $milestoneTable = resolve_existing_table($pdo, ['obra_cronograma_marcos']);
+    $receivableTable = resolve_existing_table($pdo, ['accounts_receivable']);
+    $projectTable = resolve_existing_table($pdo, ['obras', 'projects']);
+    $receivableColumns = table_columns($pdo, $receivableTable);
+    $refTypeColumn = pick_column($receivableColumns, ['referencia_tipo', 'referenceType', 'reference_type']);
+    $refIdColumn = pick_column($receivableColumns, ['referencia_id', 'referenceId', 'reference_id']);
+    if (!$refTypeColumn || !$refIdColumn) {
+        throw new RuntimeException('accounts_receivable sem colunas de referencia.');
+    }
+    $existing = find_by_reference($pdo, $receivableTable, $refTypeColumn, $refIdColumn, 'MARCO', $milestoneId);
+    if ($existing) {
+        update_dynamic($pdo, $milestoneTable, $milestoneId, [
+            'conta_receber_id' => (int) $existing['id'],
+            'receivableId' => (int) $existing['id'],
+            'receivable_id' => (int) $existing['id'],
+        ]);
+        log_automation_event($pdo, 'MARCO_APROVADO', 'MARCO', $milestoneId, 'CONTA_RECEBER', (int) $existing['id'], 'PARCIAL', 'Conta a receber ja existia para este marco.', null);
+        return ['created' => false, 'receivableId' => (int) $existing['id'], 'message' => 'Conta a receber ja existia para este marco.'];
+    }
+    $milestone = fetch_table_record($pdo, $milestoneTable, $milestoneId);
+    $projectId = value_from($milestone, ['obra_id', 'projectId', 'project_id']);
+    if (!$projectId) {
+        throw new RuntimeException('Marco sem obra vinculada.');
+    }
+    $project = fetch_table_record($pdo, $projectTable, (int) $projectId);
+    $percent = (float) (value_from($milestone, ['percentual', 'percentual_financeiro', 'plannedFinancialPercent', 'plannedPhysicalPercent', 'defaultPhysicalPercent']) ?? 0);
+    if ($percent <= 0 && ($stepId = value_from($milestone, ['scheduleStepId', 'schedule_step_id', 'etapa_id']))) {
+        $stepTable = resolve_existing_table($pdo, ['obra_cronograma_etapas'], false);
+        if ($stepTable) {
+            $step = fetch_table_record($pdo, $stepTable, (int) $stepId, false);
+            $percent = (float) (value_from($step, ['percentual', 'plannedFinancialPercent', 'plannedPhysicalPercent', 'actualPhysicalPercent']) ?? 0);
+        }
+    }
+    $contractValue = (float) (value_from($project, ['valor_contrato', 'revenueContracted', 'budgetForecast', 'valor_total']) ?? 0);
+    $amount = round($contractValue * ($percent / 100), 2);
+    $paymentDays = (int) (value_from($project, ['prazo_pagamento', 'paymentDeadlineDays', 'paymentTermDays']) ?? 30);
+    if ($paymentDays <= 0) $paymentDays = 30;
+    $clientId = value_from($project, ['cliente_id', 'clientId', 'client_id']);
+    $costCenterId = value_from($project, ['centro_custo_id', 'costCenterId', 'cost_center_id']);
+    $description = 'Medicao: ' . (value_from($milestone, ['nome', 'name', 'milestoneName']) ?? 'Marco da obra');
+    $dueDate = date_add_days(date('Y-m-d'), $paymentDays);
+    $receivableId = insert_dynamic($pdo, $receivableTable, [
+        'obra_id' => $projectId,
+        'projectId' => $projectId,
+        'project_id' => $projectId,
+        'cliente_id' => $clientId,
+        'clientId' => $clientId,
+        'client_id' => $clientId,
+        'descricao' => $description,
+        'description' => $description,
+        'document' => 'MARCO-' . $milestoneId,
+        'data_emissao' => date('Y-m-d'),
+        'issueDate' => date('Y-m-d'),
+        'issue_date' => date('Y-m-d'),
+        'data_vencimento' => $dueDate,
+        'dueDate' => $dueDate,
+        'due_date' => $dueDate,
+        'valor' => $amount,
+        'amount' => $amount,
+        'status' => open_status_for_table($pdo, $receivableTable),
+        'centro_custo_id' => $costCenterId,
+        'costCenterId' => $costCenterId,
+        'cost_center_id' => $costCenterId,
+        'referencia_tipo' => 'MARCO',
+        'referenceType' => 'MARCO',
+        'reference_type' => 'MARCO',
+        'referencia_id' => $milestoneId,
+        'referenceId' => $milestoneId,
+        'reference_id' => $milestoneId,
+    ]);
+    update_dynamic($pdo, $milestoneTable, $milestoneId, [
+        'conta_receber_id' => $receivableId,
+        'receivableId' => $receivableId,
+        'receivable_id' => $receivableId,
+    ]);
+    log_automation_event($pdo, 'MARCO_APROVADO', 'MARCO', $milestoneId, 'CONTA_RECEBER', $receivableId, 'SUCESSO', null, null);
+    return ['created' => true, 'receivableId' => $receivableId];
+}
+
+function automate_approved_purchase_order(PDO $pdo, int $orderId): array
+{
+    $orderTable = resolve_existing_table($pdo, ['purchase_orders']);
+    $payableTable = resolve_existing_table($pdo, ['accounts_payable']);
+    $projectTable = resolve_existing_table($pdo, ['obras', 'projects'], false);
+    $payableColumns = table_columns($pdo, $payableTable);
+    $refTypeColumn = pick_column($payableColumns, ['referencia_tipo', 'referenceType', 'reference_type']);
+    $refIdColumn = pick_column($payableColumns, ['referencia_id', 'referenceId', 'reference_id']);
+    if (!$refTypeColumn || !$refIdColumn) {
+        throw new RuntimeException('accounts_payable sem colunas de referencia.');
+    }
+    $existing = find_by_reference($pdo, $payableTable, $refTypeColumn, $refIdColumn, 'PEDIDO_COMPRA', $orderId);
+    if ($existing) {
+        update_dynamic($pdo, $orderTable, $orderId, [
+            'conta_pagar_id' => (int) $existing['id'],
+            'payableId' => (int) $existing['id'],
+            'payable_id' => (int) $existing['id'],
+        ]);
+        log_automation_event($pdo, 'PEDIDO_APROVADO', 'PEDIDO_COMPRA', $orderId, 'CONTA_PAGAR', (int) $existing['id'], 'PARCIAL', 'Conta a pagar ja existia para este pedido.', null);
+        return ['created' => false, 'payableId' => (int) $existing['id'], 'message' => 'Conta a pagar ja existia para este pedido.'];
+    }
+    $order = fetch_table_record($pdo, $orderTable, $orderId);
+    $projectId = value_from($order, ['obra_id', 'projectId', 'project_id']);
+    $project = ($projectTable && $projectId) ? fetch_table_record($pdo, $projectTable, (int) $projectId, false) : [];
+    $paymentDays = (int) (value_from($order, ['prazo_pagamento', 'paymentDeadlineDays', 'paymentTermDays']) ?? 30);
+    if ($paymentDays <= 0) $paymentDays = 30;
+    $baseDate = value_from($order, ['data_entrega_prevista', 'expectedDate', 'expected_date']) ?: date('Y-m-d');
+    $dueDate = date_add_days((string) $baseDate, $paymentDays);
+    $supplierId = value_from($order, ['fornecedor_id', 'supplierId', 'supplier_id']);
+    $costCenterId = value_from($order, ['centro_custo_id', 'costCenterId', 'cost_center_id']) ?: value_from($project, ['centro_custo_id', 'costCenterId', 'cost_center_id']);
+    $description = 'Compra: ' . (value_from($order, ['descricao', 'description', 'notes', 'number']) ?? 'Pedido de compra');
+    $amount = (float) (value_from($order, ['valor_total', 'amount', 'totalAmount', 'valor']) ?? 0);
+    $payableId = insert_dynamic($pdo, $payableTable, [
+        'obra_id' => $projectId,
+        'projectId' => $projectId,
+        'project_id' => $projectId,
+        'fornecedor_id' => $supplierId,
+        'supplierId' => $supplierId,
+        'supplier_id' => $supplierId,
+        'descricao' => $description,
+        'description' => $description,
+        'document' => value_from($order, ['number', 'numero']) ?: 'PC-' . $orderId,
+        'data_emissao' => date('Y-m-d'),
+        'issueDate' => date('Y-m-d'),
+        'issue_date' => date('Y-m-d'),
+        'data_vencimento' => $dueDate,
+        'dueDate' => $dueDate,
+        'due_date' => $dueDate,
+        'valor' => $amount,
+        'amount' => $amount,
+        'status' => open_status_for_table($pdo, $payableTable),
+        'centro_custo_id' => $costCenterId,
+        'costCenterId' => $costCenterId,
+        'cost_center_id' => $costCenterId,
+        'referencia_tipo' => 'PEDIDO_COMPRA',
+        'referenceType' => 'PEDIDO_COMPRA',
+        'reference_type' => 'PEDIDO_COMPRA',
+        'referencia_id' => $orderId,
+        'referenceId' => $orderId,
+        'reference_id' => $orderId,
+    ]);
+    update_dynamic($pdo, $orderTable, $orderId, [
+        'conta_pagar_id' => $payableId,
+        'payableId' => $payableId,
+        'payable_id' => $payableId,
+    ]);
+    log_automation_event($pdo, 'PEDIDO_APROVADO', 'PEDIDO_COMPRA', $orderId, 'CONTA_PAGAR', $payableId, 'SUCESSO', null, null);
+    return ['created' => true, 'payableId' => $payableId];
+}
+
+function resolve_existing_table(PDO $pdo, array $candidates, bool $required = true): ?string
+{
+    foreach ($candidates as $table) {
+        $stmt = $pdo->prepare('SHOW TABLES LIKE ?');
+        $stmt->execute([$table]);
+        if ($stmt->fetchColumn()) return $table;
+    }
+    if ($required) {
+        throw new RuntimeException('Tabela nao encontrada: ' . implode(', ', $candidates));
+    }
+    return null;
+}
+
+function pick_column(array $columns, array $candidates): ?string
+{
+    foreach ($candidates as $candidate) {
+        if (in_array($candidate, $columns, true)) return $candidate;
+    }
+    return null;
+}
+
+function value_from(array $row, array $candidates): mixed
+{
+    foreach ($candidates as $candidate) {
+        if (array_key_exists($candidate, $row) && $row[$candidate] !== null && $row[$candidate] !== '') {
+            return $row[$candidate];
+        }
+    }
+    return null;
+}
+
+function fetch_table_record(PDO $pdo, string $table, int $id, bool $required = true): array
+{
+    $stmt = $pdo->prepare('SELECT * FROM `' . $table . '` WHERE id = ?');
+    $stmt->execute([$id]);
+    $record = $stmt->fetch();
+    if (!$record && $required) {
+        throw new RuntimeException('Registro nao encontrado em ' . $table . ': ' . $id);
+    }
+    return $record ?: [];
+}
+
+function find_by_reference(PDO $pdo, string $table, string $refTypeColumn, string $refIdColumn, string $type, int $id): ?array
+{
+    $stmt = $pdo->prepare('SELECT * FROM `' . $table . '` WHERE `' . $refTypeColumn . '` = ? AND `' . $refIdColumn . '` = ? LIMIT 1');
+    $stmt->execute([$type, $id]);
+    $record = $stmt->fetch();
+    return $record ?: null;
+}
+
+function insert_dynamic(PDO $pdo, string $table, array $data): int
+{
+    $columns = table_columns($pdo, $table);
+    $data = array_filter($data, fn ($field) => in_array($field, $columns, true), ARRAY_FILTER_USE_KEY);
+    if (!$data) {
+        throw new RuntimeException('Nenhuma coluna valida para inserir em ' . $table . '.');
+    }
+    $fields = array_keys($data);
+    $sql = 'INSERT INTO `' . $table . '` (`' . implode('`,`', $fields) . '`) VALUES (' . implode(',', array_fill(0, count($fields), '?')) . ')';
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute(array_values($data));
+    return (int) $pdo->lastInsertId();
+}
+
+function update_dynamic(PDO $pdo, string $table, int $id, array $data): void
+{
+    $columns = table_columns($pdo, $table);
+    $data = array_filter($data, fn ($field) => in_array($field, $columns, true), ARRAY_FILTER_USE_KEY);
+    if (!$data) return;
+    $sets = array_map(fn ($field) => "`$field` = ?", array_keys($data));
+    $stmt = $pdo->prepare('UPDATE `' . $table . '` SET ' . implode(',', $sets) . ' WHERE id = ?');
+    $stmt->execute([...array_values($data), $id]);
+}
+
+function open_status_for_table(PDO $pdo, string $table): string
+{
+    $stmt = $pdo->query('DESCRIBE `' . $table . '`');
+    foreach ($stmt->fetchAll() as $column) {
+        if (($column['Field'] ?? '') !== 'status') continue;
+        $type = (string) ($column['Type'] ?? '');
+        if (str_starts_with(strtolower($type), 'enum(')) {
+            preg_match_all("/'((?:[^'\\\\]|\\\\.)*)'/", $type, $matches);
+            foreach (['aberta', 'Aberta', 'aberto', 'Aberto'] as $candidate) {
+                if (in_array($candidate, $matches[1] ?? [], true)) return $candidate;
+            }
+        }
+    }
+    return 'Aberto';
+}
+
+function date_add_days(string $date, int $days): string
+{
+    return (new DateTimeImmutable($date))->modify('+' . $days . ' days')->format('Y-m-d');
+}
+
+function log_automation_event(PDO $pdo, string $type, ?string $originType, ?int $originId, ?string $generatedType, ?int $generatedId, string $status, ?string $message, ?int $userId): void
+{
+    try {
+        $table = resolve_existing_table($pdo, ['eventos_automacao'], false);
+        if (!$table) return;
+        insert_dynamic($pdo, $table, [
+            'tipo_evento' => $type,
+            'entidade_origem_tipo' => $originType,
+            'entidade_origem_id' => $originId,
+            'entidade_gerada_tipo' => $generatedType,
+            'entidade_gerada_id' => $generatedId,
+            'status' => $status,
+            'mensagem_erro' => $message,
+            'usuario_id' => $userId,
+        ]);
+    } catch (Throwable) {
+    }
 }
 
 function migrate_payload(PDO $pdo, array $resources, array $payload): array

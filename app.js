@@ -1,8 +1,6 @@
 const STORE_KEY = "finconta.v1";
 const AUTH_KEY = "finconta.auth";
-const AUTH_USER_KEY = "finconta.auth.user";
-const AUTH_ACTIVITY_KEY = "finconta.auth.ts";
-const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
+const AUTH_TIMEOUT_MS = 30 * 60 * 1000;
 const API_BASE = "api";
 const AUTH_BYPASS_FOR_TESTS = false;
 const APP_NAME = "ObraSync";
@@ -1446,20 +1444,64 @@ async function refreshData() {
   if (!serverMode) return;
   const payload = await apiRequest("bootstrap");
   db = { ...structuredClone(seed), ...payload.data };
+  Object.keys(seed).forEach((key) => {
+    if (!Array.isArray(db[key])) db[key] = [];
+  });
 }
 
 async function refreshAndRender() {
-  if (serverMode) await refreshData().catch(() => {});
+  await refreshData();
   render();
 }
 
-function touchActivity() {
-  localStorage.setItem(AUTH_ACTIVITY_KEY, String(Date.now()));
+function nowMs() {
+  return Date.now();
 }
 
-function isSessionExpired() {
-  const ts = Number(localStorage.getItem(AUTH_ACTIVITY_KEY) || 0);
-  return ts > 0 && Date.now() - ts > SESSION_TIMEOUT_MS;
+function readAuthSession() {
+  const raw = localStorage.getItem(AUTH_KEY) || sessionStorage.getItem(AUTH_KEY);
+  if (!raw) return null;
+  try {
+    const session = JSON.parse(raw);
+    if (!session?.userId || !session.lastActivity) return null;
+    if (nowMs() - Number(session.lastActivity) > AUTH_TIMEOUT_MS) {
+      clearAuthSession();
+      return null;
+    }
+    return session;
+  } catch {
+    const userId = raw;
+    return userId ? { userId, lastActivity: nowMs() } : null;
+  }
+}
+
+function writeAuthSession(user) {
+  const session = JSON.stringify({ userId: user.id, lastActivity: nowMs() });
+  localStorage.setItem(AUTH_KEY, session);
+  sessionStorage.setItem(AUTH_KEY, session);
+}
+
+function touchAuthSession() {
+  if (!currentUser) return;
+  writeAuthSession(currentUser);
+}
+
+function clearAuthSession() {
+  localStorage.removeItem(AUTH_KEY);
+  sessionStorage.removeItem(AUTH_KEY);
+}
+
+function handleUserActivity() {
+  const session = readAuthSession();
+  if (!currentUser || !session) return;
+  touchAuthSession();
+}
+
+function enforceInactivityTimeout() {
+  if (!currentUser) return;
+  if (!readAuthSession()) {
+    showLogin("Sessão expirada por inatividade.");
+  }
 }
 
 function qs(id) {
@@ -3704,8 +3746,7 @@ async function importSinapiFile(mode = "preview") {
     qs("sinapiImportResult").classList.remove("hidden");
     qs("sinapiImportResult").innerHTML = sinapiLastImportHtml;
     if (mode === "confirm") {
-      await refreshData().catch(() => {});
-      render();
+      await refreshAndRender();
     }
   } catch (error) {
     alert(`Não foi possível importar a base SINAPI: ${error.message}`);
@@ -4332,8 +4373,7 @@ async function saveGeneratedProposal(statusOverride = "") {
     qs("proposalGeneratorDialog").close();
     proposalGeneratorState = null;
     currentModule = "proposals";
-    await refreshData().catch(() => {});
-    render();
+    await refreshAndRender();
   } catch (error) {
     alert(`Não foi possível salvar a proposta gerada: ${error.message}`);
   }
@@ -4761,7 +4801,7 @@ async function importBackup() {
       db = parsed;
       saveDb();
     }
-    render();
+    await refreshAndRender();
   } catch {
     alert("JSON inválido para backup do sistema.");
   }
@@ -4846,8 +4886,7 @@ function download(blob, filename) {
 
 function showLogin(message = "") {
   currentUser = null;
-  localStorage.removeItem(AUTH_USER_KEY);
-  localStorage.removeItem(AUTH_ACTIVITY_KEY);
+  clearAuthSession();
   qs("loginError").textContent = message;
   qs("loginScreen").classList.remove("hidden");
   qs("appShell").classList.add("hidden");
@@ -4857,8 +4896,7 @@ function showLogin(message = "") {
 
 function showApp(user) {
   currentUser = user;
-  localStorage.setItem(AUTH_USER_KEY, JSON.stringify(user));
-  touchActivity();
+  writeAuthSession(user);
   qs("loginScreen").classList.add("hidden");
   qs("appShell").classList.remove("hidden");
   render();
@@ -4893,21 +4931,10 @@ function restoreSession() {
     showApp(testUser);
     return;
   }
-  if (isSessionExpired()) {
-    localStorage.removeItem(AUTH_USER_KEY);
-    localStorage.removeItem(AUTH_ACTIVITY_KEY);
-    showLogin("Sessão encerrada por inatividade.");
-    return;
-  }
-  const stored = localStorage.getItem(AUTH_USER_KEY);
-  if (stored) {
-    try {
-      const saved = JSON.parse(stored);
-      const user = db.users.find((item) => sameId(item.id, saved.id) && item.status === "Ativo");
-      if (user) { showApp(user); return; }
-    } catch (_) {}
-  }
-  showLogin();
+  const session = readAuthSession();
+  const user = session ? db.users.find((item) => String(item.id) === String(session.userId) && item.status === "Ativo") : null;
+  if (user) showApp(user);
+  else showLogin();
 }
 
 async function bootstrapApp() {
@@ -4916,8 +4943,13 @@ async function bootstrapApp() {
 }
 
 document.addEventListener("change", (event) => {
+  handleUserActivity();
   if (currentUser && event.target.closest(".filters")) render();
 });
+["click", "keydown", "mousemove", "touchstart", "scroll"].forEach((eventName) => {
+  document.addEventListener(eventName, handleUserActivity, { passive: true });
+});
+setInterval(enforceInactivityTimeout, 60 * 1000);
 
 qs("filterToggle").addEventListener("click", () => {
   const filters = document.querySelector(".filters");
@@ -4935,12 +4967,6 @@ qs("seedBtn").addEventListener("click", () => {
   saveDb();
   render();
 });
-["click", "keydown", "scroll", "touchstart"].forEach((type) => {
-  document.addEventListener(type, () => { if (currentUser) touchActivity(); }, { passive: true });
-});
-setInterval(() => {
-  if (currentUser && isSessionExpired()) showLogin("Sessão encerrada por inatividade.");
-}, 60_000);
 qs("loginForm").addEventListener("submit", handleLogin);
 qs("logoutBtn").addEventListener("click", () => showLogin());
 qs("recordForm").addEventListener("submit", saveForm);
