@@ -1707,10 +1707,10 @@ function setupNav() {
     qs("sidebarBackdrop").classList.add("hidden");
     render();
   });
-  qs("sidebarToggle").addEventListener("click", () => {
-    sidebarCollapsed = !sidebarCollapsed;
-    localStorage.setItem("finconta.sidebarCollapsed", String(sidebarCollapsed));
-    updateShellState();
+  qs("sidebarToggle").addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setSidebarCollapsed(!sidebarCollapsed);
   });
   qs("mobileMenuBtn").addEventListener("click", () => {
     qs("appShell").classList.add("sidebar-open");
@@ -1759,10 +1759,21 @@ function navButton(moduleKey, label, icon) {
   `;
 }
 
+function setSidebarCollapsed(collapsed) {
+  sidebarCollapsed = collapsed;
+  localStorage.setItem("finconta.sidebarCollapsed", String(sidebarCollapsed));
+  if (sidebarCollapsed) {
+    qs("appShell").classList.remove("sidebar-open");
+    qs("sidebarBackdrop").classList.add("hidden");
+  }
+  updateShellState();
+}
+
 function updateShellState() {
   qs("appShell").classList.toggle("sidebar-collapsed", sidebarCollapsed);
   qs("sidebarToggle").textContent = sidebarCollapsed ? "›" : "‹";
   qs("sidebarToggle").setAttribute("aria-label", sidebarCollapsed ? "Expandir menu" : "Recolher menu");
+  qs("sidebarToggle").setAttribute("aria-expanded", String(!sidebarCollapsed));
 }
 
 function populateFilters() {

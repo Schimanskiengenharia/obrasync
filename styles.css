@@ -113,6 +113,7 @@ button:disabled {
   display: grid;
   grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
   min-height: 100vh;
+  transition: grid-template-columns 160ms ease;
 }
 
 .app-shell.sidebar-collapsed {
@@ -128,14 +129,19 @@ button:disabled {
   background: #101918;
   color: #eef8f6;
   z-index: 30;
+  transition: width 160ms ease, transform 160ms ease;
 }
 
 .sidebar-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
   display: flex;
   align-items: center;
   gap: 8px;
   padding-bottom: 12px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  background: #101918;
 }
 
 .brand {
@@ -255,6 +261,7 @@ button:disabled {
 }
 
 .sidebar-collapsed .brand-copy,
+.sidebar-collapsed .brand,
 .sidebar-collapsed .nav-label,
 .sidebar-collapsed .nav-caret,
 .sidebar-collapsed .nav-submenu {
@@ -272,9 +279,7 @@ button:disabled {
 }
 
 .sidebar-collapsed .sidebar-toggle {
-  position: absolute;
-  top: 60px;
-  right: 8px;
+  position: static;
 }
 
 .sidebar-backdrop,
@@ -1274,6 +1279,10 @@ menu {
 
   .app-shell.sidebar-collapsed {
     --sidebar-w: 288px;
+  }
+
+  .sidebar-collapsed .brand {
+    display: flex;
   }
 
   .sidebar-collapsed .brand-copy {
