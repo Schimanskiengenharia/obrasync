@@ -1,0 +1,10 @@
+Options -Indexes
+
+<FilesMatch "\.(sql|sample|bak|env|ini|log)$">
+  Require all denied
+</FilesMatch>
+
+<IfModule mod_headers.c>
+  Header set X-Content-Type-Options "nosniff"
+  Header set X-Frame-Options "SAMEORIGIN"
+</IfModule>
