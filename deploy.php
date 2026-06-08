@@ -14,7 +14,8 @@ if (($data['ref'] ?? '') !== 'refs/heads/main') {
     exit;
 }
 
-$output = shell_exec('cd /var/www/financeiro && git pull origin main 2>&1');
+// Rodar git pull como alefschimanski (tem permissão no git)
+$output = shell_exec('sudo -u alefschimanski git -C /var/www/financeiro pull origin main 2>&1');
 $log = date('Y-m-d H:i:s') . " — Deploy:\n" . $output . "\n---\n";
 file_put_contents('/var/log/obrasync-deploy.log', $log, FILE_APPEND);
 echo 'Deploy OK';
