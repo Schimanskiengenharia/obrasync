@@ -71,6 +71,15 @@ try {
 
     if ($method === 'POST') {
         $record = create_record($pdo, $resources[$key], read_json());
+        if ($key === 'projects') {
+            $record['automation'] = ensure_project_kanban_boards($pdo, (int) $record['id'], (string) ($record['name'] ?? 'Obra'));
+        }
+        if ($key === 'purchaseOrders') {
+            $record['automation'] = create_purchase_order_kanban_card($pdo, (int) $record['id']);
+        }
+        if ($key === 'agendaEvents') {
+            $record['automation'] = create_event_day_notification($pdo, $record);
+        }
         respond(['ok' => true, 'record' => $record], 201);
     }
 
@@ -112,6 +121,7 @@ try {
                 'Criado automaticamente a partir da proposta ' . $proposal['number'],
             ]);
             $projectId = (int) $pdo->lastInsertId();
+            ensure_project_kanban_boards($pdo, $projectId, $projectName);
 
             if (empty($proposal['projectId'])) {
                 $pdo->prepare('UPDATE commercial_proposals SET projectId = ? WHERE id = ?')
@@ -191,6 +201,12 @@ try {
 
     if ($method === 'PUT' || $method === 'PATCH') {
         $record = update_record($pdo, $resources[$key], (int) $id, read_json());
+        if ($key === 'agendaEvents') {
+            $record['automation'] = create_event_day_notification($pdo, $record);
+        }
+        if ($key === 'kanbanCards' && kanban_card_is_done($pdo, $record)) {
+            $record['completionPrompt'] = 'Card movido para Concluído. Deseja atualizar o status do item vinculado?';
+        }
         respond(['ok' => true, 'record' => $record]);
     }
 
@@ -294,6 +310,10 @@ function resource_map(): array
         'projectMilestones' => r('obra_cronograma_marcos', ['marcos-obras','marcos-da-obra'], ['projectId','scheduleStepId','name','defaultMessage','visibleToClient','plannedDate','completedDate','status','notes'], ['projectId','name']),
         'projectNotifications' => r('obra_notificacoes', ['notificacoes-obras','notificacoes-da-obra'], ['projectId','scheduleStepId','milestoneId','recipient','phone','type','message','generatedLink','status','responsibleUserId'], ['generatedLink']),
         'projectTrackingLinks' => r('obra_links_acompanhamento', ['links-acompanhamento-obras','links-obras'], ['projectId','token','url','visibility','status','notes'], ['token']),
+        'agendaEvents' => r('agenda_eventos', ['agenda-eventos','agenda'], ['obra_id','cliente_id','usuario_id','titulo','descricao','tipo','data_inicio','data_fim','dia_todo','lembrete_minutos','status'], ['titulo','data_inicio']),
+        'kanbanBoards' => r('kanban_boards', ['kanban-boards','quadros-kanban'], ['obra_id','nome','tipo'], ['obra_id','nome','tipo']),
+        'kanbanColumns' => r('kanban_colunas', ['kanban-colunas','colunas-kanban'], ['board_id','nome','ordem','cor','limite_cards'], ['board_id','nome']),
+        'kanbanCards' => r('kanban_cards', ['kanban-cards','cards-kanban'], ['coluna_id','obra_id','titulo','descricao','responsavel_id','data_vencimento','prioridade','referencia_tipo','referencia_id','ordem'], ['referencia_tipo','referencia_id','titulo']),
         'purchaseOrders' => r('purchase_orders', ['pedidos-compra','pedidos-de-compra'], ['number','date','projectId','supplierId','costCenterId','categoryId','amount','expectedDate','status','notes'], ['number']),
         'technicalReports' => r('technical_reports', ['relatorios-tecnicos','relatórios-técnicos'], ['projectId','title','date','responsible','visibleToClient','status','notes'], ['projectId','title','date']),
         'products' => r('products', ['produtos'], ['name','sku','categoryId','costCenterId','projectId','cost','price','stock','status'], ['sku','name']),
@@ -439,6 +459,19 @@ function normalize_payload_aliases(array $payload): array
         'scheduleStepId' => ['schedule_step_id', 'etapa_id'],
         'milestoneId' => ['milestone_id', 'marco_id'],
         'responsibleUserId' => ['responsible_user_id', 'usuario_responsavel'],
+        'obra_id' => ['projectId', 'project_id', 'obraId'],
+        'cliente_id' => ['clientId', 'client_id', 'clienteId'],
+        'usuario_id' => ['userId', 'user_id', 'usuarioId'],
+        'data_inicio' => ['startDateTime', 'dataInicio'],
+        'data_fim' => ['endDateTime', 'dataFim'],
+        'dia_todo' => ['allDay', 'diaTodo'],
+        'lembrete_minutos' => ['reminderMinutes', 'lembreteMinutos'],
+        'board_id' => ['boardId'],
+        'coluna_id' => ['columnId', 'colunaId'],
+        'responsavel_id' => ['responsibleId', 'responsavelId'],
+        'data_vencimento' => ['dueDate', 'dataVencimento'],
+        'referencia_tipo' => ['referenceType', 'referenciaTipo'],
+        'referencia_id' => ['referenceId', 'referenciaId'],
         'workTypeId' => ['work_type_id', 'tipo_obra_id'],
         'standardStageId' => ['standard_stage_id', 'etapa_padrao_id'],
         'customFieldId' => ['custom_field_id', 'campo_personalizado_id'],
@@ -1330,8 +1363,9 @@ function automate_approved_milestone(PDO $pdo, int $milestoneId): array
         'receivableId' => $receivableId,
         'receivable_id' => $receivableId,
     ]);
+    $agendaId = create_milestone_billing_event($pdo, $milestone, $project, $milestoneId, $dueDate);
     log_automation_event($pdo, 'MARCO_APROVADO', 'MARCO', $milestoneId, 'CONTA_RECEBER', $receivableId, 'SUCESSO', null, null);
-    return ['created' => true, 'receivableId' => $receivableId];
+    return ['created' => true, 'receivableId' => $receivableId, 'agendaEventId' => $agendaId];
 }
 
 function automate_approved_purchase_order(PDO $pdo, int $orderId): array
@@ -1400,8 +1434,150 @@ function automate_approved_purchase_order(PDO $pdo, int $orderId): array
         'payableId' => $payableId,
         'payable_id' => $payableId,
     ]);
+    $cardId = create_purchase_order_kanban_card($pdo, $orderId);
     log_automation_event($pdo, 'PEDIDO_APROVADO', 'PEDIDO_COMPRA', $orderId, 'CONTA_PAGAR', $payableId, 'SUCESSO', null, null);
-    return ['created' => true, 'payableId' => $payableId];
+    return ['created' => true, 'payableId' => $payableId, 'kanbanCardId' => $cardId];
+}
+
+function ensure_project_kanban_boards(PDO $pdo, int $projectId, string $projectName): array
+{
+    if (!resolve_existing_table($pdo, ['kanban_boards'], false)) return [];
+    $created = [];
+    $created['obra'] = ensure_kanban_board($pdo, $projectId, 'Kanban - ' . mb_substr($projectName, 0, 80), 'obra');
+    $created['compras'] = ensure_kanban_board($pdo, $projectId, 'Compras - ' . mb_substr($projectName, 0, 78), 'compras');
+    return $created;
+}
+
+function ensure_kanban_board(PDO $pdo, ?int $projectId, string $name, string $type): int
+{
+    $boardTable = resolve_existing_table($pdo, ['kanban_boards']);
+    $columnsTable = resolve_existing_table($pdo, ['kanban_colunas']);
+    if ($projectId) {
+        $stmt = $pdo->prepare('SELECT id FROM kanban_boards WHERE obra_id = ? AND tipo = ? LIMIT 1');
+        $stmt->execute([$projectId, $type]);
+    } else {
+        $stmt = $pdo->prepare('SELECT id FROM kanban_boards WHERE obra_id IS NULL AND tipo = ? LIMIT 1');
+        $stmt->execute([$type]);
+    }
+    $boardId = (int) ($stmt->fetchColumn() ?: 0);
+    if (!$boardId) {
+        $boardId = insert_dynamic($pdo, $boardTable, [
+            'obra_id' => $projectId,
+            'nome' => $name,
+            'tipo' => $type,
+        ]);
+    }
+    ensure_kanban_default_columns($pdo, $columnsTable, $boardId);
+    return $boardId;
+}
+
+function ensure_kanban_default_columns(PDO $pdo, string $columnsTable, int $boardId): void
+{
+    $defaults = [
+        ['A fazer', 10, '#185FA5'],
+        ['Em andamento', 20, '#B8872D'],
+        ['Aguardando aprovação', 30, '#7C3AED'],
+        ['Concluído', 40, '#147A47'],
+    ];
+    foreach ($defaults as [$name, $order, $color]) {
+        $stmt = $pdo->prepare('SELECT id FROM kanban_colunas WHERE board_id = ? AND nome = ? LIMIT 1');
+        $stmt->execute([$boardId, $name]);
+        if ($stmt->fetchColumn()) continue;
+        insert_dynamic($pdo, $columnsTable, [
+            'board_id' => $boardId,
+            'nome' => $name,
+            'ordem' => $order,
+            'cor' => $color,
+        ]);
+    }
+}
+
+function create_purchase_order_kanban_card(PDO $pdo, int $orderId): ?int
+{
+    if (!resolve_existing_table($pdo, ['kanban_cards'], false)) return null;
+    $orderTable = resolve_existing_table($pdo, ['purchase_orders'], false);
+    if (!$orderTable) return null;
+    $order = fetch_table_record($pdo, $orderTable, $orderId, false);
+    if (!$order) return null;
+    $existing = find_by_reference($pdo, 'kanban_cards', 'referencia_tipo', 'referencia_id', 'PEDIDO_COMPRA', $orderId);
+    if ($existing) return (int) $existing['id'];
+    $projectId = value_from($order, ['obra_id', 'projectId', 'project_id']);
+    $boardId = ensure_kanban_board($pdo, $projectId ? (int) $projectId : null, $projectId ? 'Compras da obra' : 'Compras gerais', $projectId ? 'compras' : 'geral');
+    $columnId = first_kanban_column_id($pdo, $boardId);
+    if (!$columnId) return null;
+    return insert_dynamic($pdo, 'kanban_cards', [
+        'coluna_id' => $columnId,
+        'obra_id' => $projectId,
+        'titulo' => 'Pedido ' . (value_from($order, ['number', 'numero']) ?: '#' . $orderId),
+        'descricao' => value_from($order, ['notes', 'descricao', 'description']) ?: 'Card criado automaticamente a partir do pedido de compra.',
+        'data_vencimento' => value_from($order, ['expectedDate', 'expected_date', 'data_entrega_prevista']),
+        'prioridade' => 'media',
+        'referencia_tipo' => 'PEDIDO_COMPRA',
+        'referencia_id' => $orderId,
+        'ordem' => time(),
+    ]);
+}
+
+function first_kanban_column_id(PDO $pdo, int $boardId): ?int
+{
+    $stmt = $pdo->prepare('SELECT id FROM kanban_colunas WHERE board_id = ? ORDER BY ordem, id LIMIT 1');
+    $stmt->execute([$boardId]);
+    $id = $stmt->fetchColumn();
+    return $id ? (int) $id : null;
+}
+
+function create_milestone_billing_event(PDO $pdo, array $milestone, array $project, int $milestoneId, string $dueDate): ?int
+{
+    if (!resolve_existing_table($pdo, ['agenda_eventos'], false)) return null;
+    $stmt = $pdo->prepare('SELECT id FROM agenda_eventos WHERE tipo = ? AND descricao LIKE ? LIMIT 1');
+    $stmt->execute(['cobranca', '%MARCO-' . $milestoneId . '%']);
+    $existingId = $stmt->fetchColumn();
+    if ($existingId) return (int) $existingId;
+    $projectId = value_from($milestone, ['obra_id', 'projectId', 'project_id']);
+    $clientId = value_from($project, ['cliente_id', 'clientId', 'client_id']);
+    $title = 'Cobrança: ' . (value_from($milestone, ['nome', 'name', 'milestoneName']) ?? 'Marco aprovado');
+    $event = [
+        'obra_id' => $projectId,
+        'cliente_id' => $clientId,
+        'titulo' => $title,
+        'descricao' => 'MARCO-' . $milestoneId . ' - Evento automático de cobrança criado ao aprovar marco.',
+        'tipo' => 'cobranca',
+        'data_inicio' => $dueDate . ' 09:00:00',
+        'data_fim' => $dueDate . ' 10:00:00',
+        'dia_todo' => 0,
+        'lembrete_minutos' => 1440,
+        'status' => 'agendado',
+    ];
+    $eventId = insert_dynamic($pdo, 'agenda_eventos', $event);
+    create_event_day_notification($pdo, array_merge(['id' => $eventId], $event));
+    return $eventId;
+}
+
+function create_event_day_notification(PDO $pdo, array $event): ?int
+{
+    if (!resolve_existing_table($pdo, ['obra_notificacoes'], false)) return null;
+    $projectId = value_from($event, ['obra_id', 'projectId', 'project_id']);
+    if (!$projectId) return null;
+    $eventId = (int) ($event['id'] ?? 0);
+    $existing = find_by_reference($pdo, 'obra_notificacoes', 'generatedLink', 'projectId', 'agenda-evento-' . $eventId, (int) $projectId);
+    if ($existing) return (int) $existing['id'];
+    return insert_dynamic($pdo, 'obra_notificacoes', [
+        'projectId' => $projectId,
+        'recipient' => 'Equipe interna',
+        'type' => 'WhatsApp manual',
+        'message' => 'Evento de agenda hoje: ' . (value_from($event, ['titulo']) ?? 'Evento'),
+        'generatedLink' => 'agenda-evento-' . $eventId,
+        'status' => 'Preparado',
+        'responsibleUserId' => value_from($event, ['usuario_id', 'userId', 'user_id']),
+    ]);
+}
+
+function kanban_card_is_done(PDO $pdo, array $card): bool
+{
+    $columnId = value_from($card, ['coluna_id', 'columnId', 'colunaId']);
+    if (!$columnId || !resolve_existing_table($pdo, ['kanban_colunas'], false)) return false;
+    $column = fetch_table_record($pdo, 'kanban_colunas', (int) $columnId, false);
+    return normalized_status((string) ($column['nome'] ?? '')) === normalized_status('Concluído');
 }
 
 function resolve_existing_table(PDO $pdo, array $candidates, bool $required = true): ?string

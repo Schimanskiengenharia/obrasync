@@ -70,6 +70,8 @@ const modules = [
   ["purchaseOrders", "Pedidos de compra"],
   ["projectSchedule", "Cronograma Físico-Financeiro"],
   ["projectMilestones", "Marcos da obra"],
+  ["agenda", "Agenda"],
+  ["kanban", "Kanban"],
   ["projectNotifications", "Notificações da obra"],
   ["projectTrackingLinks", "Links de acompanhamento"],
   ["technicalReports", "Relatórios técnicos"],
@@ -112,7 +114,7 @@ const modules = [
 const sidebarSections = [
   { id: "dashboard", label: "Dashboard", icon: "D", module: "dashboard" },
   { id: "cadastros", label: "Cadastros", icon: "C", modules: ["clients", "suppliers", "products", "services", "categories", "costCenters", "bankAccounts"] },
-  { id: "obras", label: "Obras/Projetos", icon: "O", modules: ["projects", "projectCosts", "projectRevenues", "workBudgets", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "projectSchedule", "projectMilestones", "projectNotifications", "projectTrackingLinks", "purchaseOrders", "technicalReports", "fiscalDocuments", "projectReport"] },
+  { id: "obras", label: "Obras/Projetos", icon: "O", modules: ["projects", "projectCosts", "projectRevenues", "workBudgets", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "purchaseOrders", "technicalReports", "fiscalDocuments", "projectReport"] },
   { id: "financeiro", label: "Financeiro", icon: "$", modules: ["receivable", "payable", "cashMoves", "cashFlow", "reconciliation"] },
   { id: "comercial", label: "Comercial", icon: "V", modules: ["budgets", "proposals", "proposalModels", "proposalAreas", "proposalActionTypes", "proposalServiceSubtypes", "sales"] },
   { id: "contabilidade", label: "Contabilidade Gerencial", icon: "L", modules: ["chartAccounts", "journalEntries", "dre", "taxDocuments", "taxes"] },
@@ -135,15 +137,15 @@ const roleLabels = {
 const roleModules = {
   admin: modules.map(([key]) => key),
   financeiro: [
-    "dashboard", "clients", "suppliers", "categories", "costCenters", "bankAccounts", "projects", "projectSchedule",
+    "dashboard", "clients", "suppliers", "categories", "costCenters", "bankAccounts", "projects", "projectSchedule", "agenda", "kanban",
     "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "sinapiSettings", "ownCompositions", "quotes", "abcCurve",
     "fiscalDocuments", "receivable", "payable", "cashMoves", "cashFlow", "reconciliation",
     "proposals", "sales", "chartAccounts", "journalEntries", "dre", "taxDocuments", "taxes",
     "reports", "reportFinancial", "reportClient", "reportSupplier", "reportCostCenter", "reportProject", "exports", "systemVersion",
   ],
-  comercial: ["dashboard", "clients", "projects", "projectSchedule", "workBudgets", "abcCurve", "budgets", "proposals", "proposalModels", "sales", "reportClient", "systemVersion"],
-  engenharia: ["dashboard", "projects", "projectSchedule", "projectMilestones", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "purchaseOrders", "technicalReports", "projectReport", "proposals", "reportProject", "systemVersion"],
-  gestor_obra: ["dashboard", "projects", "projectSchedule", "projectMilestones", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "purchaseOrders", "technicalReports", "projectReport", "proposals", "reportProject", "systemVersion"],
+  comercial: ["dashboard", "clients", "projects", "projectSchedule", "agenda", "kanban", "workBudgets", "abcCurve", "budgets", "proposals", "proposalModels", "sales", "reportClient", "systemVersion"],
+  engenharia: ["dashboard", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "purchaseOrders", "technicalReports", "projectReport", "proposals", "reportProject", "systemVersion"],
+  gestor_obra: ["dashboard", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "purchaseOrders", "technicalReports", "projectReport", "proposals", "reportProject", "systemVersion"],
   equipe_campo: ["dashboard", "projectReport", "systemVersion"],
   cliente_obra: ["dashboard", "projectReport", "projectSchedule", "technicalReports", "systemVersion"],
   fornecedor_terceiro: ["dashboard", "systemVersion"],
@@ -164,6 +166,13 @@ let sinapiUfFilter = "MS";
 let sinapiTypeFilter = "all";
 let sinapiLastImportHtml = "";
 let proposalGeneratorState = null;
+let agendaViewMode = "month";
+let agendaCursorDate = new Date().toISOString().slice(0, 10);
+let agendaProjectFilter = "";
+let agendaTypeFilter = "";
+let selectedKanbanBoardId = "";
+let agendaNewDate = "";
+let kanbanNewColumnId = "";
 
 const apiResources = {
   clients: "clientes",
@@ -202,6 +211,10 @@ const apiResources = {
   purchaseOrders: "pedidos-compra",
   projectSchedule: "cronograma-fisico-financeiro",
   projectMilestones: "marcos-obras",
+  agendaEvents: "agenda-eventos",
+  kanbanBoards: "kanban-boards",
+  kanbanColumns: "kanban-colunas",
+  kanbanCards: "kanban-cards",
   projectNotifications: "notificacoes-obras",
   projectTrackingLinks: "links-acompanhamento-obras",
   technicalReports: "relatorios-tecnicos",
@@ -597,6 +610,39 @@ const configs = {
       ["completedDate", "Data concluída", "date"],
       ["status", "Status", "select", ["Pendente", "Concluído", "Cancelado"]],
       ["notes", "Observações", "textarea"],
+    ],
+  },
+  agendaEvents: {
+    title: "Evento da agenda",
+    description: "Compromissos por obra, cliente, usuário e tipo.",
+    fields: [
+      ["obra_id", "Obra/Projeto", "project"],
+      ["cliente_id", "Cliente", "client"],
+      ["usuario_id", "Responsável", "user"],
+      ["titulo", "Título", "text", true],
+      ["descricao", "Descrição", "textarea"],
+      ["tipo", "Tipo", "select", ["reuniao", "visita", "entrega", "cobranca", "outro"]],
+      ["data_inicio", "Início", "datetime-local", true],
+      ["data_fim", "Fim", "datetime-local"],
+      ["dia_todo", "Dia todo", "select", ["0", "1"]],
+      ["lembrete_minutos", "Lembrete em minutos", "number"],
+      ["status", "Status", "select", ["agendado", "realizado", "cancelado"]],
+    ],
+  },
+  kanbanCards: {
+    title: "Card Kanban",
+    description: "Tarefa do board com responsável, prazo e prioridade.",
+    fields: [
+      ["coluna_id", "Coluna", "kanbanColumn", true],
+      ["obra_id", "Obra/Projeto", "project"],
+      ["titulo", "Título", "text", true],
+      ["descricao", "Descrição", "textarea"],
+      ["responsavel_id", "Responsável", "user"],
+      ["data_vencimento", "Prazo", "date"],
+      ["prioridade", "Prioridade", "select", ["baixa", "media", "alta", "urgente"]],
+      ["referencia_tipo", "Tipo de referência", "text"],
+      ["referencia_id", "ID de referência", "number"],
+      ["ordem", "Ordem", "number"],
     ],
   },
   projectNotifications: {
@@ -1387,6 +1433,17 @@ const seed = {
     { id: "pref1", name: "Moeda padrão", value: "BRL", description: "Moeda usada nos relatórios financeiros.", status: "Ativo" },
     { id: "pref2", name: "Publicação", value: "Apache", description: "Aplicação estática compatível com hospedagem em servidor Apache.", status: "Ativo" },
   ],
+  agendaEvents: [],
+  kanbanBoards: [
+    { id: "kb-geral", obra_id: "", nome: "Board geral", tipo: "geral" },
+  ],
+  kanbanColumns: [
+    { id: "kc-geral-1", board_id: "kb-geral", nome: "A fazer", ordem: 10, cor: "#185FA5" },
+    { id: "kc-geral-2", board_id: "kb-geral", nome: "Em andamento", ordem: 20, cor: "#B8872D" },
+    { id: "kc-geral-3", board_id: "kb-geral", nome: "Aguardando aprovação", ordem: 30, cor: "#7C3AED" },
+    { id: "kc-geral-4", board_id: "kb-geral", nome: "Concluído", ordem: 40, cor: "#147A47" },
+  ],
+  kanbanCards: [],
 };
 
 let db = loadDb();
@@ -1515,7 +1572,7 @@ function byId(collection, id) {
 function nameOf(collection, id) {
   const row = byId(collection, id);
   if (!row) return "";
-  return row.name || row.stageName || row.title || row.number || row.document || row.code || row.fieldName || row.description || "";
+  return row.name || row.nome || row.titulo || row.stageName || row.title || row.number || row.document || row.code || row.fieldName || row.description || "";
 }
 
 function asMoney(value) {
@@ -1658,13 +1715,14 @@ function canEdit() {
 
 function canEditModule(key = currentModule) {
   if (isAdmin()) return true;
+  const permissionKey = { agendaEvents: "agenda", kanbanBoards: "kanban", kanbanColumns: "kanban", kanbanCards: "kanban" }[key] || key;
   const editableByRole = {
-    financeiro: ["fiscalDocuments", "receivable", "payable", "cashMoves", "cashFlow", "reconciliation", "categories", "costCenters", "bankAccounts", "chartAccounts", "journalEntries", "taxDocuments", "taxes", "exports", "projectSchedule", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "sinapiSettings", "quotes", "sales"],
-    comercial: ["clients", "budgets", "proposals"],
-    engenharia: ["projects", "projectSchedule", "projectMilestones", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "purchaseOrders", "technicalReports"],
-    gestor_obra: ["projects", "projectSchedule", "projectMilestones", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "purchaseOrders", "technicalReports"],
+    financeiro: ["fiscalDocuments", "receivable", "payable", "cashMoves", "cashFlow", "reconciliation", "categories", "costCenters", "bankAccounts", "chartAccounts", "journalEntries", "taxDocuments", "taxes", "exports", "projectSchedule", "agenda", "kanban", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "sinapiSettings", "quotes", "sales"],
+    comercial: ["clients", "budgets", "proposals", "agenda", "kanban"],
+    engenharia: ["projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "purchaseOrders", "technicalReports"],
+    gestor_obra: ["projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "purchaseOrders", "technicalReports"],
   };
-  return (editableByRole[currentUser?.role] || []).includes(key);
+  return (editableByRole[currentUser?.role] || []).includes(permissionKey);
 }
 
 function visibleRowsForModule(key, rows) {
@@ -1865,6 +1923,8 @@ function render() {
   if (currentModule === "sinapiReferences") return renderSinapiReferences();
   if (currentModule === "abcCurve") return renderAbcCurve();
   if (currentModule === "projectSchedule") return renderProjectSchedule();
+  if (currentModule === "agenda") return renderAgenda();
+  if (currentModule === "kanban") return renderKanban();
   if (currentModule === "projectReport") return renderProjectReport();
   if (currentModule === "cashFlow") return renderCashFlow();
   if (currentModule === "reconciliation") return renderReconciliation();
@@ -2380,6 +2440,7 @@ function renderDashboard() {
       ${dashboardCards.map((card) => kpi(card[0], card[1], card[2] ?? true)).join("")}
     </section>
     ${dashboardAlerts(metrics)}
+    ${dashboardAgendaKanbanWidgets()}
     <section class="chart-grid">
       ${charts}
     </section>
@@ -2405,6 +2466,52 @@ function dashboardAlerts(metrics) {
   if (margin < 10 && ((metrics.project && metrics.revenueReceived > 0) || (!metrics.project && metrics.revenueTotal > 0))) alerts.push("Margem líquida baixa. Revise custos, preços e despesas.");
   if (!alerts.length) return "";
   return `<section class="alerts">${alerts.map((message) => `<div class="alert">${message}</div>`).join("")}</section>`;
+}
+
+function dashboardAgendaKanbanWidgets() {
+  const events = upcomingAgendaEvents(7);
+  const cards = urgentKanbanCards();
+  const eventRows = events.length ? events.map((event) => `
+    <li><strong>${svgText(event.titulo)}</strong><span>${asDate(String(event.data_inicio || "").slice(0, 10))} · ${agendaTypeLabel(event.tipo)}${event.obra_id ? ` · ${nameOf("projects", event.obra_id)}` : ""}</span></li>
+  `).join("") : '<li class="muted-row">Sem eventos nos próximos 7 dias</li>';
+  const cardRows = cards.length ? cards.map((card) => `
+    <li><strong>${svgText(card.titulo)}</strong><span>${priorityLabel(card.prioridade)} · ${card.data_vencimento ? asDate(card.data_vencimento) : "Sem prazo"}${card.obra_id ? ` · ${nameOf("projects", card.obra_id)}` : ""}</span></li>
+  `).join("") : '<li class="muted-row">Sem cards urgentes ou atrasados</li>';
+  return `
+    <section class="split dashboard-work-widgets">
+      <div class="panel compact-list-panel">
+        <h3>Próximos eventos da agenda</h3>
+        <ul class="compact-list">${eventRows}</ul>
+      </div>
+      <div class="panel compact-list-panel">
+        <h3>Kanban urgente/atrasado</h3>
+        <ul class="compact-list">${cardRows}</ul>
+      </div>
+    </section>
+  `;
+}
+
+function upcomingAgendaEvents(days = 7) {
+  const today = startOfLocalDay(new Date());
+  const limit = new Date(today);
+  limit.setDate(limit.getDate() + days);
+  return (db.agendaEvents || [])
+    .filter((event) => event.status !== "cancelado")
+    .filter((event) => {
+      const date = parseLocalDateTime(event.data_inicio);
+      return date && date >= today && date <= limit;
+    })
+    .sort((a, b) => String(a.data_inicio).localeCompare(String(b.data_inicio)))
+    .slice(0, 8);
+}
+
+function urgentKanbanCards() {
+  const today = localDateString(new Date());
+  return (db.kanbanCards || [])
+    .filter((card) => !kanbanCardDone(card))
+    .filter((card) => ["alta", "urgente"].includes(card.prioridade) || (card.data_vencimento && card.data_vencimento < today))
+    .sort((a, b) => String(a.data_vencimento || "9999-12-31").localeCompare(String(b.data_vencimento || "9999-12-31")))
+    .slice(0, 8);
 }
 
 function kpi(label, value, format = true) {
@@ -2697,6 +2804,10 @@ function labelFor(field) {
     variables: "Variáveis", folder: "Subpasta", visibleToClientDefault: "Visível ao cliente", checklistId: "Checklist",
     allowsPhoto: "Permite foto", allowsAttachment: "Permite anexo", installments: "Parcelas", context: "Contexto",
     message: "Mensagem", rule: "Regra", predecessorIds: "Dependências", durationDays: "Duração",
+    obra_id: "Obra/Projeto", cliente_id: "Cliente", usuario_id: "Responsável", titulo: "Título", tipo: "Tipo",
+    data_inicio: "Início", data_fim: "Fim", dia_todo: "Dia todo", lembrete_minutos: "Lembrete",
+    board_id: "Board", coluna_id: "Coluna", responsavel_id: "Responsável", data_vencimento: "Prazo",
+    prioridade: "Prioridade", referencia_tipo: "Referência", referencia_id: "ID ref.", nome: "Nome", ordem: "Ordem",
   };
   return labels[field] || field;
 }
@@ -2708,10 +2819,19 @@ function formatCell(field, value, row = {}) {
   if (field === "password") return "••••••••";
   if (field === "role") return roleLabels[value] || value || "";
   if (field === "clientId") return nameOf("clients", value);
+  if (field === "cliente_id") return nameOf("clients", value);
   if (field === "supplierId") return nameOf("suppliers", value);
   if (field === "categoryId") return nameOf("categories", value);
   if (field === "costCenterId") return nameOf("costCenters", value);
   if (field === "projectId") return nameOf("projects", value);
+  if (field === "obra_id") return nameOf("projects", value);
+  if (field === "usuario_id" || field === "responsavel_id") return nameOf("users", value);
+  if (field === "board_id") return nameOf("kanbanBoards", value);
+  if (field === "coluna_id") return nameOf("kanbanColumns", value);
+  if (field === "tipo") return agendaTypeLabel(value);
+  if (field === "prioridade") return priorityLabel(value);
+  if (field === "data_inicio" || field === "data_fim") return value ? String(value).replace("T", " ") : "";
+  if (field === "data_vencimento") return asDate(value);
   if (["createdByUserId", "commercialUserId", "projectManagerId", "financialUserId"].includes(field)) return nameOf("users", value);
   if (field === "budgetId") return nameOf("budgets", value);
   if (field === "workBudgetId") return nameOf("workBudgets", value);
@@ -2760,6 +2880,19 @@ function openForm(key, id = null) {
     row.projectId = budget?.projectId || "";
     row.bdiPercent = budget?.bdiPercent || 0;
   }
+  if (!id && key === "agendaEvents") {
+    row.data_inicio = `${agendaNewDate || localDateString(new Date())}T09:00`;
+    row.data_fim = `${agendaNewDate || localDateString(new Date())}T10:00`;
+    row.tipo = "reuniao";
+    row.status = "agendado";
+    row.lembrete_minutos = 60;
+    row.dia_todo = "0";
+  }
+  if (!id && key === "kanbanCards") {
+    row.coluna_id = kanbanNewColumnId || "";
+    row.prioridade = "media";
+    row.ordem = Date.now();
+  }
   qs("dialogTitle").textContent = id ? `Editar ${config.title}` : `Novo ${config.title}`;
   qs("formFields").innerHTML = config.fields.map(([field, label, type, options]) => inputFor(key, field, label, type, options, row[field], row)).join("");
   applyFormEnhancements();
@@ -2806,10 +2939,12 @@ function inputFor(key, field, label, type, options, value = "", row = {}) {
     proposalSubtype: ["proposalServiceSubtypes", "Selecione"],
     scheduleStep: ["projectSchedule", "Selecione"],
     projectMilestone: ["projectMilestones", "Selecione"],
+    kanbanColumn: ["kanbanColumns", "Selecione"],
   }[type];
   if (lookup) return `<label>${label}<select name="${field}" ${required}><option value="">${lookup[1]}</option>${db[lookup[0]].map((row) => `<option value="${row.id}" ${String(row.id) === String(value) ? "selected" : ""}>${row.code ? `${row.code} - ` : ""}${row.name || row.number || row.document || row.username || row.id}</option>`).join("")}</select></label>`;
   if (isMoneyField(field) || type === "money") return `<label>${label}<input name="${field}" type="text" inputmode="decimal" value="${formatMoneyInput(value)}" placeholder="${placeholder}" data-format="money" ${required}></label>`;
   if (isPercentField(field)) return `<label>${label}<input name="${field}" type="text" inputmode="decimal" value="${formatPercentInput(value)}" placeholder="${placeholder}" data-format="percent" ${required}></label>`;
+  if (type === "datetime-local") return `<label>${label}<input name="${field}" type="${type}" value="${String(value || "").replace(" ", "T").slice(0, 16)}" placeholder="${placeholder}" ${required}></label>`;
   const mask = field === "phone" ? 'data-mask="phone"' : field === "document" && ["clients", "suppliers", "companySettings"].includes(key) ? 'data-mask="document"' : ["zipCode", "postalCode", "cep"].includes(field) ? 'data-mask="cep"' : "";
   return `<label>${label}<input name="${field}" type="${type}" value="${value || ""}" placeholder="${placeholder}" ${required} ${mask}></label>`;
 }
@@ -2844,6 +2979,8 @@ async function saveForm(event) {
   if (editing.key === "workBudgets") normalizeWorkBudget(data);
   if (editing.key === "quotes") normalizeQuote(data);
   if (editing.key === "ownCompositions") normalizeOwnComposition(data);
+  if (editing.key === "agendaEvents") normalizeAgendaEvent(data);
+  if (editing.key === "kanbanCards") normalizeKanbanCard(data);
   if (["budgets", "proposals", "workBudgets"].includes(editing.key)) {
     if (!data.createdByUserId) data.createdByUserId = currentUser.id;
     if (!data.commercialUserId && currentUser.role === "comercial") data.commercialUserId = currentUser.id;
@@ -2906,6 +3043,17 @@ async function saveForm(event) {
       newStatus: data.status || "",
       notes: "Status alterado pelo cadastro de proposta.",
     }).catch(() => {});
+  }
+  if (!serverMode && editing.key === "projects" && !editing.id) {
+    const project = db.projects.at(-1);
+    ensureLocalProjectBoard(project);
+    saveDb();
+  }
+  if (!serverMode && editing.key === "purchaseOrders" && !editing.id) {
+    await createLocalPurchaseKanbanCard(db.purchaseOrders.at(-1)).catch(() => {});
+  }
+  if (!serverMode && editing.key === "projectMilestones" && data.status === "Concluído" && previousRecord?.status !== data.status) {
+    await createLocalMilestoneBillingEvent(editing.id).catch(() => {});
   }
   qs("recordDialog").close();
   await refreshAndRender();
@@ -2976,6 +3124,76 @@ function normalizeOwnComposition(data) {
   const cost = Number(data.laborCost || 0) + Number(data.materialCost || 0) + Number(data.equipmentCost || 0) + Number(data.thirdPartyCost || 0);
   if (cost && !Number(data.estimatedCost || 0)) data.estimatedCost = roundMoney(cost);
   if (cost && !Number(data.suggestedPrice || 0)) data.suggestedPrice = roundMoney(cost * (1 + Number(data.marginPercent || 0) / 100));
+}
+
+function normalizeAgendaEvent(data) {
+  data.data_inicio = String(data.data_inicio || "").replace("T", " ");
+  data.data_fim = data.data_fim ? String(data.data_fim).replace("T", " ") : "";
+  data.dia_todo = Number(data.dia_todo || 0);
+  data.lembrete_minutos = Number(data.lembrete_minutos || 60);
+  if (!data.status) data.status = "agendado";
+}
+
+function normalizeKanbanCard(data) {
+  data.ordem = Number(data.ordem || Date.now());
+  if (!data.prioridade) data.prioridade = "media";
+  if (!data.obra_id && selectedKanbanBoardId) data.obra_id = byId("kanbanBoards", selectedKanbanBoardId)?.obra_id || "";
+}
+
+async function createLocalPurchaseKanbanCard(order) {
+  if (!order) return;
+  const project = byId("projects", order.projectId);
+  const board = project ? ensureLocalProjectBoard(project) : (db.kanbanBoards || [])[0];
+  const column = (db.kanbanColumns || []).filter((row) => sameId(row.board_id, board?.id)).sort((a, b) => Number(a.ordem || 0) - Number(b.ordem || 0))[0];
+  if (!column) return;
+  db.kanbanCards.push({
+    id: crypto.randomUUID(),
+    coluna_id: column.id,
+    obra_id: order.projectId || "",
+    titulo: `Pedido ${order.number || ""}`.trim(),
+    descricao: order.notes || "Card criado automaticamente a partir do pedido de compra.",
+    responsavel_id: "",
+    data_vencimento: order.expectedDate || "",
+    prioridade: "media",
+    referencia_tipo: "PEDIDO_COMPRA",
+    referencia_id: order.id,
+    ordem: Date.now(),
+  });
+  saveDb();
+}
+
+async function createLocalMilestoneBillingEvent(milestoneId) {
+  const milestone = byId("projectMilestones", milestoneId);
+  if (!milestone) return;
+  const project = byId("projects", milestone.projectId);
+  const date = milestone.completedDate || milestone.plannedDate || localDateString(new Date());
+  db.agendaEvents.push({
+    id: crypto.randomUUID(),
+    obra_id: milestone.projectId || "",
+    cliente_id: project?.clientId || "",
+    usuario_id: currentUser?.id || "",
+    titulo: `Cobrança: ${milestone.name}`,
+    descricao: `MARCO-${milestone.id} - Evento automático de cobrança criado ao aprovar marco.`,
+    tipo: "cobranca",
+    data_inicio: `${date} 09:00`,
+    data_fim: `${date} 10:00`,
+    dia_todo: 0,
+    lembrete_minutos: 1440,
+    status: "agendado",
+  });
+  db.projectNotifications.push({
+    id: crypto.randomUUID(),
+    projectId: milestone.projectId,
+    milestoneId: milestone.id,
+    recipient: "Equipe interna",
+    phone: "",
+    type: "WhatsApp manual",
+    message: `Evento de agenda hoje: Cobrança ${milestone.name}`,
+    generatedLink: `agenda-evento-${milestone.id}`,
+    status: "Preparado",
+    responsibleUserId: currentUser?.id || "",
+  });
+  saveDb();
 }
 
 async function syncWorkBudgetTotals(workBudgetId) {
@@ -3137,6 +3355,281 @@ async function createReceivablesFromProposal(id) {
 function currentScheduleProject() {
   const filterProject = getFilters().projectId;
   return byId("projects", filterProject) || byId("projects", dashboardProjectId) || db.projects[0] || null;
+}
+
+function renderAgenda() {
+  const editable = canEditModule("agenda");
+  const cursor = parseLocalDate(agendaCursorDate) || new Date();
+  const projectOptions = (db.projects || []).map((row) => `<option value="${row.id}" ${sameId(row.id, agendaProjectFilter) ? "selected" : ""}>${row.name}</option>`).join("");
+  const typeOptions = ["reuniao", "visita", "entrega", "cobranca", "outro"].map((type) => `<option value="${type}" ${agendaTypeFilter === type ? "selected" : ""}>${agendaTypeLabel(type)}</option>`).join("");
+  const events = filteredAgendaEvents();
+  qs("content").innerHTML = `
+    <section class="module-head">
+      <div>
+        <h2>Agenda</h2>
+        <p>Compromissos por obra, cliente, responsável e tipo, com visão mensal, semanal e diária.</p>
+      </div>
+      ${editable ? '<button id="newAgendaEvent" class="primary" type="button">Novo evento</button>' : ""}
+    </section>
+    <section class="schedule-toolbar agenda-toolbar">
+      <div class="segmented">
+        ${["month", "week", "day"].map((mode) => `<button type="button" data-agenda-view="${mode}" class="${agendaViewMode === mode ? "active" : ""}">${agendaViewLabel(mode)}</button>`).join("")}
+      </div>
+      <button type="button" class="secondary" id="agendaPrev">Anterior</button>
+      <strong>${agendaPeriodLabel(cursor)}</strong>
+      <button type="button" class="secondary" id="agendaNext">Próximo</button>
+      <label>Obra<select id="agendaProjectFilter"><option value="">Todas</option>${projectOptions}</select></label>
+      <label>Tipo<select id="agendaTypeFilter"><option value="">Todos</option>${typeOptions}</select></label>
+    </section>
+    ${agendaCalendarHtml(cursor, events, editable)}
+    ${table("Eventos da agenda", events.map(agendaTableRow), ["titulo", "tipo", "obra_id", "cliente_id", "usuario_id", "data_inicio", "data_fim", "status"], editable, "agendaEvents")}
+  `;
+  qs("newAgendaEvent")?.addEventListener("click", () => openAgendaEventForm(localDateString(cursor)));
+  qs("agendaProjectFilter").addEventListener("change", (event) => { agendaProjectFilter = event.target.value; renderAgenda(); });
+  qs("agendaTypeFilter").addEventListener("change", (event) => { agendaTypeFilter = event.target.value; renderAgenda(); });
+  qs("agendaPrev").addEventListener("click", () => moveAgendaCursor(-1));
+  qs("agendaNext").addEventListener("click", () => moveAgendaCursor(1));
+  qs("content").querySelectorAll("[data-agenda-view]").forEach((button) => button.addEventListener("click", () => { agendaViewMode = button.dataset.agendaView; renderAgenda(); }));
+  qs("content").querySelectorAll("[data-agenda-date]").forEach((button) => button.addEventListener("click", () => openAgendaEventForm(button.dataset.agendaDate)));
+  qs("content").querySelectorAll("[data-edit]").forEach((button) => button.addEventListener("click", () => openForm("agendaEvents", button.dataset.edit)));
+  qs("content").querySelectorAll("[data-delete]").forEach((button) => button.addEventListener("click", () => removeRecord("agendaEvents", button.dataset.delete)));
+}
+
+function renderKanban() {
+  ensureLocalDefaultKanban();
+  const editable = canEditModule("kanban");
+  const boards = db.kanbanBoards || [];
+  if (!selectedKanbanBoardId || !boards.some((board) => sameId(board.id, selectedKanbanBoardId))) selectedKanbanBoardId = boards[0]?.id || "";
+  const board = boards.find((row) => sameId(row.id, selectedKanbanBoardId));
+  const boardOptions = boards.map((row) => `<option value="${row.id}" ${sameId(row.id, selectedKanbanBoardId) ? "selected" : ""}>${row.nome}</option>`).join("");
+  const columns = (db.kanbanColumns || []).filter((column) => sameId(column.board_id, selectedKanbanBoardId)).sort((a, b) => Number(a.ordem || 0) - Number(b.ordem || 0));
+  qs("content").innerHTML = `
+    <section class="module-head">
+      <div>
+        <h2>Kanban</h2>
+        <p>Boards por obra, compras e tarefas gerais, com cards arrastáveis por coluna.</p>
+      </div>
+      ${editable ? '<button id="newKanbanCard" class="primary" type="button">Novo card</button>' : ""}
+    </section>
+    <section class="schedule-toolbar kanban-toolbar">
+      <label>Board<select id="kanbanBoardSelect">${boardOptions}</select></label>
+      <span>${board?.obra_id ? `Obra: ${nameOf("projects", board.obra_id)}` : "Sem obra vinculada"}</span>
+    </section>
+    <section class="kanban-board">
+      ${columns.map((column) => kanbanColumnHtml(column, editable)).join("") || '<div class="empty">Nenhuma coluna neste board.</div>'}
+    </section>
+  `;
+  qs("kanbanBoardSelect").addEventListener("change", (event) => { selectedKanbanBoardId = event.target.value; renderKanban(); });
+  qs("newKanbanCard")?.addEventListener("click", () => openKanbanCardForm(columns[0]?.id || ""));
+  qs("content").querySelectorAll("[data-kanban-card]").forEach((card) => {
+    card.addEventListener("dragstart", (event) => event.dataTransfer.setData("text/plain", card.dataset.kanbanCard));
+  });
+  qs("content").querySelectorAll("[data-kanban-column]").forEach((column) => {
+    column.addEventListener("dragover", (event) => event.preventDefault());
+    column.addEventListener("drop", (event) => moveKanbanCard(event.dataTransfer.getData("text/plain"), column.dataset.kanbanColumn));
+  });
+  qs("content").querySelectorAll("[data-edit-card]").forEach((button) => button.addEventListener("click", () => openForm("kanbanCards", button.dataset.editCard)));
+  qs("content").querySelectorAll("[data-delete-card]").forEach((button) => button.addEventListener("click", () => removeRecord("kanbanCards", button.dataset.deleteCard)));
+}
+
+function agendaCalendarHtml(cursor, events, editable) {
+  const days = agendaVisibleDays(cursor);
+  return `<section class="agenda-grid agenda-${agendaViewMode}">
+    ${days.map((date) => {
+      const key = localDateString(date);
+      const dayEvents = events.filter((event) => String(event.data_inicio || "").slice(0, 10) === key);
+      return `<button type="button" class="agenda-day" data-agenda-date="${key}" ${editable ? "" : "disabled"}>
+        <span>${date.getDate()}</span>
+        ${dayEvents.slice(0, 4).map((event) => `<small class="agenda-event ${event.tipo}">${svgText(event.titulo)}</small>`).join("")}
+        ${dayEvents.length > 4 ? `<em>+${dayEvents.length - 4}</em>` : ""}
+      </button>`;
+    }).join("")}
+  </section>`;
+}
+
+function agendaVisibleDays(cursor) {
+  const base = startOfLocalDay(cursor);
+  if (agendaViewMode === "day") return [base];
+  if (agendaViewMode === "week") {
+    const start = new Date(base);
+    start.setDate(start.getDate() - start.getDay());
+    return Array.from({ length: 7 }, (_, index) => addDays(start, index));
+  }
+  const first = new Date(base.getFullYear(), base.getMonth(), 1);
+  const start = new Date(first);
+  start.setDate(start.getDate() - start.getDay());
+  return Array.from({ length: 42 }, (_, index) => addDays(start, index));
+}
+
+function filteredAgendaEvents() {
+  return (db.agendaEvents || [])
+    .filter((event) => !agendaProjectFilter || sameId(event.obra_id, agendaProjectFilter))
+    .filter((event) => !agendaTypeFilter || event.tipo === agendaTypeFilter)
+    .sort((a, b) => String(a.data_inicio).localeCompare(String(b.data_inicio)));
+}
+
+function agendaTableRow(event) {
+  return {
+    ...event,
+    tipo: agendaTypeLabel(event.tipo),
+    data_inicio: event.data_inicio ? String(event.data_inicio).replace("T", " ") : "",
+    data_fim: event.data_fim ? String(event.data_fim).replace("T", " ") : "",
+  };
+}
+
+function moveAgendaCursor(direction) {
+  const date = parseLocalDate(agendaCursorDate) || new Date();
+  if (agendaViewMode === "day") date.setDate(date.getDate() + direction);
+  else if (agendaViewMode === "week") date.setDate(date.getDate() + direction * 7);
+  else date.setMonth(date.getMonth() + direction);
+  agendaCursorDate = localDateString(date);
+  renderAgenda();
+}
+
+function openAgendaEventForm(date) {
+  agendaCursorDate = date || agendaCursorDate;
+  agendaNewDate = date || localDateString(new Date());
+  openForm("agendaEvents");
+}
+
+function openKanbanCardForm(columnId) {
+  kanbanNewColumnId = columnId;
+  openForm("kanbanCards");
+}
+
+function kanbanColumnHtml(column, editable) {
+  const cards = (db.kanbanCards || []).filter((card) => sameId(card.coluna_id, column.id)).sort((a, b) => Number(a.ordem || 0) - Number(b.ordem || 0));
+  return `
+    <div class="kanban-column" data-kanban-column="${column.id}">
+      <header style="border-color:${svgText(column.cor || "#185FA5")}">
+        <h3>${svgText(column.nome)}</h3>
+        <span>${cards.length}${column.limite_cards ? `/${column.limite_cards}` : ""}</span>
+      </header>
+      <div class="kanban-card-list">
+        ${cards.map((card) => kanbanCardHtml(card, editable)).join("") || '<div class="empty small">Sem cards</div>'}
+      </div>
+    </div>
+  `;
+}
+
+function kanbanCardHtml(card, editable) {
+  const overdue = card.data_vencimento && card.data_vencimento < localDateString(new Date()) && !kanbanCardDone(card);
+  const priority = card.prioridade || "media";
+  return `
+    <article class="kanban-card priority-${priority} ${overdue ? "overdue" : ""}" draggable="${editable}" data-kanban-card="${card.id}">
+      <strong>${svgText(card.titulo)}</strong>
+      <p>${svgText(card.descricao || "")}</p>
+      <footer>
+        <span>${card.responsavel_id ? nameOf("users", card.responsavel_id) : "Sem responsável"}</span>
+        <span>${card.data_vencimento ? asDate(card.data_vencimento) : "Sem prazo"}</span>
+      </footer>
+      <div class="kanban-card-actions">
+        <span>${priorityLabel(priority)}</span>
+        ${editable ? `<button type="button" data-edit-card="${card.id}">Editar</button><button type="button" data-delete-card="${card.id}">Excluir</button>` : ""}
+      </div>
+    </article>
+  `;
+}
+
+async function moveKanbanCard(cardId, columnId) {
+  if (!cardId || !columnId || !canEditModule("kanban")) return;
+  const card = byId("kanbanCards", cardId);
+  if (!card || sameId(card.coluna_id, columnId)) return;
+  const targetColumn = (db.kanbanColumns || []).find((column) => sameId(column.id, columnId));
+  await updateIntegratedRecord("kanbanCards", cardId, { coluna_id: columnId, ordem: Date.now() });
+  if (targetColumn && normalizedText(targetColumn.nome) === normalizedText("Concluído") && card.referencia_tipo && confirm("Card movido para Concluído. Deseja atualizar o status do item vinculado?")) {
+    alert("Atualização do item vinculado depende do tipo de referência e deve ser confirmada no módulo de origem.");
+  }
+  await refreshAndRender();
+}
+
+function ensureLocalDefaultKanban() {
+  if (serverMode) return;
+  if (!db.kanbanBoards?.length) {
+    db.kanbanBoards = [{ id: "kb-geral", obra_id: "", nome: "Board geral", tipo: "geral" }];
+  }
+  db.projects.forEach((project) => ensureLocalProjectBoard(project));
+  saveDb();
+}
+
+function ensureLocalProjectBoard(project) {
+  if (!project) return null;
+  let board = db.kanbanBoards.find((row) => sameId(row.obra_id, project.id) && row.tipo === "obra");
+  if (!board) {
+    board = { id: crypto.randomUUID(), obra_id: project.id, nome: `Kanban - ${project.name}`, tipo: "obra" };
+    db.kanbanBoards.push(board);
+  }
+  ensureLocalKanbanColumns(board.id);
+  return board;
+}
+
+function ensureLocalKanbanColumns(boardId) {
+  const defaults = [
+    ["A fazer", 10, "#185FA5"],
+    ["Em andamento", 20, "#B8872D"],
+    ["Aguardando aprovação", 30, "#7C3AED"],
+    ["Concluído", 40, "#147A47"],
+  ];
+  defaults.forEach(([nome, ordem, cor]) => {
+    if (!(db.kanbanColumns || []).some((column) => sameId(column.board_id, boardId) && column.nome === nome)) {
+      db.kanbanColumns.push({ id: crypto.randomUUID(), board_id: boardId, nome, ordem, cor });
+    }
+  });
+}
+
+function kanbanCardDone(card) {
+  const column = (db.kanbanColumns || []).find((row) => sameId(row.id, card.coluna_id));
+  return normalizedText(column?.nome || "") === normalizedText("Concluído");
+}
+
+function agendaTypeLabel(type) {
+  return ({ reuniao: "Reunião", visita: "Visita", entrega: "Entrega", cobranca: "Cobrança", outro: "Outro" })[type] || type || "";
+}
+
+function priorityLabel(priority) {
+  return ({ baixa: "Baixa", media: "Média", alta: "Alta", urgente: "Urgente" })[priority] || priority || "";
+}
+
+function agendaViewLabel(mode) {
+  return ({ month: "Mês", week: "Semana", day: "Dia" })[mode] || mode;
+}
+
+function agendaPeriodLabel(date) {
+  if (agendaViewMode === "day") return asDate(localDateString(date));
+  if (agendaViewMode === "week") {
+    const days = agendaVisibleDays(date);
+    return `${asDate(localDateString(days[0]))} a ${asDate(localDateString(days.at(-1)))}`;
+  }
+  return date.toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
+}
+
+function parseLocalDate(value) {
+  if (!value) return null;
+  const [year, month, day] = String(value).slice(0, 10).split("-").map(Number);
+  if (!year || !month || !day) return null;
+  return new Date(year, month - 1, day);
+}
+
+function parseLocalDateTime(value) {
+  if (!value) return null;
+  return new Date(String(value).replace(" ", "T"));
+}
+
+function startOfLocalDay(date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function addDays(date, days) {
+  const copy = new Date(date);
+  copy.setDate(copy.getDate() + days);
+  return copy;
+}
+
+function localDateString(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function renderProjectSchedule() {
