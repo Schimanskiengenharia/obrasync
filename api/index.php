@@ -12,6 +12,10 @@ $resources = resource_map();
 
 try {
     $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+    $module = strtolower((string) ($_GET['module'] ?? ''));
+    if (in_array($module, ['agenda', 'agenda_eventos', 'agenda-eventos'], true)) {
+        handle_agenda_module($pdo, $method, $_GET);
+    }
     $segments = route_segments();
     $resource = $segments[0] ?? 'bootstrap';
     $id = $segments[1] ?? null;
@@ -218,6 +222,307 @@ try {
     fail('Método não permitido.', 405);
 } catch (Throwable $error) {
     fail($error->getMessage(), 500);
+}
+
+function handle_agenda_module(PDO $pdo, string $method, array $query): never
+{
+    $action = strtolower(trim((string) ($query['action'] ?? '')));
+    if ($action === '') {
+        if ($method === 'GET') {
+            $action = 'list';
+        } elseif ($method === 'POST') {
+            $action = 'create';
+        } elseif ($method === 'PUT' || $method === 'PATCH') {
+            $action = 'update';
+        } elseif ($method === 'DELETE') {
+            $action = 'delete';
+        }
+    }
+
+    try {
+        if ($action === 'list') {
+            require_method($method, ['GET']);
+            agenda_respond(true, agenda_list_events($pdo, $query));
+        }
+
+        if ($action === 'get') {
+            require_method($method, ['GET']);
+            $id = (int) ($query['id'] ?? 0);
+            if ($id <= 0) {
+                agenda_respond(false, [], 'Informe o id do evento.', 400);
+            }
+            agenda_respond(true, agenda_get_event($pdo, $id));
+        }
+
+        if ($action === 'create') {
+            require_method($method, ['POST']);
+            $record = agenda_create_event($pdo, read_json());
+            agenda_respond(true, $record, 'Evento criado com sucesso.', 201);
+        }
+
+        if ($action === 'update') {
+            require_method($method, ['PUT', 'PATCH', 'POST']);
+            $id = (int) ($query['id'] ?? 0);
+            $payload = read_json();
+            if ($id <= 0) {
+                $id = (int) ($payload['id'] ?? 0);
+            }
+            if ($id <= 0) {
+                agenda_respond(false, [], 'Informe o id do evento.', 400);
+            }
+            $record = agenda_update_event($pdo, $id, $payload);
+            agenda_respond(true, $record, 'Evento atualizado com sucesso.');
+        }
+
+        if ($action === 'delete') {
+            require_method($method, ['DELETE', 'POST']);
+            $id = (int) ($query['id'] ?? 0);
+            if ($id <= 0) {
+                agenda_respond(false, [], 'Informe o id do evento.', 400);
+            }
+            agenda_delete_event($pdo, $id);
+            agenda_respond(true, [], 'Evento excluído com sucesso.');
+        }
+
+        agenda_respond(false, [], 'Ação da agenda inválida.', 400);
+    } catch (Throwable $e) {
+        agenda_respond(false, [], $e->getMessage(), 500);
+    }
+}
+
+function agenda_respond(bool $success, mixed $data = [], string $message = '', int $status = 200): never
+{
+    http_response_code($status);
+    echo json_encode([
+        'success' => $success,
+        'data' => $data,
+        'message' => $message,
+    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
+function agenda_list_events(PDO $pdo, array $query): array
+{
+    $table = resolve_existing_table($pdo, ['agenda_eventos']);
+    $sql = 'SELECT * FROM `' . $table . '` WHERE 1=1';
+    $params = [];
+
+    $obraId = agenda_query_value($query, ['obra_id', 'obraId', 'projectId', 'project_id']);
+    if ($obraId !== null && $obraId !== '') {
+        $sql .= ' AND `obra_id` = ?';
+        $params[] = (int) $obraId;
+    }
+
+    $tipo = agenda_query_value($query, ['tipo', 'type']);
+    if ($tipo !== null && $tipo !== '') {
+        $sql .= ' AND `tipo` = ?';
+        $params[] = (string) $tipo;
+    }
+
+    $periodStart = agenda_date_only(agenda_query_value($query, ['periodo_inicio', 'data_inicio', 'inicio', 'start', 'from']));
+    $periodEnd = agenda_date_only(agenda_query_value($query, ['periodo_fim', 'data_fim', 'fim', 'end', 'to']));
+    if ($periodStart && $periodEnd) {
+        $sql .= ' AND `data_inicio` <= ? AND (NULLIF(`data_fim`, "") IS NULL OR `data_fim` >= ?)';
+        $params[] = $periodEnd . ' 23:59:59';
+        $params[] = $periodStart . ' 00:00:00';
+    } elseif ($periodStart) {
+        $sql .= ' AND (DATE(`data_inicio`) >= ? OR DATE(`data_fim`) >= ?)';
+        $params[] = $periodStart;
+        $params[] = $periodStart;
+    } elseif ($periodEnd) {
+        $sql .= ' AND (DATE(`data_inicio`) <= ? OR DATE(`data_fim`) <= ?)';
+        $params[] = $periodEnd;
+        $params[] = $periodEnd;
+    }
+
+    $sql .= ' ORDER BY `data_inicio` ASC, `id` ASC';
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    return $stmt->fetchAll();
+}
+
+function agenda_get_event(PDO $pdo, int $id): array
+{
+    $table = resolve_existing_table($pdo, ['agenda_eventos']);
+    $stmt = $pdo->prepare('SELECT * FROM `' . $table . '` WHERE id = ? LIMIT 1');
+    $stmt->execute([$id]);
+    $record = $stmt->fetch();
+    if (!$record) {
+        agenda_respond(false, [], 'Evento não encontrado.', 404);
+    }
+    return $record;
+}
+
+function agenda_create_event(PDO $pdo, array $payload): array
+{
+    $table = resolve_existing_table($pdo, ['agenda_eventos']);
+    $data = agenda_normalize_event_payload($payload, false);
+
+    if (empty($data['titulo']) || empty($data['data_inicio'])) {
+        agenda_respond(false, [], 'Informe título e data de início.', 400);
+    }
+
+    $stmt = $pdo->prepare(
+        'INSERT INTO `' . $table . '`
+            (`obra_id`, `cliente_id`, `usuario_id`, `titulo`, `descricao`, `tipo`,
+             `data_inicio`, `data_fim`, `dia_todo`, `lembrete_minutos`, `status`,
+             `created_at`, `updated_at`)
+         VALUES
+            (:obra_id, :cliente_id, :usuario_id, :titulo, :descricao, :tipo,
+             :data_inicio, :data_fim, :dia_todo, :lembrete_minutos, :status,
+             NOW(), NOW())'
+    );
+    $stmt->execute([
+        ':obra_id' => $data['obra_id'],
+        ':cliente_id' => $data['cliente_id'],
+        ':usuario_id' => $data['usuario_id'],
+        ':titulo' => $data['titulo'],
+        ':descricao' => $data['descricao'],
+        ':tipo' => $data['tipo'],
+        ':data_inicio' => $data['data_inicio'],
+        ':data_fim' => $data['data_fim'],
+        ':dia_todo' => $data['dia_todo'],
+        ':lembrete_minutos' => $data['lembrete_minutos'],
+        ':status' => $data['status'],
+    ]);
+
+    return agenda_get_event($pdo, (int) $pdo->lastInsertId());
+}
+
+function agenda_update_event(PDO $pdo, int $id, array $payload): array
+{
+    $table = resolve_existing_table($pdo, ['agenda_eventos']);
+    $data = agenda_normalize_event_payload($payload, true);
+    if (!$data) {
+        agenda_respond(false, [], 'Nenhum campo válido para atualizar.', 400);
+    }
+
+    $sets = [];
+    $params = [];
+    foreach ($data as $field => $value) {
+        $sets[] = '`' . $field . '` = ?';
+        $params[] = $value;
+    }
+    $sets[] = '`updated_at` = NOW()';
+    $params[] = $id;
+
+    $stmt = $pdo->prepare('UPDATE `' . $table . '` SET ' . implode(', ', $sets) . ' WHERE id = ?');
+    $stmt->execute($params);
+
+    return agenda_get_event($pdo, $id);
+}
+
+function agenda_delete_event(PDO $pdo, int $id): void
+{
+    $table = resolve_existing_table($pdo, ['agenda_eventos']);
+    $stmt = $pdo->prepare('DELETE FROM `' . $table . '` WHERE id = ?');
+    $stmt->execute([$id]);
+    if ($stmt->rowCount() === 0) {
+        agenda_respond(false, [], 'Evento não encontrado.', 404);
+    }
+}
+
+function agenda_normalize_event_payload(array $payload, bool $onlyProvided): array
+{
+    $map = [
+        'obra_id' => ['obra_id', 'obraId', 'projectId', 'project_id'],
+        'cliente_id' => ['cliente_id', 'clienteId', 'clientId', 'client_id'],
+        'usuario_id' => ['usuario_id', 'usuarioId', 'userId', 'user_id'],
+        'titulo' => ['titulo', 'title'],
+        'descricao' => ['descricao', 'description'],
+        'tipo' => ['tipo', 'type'],
+        'data_inicio' => ['data_inicio', 'dataInicio', 'start', 'startAt', 'startsAt'],
+        'data_fim' => ['data_fim', 'dataFim', 'end', 'endAt', 'endsAt'],
+        'dia_todo' => ['dia_todo', 'diaTodo', 'allDay'],
+        'lembrete_minutos' => ['lembrete_minutos', 'lembreteMinutos', 'reminderMinutes'],
+        'status' => ['status'],
+    ];
+
+    $data = [];
+    foreach ($map as $column => $aliases) {
+        $present = false;
+        $value = agenda_payload_value($payload, $aliases, $present);
+        if (!$present && $onlyProvided) {
+            continue;
+        }
+        $data[$column] = agenda_cast_event_value($column, $value);
+    }
+
+    if (!$onlyProvided) {
+        if ($data['dia_todo'] === null) {
+            $data['dia_todo'] = 0;
+        }
+        if ($data['lembrete_minutos'] === null) {
+            $data['lembrete_minutos'] = 60;
+        }
+        if (empty($data['status'])) {
+            $data['status'] = 'agendado';
+        }
+    }
+
+    return $data;
+}
+
+function agenda_payload_value(array $payload, array $aliases, bool &$present): mixed
+{
+    foreach ($aliases as $alias) {
+        if (array_key_exists($alias, $payload)) {
+            $present = true;
+            return $payload[$alias];
+        }
+    }
+    $present = false;
+    return null;
+}
+
+function agenda_cast_event_value(string $column, mixed $value): mixed
+{
+    if ($value === null) {
+        return null;
+    }
+
+    if (in_array($column, ['obra_id', 'cliente_id', 'usuario_id', 'dia_todo', 'lembrete_minutos'], true)) {
+        return $value === '' ? null : (int) $value;
+    }
+
+    if (in_array($column, ['data_inicio', 'data_fim'], true)) {
+        return agenda_datetime_value($value);
+    }
+
+    $value = trim((string) $value);
+    return $value === '' ? null : $value;
+}
+
+function agenda_datetime_value(mixed $value): ?string
+{
+    $value = trim((string) $value);
+    if ($value === '') {
+        return null;
+    }
+    $value = str_replace('T', ' ', $value);
+    if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $value)) {
+        $value .= ' 00:00:00';
+    }
+    return $value;
+}
+
+function agenda_date_only(mixed $value): ?string
+{
+    $value = trim((string) $value);
+    if ($value === '') {
+        return null;
+    }
+    return substr($value, 0, 10);
+}
+
+function agenda_query_value(array $query, array $aliases): mixed
+{
+    foreach ($aliases as $alias) {
+        if (array_key_exists($alias, $query)) {
+            return $query[$alias];
+        }
+    }
+    return null;
 }
 
 function load_config(): array
