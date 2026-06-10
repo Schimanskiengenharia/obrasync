@@ -14,7 +14,26 @@
       "Bash(python -m http.server 8000)",
       "Bash(git add *)",
       "Bash(git commit *)",
-      "Bash(git push *)"
+      "Bash(git push *)",
+      "Bash(grep -nE '\\(\\\\$action|\\\\$resource|routeRequest|switch|preg_match\\\\\\('\\\\''#\\)' api/index.php)",
+      "Bash(grep -nE '\\(\\\\$path|\\\\$method|=== '\\\\''[A-Z]+'\\\\''|handle[A-Z][a-zA-Z]+\\)' api/index.php)",
+      "Bash(sed -n 5690,5780p app.js)",
+      "Bash(sed -n 6100,6164p app.js)",
+      "Bash(sed -n 1476,1488p app.js)",
+      "Bash(sed -n 160,180p app.js)",
+      "Bash(sed -n 1742,1780p app.js)",
+      "Bash(sed -n 2625,2640p app.js)",
+      "Bash(sed -n 1598,1604p app.js)",
+      "Bash(grep *)",
+      "Bash(sed -n 178,182p app.js)",
+      "Bash(sed -n 5670,5685p app.js)",
+      "Bash(sed -n 5834,5840p app.js)",
+      "Bash(sed -n 1945,1947p app.js)",
+      "Bash(sed -n 5862,5864p app.js)",
+      "Bash(sed -n 6074,6076p app.js)",
+      "Bash(sed -n 6142,6144p app.js)",
+      "Bash(python *)",
+      "Bash(node --check \"C:\\\\Users\\\\schim\\\\Documents\\\\Codex\\\\2026-06-05\\\\crie-um-sistema-web-financeiro-e\\\\outputs\\\\app.js\")"
     ]
   }
 }
