@@ -5,6 +5,8 @@ header('Content-Type: application/json; charset=utf-8');
 header('X-Content-Type-Options: nosniff');
 
 const CONFIG_PATH = '/etc/financeiro/config.php';
+// Tempo máximo de inatividade da sessão: igual ao AUTH_TIMEOUT_MS do frontend (30 min).
+const AUTH_IDLE_SECONDS = 1800;
 
 $config = load_config();
 $pdo = db($config);
@@ -996,9 +998,6 @@ function sanitize_record(array $meta, array $record): array
     }
     return $record;
 }
-
-// Tempo máximo de inatividade da sessão: igual ao AUTH_TIMEOUT_MS do frontend.
-const AUTH_IDLE_SECONDS = 1800;
 
 function ensure_api_sessions_table(PDO $pdo): void
 {
