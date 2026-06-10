@@ -1345,15 +1345,19 @@ function handle_change_password(PDO $pdo, array $user, array $payload): never
     if ($pwErr) {
         fail($pwErr, 400);
     }
-    $stmt = $pdo->prepare('SELECT password FROM system_users WHERE id = ? LIMIT 1');
+    $stmt = $pdo->prepare('SELECT password, mustChangePassword FROM system_users WHERE id = ? LIMIT 1');
     $stmt->execute([$user['id']]);
     $row = $stmt->fetch();
     if (!$row) {
         fail('Usuário não encontrado.', 404);
     }
     $stored = (string) ($row['password'] ?? '');
-    if (!password_verify($currentPassword, $stored) && !hash_equals($stored, $currentPassword)) {
-        fail('Senha atual incorreta.', 400);
+    // Se mustChangePassword = 1 o usuário acabou de se autenticar — a sessão já prova a identidade.
+    // Só exige senha atual em trocas voluntárias (mustChangePassword = 0).
+    if (empty($row['mustChangePassword'])) {
+        if (!password_verify($currentPassword, $stored) && !hash_equals($stored, $currentPassword)) {
+            fail('Senha atual incorreta.', 400);
+        }
     }
     $hash = password_hash($newPassword, PASSWORD_DEFAULT);
     $pdo->prepare('UPDATE system_users SET password = ?, mustChangePassword = 0 WHERE id = ?')

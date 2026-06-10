@@ -5892,9 +5892,16 @@ async function handleLogin(event) {
       });
       authToken = payload.token || null;
       writeAuthSession(payload.user);
+      if (payload.user.mustChangePassword) {
+        // Não chama loadServerData() antes da troca obrigatória: a sessão recém-criada
+        // já está na base; qualquer chamada extra entre login e change-password
+        // introduz um ponto de falha desnecessário.
+        currentUser = payload.user;
+        openChangePasswordDialog(true);
+        return;
+      }
       await loadServerData();
       showApp(payload.user);
-      if (payload.user.mustChangePassword) openChangePasswordDialog();
       return;
     }
     return showLogin(`Servidor indisponível. Verifique a conexão com a API. (${serverStatus})`);
@@ -6365,7 +6372,7 @@ async function handleResetPassword(event) {
 async function handleChangePassword(event) {
   event.preventDefault();
   const form      = event.target;
-  const currentPw = form.querySelector('[name="currentPassword"]').value;
+  const currentPw = (form.querySelector('[name="currentPassword"]')?.value) || "";
   const newPw     = form.querySelector('[name="newPassword"]').value;
   const confirmPw = form.querySelector('[name="confirmPassword"]').value;
   const msgEl     = form.querySelector(".pwd-change-msg");
@@ -6380,7 +6387,15 @@ async function handleChangePassword(event) {
     msgEl.className = "pwd-change-msg login-success";
     if (currentUser) currentUser.mustChangePassword = false;
     const dialog = document.getElementById("changePasswordDialog");
-    if (dialog?.open) setTimeout(() => dialog.close(), 1500);
+    const wasForced = dialog?.dataset.forced === "1";
+    setTimeout(async () => {
+      if (dialog?.open) dialog.close();
+      if (wasForced) {
+        // Troca obrigatória concluída: agora carrega o app normalmente.
+        await loadServerData();
+        showApp(currentUser);
+      }
+    }, 1200);
   } catch (error) {
     msgEl.textContent = error.message;
     msgEl.className = "pwd-change-msg login-error";
@@ -6389,13 +6404,20 @@ async function handleChangePassword(event) {
   }
 }
 
-function openChangePasswordDialog() {
+function openChangePasswordDialog(isForced = false) {
   const dialog = document.getElementById("changePasswordDialog");
   if (!dialog) return;
   const form = document.getElementById("changePasswordForm");
   form.reset();
   form.querySelector(".pwd-change-msg").textContent = "";
   document.getElementById("changePwdStrength").innerHTML = "";
+  // Em troca obrigatória (mustChangePassword), oculta o campo de senha atual — a sessão
+  // já comprova a identidade. Em troca voluntária, exibe e exige o campo.
+  const currentPwLabel = form.querySelector('[name="currentPassword"]')?.closest("label");
+  const currentPwInput = form.querySelector('[name="currentPassword"]');
+  if (currentPwLabel) currentPwLabel.hidden = isForced;
+  if (currentPwInput) currentPwInput.required = !isForced;
+  dialog.dataset.forced = isForced ? "1" : "";
   dialog.showModal();
 }
 
