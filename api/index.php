@@ -643,7 +643,7 @@ function resource_map(): array
         'taxDocuments' => r('tax_documents', ['documentos-fiscais'], ['document','date','type','clientId','supplierId','projectId','amount','status'], ['document']),
         'taxes' => r('taxes', ['impostos'], ['name','competenceDate','baseAmount','rate','amount','projectId','status'], ['name','competenceDate']),
         'companySettings' => r('company_settings', ['dados-empresa'], ['name','document','zipCode','address','email','phone','city','status'], ['document','name']),
-        'users' => r('system_users', ['usuarios','usuários'], ['username','fullName','password','role','status'], ['username'], ['password']),
+        'users' => r('system_users', ['usuarios','usuários'], ['username','fullName','password','role','status','blocked'], ['username'], ['password']),
         'permissions' => r('role_permissions', ['permissoes','permissões'], ['role','module','canView','canCreate','canEdit','canDelete','canExport','canApprove','canAttach','status'], ['role','module']),
         'systemVersion' => r('sistema_versoes', ['sistema-versoes','versoes-sistema'], ['versao','data_versao','descricao','alteracoes'], ['versao']),
         'reportModels' => r('modelos_relatorio', ['modelos-relatorios','modelos-relatórios'], ['name','workTypeId','serviceSubtypeId','body','variables','status'], ['name']),
@@ -954,6 +954,9 @@ function handle_login(PDO $pdo, array $payload): never
     $user = $stmt->fetch();
     if (!$user) {
         fail('Usuário ou senha inválidos.', 401);
+    }
+    if (!empty($user['blocked'])) {
+        fail('Usuário bloqueado. Fale com o administrador.', 403);
     }
     $stored = (string) ($user['password'] ?? '');
     $valid = password_verify($password, $stored) || hash_equals($stored, $password);

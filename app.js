@@ -12,7 +12,7 @@ if (location.protocol === "http:" && location.hostname !== "localhost" && locati
 }
 const APP_NAME = "ObraSync";
 const APP_VERSION = "v1.8.0";
-const APP_VERSION_DATE = "2026-06-08";
+const APP_VERSION_DATE = "2026-06-10";
 const APP_CHANGELOG = [
   "Controle interno de versão e instruções de atualização segura.",
   "Perfis e permissões preparados por módulo e ação.",
@@ -5842,8 +5842,7 @@ async function toggleUserBlock(userId, block) {
   if (!isAdmin()) return;
   const target = byId("users", userId);
   if (!target) return;
-  db.users = db.users.map((u) => sameId(u.id, userId) ? { ...u, blocked: block } : u);
-  saveDb();
+  await updateIntegratedRecord("users", userId, { ...target, blocked: block ? 1 : 0 });
   logAudit(block ? "block" : "unblock", "users", `${block ? "Bloqueou" : "Desbloqueou"}: ${target.username}`);
   await refreshAndRender();
 }

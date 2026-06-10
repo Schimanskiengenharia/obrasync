@@ -12,8 +12,9 @@ CREATE TABLE IF NOT EXISTS system_users (
   username VARCHAR(80) NOT NULL UNIQUE,
   fullName VARCHAR(160) NOT NULL,
   password VARCHAR(255) NOT NULL,
-  role ENUM('admin', 'financeiro', 'comercial', 'engenharia', 'gestor_obra', 'equipe_campo', 'cliente_obra', 'fornecedor_terceiro', 'consulta') NOT NULL DEFAULT 'financeiro',
+  role ENUM('admin', 'financeiro', 'comercial', 'engenharia', 'gestor_obra', 'equipe_campo', 'cliente_obra', 'fornecedor_terceiro', 'consulta', 'gerente', 'operador', 'visualizador') NOT NULL DEFAULT 'financeiro',
   status VARCHAR(30) NOT NULL DEFAULT 'Ativo',
+  blocked TINYINT(1) NOT NULL DEFAULT 0,
   createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updatedAt TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
@@ -231,12 +232,12 @@ CREATE TABLE IF NOT EXISTS agenda_eventos (
   usuario_id BIGINT UNSIGNED NULL,
   titulo VARCHAR(200) NOT NULL,
   descricao TEXT NULL,
-  tipo ENUM('reuniao','visita','entrega','cobranca','outro') NOT NULL,
+  tipo ENUM('reuniao','visita','vistoria','entrega','cobranca','projeto','obra','financeiro','comercial','prazo','outro') NOT NULL,
   data_inicio DATETIME NOT NULL,
   data_fim DATETIME NULL,
   dia_todo TINYINT(1) DEFAULT 0,
   lembrete_minutos INT DEFAULT 60,
-  status ENUM('agendado','realizado','cancelado') DEFAULT 'agendado',
+  status ENUM('agendado','em_andamento','realizado','concluido','cancelado') DEFAULT 'agendado',
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   INDEX idx_agenda_obra (obra_id),
@@ -1192,11 +1193,11 @@ CREATE TABLE IF NOT EXISTS regras_visualizacao (
   UNIQUE KEY uk_regra_scope (`role`, module, workTypeId)
 ) ENGINE=InnoDB;
 
-INSERT INTO system_users (username, fullName, password, role, status)
+INSERT INTO system_users (username, fullName, password, role, status, blocked)
 VALUES
-  ('admin', 'Administrador', 'admin123', 'admin', 'Ativo'),
-  ('alefschimanski', 'alefschimanski', 'Schimanski!@#', 'admin', 'Ativo')
-ON DUPLICATE KEY UPDATE username = VALUES(username);
+  ('admin', 'Administrador', 'admin123', 'admin', 'Ativo', 0),
+  ('alefschimanski', 'alefschimanski', 'Schimanski!@#', 'admin', 'Ativo', 0)
+ON DUPLICATE KEY UPDATE status = VALUES(status), blocked = 0;
 
 INSERT INTO sinapi_referencias (uf, referenceMonth, referenceYear, priceType, source, defaultUf, locationName, issueDate, availableTypes, importDate, status)
 VALUES
@@ -1216,7 +1217,7 @@ VALUES
   ('v1.5.0', '2026-06-07', 'ObraSync e revisão de integração geral.', 'Nome visual ObraSync, dashboard geral revisado, aliases de API e fluxo proposta-venda-conta a receber.'),
   ('v1.6.0', '2026-06-08', 'SINAPI, orçamentos de obras, Microsoft Project e estruturas editáveis.', 'Base SINAPI, orçamentos por obra, itens, composições próprias, cotações, Curva ABC, exportação/importação MS Project e parametrizações pelo administrador.'),
   ('v1.7.0', '2026-06-08', 'Gerador de proposta comercial a partir de orçamento de obra.', 'Seleção de modelo, variáveis dinâmicas, escopo gerado pelos itens, tabela de itens, rascunho/finalização, histórico de status e impressão/PDF A4 pelo navegador.'),
-  ('v1.8.0', '2026-06-08', 'Importador SINAPI 04/2026 MS.', 'Referência padrão MS 04/2026, importador XLSX/CSV, mão de obra, famílias/coeficientes, manutenções, configuração SINAPI e integração com orçamento/proposta.')
+  ('v1.8.0', '2026-06-10', 'Importador SINAPI 04/2026 MS.', 'Referência padrão MS 04/2026, importador XLSX/CSV, mão de obra, famílias/coeficientes, manutenções, configuração SINAPI e integração com orçamento/proposta.')
 ON DUPLICATE KEY UPDATE versao = VALUES(versao);
 
 INSERT INTO role_permissions (`role`, module, canView, canCreate, canEdit, canDelete, canExport, canApprove, canAttach, status)

@@ -12,6 +12,12 @@ CREATE TABLE IF NOT EXISTS system_users (
   createdAt   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+ALTER TABLE system_users
+  ADD COLUMN IF NOT EXISTS blocked TINYINT(1) NOT NULL DEFAULT 0 AFTER status;
+
+ALTER TABLE system_users
+  MODIFY COLUMN role ENUM('admin', 'financeiro', 'comercial', 'engenharia', 'gestor_obra', 'equipe_campo', 'cliente_obra', 'fornecedor_terceiro', 'consulta', 'gerente', 'operador', 'visualizador') NOT NULL DEFAULT 'financeiro';
+
 INSERT INTO system_users (username, fullName, password, role, status)
 VALUES
   ('admin',            'Administrador', 'admin123',       'admin', 'Ativo'),
