@@ -2,7 +2,7 @@ const STORE_KEY = "finconta.v1";
 const AUTH_KEY = "finconta.auth";
 const AUTH_TIMEOUT_MS = 30 * 60 * 1000;
 const API_BASE = "api";
-const AUTH_BYPASS_FOR_TESTS = false;
+const AUTH_BYPASS_FOR_TESTS = true;
 const APP_NAME = "ObraSync";
 const APP_VERSION = "v1.8.0";
 const APP_VERSION_DATE = "2026-06-08";
@@ -5388,7 +5388,17 @@ function download(blob, filename) {
   URL.revokeObjectURL(url);
 }
 
+function directAccessUser() {
+  return db.users.find((item) => item.role === "admin" && item.status === "Ativo")
+    || db.users.find((item) => item.status === "Ativo")
+    || { id: "direct-admin", username: "admin", fullName: "Acesso direto", role: "admin", status: "Ativo" };
+}
+
 function showLogin(message = "") {
+  if (AUTH_BYPASS_FOR_TESTS) {
+    showApp(directAccessUser());
+    return;
+  }
   currentUser = null;
   clearAuthSession();
   qs("loginError").textContent = message;
@@ -5429,10 +5439,7 @@ async function handleLogin(event) {
 function restoreSession() {
   setupNav();
   if (AUTH_BYPASS_FOR_TESTS) {
-    const testUser = db.users.find((item) => item.role === "admin" && item.status === "Ativo")
-      || db.users.find((item) => item.status === "Ativo")
-      || { id: "test-admin", username: "teste", fullName: "Acesso de teste", role: "admin", status: "Ativo" };
-    showApp(testUser);
+    showApp(directAccessUser());
     return;
   }
   const session = readAuthSession();
@@ -5472,7 +5479,11 @@ qs("seedBtn").addEventListener("click", () => {
   render();
 });
 qs("loginForm").addEventListener("submit", handleLogin);
-qs("logoutBtn").addEventListener("click", () => showLogin());
+qs("logoutBtn").addEventListener("click", () => {
+  clearAuthSession();
+  if (AUTH_BYPASS_FOR_TESTS) restoreSession();
+  else showLogin();
+});
 qs("recordForm").addEventListener("submit", saveForm);
 qs("cancelDialog").addEventListener("click", () => qs("recordDialog").close());
 qs("closeDialog").addEventListener("click", () => qs("recordDialog").close());
