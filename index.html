@@ -3,6 +3,10 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta http-equiv="X-Frame-Options" content="SAMEORIGIN" />
+    <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+    <meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin" />
+    <meta name="robots" content="noindex, nofollow" />
     <title>ObraSync</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
@@ -61,6 +65,9 @@
             <button id="logoutBtn" class="secondary" type="button">Sair</button>
           </div>
         </header>
+
+        <div id="favTriggerStrip" class="fav-trigger-strip hidden"></div>
+        <nav id="favoritesBar" class="favorites-bar hidden" aria-label="Favoritos"></nav>
 
         <button id="filterToggle" class="secondary filter-toggle" type="button" aria-expanded="false">Mostrar filtros</button>
         <section class="filters" aria-label="Filtros">
@@ -151,6 +158,43 @@
         </section>
         <section id="proposalPreview" class="proposal-print" aria-label="Pré-visualização da proposta"></section>
       </form>
+    </dialog>
+
+    <dialog id="sessionWarningDialog" class="session-warning-dialog">
+      <div class="session-warning-content">
+        <h2>Sessão prestes a expirar</h2>
+        <p>Sua sessão irá expirar em <strong id="sessionCountdown">5:00</strong>. Deseja continuar conectado?</p>
+        <menu>
+          <button id="sessionLogoutNowBtn" class="secondary" type="button">Sair agora</button>
+          <button id="sessionRenewBtn" class="primary" type="button">Continuar conectado</button>
+        </menu>
+      </div>
+    </dialog>
+
+    <dialog id="confirmDestructiveDialog" class="confirm-destructive-dialog">
+      <div class="dialog-head">
+        <h2>Confirmar exclusão</h2>
+        <button id="cancelDestructiveBtn" class="icon-btn" type="button" aria-label="Fechar">×</button>
+      </div>
+      <p>Para excluir <strong id="confirmDestructiveName">este registro</strong>, digite <strong>CONFIRMAR</strong> no campo abaixo:</p>
+      <input id="confirmDestructiveInput" type="text" placeholder="CONFIRMAR" autocomplete="off" class="destructive-input" />
+      <p id="confirmDestructiveError" class="login-error"></p>
+      <menu>
+        <button id="doDestructiveBtn" class="danger full-btn" type="button">Excluir definitivamente</button>
+      </menu>
+    </dialog>
+
+    <dialog id="favoritesDialog" class="favorites-dialog">
+      <div class="dialog-head">
+        <h2>Personalizar favoritos</h2>
+        <button id="closeFavoritesDialog" class="icon-btn" type="button" aria-label="Fechar">×</button>
+      </div>
+      <p class="fav-dialog-hint">Selecione até <strong>5 módulos</strong> para fixar na barra de acesso rápido.</p>
+      <div id="favoritesPickerList" class="favorites-picker-list"></div>
+      <menu>
+        <button class="secondary" id="cancelFavoritesDialog" type="button">Cancelar</button>
+        <button class="primary" id="saveFavoritesDialog" type="button">Salvar favoritos</button>
+      </menu>
     </dialog>
 
     <script src="app.js?v=1703"></script>

@@ -5,7 +5,14 @@
       "Bash(php *)",
       "Bash(node --input-type=module)",
       "Bash(echo \"EXIT:$?\")",
-      "Bash(node --check /var/www/financeiro/app.js)"
+      "Bash(node --check /var/www/financeiro/app.js)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\schim\\\\Documents\\\\Codex\\\\2026-06-05\\\\crie-um-sistema-web-financeiro-e\\\\outputs\" -Recurse)",
+      "Bash(Select-Object FullName, PSIsContainer)",
+      "Bash(Sort-Object FullName)",
+      "Bash(node --check app.js)",
+      "Bash(node -e ' *)",
+      "Bash(python -m http.server 8000)",
+      "Bash(git add *)"
     ]
   }
 }

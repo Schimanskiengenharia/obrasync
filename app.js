@@ -1,8 +1,16 @@
 const STORE_KEY = "finconta.v1";
 const AUTH_KEY = "finconta.auth";
 const AUTH_TIMEOUT_MS = 30 * 60 * 1000;
+const SESSION_WARN_BEFORE_MS = 5 * 60 * 1000;
 const API_BASE = "api";
-const AUTH_BYPASS_FOR_TESTS = true;
+const AUTH_BYPASS_FOR_TESTS = (() => {
+  const h = location.hostname;
+  return h === "localhost" || h === "127.0.0.1" || h === "" || location.protocol === "file:";
+})();
+// Item 9: redirecionar HTTP → HTTPS em produção
+if (!AUTH_BYPASS_FOR_TESTS && location.protocol === "http:") {
+  location.replace(location.href.replace(/^http:/, "https:"));
+}
 const APP_NAME = "ObraSync";
 const APP_VERSION = "v1.8.0";
 const APP_VERSION_DATE = "2026-06-08";
@@ -72,6 +80,8 @@ const modules = [
   ["projectMilestones", "Marcos da obra"],
   ["agenda", "Agenda"],
   ["kanban", "Kanban"],
+  ["auditLog", "Log de Auditoria"],
+  ["myProfile", "Meu Perfil"],
   ["projectNotifications", "Notificações da obra"],
   ["projectTrackingLinks", "Links de acompanhamento"],
   ["technicalReports", "Relatórios técnicos"],
@@ -114,12 +124,12 @@ const modules = [
 const sidebarSections = [
   { id: "dashboard", label: "Dashboard", icon: "D", module: "dashboard" },
   { id: "cadastros", label: "Cadastros", icon: "C", modules: ["clients", "suppliers", "products", "services", "categories", "costCenters", "bankAccounts"] },
-  { id: "obras", label: "Obras/Projetos", icon: "O", modules: ["projects", "projectCosts", "projectRevenues", "workBudgets", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "purchaseOrders", "technicalReports", "fiscalDocuments", "projectReport"] },
+  { id: "obras", label: "Obras/Projetos", icon: "O", modules: ["projects", "projectCosts", "projectRevenues", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "projectSchedule", "projectMilestones", "projectNotifications", "projectTrackingLinks", "purchaseOrders", "technicalReports", "fiscalDocuments", "projectReport", "agenda", "kanban"] },
   { id: "financeiro", label: "Financeiro", icon: "$", modules: ["receivable", "payable", "cashMoves", "cashFlow", "reconciliation"] },
   { id: "comercial", label: "Comercial", icon: "V", modules: ["budgets", "proposals", "proposalModels", "proposalAreas", "proposalActionTypes", "proposalServiceSubtypes", "sales"] },
   { id: "contabilidade", label: "Contabilidade Gerencial", icon: "L", modules: ["chartAccounts", "journalEntries", "dre", "taxDocuments", "taxes"] },
   { id: "relatorios", label: "Relatórios", icon: "R", modules: ["reports", "reportFinancial", "reportClient", "reportSupplier", "reportCostCenter", "reportProject", "exports"] },
-  { id: "config", label: "Configurações", icon: "S", modules: ["companySettings", "users", "permissions", "systemVersion", "workTypes", "workStatuses", "standardStages", "standardMilestones", "customFields", "reportModels", "documentTypes", "checklists", "measurementTypes", "paymentMethods", "whatsappTemplates", "visibilityRules", "sinapiSettings", "backupLocal", "preferences", "migration"] },
+  { id: "config", label: "Configurações", icon: "S", modules: ["companySettings", "users", "permissions", "systemVersion", "workTypes", "workStatuses", "standardStages", "standardMilestones", "customFields", "reportModels", "documentTypes", "checklists", "measurementTypes", "paymentMethods", "whatsappTemplates", "visibilityRules", "sinapiSettings", "backupLocal", "preferences", "migration", "auditLog", "myProfile"] },
 ];
 
 const roleLabels = {
@@ -132,6 +142,9 @@ const roleLabels = {
   cliente_obra: "Cliente/Dono da obra",
   fornecedor_terceiro: "Fornecedor/Terceiro",
   consulta: "Consulta",
+  gerente: "Gerente",
+  operador: "Operador",
+  visualizador: "Visualizador",
 };
 
 const roleModules = {
@@ -150,10 +163,13 @@ const roleModules = {
   cliente_obra: ["dashboard", "projectReport", "projectSchedule", "technicalReports", "systemVersion"],
   fornecedor_terceiro: ["dashboard", "systemVersion"],
   consulta: ["dashboard", "projectReport", "cashFlow", "dre", "reports", "reportFinancial", "reportClient", "reportSupplier", "reportCostCenter", "reportProject", "exports"],
+  gerente: modules.map(([key]) => key).filter((k) => !["users", "permissions"].includes(k)),
+  operador: ["dashboard", "clients", "suppliers", "products", "services", "categories", "costCenters", "bankAccounts", "projects", "projectCosts", "projectRevenues", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "ownCompositions", "quotes", "abcCurve", "fiscalDocuments", "receivable", "payable", "cashMoves", "cashFlow", "reconciliation", "budgets", "proposals", "sales", "purchaseOrders", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectReport", "reports", "reportFinancial", "reportClient", "reportSupplier", "reportCostCenter", "reportProject", "myProfile"],
+  visualizador: modules.map(([key]) => key),
 };
 
 const moduleLabels = Object.fromEntries(modules);
-const openNavGroups = new Set(["cadastros", "financeiro"]);
+const openNavGroups = new Set();
 let sidebarCollapsed = localStorage.getItem("finconta.sidebarCollapsed") === "true";
 let serverMode = false;
 let serverStatus = "Conectando ao servidor";
@@ -173,6 +189,10 @@ let agendaTypeFilter = "";
 let selectedKanbanBoardId = "";
 let agendaNewDate = "";
 let kanbanNewColumnId = "";
+let favoritesDialogSelections = new Set();
+let sessionWarnTimer = null;
+let sessionWarnIntervalId = null;
+let currentModuleTracked = "";
 
 const apiResources = {
   clients: "clientes",
@@ -970,7 +990,7 @@ const configs = {
       ["username", "Usuário", "text", true],
       ["fullName", "Nome", "text", true],
       ["password", "Senha", "password", true],
-      ["role", "Perfil", "select", ["admin", "financeiro", "comercial", "engenharia", "gestor_obra", "equipe_campo", "cliente_obra", "fornecedor_terceiro", "consulta"]],
+      ["role", "Perfil", "select", ["admin", "gerente", "financeiro", "comercial", "engenharia", "gestor_obra", "equipe_campo", "cliente_obra", "fornecedor_terceiro", "consulta", "operador", "visualizador"]],
       ["status", "Status", "select", ["Ativo", "Inativo"]],
     ],
   },
@@ -1552,6 +1572,10 @@ function handleUserActivity() {
   const session = readAuthSession();
   if (!currentUser || !session) return;
   touchAuthSession();
+  if (!document.getElementById("sessionWarningDialog")?.open) {
+    clearTimeout(sessionWarnTimer);
+    scheduleSessionWarning();
+  }
 }
 
 function enforceInactivityTimeout() {
@@ -1716,11 +1740,14 @@ function canEdit() {
 function canEditModule(key = currentModule) {
   if (isAdmin()) return true;
   const permissionKey = { agendaEvents: "agenda", kanbanBoards: "kanban", kanbanColumns: "kanban", kanbanCards: "kanban" }[key] || key;
+  if (currentUser?.role === "visualizador") return false;
   const editableByRole = {
     financeiro: ["fiscalDocuments", "receivable", "payable", "cashMoves", "cashFlow", "reconciliation", "categories", "costCenters", "bankAccounts", "chartAccounts", "journalEntries", "taxDocuments", "taxes", "exports", "projectSchedule", "agenda", "kanban", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "sinapiSettings", "quotes", "sales"],
     comercial: ["clients", "budgets", "proposals", "agenda", "kanban"],
     engenharia: ["projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "purchaseOrders", "technicalReports"],
     gestor_obra: ["projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "purchaseOrders", "technicalReports"],
+    gerente: modules.map(([k]) => k).filter((k) => !["users", "permissions"].includes(k)),
+    operador: ["clients", "suppliers", "products", "services", "categories", "costCenters", "bankAccounts", "projects", "projectCosts", "projectRevenues", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "ownCompositions", "quotes", "fiscalDocuments", "receivable", "payable", "cashMoves", "reconciliation", "budgets", "proposals", "sales", "purchaseOrders", "projectSchedule", "projectMilestones", "agenda", "kanban"],
   };
   return (editableByRole[currentUser?.role] || []).includes(permissionKey);
 }
@@ -1790,7 +1817,6 @@ function renderNav() {
     const items = section.modules.filter((moduleKey) => allowed.has(moduleKey));
     if (!items.length) return "";
     const active = items.includes(currentModule);
-    if (active) openNavGroups.add(section.id);
     const open = openNavGroups.has(section.id);
     return `
       <div class="nav-section ${active ? "section-active" : ""}">
@@ -1824,7 +1850,24 @@ function setSidebarCollapsed(collapsed) {
     qs("appShell").classList.remove("sidebar-open");
     qs("sidebarBackdrop").classList.add("hidden");
   }
+  applySidebarWidth();
   updateShellState();
+}
+
+function applySidebarWidth() {
+  const isMobile = window.innerWidth <= 860;
+  const w = isMobile ? 0 : (sidebarCollapsed ? 84 : 288);
+  document.documentElement.style.setProperty("--sidebar-w", `${w}px`);
+  updateFavoritesPosition();
+}
+
+function updateFavoritesPosition() {
+  const isMobile = window.innerWidth <= 860;
+  const left = isMobile ? 0 : (sidebarCollapsed ? 84 : 288);
+  const bar = document.getElementById("favoritesBar");
+  const strip = document.getElementById("favTriggerStrip");
+  if (bar) bar.style.left = `${left}px`;
+  if (strip) strip.style.left = `${left}px`;
 }
 
 function updateShellState() {
@@ -1910,7 +1953,9 @@ function applyFilters(rows, options = {}) {
 function render() {
   if (!currentUser) return;
   if (!canAccessModule(currentModule)) currentModule = "dashboard";
+  if (currentModule !== currentModuleTracked) { logAccess(currentModule); currentModuleTracked = currentModule; }
   renderNav();
+  renderFavoritesBar();
   populateFilters();
   document.querySelectorAll(".nav button").forEach((button) => button.classList.toggle("active", button.dataset.module === currentModule));
   qs("pageTitle").textContent = moduleLabels[currentModule] || "";
@@ -1925,6 +1970,8 @@ function render() {
   if (currentModule === "projectSchedule") return renderProjectSchedule();
   if (currentModule === "agenda") return renderAgenda();
   if (currentModule === "kanban") return renderKanban();
+  if (currentModule === "auditLog") return renderAuditLog();
+  if (currentModule === "myProfile") return renderMyProfile();
   if (currentModule === "projectReport") return renderProjectReport();
   if (currentModule === "cashFlow") return renderCashFlow();
   if (currentModule === "reconciliation") return renderReconciliation();
@@ -2694,6 +2741,8 @@ function renderCrud(key) {
   qs("newRecord")?.addEventListener("click", () => openForm(key));
   qs("content").querySelectorAll("[data-edit]").forEach((button) => button.addEventListener("click", () => openForm(key, button.dataset.edit)));
   qs("content").querySelectorAll("[data-delete]").forEach((button) => button.addEventListener("click", () => removeRecord(key, button.dataset.delete)));
+  qs("content").querySelectorAll("[data-toggle-block]").forEach((btn) => btn.addEventListener("click", () => toggleUserBlock(btn.dataset.toggleBlock, btn.dataset.blockState !== "1")));
+  qs("content").querySelectorAll(".reveal-btn").forEach((btn) => btn.addEventListener("click", () => { btn.parentElement.innerHTML = svgText(btn.dataset.original); }));
   qs("content").querySelectorAll("[data-convert-proposal]").forEach((button) => button.addEventListener("click", () => convertProposalToSale(button.dataset.convertProposal)));
   qs("content").querySelectorAll("[data-preview-proposal]").forEach((button) => button.addEventListener("click", () => openSavedProposalPreview(button.dataset.previewProposal)));
   qs("content").querySelectorAll("[data-create-proposal-receivables]").forEach((button) => button.addEventListener("click", () => createReceivablesFromProposal(button.dataset.createProposalReceivables)));
@@ -2707,15 +2756,18 @@ function renderCrud(key) {
 
 function table(title, rows, fields, actions = false, actionKey = "") {
   if (!rows.length) return `<div class="empty">Sem dados para exibir</div>`;
-  const canMutateRows = actions && (!actionKey || canEditModule(actionKey));
+  const canEdit = actions && (!actionKey || canEditModule(actionKey));
+  const canDel = actions && (!actionKey || canDeleteRecord(actionKey));
   return `<section class="table-wrap" data-export-title="${title}">
     <table>
       <thead><tr>${fields.map((field) => `<th>${labelFor(field)}</th>`).join("")}${actions ? "<th>Ações</th>" : ""}</tr></thead>
       <tbody>
         ${rows.map((row) => {
           const extra = extraRowActions(actionKey, row);
-          const editDelete = canMutateRows ? `<button class="secondary" type="button" data-action-key="${actionKey}" data-edit="${row.id}">Editar</button><button class="danger" type="button" data-action-key="${actionKey}" data-delete="${row.id}">Excluir</button>` : "";
-          return `<tr>${fields.map((field) => `<td>${formatCell(field, row[field], row)}</td>`).join("")}${actions ? `<td><div class="row-actions">${extra}${editDelete || (!extra ? '<span class="muted">Somente leitura</span>' : "")}</div></td>` : ""}</tr>`;
+          const editBtn = canEdit ? `<button class="secondary" type="button" data-action-key="${actionKey}" data-edit="${row.id}">Editar</button>` : "";
+          const delBtn = canDel ? `<button class="danger" type="button" data-action-key="${actionKey}" data-delete="${row.id}">Excluir</button>` : "";
+          const noAction = !extra && !canEdit && !canDel ? '<span class="muted">Somente leitura</span>' : "";
+          return `<tr>${fields.map((field) => `<td>${formatCell(field, row[field], row)}</td>`).join("")}${actions ? `<td><div class="row-actions">${extra}${editBtn}${delBtn}${noAction}</div></td>` : ""}</tr>`;
         }).join("")}
       </tbody>
     </table>
@@ -2723,6 +2775,10 @@ function table(title, rows, fields, actions = false, actionKey = "") {
 }
 
 function extraRowActions(actionKey, row) {
+  if (actionKey === "users" && isAdmin() && row.id !== currentUser?.id) {
+    const blocked = row.blocked;
+    return `<button class="secondary" type="button" data-toggle-block="${row.id}" data-block-state="${blocked ? "1" : "0"}">${blocked ? "Desbloquear" : "Bloquear"}</button>`;
+  }
   if (["sinapiInputs", "sinapiCompositions", "ownCompositions", "quotes"].includes(actionKey)) {
     return `<button class="secondary" type="button" data-add-budget-item="${actionKey}:${row.id}">Adicionar</button>`;
   }
@@ -2817,6 +2873,8 @@ function formatCell(field, value, row = {}) {
   if (isMoneyField(field)) return asMoney(value);
   if (isPercentField(field)) return asPercent(value);
   if (field === "password") return "••••••••";
+  if (["phone"].includes(field) && isSensitiveFieldMasked() && value) return maskedCell(value);
+  if (["cpf", "document"].includes(field) && isSensitiveFieldMasked() && value) return maskedCell(value);
   if (field === "role") return roleLabels[value] || value || "";
   if (field === "clientId") return nameOf("clients", value);
   if (field === "cliente_id") return nameOf("clients", value);
@@ -2967,6 +3025,26 @@ function applyFormEnhancements() {
     input.addEventListener("focus", () => input.value = input.value.replace("%", ""));
     input.addEventListener("blur", () => input.value = formatPercentInput(parsePercentInput(input.value)));
   });
+  const pwdInput = qs("formFields").querySelector('input[name="password"]');
+  if (pwdInput) {
+    let meter = pwdInput.parentElement.querySelector(".pwd-strength");
+    if (!meter) {
+      meter = document.createElement("div");
+      meter.className = "pwd-strength";
+      pwdInput.parentElement.appendChild(meter);
+    }
+    const updateMeter = () => {
+      const v = pwdInput.value;
+      if (!v) { meter.innerHTML = ""; return; }
+      const r = validatePassword(v);
+      const score = 4 - r.errors.length;
+      const colors = ["#e74c3c", "#e67e22", "#f1c40f", "#2ecc71", "#16a085"];
+      const labels = ["Muito fraca", "Fraca", "Razoável", "Boa", "Forte"];
+      const bars = [0,1,2,3].map(i => `<span style="flex:1;height:4px;border-radius:2px;background:${i < score ? colors[score] : "var(--line)"}"></span>`).join("");
+      meter.innerHTML = `<div style="display:flex;gap:3px;margin-top:4px">${bars}</div><span style="font-size:11px;color:${colors[score]}">${labels[score]}</span>` + (r.errors.length ? `<ul style="margin:2px 0 0;padding-left:16px;font-size:11px;color:var(--muted)">${r.errors.map(e => `<li>${e}</li>`).join("")}</ul>` : "");
+    };
+    pwdInput.addEventListener("input", updateMeter);
+  }
 }
 
 async function saveForm(event) {
@@ -2989,7 +3067,13 @@ async function saveForm(event) {
     if (!data.token) data.token = `obra-${data.projectId || "link"}-${Date.now()}`;
     if (!data.url) data.url = "https://schimanskiengenharia.com.br/financeiro";
   }
+  // Item 10: sanitizar campos de texto antes de salvar
+  (configs[editing.key]?.fields || []).filter(([, , t]) => ["text", "email", "textarea"].includes(t)).forEach(([f]) => { if (data[f]) data[f] = sanitizeInput(data[f]); });
   if (editing.key === "users") {
+    if (data.password) {
+      const pwdCheck = validatePassword(data.password);
+      if (!pwdCheck.valid) return alert("Senha não atende aos critérios:\n• " + pwdCheck.errors.join("\n• "));
+    }
     const duplicate = db.users.some((user) => user.username.toLowerCase() === String(data.username || "").toLowerCase() && user.id !== editing.id);
     if (duplicate) return alert("Já existe um usuário com esse login.");
     if (editing.id === currentUser.id && data.role !== "admin") return alert("O administrador logado não pode remover o próprio perfil de administrador.");
@@ -3055,6 +3139,8 @@ async function saveForm(event) {
   if (!serverMode && editing.key === "projectMilestones" && data.status === "Concluído" && previousRecord?.status !== data.status) {
     await createLocalMilestoneBillingEvent(editing.id).catch(() => {});
   }
+  const savedName = data.name || data.titulo || data.username || data.number || editing.id || "";
+  logAudit(editing.id ? "edit" : "create", editing.key, String(savedName));
   qs("recordDialog").close();
   await refreshAndRender();
 }
@@ -3214,18 +3300,21 @@ function roundMoney(value) {
 
 async function removeRecord(key, id) {
   if (!canEditModule(key)) return;
+  if (!canDeleteRecord(key)) return alert("Seu perfil não tem permissão para excluir registros.");
   const removed = byId(key, id);
   if (key === "users" && id === currentUser.id) return alert("O administrador logado não pode excluir o próprio usuário.");
   if (key === "users" && byId("users", id)?.role === "admin" && db.users.filter((user) => user.role === "admin").length === 1) {
     return alert("Mantenha ao menos um administrador ativo no sistema.");
   }
-  if (!confirm("Excluir este registro?")) return;
+  const recordName = removed?.name || removed?.titulo || removed?.username || removed?.number || removed?.description || id;
+  if (!await confirmDestructive(String(recordName))) return;
   try {
     if (serverMode && apiResources[key]) {
       await apiRequest(`${apiResources[key]}/${id}`, { method: "DELETE" });
     }
     db[key] = db[key].filter((row) => String(row.id) !== String(id));
     saveDb();
+    logAudit("delete", key, String(recordName));
     if (key === "workBudgetItems" && removed?.workBudgetId) {
       await syncWorkBudgetTotals(removed.workBudgetId);
     }
@@ -3358,41 +3447,7 @@ function currentScheduleProject() {
 }
 
 function renderAgenda() {
-  const editable = canEditModule("agenda");
-  const cursor = parseLocalDate(agendaCursorDate) || new Date();
-  const projectOptions = (db.projects || []).map((row) => `<option value="${row.id}" ${sameId(row.id, agendaProjectFilter) ? "selected" : ""}>${row.name}</option>`).join("");
-  const typeOptions = ["reuniao", "visita", "entrega", "cobranca", "outro"].map((type) => `<option value="${type}" ${agendaTypeFilter === type ? "selected" : ""}>${agendaTypeLabel(type)}</option>`).join("");
-  const events = filteredAgendaEvents();
-  qs("content").innerHTML = `
-    <section class="module-head">
-      <div>
-        <h2>Agenda</h2>
-        <p>Compromissos por obra, cliente, responsável e tipo, com visão mensal, semanal e diária.</p>
-      </div>
-      ${editable ? '<button id="newAgendaEvent" class="primary" type="button">Novo evento</button>' : ""}
-    </section>
-    <section class="schedule-toolbar agenda-toolbar">
-      <div class="segmented">
-        ${["month", "week", "day"].map((mode) => `<button type="button" data-agenda-view="${mode}" class="${agendaViewMode === mode ? "active" : ""}">${agendaViewLabel(mode)}</button>`).join("")}
-      </div>
-      <button type="button" class="secondary" id="agendaPrev">Anterior</button>
-      <strong>${agendaPeriodLabel(cursor)}</strong>
-      <button type="button" class="secondary" id="agendaNext">Próximo</button>
-      <label>Obra<select id="agendaProjectFilter"><option value="">Todas</option>${projectOptions}</select></label>
-      <label>Tipo<select id="agendaTypeFilter"><option value="">Todos</option>${typeOptions}</select></label>
-    </section>
-    ${agendaCalendarHtml(cursor, events, editable)}
-    ${table("Eventos da agenda", events.map(agendaTableRow), ["titulo", "tipo", "obra_id", "cliente_id", "usuario_id", "data_inicio", "data_fim", "status"], editable, "agendaEvents")}
-  `;
-  qs("newAgendaEvent")?.addEventListener("click", () => openAgendaEventForm(localDateString(cursor)));
-  qs("agendaProjectFilter").addEventListener("change", (event) => { agendaProjectFilter = event.target.value; renderAgenda(); });
-  qs("agendaTypeFilter").addEventListener("change", (event) => { agendaTypeFilter = event.target.value; renderAgenda(); });
-  qs("agendaPrev").addEventListener("click", () => moveAgendaCursor(-1));
-  qs("agendaNext").addEventListener("click", () => moveAgendaCursor(1));
-  qs("content").querySelectorAll("[data-agenda-view]").forEach((button) => button.addEventListener("click", () => { agendaViewMode = button.dataset.agendaView; renderAgenda(); }));
-  qs("content").querySelectorAll("[data-agenda-date]").forEach((button) => button.addEventListener("click", () => openAgendaEventForm(button.dataset.agendaDate)));
-  qs("content").querySelectorAll("[data-edit]").forEach((button) => button.addEventListener("click", () => openForm("agendaEvents", button.dataset.edit)));
-  qs("content").querySelectorAll("[data-delete]").forEach((button) => button.addEventListener("click", () => removeRecord("agendaEvents", button.dataset.delete)));
+  renderAgendaWeek();
 }
 
 function renderKanban() {
@@ -3432,64 +3487,207 @@ function renderKanban() {
   qs("content").querySelectorAll("[data-delete-card]").forEach((button) => button.addEventListener("click", () => removeRecord("kanbanCards", button.dataset.deleteCard)));
 }
 
-function agendaCalendarHtml(cursor, events, editable) {
-  const days = agendaVisibleDays(cursor);
-  return `<section class="agenda-grid agenda-${agendaViewMode}">
+function renderAgendaWeek() {
+  const editable = canEditModule("agenda");
+  const cursor = parseLocalDate(agendaCursorDate) || new Date();
+  const today = startOfLocalDay(new Date());
+  const weekStart = agendaWeekStart(cursor);
+  const weekEnd = addDays(weekStart, 6);
+  const isPastWeek = weekEnd < today;
+  const canCreateInWeek = editable && !isPastWeek;
+  const events = agendaEventsSorted();
+  const nowLabel = new Date().toLocaleString("pt-BR", { weekday: "long", year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  qs("content").innerHTML = `
+    <section class="module-head">
+      <div>
+        <h2>Agenda</h2>
+        <p class="agenda-now-label">${nowLabel}</p>
+      </div>
+    </section>
+    <section class="schedule-toolbar agenda-toolbar">
+      <button type="button" class="secondary" id="agendaPrev">‹ Semana anterior</button>
+      <button type="button" class="secondary" id="agendaToday">Hoje</button>
+      <button type="button" class="secondary" id="agendaNext">Próxima semana ›</button>
+      <span class="agenda-week-range">${agendaWeekLabel(weekStart)}</span>
+    </section>
+    ${agendaKpiHtml()}
+    ${isPastWeek ? '<p class="agenda-past-notice">Semana anterior — disponível apenas para consulta.</p>' : ""}
+    <div class="agenda-layout">
+      ${agendaCalendarHtml(weekStart, events)}
+      ${agendaFormHtml(canCreateInWeek, weekStart)}
+    </div>
+  `;
+  qs("agendaPrev").addEventListener("click", () => moveAgendaCursor(-1));
+  qs("agendaToday").addEventListener("click", () => { agendaCursorDate = localDateString(new Date()); renderAgenda(); });
+  qs("agendaNext").addEventListener("click", () => moveAgendaCursor(1));
+  qs("agendaEventForm")?.addEventListener("submit", saveAgendaEvent);
+}
+
+function agendaCalendarHtml(weekStart, events) {
+  const todayKey = localDateString(startOfLocalDay(new Date()));
+  const days = agendaVisibleDays(weekStart);
+  return `<section class="agenda-grid agenda-week">
     ${days.map((date) => {
       const key = localDateString(date);
+      const isToday = key === todayKey;
       const dayEvents = events.filter((event) => String(event.data_inicio || "").slice(0, 10) === key);
-      return `<button type="button" class="agenda-day" data-agenda-date="${key}" ${editable ? "" : "disabled"}>
-        <span>${date.getDate()}</span>
-        ${dayEvents.slice(0, 4).map((event) => `<small class="agenda-event ${event.tipo}">${svgText(event.titulo)}</small>`).join("")}
-        ${dayEvents.length > 4 ? `<em>+${dayEvents.length - 4}</em>` : ""}
-      </button>`;
+      return `<article class="agenda-day${isToday ? " today" : ""}">
+        <header>
+          <strong>${agendaDayName(date)}</strong>
+          <span>${date.getDate()}</span>
+        </header>
+        <div class="agenda-day-events">
+          ${dayEvents.length ? dayEvents.map(agendaEventCardHtml).join("") : '<p class="empty small">Sem compromissos.</p>'}
+        </div>
+      </article>`;
     }).join("")}
   </section>`;
 }
 
 function agendaVisibleDays(cursor) {
-  const base = startOfLocalDay(cursor);
-  if (agendaViewMode === "day") return [base];
-  if (agendaViewMode === "week") {
-    const start = new Date(base);
-    start.setDate(start.getDate() - start.getDay());
-    return Array.from({ length: 7 }, (_, index) => addDays(start, index));
-  }
-  const first = new Date(base.getFullYear(), base.getMonth(), 1);
-  const start = new Date(first);
-  start.setDate(start.getDate() - start.getDay());
-  return Array.from({ length: 42 }, (_, index) => addDays(start, index));
-}
-
-function filteredAgendaEvents() {
-  return (db.agendaEvents || [])
-    .filter((event) => !agendaProjectFilter || sameId(event.obra_id, agendaProjectFilter))
-    .filter((event) => !agendaTypeFilter || event.tipo === agendaTypeFilter)
-    .sort((a, b) => String(a.data_inicio).localeCompare(String(b.data_inicio)));
-}
-
-function agendaTableRow(event) {
-  return {
-    ...event,
-    tipo: agendaTypeLabel(event.tipo),
-    data_inicio: event.data_inicio ? String(event.data_inicio).replace("T", " ") : "",
-    data_fim: event.data_fim ? String(event.data_fim).replace("T", " ") : "",
-  };
+  const start = agendaWeekStart(cursor);
+  return Array.from({ length: 7 }, (_, index) => addDays(start, index));
 }
 
 function moveAgendaCursor(direction) {
   const date = parseLocalDate(agendaCursorDate) || new Date();
-  if (agendaViewMode === "day") date.setDate(date.getDate() + direction);
-  else if (agendaViewMode === "week") date.setDate(date.getDate() + direction * 7);
-  else date.setMonth(date.getMonth() + direction);
+  date.setDate(date.getDate() + direction * 7);
   agendaCursorDate = localDateString(date);
   renderAgenda();
 }
 
-function openAgendaEventForm(date) {
-  agendaCursorDate = date || agendaCursorDate;
-  agendaNewDate = date || localDateString(new Date());
-  openForm("agendaEvents");
+function agendaFormHtml(enabled, weekStart) {
+  const today = localDateString(new Date());
+  const defaultDate = localDateString(weekStart < startOfLocalDay(new Date()) ? new Date() : weekStart);
+  const disabled = enabled ? "" : "disabled";
+  return `
+    <section class="agenda-form-card">
+      <h3>Novo compromisso</h3>
+      <form id="agendaEventForm" class="agenda-event-form">
+        <label>Data<input type="date" name="date" value="${defaultDate}" min="${today}" required ${disabled}></label>
+        <label>Horario inicial<input type="time" name="startTime" value="09:00" required ${disabled}></label>
+        <label>Horario final<input type="time" name="endTime" value="10:00" required ${disabled}></label>
+        <label>Titulo<input name="titulo" required ${disabled}></label>
+        <label>Tipo<select name="tipo" required ${disabled}>${agendaTypeOptions()}</select></label>
+        <label>Responsavel<select name="usuario_id" ${disabled}><option value="">Selecione</option>${agendaOptions("users")}</select></label>
+        <label>Cliente<select name="cliente_id" ${disabled}><option value="">Selecione</option>${agendaOptions("clients")}</select></label>
+        <label>Obra/projeto<select name="obra_id" ${disabled}><option value="">Selecione</option>${agendaOptions("projects")}</select></label>
+        <label>Observacoes<textarea name="descricao" rows="3" ${disabled}></textarea></label>
+        <label>Status<select name="status" required ${disabled}>
+          <option value="agendado">Agendado</option>
+          <option value="em_andamento">Em andamento</option>
+          <option value="concluido">Concluído</option>
+          <option value="cancelado">Cancelado</option>
+        </select></label>
+        <div class="agenda-form-actions">
+          <span>${enabled ? "" : "Semana anterior — disponível apenas para consulta."}</span>
+          <button type="submit" class="primary" ${disabled}>Salvar compromisso</button>
+        </div>
+      </form>
+    </section>
+  `;
+}
+
+function agendaTypeOptions() {
+  return ["reuniao", "vistoria", "projeto", "obra", "financeiro", "comercial", "prazo", "outro"].map((type) => `<option value="${type}">${agendaTypeLabel(type)}</option>`).join("");
+}
+
+function agendaEventsSorted() {
+  return (db.agendaEvents || []).slice().sort((a, b) => String(a.data_inicio || "").localeCompare(String(b.data_inicio || "")));
+}
+
+function agendaOptions(collection) {
+  return (db[collection] || []).map((row) => `<option value="${row.id}">${svgText(nameOf(collection, row.id))}</option>`).join("");
+}
+
+function agendaEventCardHtml(event) {
+  const start = agendaTimeLabel(event.data_inicio);
+  const end = agendaTimeLabel(event.data_fim);
+  const statusClass = event.status ? `status-${event.status}` : "status-agendado";
+  return `
+    <article class="agenda-event ${event.tipo || ""} ${statusClass}">
+      <strong>${svgText(event.titulo || "Sem titulo")}</strong>
+      <span>${start}${end ? ` - ${end}` : ""}</span>
+      <small>${agendaTypeLabel(event.tipo)}${event.usuario_id ? ` - ${nameOf("users", event.usuario_id)}` : ""}</small>
+      ${event.cliente_id || event.obra_id ? `<small>${[nameOf("clients", event.cliente_id), nameOf("projects", event.obra_id)].filter(Boolean).join(" - ")}</small>` : ""}
+      ${event.status ? `<em class="agenda-status-label">${svgText(agendaStatusLabel(event.status))}</em>` : ""}
+    </article>
+  `;
+}
+
+function agendaStatusLabel(status) {
+  return { agendado: "Agendado", em_andamento: "Em andamento", concluido: "Concluído", cancelado: "Cancelado" }[status] || status;
+}
+
+function agendaKpiHtml() {
+  const events = db.agendaEvents || [];
+  const todayKey = localDateString(startOfLocalDay(new Date()));
+  const hoje = events.filter((e) => String(e.data_inicio || "").slice(0, 10) === todayKey).length;
+  const emAberto = events.filter((e) => e.status !== "concluido" && e.status !== "cancelado").length;
+  const proximoEvent = events
+    .filter((e) => String(e.data_inicio || "").slice(0, 10) >= todayKey && e.status !== "concluido" && e.status !== "cancelado")
+    .sort((a, b) => String(a.data_inicio || "").localeCompare(String(b.data_inicio || "")))[0];
+  const proximo = proximoEvent
+    ? `${asDate(String(proximoEvent.data_inicio || "").slice(0, 10))} — ${svgText(proximoEvent.titulo || "")}`
+    : "—";
+  return `
+    <section class="agenda-kpis">
+      <div class="agenda-kpi"><strong>${events.length}</strong><span>Total</span></div>
+      <div class="agenda-kpi"><strong>${hoje}</strong><span>Hoje</span></div>
+      <div class="agenda-kpi"><strong>${emAberto}</strong><span>Em aberto</span></div>
+      <div class="agenda-kpi agenda-kpi-next"><strong>${proximo}</strong><span>Próximo compromisso</span></div>
+    </section>
+  `;
+}
+
+async function saveAgendaEvent(event) {
+  event.preventDefault();
+  if (!canEditModule("agenda")) return;
+  const form = event.target;
+  const data = Object.fromEntries(new FormData(form).entries());
+  const today = localDateString(new Date());
+  if (data.date < today) return alert("Nao e permitido cadastrar compromisso em data anterior ao dia atual.");
+  if (data.endTime && data.startTime && data.endTime <= data.startTime) return alert("O horario final deve ser maior que o horario inicial.");
+  const record = {
+    obra_id: data.obra_id || "",
+    cliente_id: data.cliente_id || "",
+    usuario_id: data.usuario_id || "",
+    titulo: data.titulo || "",
+    descricao: data.descricao || "",
+    tipo: data.tipo || "outro",
+    data_inicio: `${data.date} ${data.startTime}`,
+    data_fim: `${data.date} ${data.endTime}`,
+    dia_todo: 0,
+    lembrete_minutos: 60,
+    status: data.status || "agendado",
+  };
+  try {
+    await createIntegratedRecord("agendaEvents", record);
+  } catch (error) {
+    alert(`Nao foi possivel salvar o compromisso: ${error.message}`);
+    return;
+  }
+  agendaCursorDate = data.date;
+  await refreshAndRender();
+}
+
+function agendaWeekStart(date) {
+  const start = startOfLocalDay(date);
+  start.setDate(start.getDate() - start.getDay());
+  return start;
+}
+
+function agendaWeekLabel(weekStart) {
+  return `${asDate(localDateString(weekStart))} a ${asDate(localDateString(addDays(weekStart, 6)))}`;
+}
+
+function agendaDayName(date) {
+  return ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"][date.getDay()];
+}
+
+function agendaTimeLabel(value) {
+  const text = String(value || "");
+  return text.includes("T") ? text.slice(11, 16) : text.slice(11, 16);
 }
 
 function openKanbanCardForm(columnId) {
@@ -3583,7 +3781,11 @@ function kanbanCardDone(card) {
 }
 
 function agendaTypeLabel(type) {
-  return ({ reuniao: "Reunião", visita: "Visita", entrega: "Entrega", cobranca: "Cobrança", outro: "Outro" })[type] || type || "";
+  return ({
+    reuniao: "Reunião", visita: "Visita", vistoria: "Vistoria", entrega: "Entrega",
+    cobranca: "Cobrança", projeto: "Projeto", obra: "Obra",
+    financeiro: "Financeiro", comercial: "Comercial", prazo: "Prazo", outro: "Outro",
+  })[type] || type || "";
 }
 
 function priorityLabel(priority) {
@@ -5404,6 +5606,8 @@ function showLogin(message = "") {
   qs("loginError").textContent = message;
   qs("loginScreen").classList.remove("hidden");
   qs("appShell").classList.add("hidden");
+  document.getElementById("favoritesBar")?.classList.add("hidden");
+  document.getElementById("favTriggerStrip")?.classList.add("hidden");
   qs("loginPassword").value = "";
   qs("loginUser").focus();
 }
@@ -5413,6 +5617,8 @@ function showApp(user) {
   writeAuthSession(user);
   qs("loginScreen").classList.add("hidden");
   qs("appShell").classList.remove("hidden");
+  logAudit("login", "sistema", `Login: ${user.username}`);
+  scheduleSessionWarning();
   render();
 }
 
@@ -5430,6 +5636,7 @@ async function handleLogin(event) {
     }
     const user = db.users.find((item) => item.username?.toLowerCase() === username && item.password === password && item.status === "Ativo");
     if (!user) return showLogin(`${serverStatus}. Configure a API ou use dados locais antigos apenas para migração.`);
+    if (user.blocked) return showLogin("Usuário bloqueado. Entre em contato com o administrador do sistema.");
     showApp(user);
   } catch (error) {
     showLogin(error.message || "Usuário ou senha inválidos.");
@@ -5437,7 +5644,11 @@ async function handleLogin(event) {
 }
 
 function restoreSession() {
+  applySidebarWidth();
   setupNav();
+  setupFavoritesDialog();
+  setupFavoritesHover();
+  setupSessionWarning();
   if (AUTH_BYPASS_FOR_TESTS) {
     showApp(directAccessUser());
     return;
@@ -5446,6 +5657,359 @@ function restoreSession() {
   const user = session ? db.users.find((item) => String(item.id) === String(session.userId) && item.status === "Ativo") : null;
   if (user) showApp(user);
   else showLogin();
+}
+
+// ── Barra de favoritos ──────────────────────────────────────────────────────
+
+function favoritesStorageKey() {
+  return `finconta.favorites.${currentUser?.id || "default"}`;
+}
+
+function loadFavorites() {
+  try {
+    const raw = localStorage.getItem(favoritesStorageKey());
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.slice(0, 5) : [];
+  } catch { return []; }
+}
+
+function persistFavorites(favs) {
+  localStorage.setItem(favoritesStorageKey(), JSON.stringify(favs.slice(0, 5)));
+}
+
+function moduleInitials(key) {
+  const label = moduleLabels[key] || key;
+  const words = label.split(/[\s\/]+/).filter((w) => w.length > 2);
+  if (!words.length) return label.slice(0, 2).toUpperCase();
+  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+  return (words[0][0] + words[1][0]).toUpperCase();
+}
+
+function renderFavoritesBar() {
+  const bar = document.getElementById("favoritesBar");
+  const strip = document.getElementById("favTriggerStrip");
+  if (!bar || !currentUser) return;
+  const favs = loadFavorites();
+  const allowed = new Set(visibleModules().map(([k]) => k));
+  const visible = favs.filter((k) => allowed.has(k));
+  bar.classList.remove("hidden");
+  if (strip) strip.classList.remove("hidden");
+  updateFavoritesPosition();
+  if (!visible.length) {
+    bar.innerHTML = `
+      <span class="fav-empty">Nenhum favorito configurado. Clique em</span>
+      <button class="fav-edit-btn" id="openFavoritesDialog" type="button" title="Personalizar favoritos">★ Personalizar</button>
+      <span class="fav-empty">para configurar seus atalhos.</span>
+    `;
+  } else {
+    bar.innerHTML = `
+      <div class="fav-tabs" role="list">
+        ${visible.map((k) => `
+          <button class="fav-tab${k === currentModule ? " active" : ""}" type="button" data-module="${k}" role="listitem" title="${moduleLabels[k] || k}">
+            <span class="fav-icon">${moduleInitials(k)}</span>
+            <span class="fav-label">${moduleLabels[k] || k}</span>
+          </button>`).join("")}
+      </div>
+      <button class="fav-edit-btn" id="openFavoritesDialog" type="button" title="Personalizar favoritos">★</button>
+    `;
+    bar.querySelectorAll(".fav-tab").forEach((btn) => {
+      btn.addEventListener("click", () => { currentModule = btn.dataset.module; render(); });
+    });
+  }
+  document.getElementById("openFavoritesDialog")?.addEventListener("click", openFavoritesModal);
+}
+
+function openFavoritesModal() {
+  favoritesDialogSelections = new Set(loadFavorites());
+  const allowed = visibleModules().map(([k]) => k);
+  document.getElementById("favoritesPickerList").innerHTML = allowed.map((k) => {
+    const checked = favoritesDialogSelections.has(k);
+    return `
+      <label class="fav-picker-item${checked ? " selected" : ""}">
+        <input type="checkbox" value="${k}" ${checked ? "checked" : ""}>
+        <span class="fav-picker-icon">${moduleInitials(k)}</span>
+        <span class="fav-picker-label">${moduleLabels[k] || k}</span>
+      </label>`;
+  }).join("");
+  document.getElementById("favoritesPickerList").querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    cb.addEventListener("change", () => {
+      if (cb.checked) {
+        if (favoritesDialogSelections.size >= 5) { cb.checked = false; alert("Máximo de 5 favoritos."); return; }
+        favoritesDialogSelections.add(cb.value);
+        cb.closest(".fav-picker-item").classList.add("selected");
+      } else {
+        favoritesDialogSelections.delete(cb.value);
+        cb.closest(".fav-picker-item").classList.remove("selected");
+      }
+    });
+  });
+  document.getElementById("favoritesDialog").showModal();
+}
+
+function setupFavoritesDialog() {
+  document.getElementById("closeFavoritesDialog").addEventListener("click", () => document.getElementById("favoritesDialog").close());
+  document.getElementById("cancelFavoritesDialog").addEventListener("click", () => document.getElementById("favoritesDialog").close());
+  document.getElementById("saveFavoritesDialog").addEventListener("click", () => {
+    persistFavorites([...favoritesDialogSelections]);
+    document.getElementById("favoritesDialog").close();
+    renderFavoritesBar();
+  });
+}
+
+function setupFavoritesHover() {
+  const bar = document.getElementById("favoritesBar");
+  const strip = document.getElementById("favTriggerStrip");
+  if (!bar || !strip) return;
+  let hideTimer;
+
+  function showBar() {
+    clearTimeout(hideTimer);
+    bar.classList.add("fav-visible");
+  }
+
+  function scheduleHide() {
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(() => {
+      if (!bar.matches(":hover") && !strip.matches(":hover")) {
+        bar.classList.remove("fav-visible");
+      }
+    }, 280);
+  }
+
+  strip.addEventListener("mouseenter", showBar);
+  strip.addEventListener("mouseleave", scheduleHide);
+  bar.addEventListener("mouseenter", showBar);
+  bar.addEventListener("mouseleave", scheduleHide);
+}
+
+window.addEventListener("resize", () => {
+  applySidebarWidth();
+});
+
+// ── Segurança — funções centrais ─────────────────────────────────────────────
+
+// Item 10: sanitização de input (remove tags HTML antes de salvar)
+function sanitizeInput(value) {
+  return String(value ?? "").replace(/<[^>]*>/g, "").trim();
+}
+
+// Item 7: validação de senha
+function validatePassword(password) {
+  const errors = [];
+  if (!password || password.length < 8) errors.push("Mínimo de 8 caracteres");
+  if (!/[A-Z]/.test(password)) errors.push("Pelo menos uma letra maiúscula");
+  if (!/[a-z]/.test(password)) errors.push("Pelo menos uma letra minúscula");
+  if (!/[0-9]/.test(password)) errors.push("Pelo menos um número");
+  return { valid: errors.length === 0, errors };
+}
+
+// Item 8: mascaramento de dados sensíveis
+function isSensitiveFieldMasked() {
+  return ["visualizador", "operador"].includes(currentUser?.role);
+}
+
+function maskedCell(value) {
+  return `<span class="masked-cell"><span class="masked-dots">•••••••</span><button class="reveal-btn" type="button" data-original="${svgText(value)}" title="Revelar (somente para você)">Ver</button></span>`;
+}
+
+// Item 5: bloquear/desbloquear usuário
+async function toggleUserBlock(userId, block) {
+  if (!isAdmin()) return;
+  const target = byId("users", userId);
+  if (!target) return;
+  db.users = db.users.map((u) => sameId(u.id, userId) ? { ...u, blocked: block } : u);
+  saveDb();
+  logAudit(block ? "block" : "unblock", "users", `${block ? "Bloqueou" : "Desbloqueou"}: ${target.username}`);
+  await refreshAndRender();
+}
+
+// Item 3: permissão de deleção por perfil
+function canDeleteRecord(key = currentModule) {
+  const k = { agendaEvents: "agenda", kanbanBoards: "kanban", kanbanColumns: "kanban", kanbanCards: "kanban" }[key] || key;
+  if (isAdmin()) return true;
+  if (currentUser?.role === "gerente") return !["users", "permissions"].includes(k);
+  if (currentUser?.role === "operador" || currentUser?.role === "visualizador") return false;
+  return canEditModule(key);
+}
+
+// Item 4: confirmação de ação destrutiva com "CONFIRMAR"
+function confirmDestructive(name = "") {
+  return new Promise((resolve) => {
+    const dialog = document.getElementById("confirmDestructiveDialog");
+    if (!dialog) { resolve(confirm("Excluir este registro?")); return; }
+    const input = document.getElementById("confirmDestructiveInput");
+    const error = document.getElementById("confirmDestructiveError");
+    const doBtn = document.getElementById("doDestructiveBtn");
+    const cancelBtn = document.getElementById("cancelDestructiveBtn");
+    document.getElementById("confirmDestructiveName").textContent = name || "este registro";
+    input.value = "";
+    error.textContent = "";
+    function go() {
+      if (input.value.trim() !== "CONFIRMAR") { error.textContent = 'Digite exatamente CONFIRMAR (letras maiúsculas).'; input.focus(); return; }
+      cleanup(); dialog.close(); resolve(true);
+    }
+    function cancel() { cleanup(); dialog.close(); resolve(false); }
+    function cleanup() { doBtn.removeEventListener("click", go); cancelBtn.removeEventListener("click", cancel); dialog.removeEventListener("cancel", onCancel); }
+    function onCancel() { cancel(); }
+    doBtn.addEventListener("click", go);
+    cancelBtn.addEventListener("click", cancel);
+    dialog.addEventListener("cancel", onCancel, { once: true });
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); }, { once: false });
+    dialog.showModal();
+    setTimeout(() => input.focus(), 60);
+  });
+}
+
+// Item 2: Log de auditoria
+const AUDIT_LOG_KEY = "finconta.auditLog";
+const AUDIT_MAX_ENTRIES = 500;
+
+function getAuditLog() {
+  try { return JSON.parse(localStorage.getItem(AUDIT_LOG_KEY) || "[]"); } catch { return []; }
+}
+
+function saveAuditLog(entries) {
+  localStorage.setItem(AUDIT_LOG_KEY, JSON.stringify(entries.slice(-AUDIT_MAX_ENTRIES)));
+}
+
+function logAudit(action, module, detail = "") {
+  if (!currentUser) return;
+  const log = getAuditLog();
+  log.push({ id: crypto.randomUUID(), userId: currentUser.id, username: currentUser.username || "", action, module: module || currentModule, detail: String(detail).slice(0, 200), timestamp: new Date().toISOString(), host: location.hostname || "local" });
+  saveAuditLog(log);
+}
+
+function renderAuditLog() {
+  if (!isAdmin()) { qs("content").innerHTML = '<div class="empty">Acesso restrito a administradores.</div>'; return; }
+  const all = getAuditLog().slice().reverse();
+  qs("content").innerHTML = `
+    <section class="module-head">
+      <div><h2>Log de Auditoria</h2><p>Histórico de ações (últimas ${AUDIT_MAX_ENTRIES}).</p></div>
+      <button class="secondary" id="clearAuditLogBtn" type="button">Limpar log</button>
+    </section>
+    <section class="audit-filters">
+      <label>Usuário<select id="afUser"><option value="">Todos</option>${[...new Set(all.map((e) => e.username))].map((u) => `<option>${svgText(u)}</option>`).join("")}</select></label>
+      <label>Módulo<select id="afModule"><option value="">Todos</option>${[...new Set(all.map((e) => e.module))].map((m) => `<option value="${svgText(m)}">${svgText(moduleLabels[m] || m)}</option>`).join("")}</select></label>
+      <label>De<input type="date" id="afFrom"></label>
+      <label>Até<input type="date" id="afTo"></label>
+    </section>
+    <div id="auditTableBody">${auditTableHtml(all)}</div>
+  `;
+  function applyAuditFilters() {
+    const u = document.getElementById("afUser").value;
+    const m = document.getElementById("afModule").value;
+    const f = document.getElementById("afFrom").value;
+    const t = document.getElementById("afTo").value;
+    let rows = all;
+    if (u) rows = rows.filter((e) => e.username === u);
+    if (m) rows = rows.filter((e) => e.module === m);
+    if (f) rows = rows.filter((e) => e.timestamp >= f);
+    if (t) rows = rows.filter((e) => e.timestamp <= t + "T23:59:59Z");
+    document.getElementById("auditTableBody").innerHTML = auditTableHtml(rows);
+  }
+  ["afUser", "afModule", "afFrom", "afTo"].forEach((id) => document.getElementById(id).addEventListener("change", applyAuditFilters));
+  document.getElementById("clearAuditLogBtn").addEventListener("click", () => {
+    if (!confirm("Apagar todo o log de auditoria?")) return;
+    saveAuditLog([]);
+    renderAuditLog();
+  });
+}
+
+function auditTableHtml(entries) {
+  if (!entries.length) return '<div class="empty">Nenhum registro no log.</div>';
+  const cls = { login: "a-login", logout: "a-logout", create: "a-create", edit: "a-edit", delete: "a-delete", block: "a-delete", unblock: "a-login" };
+  return `<div class="table-wrap"><table>
+    <thead><tr><th>Data/Hora</th><th>Usuário</th><th>Ação</th><th>Módulo</th><th>Detalhe</th><th>Host</th></tr></thead>
+    <tbody>${entries.map((e) => `<tr>
+      <td>${new Date(e.timestamp).toLocaleString("pt-BR")}</td>
+      <td>${svgText(e.username)}</td>
+      <td><span class="audit-action ${cls[e.action] || ""}">${svgText(e.action)}</span></td>
+      <td>${svgText(moduleLabels[e.module] || e.module)}</td>
+      <td>${svgText(e.detail)}</td>
+      <td>${svgText(e.host)}</td>
+    </tr>`).join("")}</tbody>
+  </table></div>`;
+}
+
+// Item 6: histórico de acessos
+function logAccess(mod) {
+  if (!currentUser || !mod) return;
+  const key = `finconta.ah.${currentUser.id}`;
+  let hist = [];
+  try { hist = JSON.parse(localStorage.getItem(key) || "[]"); } catch {}
+  hist.push({ module: mod, label: moduleLabels[mod] || mod, ts: new Date().toISOString() });
+  localStorage.setItem(key, JSON.stringify(hist.slice(-10)));
+}
+
+function getAccessHistory(userId) {
+  try { return JSON.parse(localStorage.getItem(`finconta.ah.${userId}`) || "[]"); } catch { return []; }
+}
+
+function renderMyProfile() {
+  const hist = getAccessHistory(currentUser.id).slice().reverse();
+  const blockedStatus = currentUser.blocked ? '<span style="color:var(--red);font-weight:700">Bloqueado</span>' : '<span style="color:var(--green)">Ativo</span>';
+  qs("content").innerHTML = `
+    <section class="module-head"><div><h2>Meu Perfil</h2><p>${svgText(currentUser.fullName || currentUser.username)}</p></div></section>
+    <section class="profile-card">
+      <dl class="profile-dl">
+        <dt>Usuário</dt><dd>${svgText(currentUser.username)}</dd>
+        <dt>Nome</dt><dd>${svgText(currentUser.fullName || "—")}</dd>
+        <dt>Perfil</dt><dd>${roleLabels[currentUser.role] || svgText(currentUser.role)}</dd>
+        <dt>Status</dt><dd>${blockedStatus}</dd>
+      </dl>
+    </section>
+    <h3 style="margin-top:24px">Últimos 10 acessos</h3>
+    ${hist.length ? `<div class="table-wrap"><table>
+      <thead><tr><th>Data/Hora</th><th>Módulo</th></tr></thead>
+      <tbody>${hist.map((h) => `<tr><td>${new Date(h.ts).toLocaleString("pt-BR")}</td><td>${svgText(h.label)}</td></tr>`).join("")}</tbody>
+    </table></div>` : '<div class="empty">Nenhum acesso registrado ainda.</div>'}
+  `;
+}
+
+// Item 1: aviso de expiração de sessão
+function scheduleSessionWarning() {
+  clearTimeout(sessionWarnTimer);
+  if (!currentUser) return;
+  sessionWarnTimer = setTimeout(showSessionWarning, AUTH_TIMEOUT_MS - SESSION_WARN_BEFORE_MS);
+}
+
+function showSessionWarning() {
+  if (!currentUser) return;
+  const dialog = document.getElementById("sessionWarningDialog");
+  if (!dialog || dialog.open) return;
+  dialog.showModal();
+  let secs = Math.floor(SESSION_WARN_BEFORE_MS / 1000);
+  const countdown = document.getElementById("sessionCountdown");
+  clearInterval(sessionWarnIntervalId);
+  sessionWarnIntervalId = setInterval(() => {
+    secs--;
+    const m = Math.floor(secs / 60);
+    const s = String(secs % 60).padStart(2, "0");
+    if (countdown) countdown.textContent = `${m}:${s}`;
+    if (secs <= 0) {
+      clearInterval(sessionWarnIntervalId);
+      dialog.close();
+      logAudit("logout", "sistema", "Sessão expirada por inatividade");
+      showLogin("Sessão expirada por inatividade.");
+    }
+  }, 1000);
+}
+
+function setupSessionWarning() {
+  document.getElementById("sessionRenewBtn")?.addEventListener("click", () => {
+    clearInterval(sessionWarnIntervalId);
+    document.getElementById("sessionWarningDialog").close();
+    touchAuthSession();
+    scheduleSessionWarning();
+  });
+  document.getElementById("sessionLogoutNowBtn")?.addEventListener("click", () => {
+    clearInterval(sessionWarnIntervalId);
+    document.getElementById("sessionWarningDialog").close();
+    logAudit("logout", "sistema", `Logout manual: ${currentUser?.username}`);
+    clearAuthSession();
+    showLogin("Você encerrou a sessão.");
+  });
 }
 
 async function bootstrapApp() {
@@ -5480,7 +6044,11 @@ qs("seedBtn").addEventListener("click", () => {
 });
 qs("loginForm").addEventListener("submit", handleLogin);
 qs("logoutBtn").addEventListener("click", () => {
+  logAudit("logout", "sistema", `Logout: ${currentUser?.username}`);
   clearAuthSession();
+  clearTimeout(sessionWarnTimer);
+  clearInterval(sessionWarnIntervalId);
+  currentModuleTracked = "";
   if (AUTH_BYPASS_FOR_TESTS) restoreSession();
   else showLogin();
 });

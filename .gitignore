@@ -1,13 +1,32 @@
-# Config sensível — NUNCA subir
+## Config sensível — NUNCA subir
+
 /api/config.php
-/api/config.sample.php
+/api/config.local.php
+.env
+.env.local
 
-# Uploads e backups
+# VS Code / configurações locais
+
+.vscode/
+
+# Uploads, backups e arquivos gerados
+
 /uploads/
-*.sql
+/backups/
 *.log
+*.tmp
+*.bak
+*.zip
+*.tar
+*.tar.gz
 
-# Sistema
+# Backups SQL gerados manualmente
+
+financeiro-*.sql
+backup-*.sql
+dump-*.sql
+
+# Sistema operacional
+
 .DS_Store
 Thumbs.db
-*.tmp
