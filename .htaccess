@@ -1,10 +1,14 @@
 Options -Indexes
 
-<FilesMatch "\.(sql|sample|bak|env|ini|log)$">
+<FilesMatch "\.(sql|sample|bak|env|ini|log|md)$">
   Require all denied
 </FilesMatch>
 
 <IfModule mod_headers.c>
-  Header set X-Content-Type-Options "nosniff"
-  Header set X-Frame-Options "SAMEORIGIN"
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set X-Frame-Options "SAMEORIGIN"
+  Header always set Referrer-Policy "strict-origin-when-cross-origin"
+  Header always set Permissions-Policy "camera=(), microphone=(), geolocation=()"
+  # HSTS: força HTTPS por 1 ano (ative só após confirmar que HTTPS está 100% funcional)
+  # Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
 </IfModule>

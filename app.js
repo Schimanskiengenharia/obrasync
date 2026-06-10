@@ -6,8 +6,16 @@ const API_BASE = (() => {
   const dir = location.pathname.replace(/\/[^/]*$/, '') || '/';
   return location.origin + dir + '/api';
 })();
-const AUTH_BYPASS_FOR_TESTS = false;
-if (location.protocol === "http:" && location.hostname !== "localhost" && location.hostname !== "127.0.0.1") {
+// Ambiente de execução: "file" (arquivo aberto direto), "local" (desenvolvimento) ou "production".
+const APP_ENV = (() => {
+  if (location.protocol === "file:") return "file";
+  if (["localhost", "127.0.0.1", "::1"].includes(location.hostname)) return "local";
+  return "production";
+})();
+// Bypass de login é recurso exclusivo de desenvolvimento: nunca vale em produção e,
+// mesmo em desenvolvimento, só se aplica quando a API não está ativa (modo localStorage).
+const AUTH_BYPASS_FOR_TESTS = APP_ENV !== "production";
+if (APP_ENV === "production" && location.protocol === "http:") {
   location.replace(location.href.replace(/^http:/, "https:"));
 }
 const APP_NAME = "ObraSync";
@@ -25,6 +33,7 @@ const APP_CHANGELOG = [
   "Estruturas editáveis pelo administrador: tipos de obra, etapas padrão, campos personalizados, checklists, modelos e mensagens.",
   "Gerador de proposta comercial a partir de orçamento de obra, com modelo editável, variáveis dinâmicas, itens do orçamento e impressão/PDF A4.",
   "Importador SINAPI 04/2026 preparado para XLSX/CSV, UF padrão MS, manutenções, mão de obra, famílias/coeficientes e configuração de propostas SINAPI.",
+  "Autenticação por token na API com autorização por rota e perfil, tratamento de respostas inválidas, blindagem do armazenamento local, validação de datas nos filtros e escape padrão de HTML no CRUD.",
 ];
 
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
@@ -169,9 +178,28 @@ const roleModules = {
 
 const moduleLabels = Object.fromEntries(modules);
 const openNavGroups = new Set();
-let sidebarCollapsed = localStorage.getItem("finconta.sidebarCollapsed") === "true";
+
+// Leitura/escrita tolerantes de localStorage (modo privado, quota ou armazenamento bloqueado).
+function safeLocalGet(key) {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function safeLocalSet(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // Sem armazenamento disponível: o dado vale apenas para a sessão atual.
+  }
+}
+
+let sidebarCollapsed = safeLocalGet("finconta.sidebarCollapsed") === "true";
 let serverMode = false;
 let serverStatus = "Conectando ao servidor";
+let authToken = null;
 let dashboardViewMode = "general";
 let dashboardProjectId = "";
 let selectedWorkBudgetId = "";
@@ -182,7 +210,7 @@ let sinapiTypeFilter = "all";
 let sinapiLastImportHtml = "";
 let proposalGeneratorState = null;
 let agendaViewMode = "month";
-let agendaCursorDate = new Date().toISOString().slice(0, 10);
+let agendaCursorDate = agendaSafeDateString(new Date());
 let agendaProjectFilter = "";
 let agendaTypeFilter = "";
 let selectedKanbanBoardId = "";
@@ -1471,8 +1499,17 @@ let editing = null;
 let currentUser = null;
 
 function loadDb() {
-  const stored = localStorage.getItem(STORE_KEY);
-  const loaded = stored ? JSON.parse(stored) : structuredClone(seed);
+  let loaded = null;
+  try {
+    const stored = localStorage.getItem(STORE_KEY);
+    loaded = stored ? JSON.parse(stored) : null;
+  } catch (error) {
+    console.error("Dados locais ilegíveis ou corrompidos; usando dados de exemplo.", error);
+    loaded = null;
+  }
+  if (!loaded || typeof loaded !== "object" || Array.isArray(loaded)) {
+    loaded = structuredClone(seed);
+  }
   Object.keys(seed).forEach((key) => {
     if (!Array.isArray(loaded[key])) loaded[key] = structuredClone(seed[key]);
   });
@@ -1480,24 +1517,97 @@ function loadDb() {
 }
 
 function saveDb() {
-  if (!serverMode) localStorage.setItem(STORE_KEY, JSON.stringify(db));
+  if (serverMode) return;
+  try {
+    localStorage.setItem(STORE_KEY, JSON.stringify(db));
+  } catch (error) {
+    console.error("Não foi possível salvar os dados locais (quota ou armazenamento indisponível).", error);
+  }
+}
+
+function authHeaders() {
+  return authToken ? { Authorization: `Bearer ${authToken}`, "X-Auth-Token": authToken } : {};
 }
 
 async function apiRequest(path, options = {}) {
-  const response = await fetch(`${API_BASE}/${path}`, {
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
-    ...options,
-  });
+  let response;
+  try {
+    response = await fetch(`${API_BASE}/${path}`, {
+      headers: { "Content-Type": "application/json", ...authHeaders(), ...(options.headers || {}) },
+      ...options,
+    });
+  } catch (networkError) {
+    const error = new Error("Falha de conexão com o servidor. Verifique a rede e tente novamente.");
+    error.cause = networkError;
+    throw error;
+  }
   const text = await response.text();
-  const payload = text ? JSON.parse(text) : {};
+  let payload = {};
+  if (text) {
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      console.error("Resposta não-JSON da API:", path, response.status, text.slice(0, 500));
+      const error = new Error(`O servidor respondeu em formato inesperado (HTTP ${response.status}). Tente novamente ou contate o administrador.`);
+      error.status = response.status;
+      throw error;
+    }
+  }
+  if (response.status === 401) {
+    authToken = null;
+    clearAuthSession();
+    if (currentUser) showLogin(payload.error || "Sessão expirada. Faça login novamente.");
+    const error = new Error(payload.error || "Não autenticado.");
+    error.status = 401;
+    throw error;
+  }
   if (!response.ok || payload.ok === false) {
-    throw new Error(payload.error || `Erro HTTP ${response.status}`);
+    const error = new Error(payload.error || `Erro HTTP ${response.status}`);
+    error.status = response.status;
+    throw error;
+  }
+  return payload;
+}
+
+// Wrapper para uploads multipart (FormData) — não pode usar apiRequest pois ele força JSON.
+async function fetchForm(path, formData) {
+  let response;
+  try {
+    response = await fetch(`${API_BASE}/${path}`, { method: "POST", headers: authHeaders(), body: formData });
+  } catch (networkError) {
+    const error = new Error("Falha de conexão com o servidor. Verifique a rede e tente novamente.");
+    error.cause = networkError;
+    throw error;
+  }
+  const text = await response.text();
+  let payload = {};
+  if (text) {
+    try { payload = JSON.parse(text); }
+    catch {
+      console.error("Resposta não-JSON (upload):", path, response.status, text.slice(0, 500));
+      const error = new Error(`O servidor respondeu em formato inesperado (HTTP ${response.status}). Tente novamente ou contate o administrador.`);
+      error.status = response.status;
+      throw error;
+    }
+  }
+  if (response.status === 401) {
+    authToken = null;
+    clearAuthSession();
+    if (currentUser) showLogin(payload.error || "Sessão expirada. Faça login novamente.");
+    const error = new Error(payload.error || "Não autenticado.");
+    error.status = 401;
+    throw error;
+  }
+  if (!response.ok || payload.ok === false) {
+    const error = new Error(payload.error || `Erro HTTP ${response.status}`);
+    error.status = response.status;
+    throw error;
   }
   return payload;
 }
 
 async function loadServerData() {
-  if (window.location.protocol === "file:") {
+  if (APP_ENV === "file") {
     serverMode = false;
     serverStatus = "Abra pelo Apache para usar a API PHP";
     return;
@@ -1511,6 +1621,12 @@ async function loadServerData() {
     serverMode = true;
     serverStatus = "Conectado ao servidor";
   } catch (error) {
+    if (error.status === 401) {
+      // API ativa, mas sem sessão válida: mantém o modo servidor e exige login.
+      serverMode = true;
+      serverStatus = "Conectado ao servidor (login necessário)";
+      return;
+    }
     serverMode = false;
     serverStatus = `API indisponível: ${error.message}`;
   }
@@ -1535,7 +1651,12 @@ function nowMs() {
 }
 
 function readAuthSession() {
-  const raw = localStorage.getItem(AUTH_KEY) || sessionStorage.getItem(AUTH_KEY);
+  let raw = null;
+  try {
+    raw = localStorage.getItem(AUTH_KEY) || sessionStorage.getItem(AUTH_KEY);
+  } catch {
+    return null;
+  }
   if (!raw) return null;
   try {
     const session = JSON.parse(raw);
@@ -1544,17 +1665,27 @@ function readAuthSession() {
       clearAuthSession();
       return null;
     }
+    authToken = session.token || authToken;
     return session;
   } catch {
-    const userId = raw;
-    return userId ? { userId, lastActivity: nowMs() } : null;
+    clearAuthSession();
+    return null;
   }
 }
 
 function writeAuthSession(user) {
-  const session = JSON.stringify({ userId: user.id, lastActivity: nowMs() });
-  localStorage.setItem(AUTH_KEY, session);
-  sessionStorage.setItem(AUTH_KEY, session);
+  const session = JSON.stringify({
+    userId: user.id,
+    user: { id: user.id, username: user.username, fullName: user.fullName, role: user.role, status: user.status },
+    token: authToken,
+    lastActivity: nowMs(),
+  });
+  try {
+    localStorage.setItem(AUTH_KEY, session);
+    sessionStorage.setItem(AUTH_KEY, session);
+  } catch {
+    // Armazenamento indisponível (modo privado/quota): sessão vale só em memória.
+  }
 }
 
 function touchAuthSession() {
@@ -1563,8 +1694,13 @@ function touchAuthSession() {
 }
 
 function clearAuthSession() {
-  localStorage.removeItem(AUTH_KEY);
-  sessionStorage.removeItem(AUTH_KEY);
+  authToken = null;
+  try {
+    localStorage.removeItem(AUTH_KEY);
+    sessionStorage.removeItem(AUTH_KEY);
+  } catch {
+    // Armazenamento indisponível: nada a limpar.
+  }
 }
 
 function handleUserActivity() {
@@ -1844,7 +1980,7 @@ function navButton(moduleKey, label, icon) {
 
 function setSidebarCollapsed(collapsed) {
   sidebarCollapsed = collapsed;
-  localStorage.setItem("finconta.sidebarCollapsed", String(sidebarCollapsed));
+  safeLocalSet("finconta.sidebarCollapsed", String(sidebarCollapsed));
   if (sidebarCollapsed) {
     qs("appShell").classList.remove("sidebar-open");
     qs("sidebarBackdrop").classList.add("hidden");
@@ -1895,13 +2031,22 @@ function populateFilters() {
 }
 
 function fillSelect(id, rows, allLabel) {
-  qs(id).innerHTML = `<option value="">${allLabel}</option>` + rows.map((row) => `<option value="${row.id}">${row.name}</option>`).join("");
+  qs(id).innerHTML = `<option value="">${escapeHtml(allLabel)}</option>` + rows.map((row) => `<option value="${escapeHtml(row.id)}">${escapeHtml(row.name)}</option>`).join("");
+}
+
+// Aceita apenas datas reais no formato AAAA-MM-DD; qualquer outro valor é descartado.
+function validDateInput(value) {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return "";
+  return Number.isNaN(new Date(`${value}T00:00:00Z`).getTime()) ? "" : value;
 }
 
 function getFilters() {
+  let start = validDateInput(qs("filterStart")?.value);
+  let end = validDateInput(qs("filterEnd")?.value);
+  if (start && end && start > end) [start, end] = [end, start];
   return {
-    start: qs("filterStart").value,
-    end: qs("filterEnd").value,
+    start,
+    end,
     clientId: qs("filterClient").value,
     supplierId: qs("filterSupplier").value,
     costCenterId: qs("filterCostCenter").value,
@@ -2080,6 +2225,7 @@ function daysBetween(start, end) {
   if (!start || !end) return 0;
   const startDate = new Date(`${start}T00:00:00Z`);
   const endDate = new Date(`${end}T00:00:00Z`);
+  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) return 0;
   return Math.max(0, Math.ceil((endDate - startDate) / 86400000));
 }
 
@@ -2188,9 +2334,10 @@ function monthKey(value) {
 }
 
 function monthLabel(key) {
-  if (!key) return "";
+  if (!key || !/^\d{4}-\d{2}$/.test(key)) return "";
   const [year, month] = key.split("-");
   const date = new Date(Date.UTC(Number(year), Number(month) - 1, 1));
+  if (Number.isNaN(date.getTime())) return "";
   return new Intl.DateTimeFormat("pt-BR", { month: "short", year: "2-digit", timeZone: "UTC" }).format(date).replace(".", "");
 }
 
@@ -2619,9 +2766,12 @@ function compactMoney(value) {
   return money.format(Number(value || 0));
 }
 
-function svgText(value) {
+// Escape padrão de HTML para qualquer dado dinâmico interpolado em innerHTML.
+function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
 }
+// Alias histórico: vários templates antigos chamam svgText.
+const svgText = escapeHtml;
 
 function lineChart(series, labels) {
   const values = series.flatMap((item) => item.values);
@@ -2753,11 +2903,19 @@ function renderCrud(key) {
   }));
 }
 
+// Campos cujo formatCell devolve HTML intencional (links e badges); todo o resto é escapado.
+const HTML_CELL_FIELDS = new Set(["generatedLink", "hasPdf", "hasXml", "status"]);
+
+function tableCell(field, row) {
+  const content = formatCell(field, row[field], row);
+  return HTML_CELL_FIELDS.has(field) ? content : escapeHtml(content);
+}
+
 function table(title, rows, fields, actions = false, actionKey = "") {
   if (!rows.length) return `<div class="empty">Sem dados para exibir</div>`;
   const canEdit = actions && (!actionKey || canEditModule(actionKey));
   const canDel = actions && (!actionKey || canDeleteRecord(actionKey));
-  return `<section class="table-wrap" data-export-title="${title}">
+  return `<section class="table-wrap" data-export-title="${escapeHtml(title)}">
     <table>
       <thead><tr>${fields.map((field) => `<th>${labelFor(field)}</th>`).join("")}${actions ? "<th>Ações</th>" : ""}</tr></thead>
       <tbody>
@@ -2766,7 +2924,7 @@ function table(title, rows, fields, actions = false, actionKey = "") {
           const editBtn = canEdit ? `<button class="secondary" type="button" data-action-key="${actionKey}" data-edit="${row.id}">Editar</button>` : "";
           const delBtn = canDel ? `<button class="danger" type="button" data-action-key="${actionKey}" data-delete="${row.id}">Excluir</button>` : "";
           const noAction = !extra && !canEdit && !canDel ? '<span class="muted">Somente leitura</span>' : "";
-          return `<tr>${fields.map((field) => `<td>${formatCell(field, row[field], row)}</td>`).join("")}${actions ? `<td><div class="row-actions">${extra}${editBtn}${delBtn}${noAction}</div></td>` : ""}</tr>`;
+          return `<tr>${fields.map((field) => `<td>${tableCell(field, row)}</td>`).join("")}${actions ? `<td><div class="row-actions">${extra}${editBtn}${delBtn}${noAction}</div></td>` : ""}</tr>`;
         }).join("")}
       </tbody>
     </table>
@@ -2915,14 +3073,14 @@ function formatCell(field, value, row = {}) {
   if (field === "milestoneId") return nameOf("projectMilestones", value);
   if (field === "responsibleUserId") return nameOf("users", value);
   if (field === "generatedLink") return value ? `<a href="${svgText(value)}" target="_blank" rel="noopener">Abrir link</a>` : "";
-  if (field === "hasPdf") return value ? `<a href="${API_BASE}/${apiResources.fiscalDocuments}/${row.id}/pdf" target="_blank" rel="noopener">PDF</a>` : "";
-  if (field === "hasXml") return value ? `<a href="${API_BASE}/${apiResources.fiscalDocuments}/${row.id}/xml" target="_blank" rel="noopener">XML</a>` : "";
+  if (field === "hasPdf") return value ? `<a href="${API_BASE}/${apiResources.fiscalDocuments}/${row.id}/pdf${authToken ? `?token=${encodeURIComponent(authToken)}` : ""}" target="_blank" rel="noopener">PDF</a>` : "";
+  if (field === "hasXml") return value ? `<a href="${API_BASE}/${apiResources.fiscalDocuments}/${row.id}/xml${authToken ? `?token=${encodeURIComponent(authToken)}` : ""}" target="_blank" rel="noopener">XML</a>` : "";
   if (field === "fiscalDocumentNumber") {
     const match = (db.fiscalDocuments || []).find((doc) => sameId(doc.payableId, row.id) || sameId(doc.receivableId, row.id));
     return match ? match.documentNumber : "";
   }
   if (["chartAccountId", "debitAccountId", "creditAccountId", "parentId"].includes(field)) return nameOf("chartAccounts", value);
-  if (field === "status") return `<span class="status ${["Pago", "Recebido", "Aprovado", "Concluída", "Concluído", "Enviado manualmente"].includes(value) ? "success" : ["Vencido", "Atrasada"].includes(value) ? "danger" : ""}">${value || ""}</span>`;
+  if (field === "status") return `<span class="status ${["Pago", "Recebido", "Aprovado", "Concluída", "Concluído", "Enviado manualmente"].includes(value) ? "success" : ["Vencido", "Atrasada"].includes(value) ? "danger" : ""}">${escapeHtml(value || "")}</span>`;
   return value ?? "";
 }
 
@@ -2938,8 +3096,9 @@ function openForm(key, id = null) {
     row.bdiPercent = budget?.bdiPercent || 0;
   }
   if (!id && key === "agendaEvents") {
-    row.data_inicio = `${agendaNewDate || localDateString(new Date())}T09:00`;
-    row.data_fim = `${agendaNewDate || localDateString(new Date())}T10:00`;
+    const defaultAgendaDate = agendaSafeDateString(agendaNewDate, agendaSafeDateString(new Date()));
+    row.data_inicio = `${defaultAgendaDate}T09:00`;
+    row.data_fim = `${defaultAgendaDate}T10:00`;
     row.tipo = "reuniao";
     row.status = "agendado";
     row.lembrete_minutos = 60;
@@ -2960,10 +3119,10 @@ function inputFor(key, field, label, type, options, value = "", row = {}) {
   const required = options === true ? "required" : "";
   const full = type === "textarea" ? "full" : "";
   const placeholder = placeholderFor(field, label, key);
-  if (type === "textarea") return `<label class="${full}">${label}<textarea name="${field}" rows="3" placeholder="${placeholder}" ${required}>${value || ""}</textarea></label>`;
+  if (type === "textarea") return `<label class="${full}">${label}<textarea name="${field}" rows="3" placeholder="${placeholder}" ${required}>${escapeHtml(value || "")}</textarea></label>`;
   if (type === "file-pdf") return `<label>${label}<input name="${field}" type="file" accept="application/pdf,.pdf" data-file-field="${field}">${row.hasPdf ? '<span class="field-hint">PDF já anexado</span>' : ""}</label>`;
   if (type === "file-xml") return `<label>${label}<input name="${field}" type="file" accept=".xml,text/xml,application/xml" data-file-field="${field}">${row.hasXml ? '<span class="field-hint">XML já anexado</span>' : ""}</label>`;
-  if (type === "select") return `<label>${label}<select name="${field}" ${required}>${options.map((option) => `<option ${option === value ? "selected" : ""}>${option}</option>`).join("")}</select></label>`;
+  if (type === "select") return `<label>${label}<select name="${field}" ${required}>${options.map((option) => `<option ${option === value ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}</select></label>`;
   const lookup = {
     client: ["clients", "Selecione"],
     supplier: ["suppliers", "Selecione"],
@@ -2998,12 +3157,12 @@ function inputFor(key, field, label, type, options, value = "", row = {}) {
     projectMilestone: ["projectMilestones", "Selecione"],
     kanbanColumn: ["kanbanColumns", "Selecione"],
   }[type];
-  if (lookup) return `<label>${label}<select name="${field}" ${required}><option value="">${lookup[1]}</option>${db[lookup[0]].map((row) => `<option value="${row.id}" ${String(row.id) === String(value) ? "selected" : ""}>${row.code ? `${row.code} - ` : ""}${row.name || row.number || row.document || row.username || row.id}</option>`).join("")}</select></label>`;
+  if (lookup) return `<label>${label}<select name="${field}" ${required}><option value="">${lookup[1]}</option>${db[lookup[0]].map((row) => `<option value="${escapeHtml(row.id)}" ${String(row.id) === String(value) ? "selected" : ""}>${escapeHtml(`${row.code ? `${row.code} - ` : ""}${row.name || row.number || row.document || row.username || row.id}`)}</option>`).join("")}</select></label>`;
   if (isMoneyField(field) || type === "money") return `<label>${label}<input name="${field}" type="text" inputmode="decimal" value="${formatMoneyInput(value)}" placeholder="${placeholder}" data-format="money" ${required}></label>`;
   if (isPercentField(field)) return `<label>${label}<input name="${field}" type="text" inputmode="decimal" value="${formatPercentInput(value)}" placeholder="${placeholder}" data-format="percent" ${required}></label>`;
-  if (type === "datetime-local") return `<label>${label}<input name="${field}" type="${type}" value="${String(value || "").replace(" ", "T").slice(0, 16)}" placeholder="${placeholder}" ${required}></label>`;
+  if (type === "datetime-local") return `<label>${label}<input name="${field}" type="${type}" value="${escapeHtml(String(value || "").replace(" ", "T").slice(0, 16))}" placeholder="${placeholder}" ${required}></label>`;
   const mask = field === "phone" ? 'data-mask="phone"' : field === "document" && ["clients", "suppliers", "companySettings"].includes(key) ? 'data-mask="document"' : ["zipCode", "postalCode", "cep"].includes(field) ? 'data-mask="cep"' : "";
-  return `<label>${label}<input name="${field}" type="${type}" value="${value || ""}" placeholder="${placeholder}" ${required} ${mask}></label>`;
+  return `<label>${label}<input name="${field}" type="${type}" value="${escapeHtml(value || "")}" placeholder="${placeholder}" ${required} ${mask}></label>`;
 }
 
 function applyFormEnhancements() {
@@ -3084,12 +3243,10 @@ async function saveForm(event) {
   const previousRecord = editing.id ? byId(editing.key, editing.id) : null;
   try {
     if (serverMode && editing.key === "fiscalDocuments") {
-      const payload = new FormData(event.target);
-      Object.entries(data).forEach(([key, value]) => payload.set(key, value ?? ""));
-      if (editing.id) payload.set("_method", "PUT");
-      const response = await fetch(`${API_BASE}/${apiResources[editing.key]}${editing.id ? `/${editing.id}` : ""}`, { method: "POST", body: payload });
-      const result = await response.json();
-      if (!response.ok || result.ok === false) throw new Error(result.error || "Falha no upload");
+      const formPayload = new FormData(event.target);
+      Object.entries(data).forEach(([key, value]) => formPayload.set(key, value ?? ""));
+      if (editing.id) formPayload.set("_method", "PUT");
+      const result = await fetchForm(`${apiResources[editing.key]}${editing.id ? `/${editing.id}` : ""}`, formPayload);
       if (editing.id) db[editing.key] = db[editing.key].map((row) => String(row.id) === String(editing.id) ? result.record : row);
       else db[editing.key].push(result.record);
     } else if (serverMode && apiResources[editing.key]) {
@@ -3414,7 +3571,7 @@ async function createReceivablesFromProposal(id) {
   const parcels = percentages.length ? percentages.map((percent, index) => ({
     label: `${formatPercentInput(percent)} - parcela ${index + 1}`,
     amount: roundMoney(total * (percent / 100)),
-    dueDate: addDays(today, index * 30),
+    dueDate: addDateStringDays(today, index * 30),
   })) : [{ label: "Valor total da proposta", amount: total, dueDate: today }];
   try {
     for (const [index, parcel] of parcels.entries()) {
@@ -3489,14 +3646,15 @@ function renderKanban() {
 function renderAgendaWeek() {
   try {
     const editable = canEditModule("agenda");
-    const cursor = parseLocalDate(agendaCursorDate) || new Date();
-    const today = startOfLocalDay(new Date());
+    const today = agendaStartOfDay(new Date());
+    const cursor = agendaDateFromValue(agendaCursorDate, today);
+    agendaCursorDate = agendaSafeDateString(cursor);
     const weekStart = agendaWeekStart(cursor);
     const weekEnd = addDays(weekStart, 6);
     const isPastWeek = weekEnd < today;
     const canCreateInWeek = editable && !isPastWeek;
     const events = agendaEventsSorted();
-    const nowLabel = new Date().toLocaleString("pt-BR", { weekday: "long", year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    const nowLabel = agendaFormatNowLabel(new Date());
     qs("content").innerHTML = `
       <section class="module-head">
         <div>
@@ -3518,7 +3676,7 @@ function renderAgendaWeek() {
       </div>
     `;
     qs("agendaPrev")?.addEventListener("click", () => moveAgendaCursor(-1));
-    qs("agendaToday")?.addEventListener("click", () => { agendaCursorDate = localDateString(new Date()); renderAgenda(); });
+    qs("agendaToday")?.addEventListener("click", () => { agendaCursorDate = agendaSafeDateString(new Date()); renderAgenda(); });
     qs("agendaNext")?.addEventListener("click", () => moveAgendaCursor(1));
     qs("agendaEventForm")?.addEventListener("submit", saveAgendaEvent);
   } catch (err) {
@@ -3528,13 +3686,14 @@ function renderAgendaWeek() {
 }
 
 function agendaCalendarHtml(weekStart, events) {
-  const todayKey = localDateString(startOfLocalDay(new Date()));
+  const todayKey = agendaSafeDateString(new Date());
   const days = agendaVisibleDays(weekStart);
   return `<section class="agenda-grid agenda-week">
     ${days.map((date) => {
-      const key = localDateString(date);
+      const key = agendaSafeDateString(date);
+      if (!key) return "";
       const isToday = key === todayKey;
-      const dayEvents = events.filter((event) => String(event.data_inicio || "").slice(0, 10) === key);
+      const dayEvents = events.filter((event) => agendaEventDateKey(event) === key);
       return `<article class="agenda-day${isToday ? " today" : ""}">
         <header>
           <strong>${agendaDayName(date)}</strong>
@@ -3554,15 +3713,16 @@ function agendaVisibleDays(cursor) {
 }
 
 function moveAgendaCursor(direction) {
-  const date = parseLocalDate(agendaCursorDate) || new Date();
+  const date = agendaDateFromValue(agendaCursorDate, new Date());
   date.setDate(date.getDate() + direction * 7);
-  agendaCursorDate = localDateString(date);
+  agendaCursorDate = agendaSafeDateString(date, agendaSafeDateString(new Date()));
   renderAgenda();
 }
 
 function agendaFormHtml(enabled, weekStart) {
-  const today = localDateString(new Date());
-  const defaultDate = localDateString(weekStart < startOfLocalDay(new Date()) ? new Date() : weekStart);
+  const todayDate = agendaStartOfDay(new Date());
+  const today = agendaSafeDateString(todayDate);
+  const defaultDate = agendaSafeDateString(weekStart < todayDate ? todayDate : weekStart, today);
   const disabled = enabled ? "" : "disabled";
   return `
     <section class="agenda-form-card">
@@ -3597,7 +3757,7 @@ function agendaTypeOptions() {
 }
 
 function agendaEventsSorted() {
-  return (db.agendaEvents || []).slice().sort((a, b) => String(a.data_inicio || "").localeCompare(String(b.data_inicio || "")));
+  return (db.agendaEvents || []).filter(agendaEventHasValidDate).slice().sort((a, b) => agendaEventDateTimeSortKey(a).localeCompare(agendaEventDateTimeSortKey(b)));
 }
 
 function agendaOptions(collection) {
@@ -3627,15 +3787,15 @@ function agendaStatusLabel(status) {
 }
 
 function agendaKpiHtml() {
-  const events = db.agendaEvents || [];
-  const todayKey = localDateString(startOfLocalDay(new Date()));
-  const hoje = events.filter((e) => String(e.data_inicio || "").slice(0, 10) === todayKey).length;
+  const events = (db.agendaEvents || []).filter(agendaEventHasValidDate);
+  const todayKey = agendaSafeDateString(new Date());
+  const hoje = events.filter((e) => agendaEventDateKey(e) === todayKey).length;
   const emAberto = events.filter((e) => e.status !== "concluido" && e.status !== "cancelado").length;
   const proximoEvent = events
-    .filter((e) => String(e.data_inicio || "").slice(0, 10) >= todayKey && e.status !== "concluido" && e.status !== "cancelado")
-    .sort((a, b) => String(a.data_inicio || "").localeCompare(String(b.data_inicio || "")))[0];
+    .filter((e) => agendaEventDateKey(e) >= todayKey && e.status !== "concluido" && e.status !== "cancelado")
+    .sort((a, b) => agendaEventDateTimeSortKey(a).localeCompare(agendaEventDateTimeSortKey(b)))[0];
   const proximo = proximoEvent
-    ? `${asDate(String(proximoEvent.data_inicio || "").slice(0, 10))} — ${svgText(proximoEvent.titulo || "")}`
+    ? `${agendaFormatDate(agendaEventDateKey(proximoEvent))} — ${svgText(proximoEvent.titulo || "")}`
     : "—";
   return `
     <section class="agenda-kpis">
@@ -3652,8 +3812,10 @@ async function saveAgendaEvent(event) {
   if (!canEditModule("agenda")) return;
   const form = event.target;
   const data = Object.fromEntries(new FormData(form).entries());
-  const today = localDateString(new Date());
-  if (data.date < today) return alert("Nao e permitido cadastrar compromisso em data anterior ao dia atual.");
+  const today = agendaSafeDateString(new Date());
+  const eventDate = agendaSafeDateString(data.date, "");
+  if (!eventDate) return alert("Data invalida.");
+  if (eventDate < today) return alert("Nao e permitido cadastrar compromisso em data anterior ao dia atual.");
   if (data.endTime && data.startTime && data.endTime <= data.startTime) return alert("O horario final deve ser maior que o horario inicial.");
   const record = {
     obra_id: data.obra_id || "",
@@ -3662,8 +3824,8 @@ async function saveAgendaEvent(event) {
     titulo: data.titulo || "",
     descricao: data.descricao || "",
     tipo: data.tipo || "outro",
-    data_inicio: `${data.date} ${data.startTime}`,
-    data_fim: `${data.date} ${data.endTime}`,
+    data_inicio: `${eventDate} ${data.startTime}`,
+    data_fim: `${eventDate} ${data.endTime}`,
     dia_todo: 0,
     lembrete_minutos: 60,
     status: data.status || "agendado",
@@ -3674,27 +3836,29 @@ async function saveAgendaEvent(event) {
     alert(`Nao foi possivel salvar o compromisso: ${error.message}`);
     return;
   }
-  agendaCursorDate = data.date;
+  agendaCursorDate = eventDate;
   await refreshAndRender();
 }
 
 function agendaWeekStart(date) {
-  const start = startOfLocalDay(date);
+  const start = agendaStartOfDay(date);
   start.setDate(start.getDate() - start.getDay());
   return start;
 }
 
 function agendaWeekLabel(weekStart) {
-  return `${asDate(localDateString(weekStart))} a ${asDate(localDateString(addDays(weekStart, 6)))}`;
+  return `${agendaFormatDate(weekStart)} a ${agendaFormatDate(addDays(weekStart, 6))}`;
 }
 
 function agendaDayName(date) {
-  return ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"][date.getDay()];
+  const safeDate = agendaDateFromValue(date);
+  return safeDate ? ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"][safeDate.getDay()] : "";
 }
 
 function agendaTimeLabel(value) {
   const text = String(value || "");
   if (!text) return "";
+  if (!agendaDateFromValue(text)) return "Data inválida";
   // "2026-06-10T09:00" or "2026-06-10 09:00"
   const sep = text.indexOf("T") !== -1 ? "T" : " ";
   const timePart = text.split(sep)[1] || "";
@@ -3808,19 +3972,78 @@ function agendaViewLabel(mode) {
 }
 
 function agendaPeriodLabel(date) {
-  if (agendaViewMode === "day") return asDate(localDateString(date));
+  const safeDate = agendaDateFromValue(date, new Date());
+  if (agendaViewMode === "day") return agendaFormatDate(safeDate);
   if (agendaViewMode === "week") {
-    const days = agendaVisibleDays(date);
-    return `${asDate(localDateString(days[0]))} a ${asDate(localDateString(days.at(-1)))}`;
+    const days = agendaVisibleDays(safeDate);
+    return `${agendaFormatDate(days[0])} a ${agendaFormatDate(days.at(-1))}`;
   }
+  return agendaFormatMonthYear(safeDate);
+}
+
+function agendaIsValidDate(date) {
+  return date instanceof Date && !Number.isNaN(date.getTime());
+}
+
+function agendaDateFromValue(value, fallback = null) {
+  if (agendaIsValidDate(value)) return new Date(value.getTime());
+  if (value === "" || value === null || value === undefined) return agendaIsValidDate(fallback) ? new Date(fallback.getTime()) : null;
+  const parsed = typeof value === "string" ? parseLocalDate(value) : new Date(value);
+  if (agendaIsValidDate(parsed)) return parsed;
+  return agendaIsValidDate(fallback) ? new Date(fallback.getTime()) : null;
+}
+
+function agendaStartOfDay(value, fallback = new Date()) {
+  const date = agendaDateFromValue(value, fallback) || new Date();
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function agendaSafeDateString(value, fallback = agendaSafeDateString(new Date(), "")) {
+  const date = agendaDateFromValue(value);
+  if (!date) return typeof fallback === "string" ? fallback : agendaSafeDateString(fallback, "");
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function agendaFormatDate(value) {
+  const key = agendaSafeDateString(value, "");
+  return key ? asDate(key) : "Data inválida";
+}
+
+function agendaFormatMonthYear(value) {
+  const date = agendaDateFromValue(value, new Date());
   return date.toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
+}
+
+function agendaFormatNowLabel(value) {
+  const date = agendaDateFromValue(value, new Date());
+  return date.toLocaleString("pt-BR", { weekday: "long", year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function agendaEventDateKey(event) {
+  return agendaSafeDateString(event?.data_inicio, "");
+}
+
+function agendaEventHasValidDate(event) {
+  return Boolean(agendaEventDateKey(event));
+}
+
+function agendaEventDateTimeSortKey(event) {
+  const dateKey = agendaEventDateKey(event);
+  if (!dateKey) return "";
+  const time = agendaTimeLabel(event?.data_inicio);
+  return `${dateKey} ${time && time !== "Data inválida" ? time : "00:00"}`;
 }
 
 function parseLocalDate(value) {
   if (!value) return null;
   const [year, month, day] = String(value).slice(0, 10).split("-").map(Number);
   if (!year || !month || !day) return null;
-  return new Date(year, month - 1, day);
+  const date = new Date(year, month - 1, day);
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) return null;
+  return date;
 }
 
 function parseLocalDateTime(value) {
@@ -4455,9 +4678,7 @@ async function importSinapiFile(mode = "preview") {
   form.append("referenceYear", String(referenceYear));
   form.append("referenceType", referenceType);
   try {
-    const response = await fetch(`${API_BASE}/sinapi-import`, { method: "POST", body: form });
-    const payload = await response.json();
-    if (!response.ok || payload.ok === false) throw new Error(payload.error || "Falha ao importar SINAPI.");
+    const payload = await fetchForm("sinapi-import", form);
     const summary = payload.summary || {};
     sinapiLastImportHtml = sinapiImportSummaryHtml(mode, summary, payload.samples || [], payload.file || "");
     qs("sinapiImportResult").classList.remove("hidden");
@@ -4526,9 +4747,7 @@ async function uploadRawFile(endpoint, file) {
   if (!serverMode || !file) return "";
   const form = new FormData();
   form.append("file", file);
-  const response = await fetch(`${API_BASE}/${endpoint}`, { method: "POST", body: form });
-  const payload = await response.json();
-  if (!response.ok || payload.ok === false) throw new Error(payload.error || "Falha ao salvar arquivo importado.");
+  const payload = await fetchForm(endpoint, form);
   return payload.file || "";
 }
 
@@ -4658,7 +4877,7 @@ function openProposalGenerator(workBudgetId) {
   const models = (db.proposalModels || []).filter((model) => model.status !== "Inativo");
   const model = models[0] || {};
   const today = new Date().toISOString().slice(0, 10);
-  const validityDate = addDays(today, Number(model.validityDays || 15));
+  const validityDate = addDateStringDays(today, Number(model.validityDays || 15));
   const items = budgetItemsFor(budget.id, false);
   proposalGeneratorState = {
     budget,
@@ -4752,7 +4971,7 @@ function renderProposalGeneratorFields(model = {}) {
     const nextModel = byId("proposalModels", event.target.value) || {};
     proposalGeneratorState.modelId = nextModel.id || "";
     const today = proposalGeneratorState.date;
-    proposalGeneratorState.validityDate = addDays(today, Number(nextModel.validityDays || 15));
+    proposalGeneratorState.validityDate = addDateStringDays(today, Number(nextModel.validityDays || 15));
     renderProposalGeneratorFields(nextModel);
     updateProposalPreview();
   });
@@ -4974,7 +5193,7 @@ function textToHtml(text) {
   return svgText(text).replace(/\n/g, "<br>");
 }
 
-function addDays(date, days) {
+function addDateStringDays(date, days) {
   const next = new Date(`${date}T00:00:00Z`);
   next.setUTCDate(next.getUTCDate() + Number(days || 0));
   return next.toISOString().slice(0, 10);
@@ -5525,7 +5744,7 @@ async function importBackup() {
 }
 
 function renderMigration() {
-  const legacy = localStorage.getItem(STORE_KEY);
+  const legacy = safeLocalGet(STORE_KEY);
   let parsed = null;
   try {
     parsed = legacy ? JSON.parse(legacy) : null;
@@ -5555,7 +5774,7 @@ function renderMigration() {
       qs("migrationResult").innerHTML = `<h3>Registros importados</h3><pre>${svgText(JSON.stringify(result.imported, null, 2))}</pre><button id="clearLegacyBtn" class="danger" type="button">Remover localStorage antigo</button>`;
       qs("clearLegacyBtn").addEventListener("click", () => {
         if (!confirm("Remover os dados antigos do localStorage deste navegador?")) return;
-        localStorage.removeItem(STORE_KEY);
+        try { localStorage.removeItem(STORE_KEY); } catch { /* armazenamento indisponível */ }
         renderMigration();
       });
     } catch (error) {
@@ -5608,12 +5827,13 @@ function directAccessUser() {
 }
 
 function showLogin(message = "") {
-  if (AUTH_BYPASS_FOR_TESTS) {
+  if (AUTH_BYPASS_FOR_TESTS && !serverMode) {
     showApp(directAccessUser());
     return;
   }
   currentUser = null;
   clearAuthSession();
+  showLoginPanel("login");
   qs("loginError").textContent = message;
   qs("loginScreen").classList.remove("hidden");
   qs("appShell").classList.add("hidden");
@@ -5643,7 +5863,12 @@ async function handleLogin(event) {
         method: "POST",
         body: JSON.stringify({ username, password }),
       });
-      return showApp(payload.user);
+      authToken = payload.token || null;
+      writeAuthSession(payload.user);
+      await loadServerData();
+      showApp(payload.user);
+      if (payload.user.mustChangePassword) openChangePasswordDialog();
+      return;
     }
     return showLogin(`Servidor indisponível. Verifique a conexão com a API. (${serverStatus})`);
   } catch (error) {
@@ -5657,12 +5882,21 @@ function restoreSession() {
   setupFavoritesDialog();
   setupFavoritesHover();
   setupSessionWarning();
-  if (AUTH_BYPASS_FOR_TESTS) {
+  if (AUTH_BYPASS_FOR_TESTS && !serverMode) {
+    // Atalho de desenvolvimento: só vale sem API ativa; com servidor, o token é obrigatório.
     showApp(directAccessUser());
     return;
   }
   const session = readAuthSession();
-  const user = session ? db.users.find((item) => String(item.id) === String(session.userId) && item.status === "Ativo") : null;
+  if (serverMode && session && !session.token) {
+    // Sessão antiga sem token de API: força novo login para obter credencial válida.
+    clearAuthSession();
+    showLogin();
+    return;
+  }
+  const user = session
+    ? db.users.find((item) => String(item.id) === String(session.userId) && item.status === "Ativo") || session.user
+    : null;
   if (user) showApp(user);
   else showLogin();
 }
@@ -5675,7 +5909,7 @@ function favoritesStorageKey() {
 
 function loadFavorites() {
   try {
-    const raw = localStorage.getItem(favoritesStorageKey());
+    const raw = safeLocalGet(favoritesStorageKey());
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed.slice(0, 5) : [];
@@ -5683,7 +5917,7 @@ function loadFavorites() {
 }
 
 function persistFavorites(favs) {
-  localStorage.setItem(favoritesStorageKey(), JSON.stringify(favs.slice(0, 5)));
+  safeLocalSet(favoritesStorageKey(), JSON.stringify(favs.slice(0, 5)));
 }
 
 function moduleInitials(key) {
@@ -5895,7 +6129,7 @@ function getAuditLog() {
 }
 
 function saveAuditLog(entries) {
-  localStorage.setItem(AUDIT_LOG_KEY, JSON.stringify(entries.slice(-AUDIT_MAX_ENTRIES)));
+  safeLocalSet(AUDIT_LOG_KEY, JSON.stringify(entries.slice(-AUDIT_MAX_ENTRIES)));
 }
 
 function logAudit(action, module, detail = "") {
@@ -5964,7 +6198,7 @@ function logAccess(mod) {
   let hist = [];
   try { hist = JSON.parse(localStorage.getItem(key) || "[]"); } catch {}
   hist.push({ module: mod, label: moduleLabels[mod] || mod, ts: new Date().toISOString() });
-  localStorage.setItem(key, JSON.stringify(hist.slice(-10)));
+  safeLocalSet(key, JSON.stringify(hist.slice(-10)));
 }
 
 function getAccessHistory(userId) {
@@ -5975,7 +6209,9 @@ function renderMyProfile() {
   const hist = getAccessHistory(currentUser.id).slice().reverse();
   const blockedStatus = currentUser.blocked ? '<span style="color:var(--red);font-weight:700">Bloqueado</span>' : '<span style="color:var(--green)">Ativo</span>';
   qs("content").innerHTML = `
-    <section class="module-head"><div><h2>Meu Perfil</h2><p>${svgText(currentUser.fullName || currentUser.username)}</p></div></section>
+    <section class="module-head"><div><h2>Meu Perfil</h2><p>${svgText(currentUser.fullName || currentUser.username)}</p></div>
+      ${serverMode ? '<button class="secondary" id="openChangePwdBtn" type="button">Alterar senha</button>' : ""}
+    </section>
     <section class="profile-card">
       <dl class="profile-dl">
         <dt>Usuário</dt><dd>${svgText(currentUser.username)}</dd>
@@ -5990,6 +6226,7 @@ function renderMyProfile() {
       <tbody>${hist.map((h) => `<tr><td>${new Date(h.ts).toLocaleString("pt-BR")}</td><td>${svgText(h.label)}</td></tr>`).join("")}</tbody>
     </table></div>` : '<div class="empty">Nenhum acesso registrado ainda.</div>'}
   `;
+  document.getElementById("openChangePwdBtn")?.addEventListener("click", openChangePasswordDialog);
 }
 
 // Item 1: aviso de expiração de sessão
@@ -6037,8 +6274,118 @@ function setupSessionWarning() {
   });
 }
 
+// ── Força e redefinição de senha ────────────────────────────────────────────
+
+function passwordStrengthCheck(pw) {
+  return { length: pw.length >= 8, upper: /[A-Z]/.test(pw), special: /[\W_]/.test(pw) };
+}
+
+function passwordStrengthHtml(pw) {
+  if (!pw) return "";
+  const c = passwordStrengthCheck(pw);
+  const li = (ok, label) => `<li class="${ok ? "req-ok" : "req-fail"}">${ok ? "✓" : "✗"} ${label}</li>`;
+  return `<ul class="pwd-reqs">${li(c.length, "Mínimo 8 caracteres")}${li(c.upper, "Uma letra maiúscula")}${li(c.special, "Um caractere especial (!, @, #…)")}</ul>`;
+}
+
+function showLoginPanel(name) {
+  document.querySelectorAll(".login-panel").forEach((el) => el.classList.toggle("hidden", el.dataset.panel !== name));
+  if (name === "login") { qs("loginError").textContent = ""; qs("loginUser").focus(); }
+  if (name === "forgot") { qs("forgotMsg").textContent = ""; qs("forgotUser").focus(); }
+  if (name === "reset")  { qs("resetMsg").textContent = ""; qs("resetNewPwd").focus(); }
+}
+
+async function handleForgotPassword(event) {
+  event.preventDefault();
+  const username = qs("forgotUser").value.trim();
+  const btn = event.target.querySelector("button[type=submit]");
+  btn.disabled = true;
+  try {
+    await apiRequest("request-password-reset", { method: "POST", body: JSON.stringify({ username }) });
+    qs("forgotMsg").textContent = "Se o usuário existir e tiver e-mail cadastrado, enviamos um link de redefinição.";
+    qs("forgotMsg").className = "login-success";
+  } catch (error) {
+    qs("forgotMsg").textContent = error.message;
+    qs("forgotMsg").className = "login-error";
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function handleResetPassword(event) {
+  event.preventDefault();
+  const token = qs("resetToken").value;
+  const pw1   = qs("resetNewPwd").value;
+  const pw2   = qs("resetConfirmPwd").value;
+  if (pw1 !== pw2) { qs("resetMsg").textContent = "As senhas não conferem."; return; }
+  const chk = passwordStrengthCheck(pw1);
+  if (!chk.length || !chk.upper || !chk.special) { qs("resetMsg").textContent = "A senha não atende aos requisitos de segurança."; return; }
+  const btn = event.target.querySelector("button[type=submit]");
+  btn.disabled = true;
+  try {
+    await apiRequest("reset-password", { method: "POST", body: JSON.stringify({ token, newPassword: pw1 }) });
+    qs("resetMsg").textContent = "Senha redefinida com sucesso! Redirecionando para o login…";
+    qs("resetMsg").className = "login-success";
+    history.replaceState(null, "", location.pathname);
+    setTimeout(() => showLoginPanel("login"), 2000);
+  } catch (error) {
+    qs("resetMsg").textContent = error.message;
+    qs("resetMsg").className = "login-error";
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function handleChangePassword(event) {
+  event.preventDefault();
+  const form      = event.target;
+  const currentPw = form.querySelector('[name="currentPassword"]').value;
+  const newPw     = form.querySelector('[name="newPassword"]').value;
+  const confirmPw = form.querySelector('[name="confirmPassword"]').value;
+  const msgEl     = form.querySelector(".pwd-change-msg");
+  if (newPw !== confirmPw) { msgEl.textContent = "As senhas não conferem."; return; }
+  const chk = passwordStrengthCheck(newPw);
+  if (!chk.length || !chk.upper || !chk.special) { msgEl.textContent = "A senha não atende aos requisitos de segurança."; return; }
+  const btn = form.querySelector("button[type=submit]");
+  btn.disabled = true;
+  try {
+    await apiRequest("change-password", { method: "POST", body: JSON.stringify({ currentPassword: currentPw, newPassword: newPw }) });
+    msgEl.textContent = "Senha alterada com sucesso!";
+    msgEl.className = "pwd-change-msg login-success";
+    if (currentUser) currentUser.mustChangePassword = false;
+    const dialog = document.getElementById("changePasswordDialog");
+    if (dialog?.open) setTimeout(() => dialog.close(), 1500);
+  } catch (error) {
+    msgEl.textContent = error.message;
+    msgEl.className = "pwd-change-msg login-error";
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function openChangePasswordDialog() {
+  const dialog = document.getElementById("changePasswordDialog");
+  if (!dialog) return;
+  const form = document.getElementById("changePasswordForm");
+  form.reset();
+  form.querySelector(".pwd-change-msg").textContent = "";
+  document.getElementById("changePwdStrength").innerHTML = "";
+  dialog.showModal();
+}
+
 async function bootstrapApp() {
+  // Restaura o token salvo antes do bootstrap, para autenticar a carga inicial.
+  readAuthSession();
   await loadServerData();
+  // Detecta token de redefinição de senha na URL (#reset=TOKEN).
+  const hash = location.hash;
+  if (hash.startsWith("#reset=")) {
+    const token = decodeURIComponent(hash.slice(7));
+    qs("resetToken").value = token;
+    showLoginPanel("reset");
+    qs("loginScreen").classList.remove("hidden");
+    qs("appShell").classList.add("hidden");
+    return;
+  }
   restoreSession();
 }
 
@@ -6070,11 +6417,12 @@ qs("seedBtn").addEventListener("click", () => {
 qs("loginForm").addEventListener("submit", handleLogin);
 qs("logoutBtn").addEventListener("click", () => {
   logAudit("logout", "sistema", `Logout: ${currentUser?.username}`);
+  if (serverMode && authToken) apiRequest("logout", { method: "POST" }).catch(() => {});
   clearAuthSession();
   clearTimeout(sessionWarnTimer);
   clearInterval(sessionWarnIntervalId);
   currentModuleTracked = "";
-  if (AUTH_BYPASS_FOR_TESTS) restoreSession();
+  if (AUTH_BYPASS_FOR_TESTS && !serverMode) restoreSession();
   else showLogin();
 });
 qs("recordForm").addEventListener("submit", saveForm);
@@ -6090,5 +6438,26 @@ qs("printProposalPreview").addEventListener("click", () => {
 window.addEventListener("afterprint", () => document.body.classList.remove("printing-proposal"));
 qs("saveProposalDraft").addEventListener("click", () => saveGeneratedProposal("Rascunho"));
 qs("finalizeProposal").addEventListener("click", () => saveGeneratedProposal("Gerada"));
+
+// ── Redefinição e troca de senha ─────────────────────────────────────────────
+
+qs("forgotPasswordBtn").addEventListener("click", () => showLoginPanel("forgot"));
+qs("backToLoginBtn").addEventListener("click", () => showLoginPanel("login"));
+qs("backToLoginFromResetBtn").addEventListener("click", () => {
+  history.replaceState(null, "", location.pathname);
+  showLoginPanel("login");
+});
+
+qs("forgotForm").addEventListener("submit", handleForgotPassword);
+qs("resetForm").addEventListener("submit", handleResetPassword);
+qs("changePasswordForm").addEventListener("submit", handleChangePassword);
+
+// Indicador de força em tempo real nos campos de nova senha.
+["resetNewPwd", "changePwdNew"].forEach((id) => {
+  const targetId = id === "resetNewPwd" ? "resetPwdStrength" : "changePwdStrength";
+  document.getElementById(id)?.addEventListener("input", (e) => {
+    document.getElementById(targetId).innerHTML = passwordStrengthHtml(e.target.value);
+  });
+});
 
 bootstrapApp();

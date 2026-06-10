@@ -109,6 +109,59 @@ button:disabled {
   font-size: 13px;
 }
 
+.login-success {
+  min-height: 20px;
+  margin: 0;
+  color: var(--green, #16a34a);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.pwd-strength-box {
+  margin: -6px 0 0;
+}
+
+.pwd-reqs {
+  margin: 0;
+  padding: 6px 0 0 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.pwd-reqs li {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.pwd-reqs .req-ok  { color: var(--green, #16a34a); }
+.pwd-reqs .req-fail { color: var(--red); }
+
+.change-pwd-dialog {
+  width: min(420px, 92vw);
+  border: none;
+  border-radius: 8px;
+  padding: 0;
+  box-shadow: 0 24px 64px rgba(0,0,0,0.28);
+}
+
+.change-pwd-dialog form {
+  display: grid;
+  gap: 14px;
+  padding: 22px;
+}
+
+.change-pwd-dialog .dialog-head {
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.change-pwd-dialog menu {
+  margin: 0;
+  padding: 0;
+}
+
 .app-shell {
   min-height: 100vh;
 }

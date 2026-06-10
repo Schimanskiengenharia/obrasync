@@ -12,7 +12,8 @@
   </head>
   <body>
     <section id="loginScreen" class="login-screen">
-      <form id="loginForm" class="login-card">
+      <!-- Painel 1: login normal -->
+      <form id="loginForm" class="login-card login-panel" data-panel="login">
         <div class="brand login-brand">
           <div class="brand-mark">OS</div>
           <div>
@@ -30,9 +31,68 @@
         </label>
         <p id="loginError" class="login-error" role="alert"></p>
         <button class="primary" type="submit">Entrar</button>
+        <button id="forgotPasswordBtn" class="secondary" type="button">Esqueci minha senha</button>
         <p class="login-help">Acesso validado pelo servidor MariaDB/MySQL.</p>
       </form>
+
+      <!-- Painel 2: solicitar redefinição por e-mail -->
+      <form id="forgotForm" class="login-card login-panel hidden" data-panel="forgot">
+        <div class="brand login-brand">
+          <div class="brand-mark">OS</div>
+          <div><strong>ObraSync</strong><span>Redefinir senha</span></div>
+        </div>
+        <p class="login-help">Informe seu usuário ou e-mail. Se cadastrado, enviaremos um link de redefinição válido por 2 horas.</p>
+        <label>
+          Usuário ou e-mail
+          <input id="forgotUser" autocomplete="username" required />
+        </label>
+        <p id="forgotMsg" class="login-error" role="alert"></p>
+        <button class="primary" type="submit">Enviar link</button>
+        <button id="backToLoginBtn" class="secondary" type="button">Voltar ao login</button>
+      </form>
+
+      <!-- Painel 3: redefinir senha via token do e-mail -->
+      <form id="resetForm" class="login-card login-panel hidden" data-panel="reset">
+        <div class="brand login-brand">
+          <div class="brand-mark">OS</div>
+          <div><strong>ObraSync</strong><span>Nova senha</span></div>
+        </div>
+        <input id="resetToken" type="hidden" />
+        <label>
+          Nova senha
+          <input id="resetNewPwd" type="password" autocomplete="new-password" required />
+        </label>
+        <div id="resetPwdStrength" class="pwd-strength-box" aria-live="polite"></div>
+        <label>
+          Confirmar nova senha
+          <input id="resetConfirmPwd" type="password" autocomplete="new-password" required />
+        </label>
+        <p id="resetMsg" class="login-error" role="alert"></p>
+        <button class="primary" type="submit">Redefinir senha</button>
+        <button id="backToLoginFromResetBtn" class="secondary" type="button">Voltar ao login</button>
+      </form>
     </section>
+
+    <!-- Diálogo de troca de senha obrigatória (mustChangePassword) -->
+    <dialog id="changePasswordDialog" class="change-pwd-dialog">
+      <form id="changePasswordForm">
+        <div class="dialog-head">
+          <h2>Altere sua senha</h2>
+        </div>
+        <p class="login-help" style="margin-bottom:12px">Seu acesso requer a definição de uma nova senha segura antes de continuar.</p>
+        <label>Senha atual<input name="currentPassword" type="password" autocomplete="current-password" required /></label>
+        <label>
+          Nova senha
+          <input name="newPassword" id="changePwdNew" type="password" autocomplete="new-password" required />
+        </label>
+        <div id="changePwdStrength" class="pwd-strength-box" aria-live="polite"></div>
+        <label>Confirmar nova senha<input name="confirmPassword" type="password" autocomplete="new-password" required /></label>
+        <p class="pwd-change-msg login-error" role="alert"></p>
+        <menu>
+          <button class="primary" type="submit">Salvar senha</button>
+        </menu>
+      </form>
+    </dialog>
 
     <div id="appShell" class="app-shell hidden">
       <aside id="sidebar" class="sidebar">

@@ -11,10 +11,12 @@ CREATE TABLE IF NOT EXISTS system_users (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   username VARCHAR(80) NOT NULL UNIQUE,
   fullName VARCHAR(160) NOT NULL,
+  email VARCHAR(160) NOT NULL DEFAULT '',
   password VARCHAR(255) NOT NULL,
   role ENUM('admin', 'financeiro', 'comercial', 'engenharia', 'gestor_obra', 'equipe_campo', 'cliente_obra', 'fornecedor_terceiro', 'consulta', 'gerente', 'operador', 'visualizador') NOT NULL DEFAULT 'financeiro',
   status VARCHAR(30) NOT NULL DEFAULT 'Ativo',
   blocked TINYINT(1) NOT NULL DEFAULT 0,
+  mustChangePassword TINYINT(1) NOT NULL DEFAULT 0,
   createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updatedAt TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
@@ -1310,3 +1312,26 @@ JOIN proposal_action_types pat ON pat.areaId = pa.id AND pat.name = 'Projetos'
 JOIN proposal_service_subtypes pst ON pst.actionTypeId = pat.id AND pst.name = 'Instalações elétricas de baixa tensão'
 WHERE pa.name = 'Engenharia Elétrica'
   AND NOT EXISTS (SELECT 1 FROM proposal_models WHERE name = 'Projeto elétrico comercial');
+
+-- Sessões de autenticação da API (token Bearer emitido no login).
+CREATE TABLE IF NOT EXISTS api_sessions (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  userId BIGINT UNSIGNED NOT NULL,
+  tokenHash CHAR(64) NOT NULL,
+  createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  lastActivity TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_api_sessions_token (tokenHash),
+  KEY idx_api_sessions_user (userId)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Tokens de redefinição de senha via email (expiram em 2 h, uso único).
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+  id         BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  userId     BIGINT UNSIGNED NOT NULL,
+  tokenHash  CHAR(64)        NOT NULL,
+  expiresAt  TIMESTAMP       NOT NULL,
+  usedAt     TIMESTAMP       NULL DEFAULT NULL,
+  createdAt  TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_prt_token (tokenHash),
+  KEY        idx_prt_user  (userId)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

@@ -12,29 +12,56 @@ $resources = resource_map();
 
 try {
     $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
-    $module = strtolower((string) ($_GET['module'] ?? ''));
-    if (in_array($module, ['agenda', 'agenda_eventos', 'agenda-eventos'], true)) {
-        handle_agenda_module($pdo, $method, $_GET);
-    }
     $segments = route_segments();
     $resource = $segments[0] ?? 'bootstrap';
     $id = $segments[1] ?? null;
-
-    if ($resource === '' || $resource === 'bootstrap') {
-        require_method($method, ['GET']);
-        respond(['ok' => true, 'data' => bootstrap_data($pdo, $resources)]);
-    }
-
-    if ($resource === 'backup') {
-        handle_backup($pdo, $resources, $config, $method, $segments);
-    }
 
     if ($resource === 'login') {
         require_method($method, ['POST']);
         handle_login($pdo, read_json());
     }
 
+    // Rotas públicas de redefinição de senha (não exigem token).
+    if ($resource === 'request-password-reset') {
+        require_method($method, ['POST']);
+        handle_request_password_reset($pdo, $config, read_json());
+    }
+    if ($resource === 'reset-password') {
+        require_method($method, ['POST']);
+        handle_reset_password($pdo, read_json());
+    }
+
+    // Toda rota além das acima exige sessão válida emitida pelo próprio login.
+    $authUser = authenticate_request($pdo, $config);
+
+    $module = strtolower((string) ($_GET['module'] ?? ''));
+    if (in_array($module, ['agenda', 'agenda_eventos', 'agenda-eventos'], true)) {
+        authorize_request($pdo, $authUser, 'agenda', action_for_method($method));
+        handle_agenda_module($pdo, $method, $_GET);
+    }
+
+    if ($resource === '' || $resource === 'bootstrap') {
+        require_method($method, ['GET']);
+        respond(['ok' => true, 'data' => bootstrap_data($pdo, $resources, $authUser)]);
+    }
+
+    if ($resource === 'logout') {
+        require_method($method, ['POST']);
+        handle_logout($pdo);
+    }
+
+    if ($resource === 'change-password') {
+        require_method($method, ['POST']);
+        handle_change_password($pdo, $authUser, read_json());
+    }
+
+    if ($resource === 'backup') {
+        require_admin($authUser);
+        handle_backup($pdo, $resources, $config, $method, $segments);
+    }
+
     if ($resource === 'migrate') {
+        require_admin($authUser);
         require_method($method, ['POST']);
         $payload = read_json();
         respond(['ok' => true, 'imported' => migrate_payload($pdo, $resources, $payload)]);
@@ -42,16 +69,19 @@ try {
 
     if ($resource === 'sinapi-upload') {
         require_method($method, ['POST']);
+        authorize_request($pdo, $authUser, 'sinapiSettings', 'edit');
         handle_safe_file_upload($config, 'sinapi', ['csv','txt','xlsx'], ['text/plain','text/csv','application/csv','application/vnd.ms-excel','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','application/zip','application/octet-stream']);
     }
 
     if ($resource === 'sinapi-import') {
         require_method($method, ['POST']);
+        authorize_request($pdo, $authUser, 'sinapiSettings', 'edit');
         handle_sinapi_import($pdo, $resources, $config);
     }
 
     if ($resource === 'project-upload') {
         require_method($method, ['POST']);
+        authorize_request($pdo, $authUser, 'projectSchedule', 'edit');
         handle_safe_file_upload($config, 'project', ['xml'], ['text/xml','application/xml','application/octet-stream']);
     }
 
@@ -59,6 +89,8 @@ try {
     if (!$key) {
         fail('Recurso não encontrado.', 404);
     }
+
+    authorize_request($pdo, $authUser, $key, action_for_method($method));
 
     if ($key === 'fiscalDocuments' && $id && isset($segments[2]) && $method === 'GET') {
         handle_fiscal_download($pdo, (int) $id, $segments[2]);
@@ -643,7 +675,7 @@ function resource_map(): array
         'taxDocuments' => r('tax_documents', ['documentos-fiscais'], ['document','date','type','clientId','supplierId','projectId','amount','status'], ['document']),
         'taxes' => r('taxes', ['impostos'], ['name','competenceDate','baseAmount','rate','amount','projectId','status'], ['name','competenceDate']),
         'companySettings' => r('company_settings', ['dados-empresa'], ['name','document','zipCode','address','email','phone','city','status'], ['document','name']),
-        'users' => r('system_users', ['usuarios','usuários'], ['username','fullName','password','role','status','blocked'], ['username'], ['password']),
+        'users' => r('system_users', ['usuarios','usuários'], ['username','fullName','email','password','role','status','blocked','mustChangePassword'], ['username'], ['password']),
         'permissions' => r('role_permissions', ['permissoes','permissões'], ['role','module','canView','canCreate','canEdit','canDelete','canExport','canApprove','canAttach','status'], ['role','module']),
         'systemVersion' => r('sistema_versoes', ['sistema-versoes','versoes-sistema'], ['versao','data_versao','descricao','alteracoes'], ['versao']),
         'reportModels' => r('modelos_relatorio', ['modelos-relatorios','modelos-relatórios'], ['name','workTypeId','serviceSubtypeId','body','variables','status'], ['name']),
@@ -741,7 +773,15 @@ function clean_payload(array $meta, array $payload): array
     foreach ($meta['fields'] as $field) {
         if (array_key_exists($field, $payload)) {
             $value = normalize_value($payload[$field]);
-            $clean[$field] = $field === 'password' && $value ? password_hash((string) $value, PASSWORD_DEFAULT) : $value;
+            if ($field === 'password' && $value) {
+                $pwErr = validate_password_strength((string) $value);
+                if ($pwErr) {
+                    fail($pwErr, 400);
+                }
+                $clean[$field] = password_hash((string) $value, PASSWORD_DEFAULT);
+            } else {
+                $clean[$field] = $value;
+            }
         }
     }
     return $clean;
@@ -916,10 +956,25 @@ function filter_data_by_columns(PDO $pdo, array $meta, array $data): array
     return array_filter($data, fn ($field) => in_array($field, $columns, true), ARRAY_FILTER_USE_KEY);
 }
 
-function bootstrap_data(PDO $pdo, array $resources): array
+function bootstrap_data(PDO $pdo, array $resources, ?array $authUser = null): array
 {
+    $role = (string) ($authUser['role'] ?? 'admin');
     $data = [];
     foreach ($resources as $key => $meta) {
+        if (!role_can($pdo, $role, permission_module_key($key), 'view')) {
+            // Todos os perfis recebem a lista básica de usuários para exibir vínculos por nome.
+            if ($key === 'users') {
+                try {
+                    $stmt = $pdo->query('SELECT id, username, fullName, role, status FROM system_users ORDER BY id DESC');
+                    $data[$key] = $stmt->fetchAll();
+                } catch (PDOException $error) {
+                    $data[$key] = [];
+                }
+                continue;
+            }
+            $data[$key] = [];
+            continue;
+        }
         try {
             $stmt = $pdo->query('SELECT * FROM `' . $meta['table'] . '` ORDER BY id DESC');
             $data[$key] = array_map(fn ($record) => sanitize_record($meta, $record), $stmt->fetchAll());
@@ -940,6 +995,206 @@ function sanitize_record(array $meta, array $record): array
         unset($record[$field]);
     }
     return $record;
+}
+
+// Tempo máximo de inatividade da sessão: igual ao AUTH_TIMEOUT_MS do frontend.
+const AUTH_IDLE_SECONDS = 1800;
+
+function ensure_api_sessions_table(PDO $pdo): void
+{
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    $pdo->exec(
+        'CREATE TABLE IF NOT EXISTS api_sessions (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            userId BIGINT UNSIGNED NOT NULL,
+            tokenHash CHAR(64) NOT NULL,
+            createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            lastActivity TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uk_api_sessions_token (tokenHash),
+            KEY idx_api_sessions_user (userId)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+    );
+    $done = true;
+}
+
+function bearer_token(): string
+{
+    $header = (string) ($_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '');
+    if ($header === '' && function_exists('apache_request_headers')) {
+        $headers = array_change_key_case(apache_request_headers() ?: [], CASE_LOWER);
+        $header = (string) ($headers['authorization'] ?? '');
+    }
+    if (preg_match('/^Bearer\s+(\S+)$/i', $header, $match)) {
+        return $match[1];
+    }
+    $token = trim((string) ($_SERVER['HTTP_X_AUTH_TOKEN'] ?? ''));
+    if ($token !== '') {
+        return $token;
+    }
+    // Fallback para downloads abertos por navegação direta (links de PDF/XML),
+    // onde o navegador não envia headers personalizados.
+    return trim((string) ($_GET['token'] ?? ''));
+}
+
+function authenticate_request(PDO $pdo, array $config): array
+{
+    $auth = $config['auth'] ?? [];
+    $remote = $_SERVER['REMOTE_ADDR'] ?? '';
+    if (!empty($auth['dev_bypass']) && in_array($remote, ['127.0.0.1', '::1'], true)) {
+        // Atalho exclusivo de desenvolvimento local; nunca habilite em produção.
+        return ['id' => 0, 'username' => 'dev', 'role' => 'admin'];
+    }
+
+    $token = bearer_token();
+    if ($token === '') {
+        fail('Não autenticado. Faça login para acessar a API.', 401);
+    }
+    ensure_api_sessions_table($pdo);
+    $stmt = $pdo->prepare(
+        'SELECT s.id AS sessionId, s.lastActivity, u.id, u.username, u.role, u.status, u.blocked
+           FROM api_sessions s
+           JOIN system_users u ON u.id = s.userId
+          WHERE s.tokenHash = ?
+          LIMIT 1'
+    );
+    $stmt->execute([hash('sha256', $token)]);
+    $session = $stmt->fetch();
+    if (!$session) {
+        fail('Sessão inválida. Faça login novamente.', 401);
+    }
+    if (strtotime((string) $session['lastActivity']) < time() - AUTH_IDLE_SECONDS) {
+        $pdo->prepare('DELETE FROM api_sessions WHERE id = ?')->execute([$session['sessionId']]);
+        fail('Sessão expirada por inatividade. Faça login novamente.', 401);
+    }
+    if (($session['status'] ?? '') !== 'Ativo' || !empty($session['blocked'])) {
+        fail('Usuário inativo ou bloqueado.', 403);
+    }
+    $pdo->prepare('UPDATE api_sessions SET lastActivity = CURRENT_TIMESTAMP WHERE id = ?')->execute([$session['sessionId']]);
+    return [
+        'id' => (int) $session['id'],
+        'username' => (string) $session['username'],
+        'role' => (string) ($session['role'] ?? ''),
+    ];
+}
+
+function handle_logout(PDO $pdo): never
+{
+    $token = bearer_token();
+    if ($token !== '') {
+        ensure_api_sessions_table($pdo);
+        $pdo->prepare('DELETE FROM api_sessions WHERE tokenHash = ?')->execute([hash('sha256', $token)]);
+    }
+    respond(['ok' => true]);
+}
+
+function action_for_method(string $method): string
+{
+    return match (strtoupper($method)) {
+        'GET', 'HEAD' => 'view',
+        'POST' => 'create',
+        'PUT', 'PATCH' => 'edit',
+        'DELETE' => 'delete',
+        default => 'edit',
+    };
+}
+
+// Sub-recursos herdam a permissão do módulo principal correspondente do frontend.
+function permission_module_key(string $key): string
+{
+    return [
+        'agendaEvents' => 'agenda',
+        'kanbanBoards' => 'kanban',
+        'kanbanColumns' => 'kanban',
+        'kanbanCards' => 'kanban',
+        'proposalItems' => 'proposals',
+        'proposalFiles' => 'proposals',
+        'proposalStatusHistory' => 'proposals',
+        'proposalBudgetLinks' => 'proposals',
+        'proposalVariables' => 'proposals',
+        'workBudgetItems' => 'workBudgets',
+        'sinapiCompositionItems' => 'sinapiCompositions',
+        'checklistItems' => 'checklists',
+        'customFieldValues' => 'customFields',
+    ][$key] ?? $key;
+}
+
+function require_admin(?array $user): void
+{
+    if (!$user || ($user['role'] ?? '') !== 'admin') {
+        fail('Apenas administradores podem executar esta operação.', 403);
+    }
+}
+
+function authorize_request(PDO $pdo, ?array $user, string $module, string $action): void
+{
+    if (!$user) {
+        fail('Não autenticado. Faça login para acessar a API.', 401);
+    }
+    if (!role_can($pdo, (string) ($user['role'] ?? ''), permission_module_key($module), $action)) {
+        fail('Permissão negada para este módulo.', 403);
+    }
+}
+
+function role_can(PDO $pdo, string $role, string $module, string $action): bool
+{
+    if ($role === 'admin') {
+        return true;
+    }
+    if ($role === '') {
+        return false;
+    }
+    $column = ['view' => 'canView', 'create' => 'canCreate', 'edit' => 'canEdit', 'delete' => 'canDelete'][$action] ?? 'canEdit';
+    try {
+        $stmt = $pdo->prepare("SELECT `{$column}` AS allowed FROM role_permissions WHERE `role` = ? AND module = ? AND status = 'Ativo' LIMIT 1");
+        $stmt->execute([$role, $module]);
+        $row = $stmt->fetch();
+        if ($row) {
+            return in_array((string) $row['allowed'], ['Sim', '1', 'true'], true);
+        }
+    } catch (PDOException $error) {
+        // Tabela ausente em instalações antigas: usa os padrões abaixo.
+    }
+    if ($role === 'gerente') {
+        return !in_array($module, ['users', 'permissions'], true);
+    }
+    if ($action === 'view') {
+        $allowed = default_role_view_modules()[$role] ?? [];
+        return $allowed === '*' || in_array($module, (array) $allowed, true);
+    }
+    $allowed = default_role_edit_modules()[$role] ?? [];
+    return $allowed === '*' || in_array($module, (array) $allowed, true);
+}
+
+// Espelha roleModules do app.js (visualização por perfil quando não há linha em role_permissions).
+function default_role_view_modules(): array
+{
+    return [
+        'financeiro' => ['dashboard', 'clients', 'suppliers', 'categories', 'costCenters', 'bankAccounts', 'projects', 'projectSchedule', 'agenda', 'kanban', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'sinapiLabor', 'sinapiFamilies', 'sinapiMaintenances', 'sinapiSettings', 'ownCompositions', 'quotes', 'abcCurve', 'fiscalDocuments', 'receivable', 'payable', 'cashMoves', 'cashFlow', 'reconciliation', 'proposals', 'sales', 'chartAccounts', 'journalEntries', 'dre', 'taxDocuments', 'taxes', 'reports', 'reportFinancial', 'reportClient', 'reportSupplier', 'reportCostCenter', 'reportProject', 'exports', 'systemVersion'],
+        'comercial' => ['dashboard', 'clients', 'projects', 'projectSchedule', 'agenda', 'kanban', 'workBudgets', 'abcCurve', 'budgets', 'proposals', 'proposalModels', 'proposalAreas', 'proposalActionTypes', 'proposalServiceSubtypes', 'sales', 'reportClient', 'systemVersion'],
+        'engenharia' => ['dashboard', 'projects', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban', 'projectNotifications', 'projectTrackingLinks', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'sinapiLabor', 'sinapiFamilies', 'sinapiMaintenances', 'ownCompositions', 'quotes', 'abcCurve', 'purchaseOrders', 'technicalReports', 'projectReport', 'proposals', 'reportProject', 'systemVersion'],
+        'gestor_obra' => ['dashboard', 'projects', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban', 'projectNotifications', 'projectTrackingLinks', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'sinapiLabor', 'sinapiFamilies', 'sinapiMaintenances', 'ownCompositions', 'quotes', 'abcCurve', 'purchaseOrders', 'technicalReports', 'projectReport', 'proposals', 'reportProject', 'systemVersion'],
+        'equipe_campo' => ['dashboard', 'projectReport', 'systemVersion'],
+        'cliente_obra' => ['dashboard', 'projectReport', 'projectSchedule', 'technicalReports', 'systemVersion'],
+        'fornecedor_terceiro' => ['dashboard', 'systemVersion'],
+        'consulta' => ['dashboard', 'projectReport', 'cashFlow', 'dre', 'reports', 'reportFinancial', 'reportClient', 'reportSupplier', 'reportCostCenter', 'reportProject', 'exports'],
+        'operador' => ['dashboard', 'clients', 'suppliers', 'products', 'services', 'categories', 'costCenters', 'bankAccounts', 'projects', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'ownCompositions', 'quotes', 'abcCurve', 'fiscalDocuments', 'receivable', 'payable', 'cashMoves', 'cashFlow', 'reconciliation', 'budgets', 'proposals', 'sales', 'purchaseOrders', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban', 'projectReport', 'reports', 'reportFinancial', 'reportClient', 'reportSupplier', 'reportCostCenter', 'reportProject', 'myProfile'],
+        'visualizador' => '*',
+    ];
+}
+
+// Espelha editableByRole de canEditModule() do app.js (mutação por perfil sem linha em role_permissions).
+function default_role_edit_modules(): array
+{
+    return [
+        'financeiro' => ['fiscalDocuments', 'receivable', 'payable', 'cashMoves', 'cashFlow', 'reconciliation', 'categories', 'costCenters', 'bankAccounts', 'chartAccounts', 'journalEntries', 'taxDocuments', 'taxes', 'exports', 'projectSchedule', 'agenda', 'kanban', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'sinapiLabor', 'sinapiFamilies', 'sinapiMaintenances', 'sinapiSettings', 'quotes', 'sales'],
+        'comercial' => ['clients', 'budgets', 'proposals', 'agenda', 'kanban'],
+        'engenharia' => ['projects', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban', 'projectNotifications', 'projectTrackingLinks', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'sinapiLabor', 'sinapiFamilies', 'sinapiMaintenances', 'ownCompositions', 'quotes', 'purchaseOrders', 'technicalReports'],
+        'gestor_obra' => ['projects', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban', 'projectNotifications', 'projectTrackingLinks', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'sinapiLabor', 'sinapiFamilies', 'sinapiMaintenances', 'ownCompositions', 'quotes', 'purchaseOrders', 'technicalReports'],
+        'operador' => ['clients', 'suppliers', 'products', 'services', 'categories', 'costCenters', 'bankAccounts', 'projects', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'ownCompositions', 'quotes', 'fiscalDocuments', 'receivable', 'payable', 'cashMoves', 'reconciliation', 'budgets', 'proposals', 'sales', 'purchaseOrders', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban'],
+    ];
 }
 
 function handle_login(PDO $pdo, array $payload): never
@@ -969,7 +1224,247 @@ function handle_login(PDO $pdo, array $payload): never
         $update->execute([$hash, $user['id']]);
     }
     unset($user['password']);
-    respond(['ok' => true, 'user' => $user]);
+    $user['mustChangePassword'] = !empty($user['mustChangePassword']);
+
+    ensure_api_sessions_table($pdo);
+    $pdo->prepare('DELETE FROM api_sessions WHERE lastActivity < (NOW() - INTERVAL ' . AUTH_IDLE_SECONDS . ' SECOND)')->execute();
+    $token = bin2hex(random_bytes(32));
+    $pdo->prepare('INSERT INTO api_sessions (userId, tokenHash) VALUES (?, ?)')
+        ->execute([$user['id'], hash('sha256', $token)]);
+
+    respond(['ok' => true, 'user' => $user, 'token' => $token, 'idleTimeoutMs' => AUTH_IDLE_SECONDS * 1000]);
+}
+
+// ── Força e redefinição de senha ─────────────────────────────────────────────
+
+function validate_password_strength(string $pw): ?string
+{
+    if (mb_strlen($pw) < 8) {
+        return 'A senha deve ter pelo menos 8 caracteres.';
+    }
+    if (!preg_match('/[A-Z]/', $pw)) {
+        return 'A senha deve conter pelo menos uma letra maiúscula.';
+    }
+    if (!preg_match('/[\W_]/', $pw)) {
+        return 'A senha deve conter pelo menos um caractere especial (@, !, #, %, etc.).';
+    }
+    return null;
+}
+
+function ensure_password_reset_table(PDO $pdo): void
+{
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    $pdo->exec(
+        'CREATE TABLE IF NOT EXISTS password_reset_tokens (
+            id        BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            userId    BIGINT UNSIGNED NOT NULL,
+            tokenHash CHAR(64)        NOT NULL,
+            expiresAt TIMESTAMP       NOT NULL,
+            usedAt    TIMESTAMP       NULL DEFAULT NULL,
+            createdAt TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uk_prt_token (tokenHash),
+            KEY        idx_prt_user  (userId)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+    );
+    $done = true;
+}
+
+function reset_url(array $config, string $token): string
+{
+    $base = rtrim((string) ($config['mail']['app_url'] ?? 'https://schimanskiengenharia.com.br/financeiro'), '/');
+    return $base . '/#reset=' . urlencode($token);
+}
+
+function handle_request_password_reset(PDO $pdo, array $config, array $payload): never
+{
+    $identifier = trim((string) ($payload['username'] ?? ''));
+    if ($identifier === '') {
+        fail('Informe o usuário ou e-mail cadastrado.', 400);
+    }
+    // Não revelamos se o usuário existe; resposta idêntica em todos os casos.
+    $stmt = $pdo->prepare(
+        "SELECT id, username, email FROM system_users
+          WHERE (username = ? OR (email != '' AND email = ?)) AND status = 'Ativo' AND blocked = 0
+          LIMIT 1"
+    );
+    $stmt->execute([$identifier, $identifier]);
+    $user = $stmt->fetch();
+
+    if ($user && (string) ($user['email'] ?? '') !== '') {
+        ensure_password_reset_table($pdo);
+        $pdo->prepare('DELETE FROM password_reset_tokens WHERE userId = ?')->execute([$user['id']]);
+        $token = bin2hex(random_bytes(32));
+        $pdo->prepare('INSERT INTO password_reset_tokens (userId, tokenHash, expiresAt) VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 2 HOUR))')
+            ->execute([$user['id'], hash('sha256', $token)]);
+        $sent = send_reset_email($config, (string) $user['email'], (string) $user['username'], $token);
+        if (!$sent && !empty($config['mail']['log_reset_url'])) {
+            error_log('[ObraSync] Reset URL para ' . $user['username'] . ': ' . reset_url($config, $token));
+        }
+    }
+
+    respond(['ok' => true, 'message' => 'Se o usuário existir e tiver e-mail cadastrado, um link de redefinição foi enviado.']);
+}
+
+function handle_reset_password(PDO $pdo, array $payload): never
+{
+    $token       = trim((string) ($payload['token'] ?? ''));
+    $newPassword = (string) ($payload['newPassword'] ?? '');
+    if ($token === '') {
+        fail('Token de redefinição inválido.', 400);
+    }
+    $pwErr = validate_password_strength($newPassword);
+    if ($pwErr) {
+        fail($pwErr, 400);
+    }
+    ensure_password_reset_table($pdo);
+    $stmt = $pdo->prepare('SELECT id, userId, expiresAt, usedAt FROM password_reset_tokens WHERE tokenHash = ? LIMIT 1');
+    $stmt->execute([hash('sha256', $token)]);
+    $row = $stmt->fetch();
+    if (!$row || $row['usedAt'] !== null) {
+        fail('Token inválido ou já utilizado. Solicite uma nova redefinição.', 400);
+    }
+    if (strtotime((string) $row['expiresAt']) < time()) {
+        $pdo->prepare('DELETE FROM password_reset_tokens WHERE id = ?')->execute([$row['id']]);
+        fail('Token expirado. Solicite uma nova redefinição de senha.', 400);
+    }
+    $hash = password_hash($newPassword, PASSWORD_DEFAULT);
+    $pdo->prepare('UPDATE system_users SET password = ?, mustChangePassword = 0 WHERE id = ?')
+        ->execute([$hash, $row['userId']]);
+    $pdo->prepare('UPDATE password_reset_tokens SET usedAt = NOW() WHERE id = ?')
+        ->execute([$row['id']]);
+    respond(['ok' => true, 'message' => 'Senha redefinida com sucesso. Faça login.']);
+}
+
+function handle_change_password(PDO $pdo, array $user, array $payload): never
+{
+    $currentPassword = (string) ($payload['currentPassword'] ?? '');
+    $newPassword     = (string) ($payload['newPassword'] ?? '');
+    $pwErr = validate_password_strength($newPassword);
+    if ($pwErr) {
+        fail($pwErr, 400);
+    }
+    $stmt = $pdo->prepare('SELECT password FROM system_users WHERE id = ? LIMIT 1');
+    $stmt->execute([$user['id']]);
+    $row = $stmt->fetch();
+    if (!$row) {
+        fail('Usuário não encontrado.', 404);
+    }
+    $stored = (string) ($row['password'] ?? '');
+    if (!password_verify($currentPassword, $stored) && !hash_equals($stored, $currentPassword)) {
+        fail('Senha atual incorreta.', 400);
+    }
+    $hash = password_hash($newPassword, PASSWORD_DEFAULT);
+    $pdo->prepare('UPDATE system_users SET password = ?, mustChangePassword = 0 WHERE id = ?')
+        ->execute([$hash, $user['id']]);
+    respond(['ok' => true, 'message' => 'Senha alterada com sucesso.']);
+}
+
+function send_reset_email(array $config, string $email, string $username, string $token): bool
+{
+    if ($email === '') {
+        return false;
+    }
+    $mail     = $config['mail'] ?? [];
+    $from     = (string) ($mail['from_email'] ?? 'noreply@schimanskiengenharia.com.br');
+    $fromName = (string) ($mail['from_name'] ?? 'ObraSync');
+    $url      = reset_url($config, $token);
+    $subject  = 'Redefinição de senha — ObraSync';
+    $safeUser = htmlspecialchars($username, ENT_QUOTES, 'UTF-8');
+    $safeUrl  = htmlspecialchars($url, ENT_QUOTES, 'UTF-8');
+    $text     = "Olá, {$username}!\n\nRecebemos uma solicitação de redefinição de senha para sua conta no ObraSync.\n\nClique no link abaixo (válido por 2 horas):\n{$url}\n\nSe não foi você, ignore este e-mail.";
+    $html     = "<p>Olá, <strong>{$safeUser}</strong>!</p>"
+              . "<p>Recebemos uma solicitação de redefinição de senha para sua conta no <strong>ObraSync</strong>.</p>"
+              . "<p><a href=\"{$safeUrl}\" style=\"background:#185FA5;color:#fff;padding:10px 20px;border-radius:5px;text-decoration:none\">Redefinir minha senha</a></p>"
+              . "<p style=\"color:#666;font-size:13px\">Link válido por 2 horas. Se não foi você, ignore este e-mail.</p>";
+
+    $smtpHost = (string) ($mail['smtp_host'] ?? '');
+    if ($smtpHost !== '') {
+        return smtp_send_mail($mail, $from, $fromName, $email, $subject, $html, $text);
+    }
+    $headers = "From: {$fromName} <{$from}>\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=utf-8";
+    return (bool) @mail($email, $subject, $html, $headers);
+}
+
+function smtp_send_mail(array $mail, string $from, string $fromName, string $to, string $subject, string $html, string $text): bool
+{
+    $host = (string) ($mail['smtp_host'] ?? '');
+    $port = (int) ($mail['smtp_port'] ?? 587);
+    $user = (string) ($mail['smtp_user'] ?? '');
+    $pass = (string) ($mail['smtp_pass'] ?? '');
+    $tls  = !empty($mail['smtp_tls']);
+
+    $prefix  = ($port === 465) ? 'ssl://' : '';
+    $context = stream_context_create(['ssl' => ['verify_peer' => true, 'verify_peer_name' => true, 'allow_self_signed' => false]]);
+    $fp      = @stream_socket_client("{$prefix}{$host}:{$port}", $errno, $errstr, 15, STREAM_CLIENT_CONNECT, $context);
+    if (!$fp) {
+        return false;
+    }
+    stream_set_timeout($fp, 10);
+
+    $read = static function () use ($fp): string {
+        $buf = '';
+        while ($line = fgets($fp, 512)) {
+            $buf .= $line;
+            if (isset($line[3]) && $line[3] === ' ') {
+                break;
+            }
+        }
+        return $buf;
+    };
+    $cmd = static function (string $c) use ($fp, $read): string {
+        fwrite($fp, $c . "\r\n");
+        return $read();
+    };
+    $ok = static function (string $resp, int $code): bool {
+        return strncmp(ltrim($resp), (string) $code, 3) === 0;
+    };
+
+    if (!$ok($read(), 220)) {
+        fclose($fp);
+        return false;
+    }
+    $localhost = (string) (gethostname() ?: 'localhost');
+    if (!$ok($cmd("EHLO {$localhost}"), 250)) {
+        fclose($fp);
+        return false;
+    }
+    if ($tls && $port !== 465) {
+        if (!$ok($cmd('STARTTLS'), 220)) {
+            fclose($fp);
+            return false;
+        }
+        stream_socket_enable_crypto($fp, true, STREAM_CRYPTO_METHOD_TLS_CLIENT);
+        $cmd("EHLO {$localhost}");
+    }
+    if ($user !== '') {
+        $cmd('AUTH LOGIN');
+        $cmd(base64_encode($user));
+        if (!$ok($cmd(base64_encode($pass)), 235)) {
+            fclose($fp);
+            return false;
+        }
+    }
+    $cmd("MAIL FROM:<{$from}>");
+    $cmd("RCPT TO:<{$to}>");
+    $cmd('DATA');
+
+    $boundary = bin2hex(random_bytes(8));
+    $message  = "From: {$fromName} <{$from}>\r\n"
+              . "To: <{$to}>\r\n"
+              . "Subject: {$subject}\r\n"
+              . "MIME-Version: 1.0\r\n"
+              . "Content-Type: multipart/alternative; boundary=\"{$boundary}\"\r\n\r\n"
+              . "--{$boundary}\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n{$text}\r\n"
+              . "--{$boundary}\r\nContent-Type: text/html; charset=utf-8\r\n\r\n{$html}\r\n"
+              . "--{$boundary}--\r\n.\r\n";
+    fwrite($fp, $message);
+    $sent = $ok($read(), 250);
+    $cmd('QUIT');
+    fclose($fp);
+    return $sent;
 }
 
 function save_fiscal_document(PDO $pdo, array $meta, array $config, ?int $id = null): array
