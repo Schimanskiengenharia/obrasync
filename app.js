@@ -1612,24 +1612,51 @@ async function loadServerData() {
     serverStatus = "Abra pelo Apache para usar a API PHP";
     return;
   }
+
+  // O bootstrap é tratado com fetch direto para distinguir três casos sem
+  // acionar os efeitos colaterais do apiRequest (limpar sessão, chamar showLogin).
+  let response;
   try {
-    const payload = await apiRequest("bootstrap");
-    db = { ...structuredClone(seed), ...payload.data };
-    Object.keys(seed).forEach((key) => {
-      if (!Array.isArray(db[key])) db[key] = [];
+    response = await fetch(`${API_BASE}/bootstrap`, {
+      headers: { "Content-Type": "application/json", ...authHeaders() },
     });
+  } catch {
+    // Falha de rede real: servidor fora do ar, CORS, timeout de conexão.
+    serverMode = false;
+    serverStatus = "API indisponível: falha de conexão";
+    return;
+  }
+
+  let payload = {};
+  try {
+    const text = await response.text();
+    if (text) payload = JSON.parse(text);
+  } catch {
+    // Resposta não-JSON (ex.: página de erro do Apache). Continua com payload vazio.
+  }
+
+  // Caso 1 — API ativa mas usuário não autenticado: 401 OU ok:false (independente
+  // do status HTTP). O bootstrap só retorna ok:false por falha de autenticação.
+  if (response.status === 401 || payload.ok === false) {
     serverMode = true;
     serverStatus = "Conectado ao servidor";
-  } catch (error) {
-    if (error.status === 401) {
-      // API ativa, mas sem sessão válida: mantém o modo servidor e exige login.
-      serverMode = true;
-      serverStatus = "Conectado ao servidor (login necessário)";
-      return;
-    }
-    serverMode = false;
-    serverStatus = `API indisponível: ${error.message}`;
+    return;
   }
+
+  // Caso 2 — Erro real do servidor (5xx, 4xx que não é 401).
+  if (!response.ok) {
+    serverMode = false;
+    serverStatus = `API indisponível: HTTP ${response.status}`;
+    return;
+  }
+
+  // Caso 3 — Sucesso: carrega os dados no banco local.
+  db = { ...structuredClone(seed), ...payload.data };
+  Object.keys(seed).forEach((key) => {
+    if (!Array.isArray(db[key])) db[key] = [];
+  });
+  serverMode = true;
+  serverStatus = "Conectado ao servidor";
 }
 
 async function refreshData() {
