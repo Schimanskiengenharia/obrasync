@@ -5744,12 +5744,28 @@ function openFavoritesModal() {
 }
 
 function setupFavoritesDialog() {
-  document.getElementById("closeFavoritesDialog").addEventListener("click", () => document.getElementById("favoritesDialog").close());
-  document.getElementById("cancelFavoritesDialog").addEventListener("click", () => document.getElementById("favoritesDialog").close());
+  const dialog = document.getElementById("favoritesDialog");
+  const close = () => dialog.close();
+
+  document.getElementById("closeFavoritesDialog").addEventListener("click", close);
+  document.getElementById("cancelFavoritesDialog").addEventListener("click", close);
+
   document.getElementById("saveFavoritesDialog").addEventListener("click", () => {
+    if (favoritesDialogSelections.size === 0) {
+      alert("Selecione ao menos 1 favorito.");
+      return;
+    }
     persistFavorites([...favoritesDialogSelections]);
-    document.getElementById("favoritesDialog").close();
+    dialog.close();
     renderFavoritesBar();
+  });
+
+  dialog.addEventListener("click", (e) => {
+    const rect = dialog.getBoundingClientRect();
+    if (e.clientX < rect.left || e.clientX > rect.right ||
+        e.clientY < rect.top  || e.clientY > rect.bottom) {
+      dialog.close();
+    }
   });
 }
 

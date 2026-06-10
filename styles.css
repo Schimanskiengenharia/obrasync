@@ -621,6 +621,10 @@ button.danger:hover { background: #9b1d14; }
 
 /* Favorites dialog */
 
+.favorites-dialog:not([open]) {
+  display: none;
+}
+
 .favorites-dialog {
   width: min(660px, 96vw);
   max-height: 80vh;
@@ -631,6 +635,11 @@ button.danger:hover { background: #9b1d14; }
   overflow: hidden;
   display: grid;
   grid-template-rows: auto auto 1fr auto;
+}
+
+.favorites-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(2px);
 }
 
 .favorites-dialog .dialog-head {
