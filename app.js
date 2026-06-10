@@ -3487,39 +3487,44 @@ function renderKanban() {
 }
 
 function renderAgendaWeek() {
-  const editable = canEditModule("agenda");
-  const cursor = parseLocalDate(agendaCursorDate) || new Date();
-  const today = startOfLocalDay(new Date());
-  const weekStart = agendaWeekStart(cursor);
-  const weekEnd = addDays(weekStart, 6);
-  const isPastWeek = weekEnd < today;
-  const canCreateInWeek = editable && !isPastWeek;
-  const events = agendaEventsSorted();
-  const nowLabel = new Date().toLocaleString("pt-BR", { weekday: "long", year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" });
-  qs("content").innerHTML = `
-    <section class="module-head">
-      <div>
-        <h2>Agenda</h2>
-        <p class="agenda-now-label">${nowLabel}</p>
+  try {
+    const editable = canEditModule("agenda");
+    const cursor = parseLocalDate(agendaCursorDate) || new Date();
+    const today = startOfLocalDay(new Date());
+    const weekStart = agendaWeekStart(cursor);
+    const weekEnd = addDays(weekStart, 6);
+    const isPastWeek = weekEnd < today;
+    const canCreateInWeek = editable && !isPastWeek;
+    const events = agendaEventsSorted();
+    const nowLabel = new Date().toLocaleString("pt-BR", { weekday: "long", year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    qs("content").innerHTML = `
+      <section class="module-head">
+        <div>
+          <h2>Agenda</h2>
+          <p class="agenda-now-label">${nowLabel}</p>
+        </div>
+      </section>
+      <section class="schedule-toolbar agenda-toolbar">
+        <button type="button" class="secondary" id="agendaPrev">‹ Semana anterior</button>
+        <button type="button" class="secondary" id="agendaToday">Hoje</button>
+        <button type="button" class="secondary" id="agendaNext">Próxima semana ›</button>
+        <span class="agenda-week-range">${agendaWeekLabel(weekStart)}</span>
+      </section>
+      ${agendaKpiHtml()}
+      ${isPastWeek ? '<p class="agenda-past-notice">Semana anterior — disponível apenas para consulta.</p>' : ""}
+      <div class="agenda-layout">
+        ${agendaCalendarHtml(weekStart, events)}
+        ${agendaFormHtml(canCreateInWeek, weekStart)}
       </div>
-    </section>
-    <section class="schedule-toolbar agenda-toolbar">
-      <button type="button" class="secondary" id="agendaPrev">‹ Semana anterior</button>
-      <button type="button" class="secondary" id="agendaToday">Hoje</button>
-      <button type="button" class="secondary" id="agendaNext">Próxima semana ›</button>
-      <span class="agenda-week-range">${agendaWeekLabel(weekStart)}</span>
-    </section>
-    ${agendaKpiHtml()}
-    ${isPastWeek ? '<p class="agenda-past-notice">Semana anterior — disponível apenas para consulta.</p>' : ""}
-    <div class="agenda-layout">
-      ${agendaCalendarHtml(weekStart, events)}
-      ${agendaFormHtml(canCreateInWeek, weekStart)}
-    </div>
-  `;
-  qs("agendaPrev").addEventListener("click", () => moveAgendaCursor(-1));
-  qs("agendaToday").addEventListener("click", () => { agendaCursorDate = localDateString(new Date()); renderAgenda(); });
-  qs("agendaNext").addEventListener("click", () => moveAgendaCursor(1));
-  qs("agendaEventForm")?.addEventListener("submit", saveAgendaEvent);
+    `;
+    qs("agendaPrev")?.addEventListener("click", () => moveAgendaCursor(-1));
+    qs("agendaToday")?.addEventListener("click", () => { agendaCursorDate = localDateString(new Date()); renderAgenda(); });
+    qs("agendaNext")?.addEventListener("click", () => moveAgendaCursor(1));
+    qs("agendaEventForm")?.addEventListener("submit", saveAgendaEvent);
+  } catch (err) {
+    qs("content").innerHTML = `<div class="empty" style="padding:32px;color:var(--red)">Erro ao renderizar a agenda: ${err.message}</div>`;
+    console.error("renderAgendaWeek:", err);
+  }
 }
 
 function agendaCalendarHtml(weekStart, events) {
@@ -3596,7 +3601,10 @@ function agendaEventsSorted() {
 }
 
 function agendaOptions(collection) {
-  return (db[collection] || []).map((row) => `<option value="${row.id}">${svgText(nameOf(collection, row.id))}</option>`).join("");
+  return (db[collection] || []).map((row) => {
+    const label = row.fullName || row.name || row.nome || row.titulo || row.username || String(row.id);
+    return `<option value="${row.id}">${svgText(label)}</option>`;
+  }).join("");
 }
 
 function agendaEventCardHtml(event) {
@@ -3686,7 +3694,11 @@ function agendaDayName(date) {
 
 function agendaTimeLabel(value) {
   const text = String(value || "");
-  return text.includes("T") ? text.slice(11, 16) : text.slice(11, 16);
+  if (!text) return "";
+  // "2026-06-10T09:00" or "2026-06-10 09:00"
+  const sep = text.indexOf("T") !== -1 ? "T" : " ";
+  const timePart = text.split(sep)[1] || "";
+  return timePart.slice(0, 5);
 }
 
 function openKanbanCardForm(columnId) {
@@ -5850,26 +5862,28 @@ function confirmDestructive(name = "") {
   return new Promise((resolve) => {
     const dialog = document.getElementById("confirmDestructiveDialog");
     if (!dialog) { resolve(confirm("Excluir este registro?")); return; }
-    const input = document.getElementById("confirmDestructiveInput");
-    const error = document.getElementById("confirmDestructiveError");
     const doBtn = document.getElementById("doDestructiveBtn");
     const cancelBtn = document.getElementById("cancelDestructiveBtn");
-    document.getElementById("confirmDestructiveName").textContent = name || "este registro";
-    input.value = "";
-    error.textContent = "";
-    function go() {
-      if (input.value.trim() !== "CONFIRMAR") { error.textContent = 'Digite exatamente CONFIRMAR (letras maiúsculas).'; input.focus(); return; }
-      cleanup(); dialog.close(); resolve(true);
-    }
+    document.getElementById("confirmDestructiveName").textContent = name || "este item";
+    function go() { cleanup(); dialog.close(); resolve(true); }
     function cancel() { cleanup(); dialog.close(); resolve(false); }
-    function cleanup() { doBtn.removeEventListener("click", go); cancelBtn.removeEventListener("click", cancel); dialog.removeEventListener("cancel", onCancel); }
+    function cleanup() {
+      doBtn.removeEventListener("click", go);
+      cancelBtn.removeEventListener("click", cancel);
+      dialog.removeEventListener("cancel", onCancel);
+      dialog.removeEventListener("click", onBackdrop);
+    }
     function onCancel() { cancel(); }
+    function onBackdrop(e) {
+      const rect = dialog.getBoundingClientRect();
+      if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) cancel();
+    }
     doBtn.addEventListener("click", go);
     cancelBtn.addEventListener("click", cancel);
     dialog.addEventListener("cancel", onCancel, { once: true });
-    input.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); }, { once: false });
+    dialog.addEventListener("click", onBackdrop);
     dialog.showModal();
-    setTimeout(() => input.focus(), 60);
+    doBtn.focus();
   });
 }
 

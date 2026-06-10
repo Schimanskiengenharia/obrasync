@@ -172,15 +172,15 @@
     </dialog>
 
     <dialog id="confirmDestructiveDialog" class="confirm-destructive-dialog">
-      <div class="dialog-head">
-        <h2>Confirmar exclusão</h2>
-        <button id="cancelDestructiveBtn" class="icon-btn" type="button" aria-label="Fechar">×</button>
+      <div class="destructive-body">
+        <div class="destructive-icon">🗑</div>
+        <h2>Excluir registro</h2>
+        <p>Tem certeza que deseja excluir <strong id="confirmDestructiveName">este item</strong>?</p>
+        <p class="destructive-warning">Esta ação não pode ser desfeita.</p>
       </div>
-      <p>Para excluir <strong id="confirmDestructiveName">este registro</strong>, digite <strong>CONFIRMAR</strong> no campo abaixo:</p>
-      <input id="confirmDestructiveInput" type="text" placeholder="CONFIRMAR" autocomplete="off" class="destructive-input" />
-      <p id="confirmDestructiveError" class="login-error"></p>
       <menu>
-        <button id="doDestructiveBtn" class="danger full-btn" type="button">Excluir definitivamente</button>
+        <button id="cancelDestructiveBtn" class="secondary" type="button">Cancelar</button>
+        <button id="doDestructiveBtn" class="danger" type="button">Confirmar exclusão</button>
       </menu>
     </dialog>
 

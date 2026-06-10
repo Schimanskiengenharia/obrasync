@@ -428,7 +428,7 @@ textarea {
   width: calc(100vw - 40px);
 }
 
-.session-warning-dialog::backdrop, .confirm-destructive-dialog::backdrop {
+.session-warning-dialog::backdrop {
   background: rgba(10, 20, 19, 0.58);
 }
 
@@ -442,26 +442,50 @@ textarea {
 .session-warning-content p { margin: 0; }
 .session-warning-content menu { margin: 8px 0 0; }
 
-.confirm-destructive-dialog .dialog-head { border-bottom: 1px solid var(--line); padding: 16px 20px 12px; }
-.confirm-destructive-dialog > p { margin: 0; padding: 14px 20px 0; font-size: 14px; }
-
-.destructive-input {
-  display: block;
-  width: calc(100% - 40px);
-  margin: 12px 20px 4px;
-  padding: 10px 12px;
-  border: 2px solid var(--line);
-  border-radius: 6px;
-  font-size: 15px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  transition: border-color 120ms;
+.confirm-destructive-dialog::backdrop {
+  background: rgba(10, 20, 19, 0.58);
+  backdrop-filter: blur(2px);
 }
 
-.destructive-input:focus { border-color: var(--red); outline: none; }
-.confirm-destructive-dialog .login-error { padding: 0 20px; min-height: 18px; font-size: 12px; }
-.confirm-destructive-dialog menu { padding: 10px 20px 16px; margin: 0; }
+.destructive-body {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 32px 28px 20px;
+  text-align: center;
+}
+
+.destructive-icon {
+  font-size: 36px;
+  line-height: 1;
+  margin-bottom: 4px;
+}
+
+.destructive-body h2 {
+  margin: 0;
+  font-size: 18px;
+  color: var(--ink);
+}
+
+.destructive-body p {
+  margin: 0;
+  font-size: 14px;
+  color: var(--ink);
+}
+
+.destructive-warning {
+  font-size: 12px !important;
+  color: var(--muted) !important;
+}
+
+.confirm-destructive-dialog menu {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin: 0;
+  padding: 0 20px 20px;
+}
+
 .full-btn { width: 100%; }
 
 button.danger { background: var(--red); color: #fff; }
