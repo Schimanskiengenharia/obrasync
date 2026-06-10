@@ -298,26 +298,26 @@ const configs = {
     title: "Clientes",
     description: "Cadastro de clientes usado em orçamentos, vendas, contas a receber e filtros gerenciais.",
     fields: [
-      ["name", "Nome", "text", true],
-      ["document", "CPF/CNPJ", "text"],
-      ["zipCode", "CEP", "text"],
-      ["address", "Endereço", "text"],
-      ["email", "E-mail", "email"],
-      ["phone", "Telefone", "text"],
-      ["status", "Status", "select", ["Ativo", "Inativo"]],
+      ["name",     "Nome",       "text",   true],
+      ["document", "CPF/CNPJ",   "text"],
+      ["zipCode",  "CEP",        "text"],
+      ["address",  "Endereço",   "text"],
+      ["email",    "E-mail",     "email",  true],
+      ["phone",    "Celular",    "text",   true],
+      ["status",   "Status",     "select", ["Ativo", "Inativo"]],
     ],
   },
   suppliers: {
     title: "Fornecedores",
     description: "Cadastro de fornecedores para compras, contas a pagar, categorias e documentos de origem.",
     fields: [
-      ["name", "Nome", "text", true],
-      ["document", "CPF/CNPJ", "text"],
-      ["zipCode", "CEP", "text"],
-      ["address", "Endereço", "text"],
-      ["email", "E-mail", "email"],
-      ["phone", "Telefone", "text"],
-      ["status", "Status", "select", ["Ativo", "Inativo"]],
+      ["name",     "Nome",       "text",   true],
+      ["document", "CPF/CNPJ",   "text"],
+      ["zipCode",  "CEP",        "text"],
+      ["address",  "Endereço",   "text"],
+      ["email",    "E-mail",     "email",  true],
+      ["phone",    "Celular",    "text",   true],
+      ["status",   "Status",     "select", ["Ativo", "Inativo"]],
     ],
   },
   products: {
@@ -3329,7 +3329,11 @@ async function saveForm(event) {
 }
 
 function validateCurrentForm(form) {
+  const isClientOrSupplier = ["clients", "suppliers"].includes(editing?.key);
   const email = form.querySelector('[name="email"]');
+  if (isClientOrSupplier && !email?.value?.trim()) {
+    return { ok: false, message: "E-mail é obrigatório para clientes e fornecedores." };
+  }
   if (email?.value && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.value.trim())) {
     return { ok: false, message: "Informe um e-mail válido, por exemplo joao@gmail.com." };
   }
@@ -3344,9 +3348,12 @@ function validateCurrentForm(form) {
     if (digits.length === 14 && !validateCnpj(digits)) return { ok: false, message: "CNPJ inválido. Confira os dígitos informados." };
   }
   const phone = form.querySelector('[name="phone"]');
+  if (isClientOrSupplier && !phone?.value?.trim()) {
+    return { ok: false, message: "Celular é obrigatório para clientes e fornecedores. Formato: (67) 99999-9999." };
+  }
   if (phone?.value) {
     const digits = onlyDigits(phone.value);
-    if (![10, 11].includes(digits.length)) return { ok: false, message: "Informe um telefone válido, como (67) 99999-9999 ou (67) 3333-3333." };
+    if (![10, 11].includes(digits.length)) return { ok: false, message: "Informe um celular válido, como (67) 99999-9999 ou (67) 3333-3333." };
   }
   return { ok: true };
 }
@@ -6311,31 +6318,48 @@ function setupSessionWarning() {
 // ── Força e redefinição de senha ────────────────────────────────────────────
 
 function passwordStrengthCheck(pw) {
-  return { length: pw.length >= 8, upper: /[A-Z]/.test(pw), special: /[\W_]/.test(pw) };
+  return {
+    length:  pw.length >= 8,
+    upper:   /[A-Z]/.test(pw),
+    lower:   /[a-z]/.test(pw),
+    number:  /[0-9]/.test(pw),
+    special: /[\W_]/.test(pw),
+  };
 }
 
 function passwordStrengthHtml(pw) {
   if (!pw) return "";
   const c = passwordStrengthCheck(pw);
   const li = (ok, label) => `<li class="${ok ? "req-ok" : "req-fail"}">${ok ? "✓" : "✗"} ${label}</li>`;
-  return `<ul class="pwd-reqs">${li(c.length, "Mínimo 8 caracteres")}${li(c.upper, "Uma letra maiúscula")}${li(c.special, "Um caractere especial (!, @, #…)")}</ul>`;
+  return `<ul class="pwd-reqs">
+    ${li(c.length,  "Mínimo 8 caracteres")}
+    ${li(c.upper,   "Uma letra maiúscula (A-Z)")}
+    ${li(c.lower,   "Uma letra minúscula (a-z)")}
+    ${li(c.number,  "Um número (0-9)")}
+    ${li(c.special, "Um caractere especial (!@#$%^&*)")}
+  </ul>`;
+}
+
+function passwordMeetsAllRules(pw) {
+  const c = passwordStrengthCheck(pw);
+  return c.length && c.upper && c.lower && c.number && c.special;
 }
 
 function showLoginPanel(name) {
   document.querySelectorAll(".login-panel").forEach((el) => el.classList.toggle("hidden", el.dataset.panel !== name));
-  if (name === "login") { qs("loginError").textContent = ""; qs("loginUser").focus(); }
-  if (name === "forgot") { qs("forgotMsg").textContent = ""; qs("forgotUser").focus(); }
-  if (name === "reset")  { qs("resetMsg").textContent = ""; qs("resetNewPwd").focus(); }
+  if (name === "login")  { qs("loginError").textContent = ""; qs("loginUser").focus(); }
+  if (name === "forgot") { qs("forgotMsg").textContent  = ""; qs("forgotEmail").focus(); }
+  if (name === "reset")  { qs("resetMsg").textContent   = ""; qs("resetNewPwd").focus(); }
 }
 
 async function handleForgotPassword(event) {
   event.preventDefault();
-  const username = qs("forgotUser").value.trim();
+  const email = qs("forgotEmail").value.trim();
   const btn = event.target.querySelector("button[type=submit]");
   btn.disabled = true;
   try {
-    await apiRequest("request-password-reset", { method: "POST", body: JSON.stringify({ username }) });
-    qs("forgotMsg").textContent = "Se o usuário existir e tiver e-mail cadastrado, enviamos um link de redefinição.";
+    await apiRequest("request-password-reset", { method: "POST", body: JSON.stringify({ email }) });
+    qs("forgotMsg").textContent = "Link de redefinição enviado! Verifique sua caixa de entrada.";
     qs("forgotMsg").className = "login-success";
   } catch (error) {
     qs("forgotMsg").textContent = error.message;
@@ -6351,8 +6375,7 @@ async function handleResetPassword(event) {
   const pw1   = qs("resetNewPwd").value;
   const pw2   = qs("resetConfirmPwd").value;
   if (pw1 !== pw2) { qs("resetMsg").textContent = "As senhas não conferem."; return; }
-  const chk = passwordStrengthCheck(pw1);
-  if (!chk.length || !chk.upper || !chk.special) { qs("resetMsg").textContent = "A senha não atende aos requisitos de segurança."; return; }
+  if (!passwordMeetsAllRules(pw1)) { qs("resetMsg").textContent = "A senha não atende a todos os requisitos de segurança."; return; }
   const btn = event.target.querySelector("button[type=submit]");
   btn.disabled = true;
   try {
@@ -6377,8 +6400,7 @@ async function handleChangePassword(event) {
   const confirmPw = form.querySelector('[name="confirmPassword"]').value;
   const msgEl     = form.querySelector(".pwd-change-msg");
   if (newPw !== confirmPw) { msgEl.textContent = "As senhas não conferem."; return; }
-  const chk = passwordStrengthCheck(newPw);
-  if (!chk.length || !chk.upper || !chk.special) { msgEl.textContent = "A senha não atende aos requisitos de segurança."; return; }
+  if (!passwordMeetsAllRules(newPw)) { msgEl.textContent = "A senha não atende a todos os requisitos de segurança."; return; }
   const btn = form.querySelector("button[type=submit]");
   btn.disabled = true;
   try {
@@ -6388,14 +6410,13 @@ async function handleChangePassword(event) {
     if (currentUser) currentUser.mustChangePassword = false;
     const dialog = document.getElementById("changePasswordDialog");
     const wasForced = dialog?.dataset.forced === "1";
-    setTimeout(async () => {
+    setTimeout(() => {
       if (dialog?.open) dialog.close();
       if (wasForced) {
-        // Troca obrigatória concluída: agora carrega o app normalmente.
-        await loadServerData();
-        showApp(currentUser);
+        // Troca obrigatória concluída: redireciona para login para autenticar com a nova senha.
+        showLogin("Senha definida com sucesso! Faça login com a nova senha.");
       }
-    }, 1200);
+    }, 1500);
   } catch (error) {
     msgEl.textContent = error.message;
     msgEl.className = "pwd-change-msg login-error";

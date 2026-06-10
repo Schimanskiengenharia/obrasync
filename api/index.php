@@ -1224,6 +1224,12 @@ function handle_login(PDO $pdo, array $payload): never
     }
     unset($user['password']);
     $user['mustChangePassword'] = !empty($user['mustChangePassword']);
+    // Se a flag está ativa mas a senha já atende todos os requisitos atuais, desativa-a
+    // automaticamente — o usuário entra direto sem ser forçado a trocar novamente.
+    if ($user['mustChangePassword'] && validate_password_strength($password) === null) {
+        $pdo->prepare('UPDATE system_users SET mustChangePassword = 0 WHERE id = ?')->execute([$user['id']]);
+        $user['mustChangePassword'] = false;
+    }
 
     ensure_api_sessions_table($pdo);
     $pdo->prepare('DELETE FROM api_sessions WHERE lastActivity < (NOW() - INTERVAL ' . AUTH_IDLE_SECONDS . ' SECOND)')->execute();
@@ -1238,15 +1244,11 @@ function handle_login(PDO $pdo, array $payload): never
 
 function validate_password_strength(string $pw): ?string
 {
-    if (mb_strlen($pw) < 8) {
-        return 'A senha deve ter pelo menos 8 caracteres.';
-    }
-    if (!preg_match('/[A-Z]/', $pw)) {
-        return 'A senha deve conter pelo menos uma letra maiúscula.';
-    }
-    if (!preg_match('/[\W_]/', $pw)) {
-        return 'A senha deve conter pelo menos um caractere especial (@, !, #, %, etc.).';
-    }
+    if (mb_strlen($pw) < 8)          return 'A senha deve ter pelo menos 8 caracteres.';
+    if (!preg_match('/[A-Z]/', $pw)) return 'A senha deve conter pelo menos uma letra maiúscula.';
+    if (!preg_match('/[a-z]/', $pw)) return 'A senha deve conter pelo menos uma letra minúscula.';
+    if (!preg_match('/[0-9]/', $pw)) return 'A senha deve conter pelo menos um número.';
+    if (!preg_match('/[\W_]/',  $pw)) return 'A senha deve conter pelo menos um caractere especial (!@#$%^&*).';
     return null;
 }
 
@@ -1279,32 +1281,33 @@ function reset_url(array $config, string $token): string
 
 function handle_request_password_reset(PDO $pdo, array $config, array $payload): never
 {
-    $identifier = trim((string) ($payload['username'] ?? ''));
-    if ($identifier === '') {
-        fail('Informe o usuário ou e-mail cadastrado.', 400);
+    $email = trim((string) ($payload['email'] ?? ''));
+    if ($email === '') {
+        fail('Informe o e-mail cadastrado.', 400);
     }
-    // Não revelamos se o usuário existe; resposta idêntica em todos os casos.
     $stmt = $pdo->prepare(
         "SELECT id, username, email FROM system_users
-          WHERE (username = ? OR (email != '' AND email = ?)) AND status = 'Ativo' AND blocked = 0
+          WHERE email = ? AND status = 'Ativo' AND blocked = 0
           LIMIT 1"
     );
-    $stmt->execute([$identifier, $identifier]);
+    $stmt->execute([$email]);
     $user = $stmt->fetch();
 
-    if ($user && (string) ($user['email'] ?? '') !== '') {
-        ensure_password_reset_table($pdo);
-        $pdo->prepare('DELETE FROM password_reset_tokens WHERE userId = ?')->execute([$user['id']]);
-        $token = bin2hex(random_bytes(32));
-        $pdo->prepare('INSERT INTO password_reset_tokens (userId, tokenHash, expiresAt) VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 2 HOUR))')
-            ->execute([$user['id'], hash('sha256', $token)]);
-        $sent = send_reset_email($config, (string) $user['email'], (string) $user['username'], $token);
-        if (!$sent && !empty($config['mail']['log_reset_url'])) {
-            error_log('[ObraSync] Reset URL para ' . $user['username'] . ': ' . reset_url($config, $token));
-        }
+    if (!$user) {
+        fail('E-mail não cadastrado. Verifique ou contate o administrador.', 404);
     }
 
-    respond(['ok' => true, 'message' => 'Se o usuário existir e tiver e-mail cadastrado, um link de redefinição foi enviado.']);
+    ensure_password_reset_table($pdo);
+    $pdo->prepare('DELETE FROM password_reset_tokens WHERE userId = ?')->execute([$user['id']]);
+    $token = bin2hex(random_bytes(32));
+    $pdo->prepare('INSERT INTO password_reset_tokens (userId, tokenHash, expiresAt) VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 2 HOUR))')
+        ->execute([$user['id'], hash('sha256', $token)]);
+    $sent = send_reset_email($config, (string) $user['email'], (string) $user['username'], $token);
+    if (!$sent && !empty($config['mail']['log_reset_url'])) {
+        error_log('[ObraSync] Reset URL para ' . $user['username'] . ': ' . reset_url($config, $token));
+    }
+
+    respond(['ok' => true, 'message' => 'Link de redefinição enviado para o e-mail cadastrado.']);
 }
 
 function handle_reset_password(PDO $pdo, array $payload): never
