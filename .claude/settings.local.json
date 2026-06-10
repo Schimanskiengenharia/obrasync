@@ -33,7 +33,8 @@
       "Bash(sed -n 6074,6076p app.js)",
       "Bash(sed -n 6142,6144p app.js)",
       "Bash(python *)",
-      "Bash(node --check \"C:\\\\Users\\\\schim\\\\Documents\\\\Codex\\\\2026-06-05\\\\crie-um-sistema-web-financeiro-e\\\\outputs\\\\app.js\")"
+      "Bash(node --check \"C:\\\\Users\\\\schim\\\\Documents\\\\Codex\\\\2026-06-05\\\\crie-um-sistema-web-financeiro-e\\\\outputs\\\\app.js\")",
+      "Bash(git rm *)"
     ]
   }
 }
