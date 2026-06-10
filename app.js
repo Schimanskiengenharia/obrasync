@@ -2,13 +2,12 @@ const STORE_KEY = "finconta.v1";
 const AUTH_KEY = "finconta.auth";
 const AUTH_TIMEOUT_MS = 30 * 60 * 1000;
 const SESSION_WARN_BEFORE_MS = 5 * 60 * 1000;
-const API_BASE = "api";
-const AUTH_BYPASS_FOR_TESTS = (() => {
-  const h = location.hostname;
-  return h === "localhost" || h === "127.0.0.1" || h === "" || location.protocol === "file:";
+const API_BASE = (() => {
+  const dir = location.pathname.replace(/\/[^/]*$/, '') || '/';
+  return location.origin + dir + '/api';
 })();
-// Item 9: redirecionar HTTP → HTTPS em produção
-if (!AUTH_BYPASS_FOR_TESTS && location.protocol === "http:") {
+const AUTH_BYPASS_FOR_TESTS = false;
+if (location.protocol === "http:" && location.hostname !== "localhost" && location.hostname !== "127.0.0.1") {
   location.replace(location.href.replace(/^http:/, "https:"));
 }
 const APP_NAME = "ObraSync";
@@ -5634,10 +5633,7 @@ async function handleLogin(event) {
       });
       return showApp(payload.user);
     }
-    const user = db.users.find((item) => item.username?.toLowerCase() === username && item.password === password && item.status === "Ativo");
-    if (!user) return showLogin(`${serverStatus}. Configure a API ou use dados locais antigos apenas para migração.`);
-    if (user.blocked) return showLogin("Usuário bloqueado. Entre em contato com o administrador do sistema.");
-    showApp(user);
+    return showLogin(`Servidor indisponível. Verifique a conexão com a API. (${serverStatus})`);
   } catch (error) {
     showLogin(error.message || "Usuário ou senha inválidos.");
   }
