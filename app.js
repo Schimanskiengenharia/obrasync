@@ -5478,7 +5478,7 @@ function renderSinapiReferences() {
         <label>Orçamento destino<select id="sinapiTargetBudget"><option value="">Selecione</option>${budgets.map((row) => `<option value="${row.id}" ${sameId(row.id, selectedWorkBudgetId) ? "selected" : ""}>${svgText(row.name || row.id)}</option>`).join("")}</select></label>
       </div>
     </section>
-    <section class="panel import-panel">
+    ${isAdmin() ? `<section class="panel import-panel">
       <h3>Importar SINAPI</h3>
       <div class="form-grid">
         <label>Tipo do arquivo<select id="sinapiImportType"><option value="reference">Referência SINAPI</option><option value="labor">Mão de obra</option><option value="families">Famílias e coeficientes</option><option value="maintenance">Manutenções</option></select></label>
@@ -5495,7 +5495,10 @@ function renderSinapiReferences() {
       </div>
       <p class="field-hint">XLSX é importado pela API quando o PHP tiver suporte a ZipArchive. Se não houver suporte, exporte cada aba do Excel para CSV e informe a aba correspondente. Arquivos ficam em /var/lib/financeiro/uploads/sinapi.</p>
       <div id="sinapiImportResult" class="empty ${sinapiLastImportHtml ? "" : "hidden"}">${sinapiLastImportHtml}</div>
-    </section>
+    </section>` : `<section class="panel import-panel sinapi-locked">
+      <h3>Importar SINAPI</h3>
+      ${sinapiLockedNoticeHtml(false)}
+    </section>`}
     ${table("Referências SINAPI", references, ["uf", "referenceMonth", "referenceYear", "priceType", "source", "locationName", "issueDate", "status"], editable, "sinapiReferences")}
     ${["all", "inputs"].includes(sinapiSourceFilter) ? table("Insumos SINAPI", inputs.slice(0, 80), ["sinapiReferenceId", "referenceType", "uf", "classification", "code", "description", "unit", "priceOrigin", "unitPrice", "status"], canUseSinapi, "sinapiInputs") : ""}
     ${["all", "compositions"].includes(sinapiSourceFilter) ? table("Composições SINAPI", compositions.slice(0, 80), ["sinapiReferenceId", "referenceType", "uf", "groupName", "code", "description", "unit", "unitCost", "percentAS", "status"], canUseSinapi, "sinapiCompositions") : ""}
@@ -5666,11 +5669,22 @@ function renderSinapiSettingsModule() {
   renderCrud("sinapiSettings");
   const settings = sinapiDefaultSettings();
   const admin = isAdmin();
-  const canImport = admin && serverMode;
+  // Importar a base SINAPI é exclusivo do admin (a API também bloqueia com 403):
+  // os demais perfis veem o painel bloqueado com a referência da última importação.
+  if (!admin) {
+    qs("content").insertAdjacentHTML("beforeend", `
+      <section class="panel import-panel sinapi-locked" id="sinapiAsyncPanel">
+        <h3>📥 Importar Tabela SINAPI</h3>
+        ${sinapiLockedNoticeHtml(true)}
+      </section>
+    `);
+    if (serverMode) loadSinapiLastImportInfo();
+    return;
+  }
   qs("content").insertAdjacentHTML("beforeend", `
     <section class="panel import-panel" id="sinapiAsyncPanel">
       <h3>📥 Importar Tabela SINAPI</h3>
-      <p class="field-hint">Selecione os XLSX oficiais baixados do site da CAIXA. O mês de referência é detectado pelo nome do arquivo (ex.: SINAPI_Referência_2026_04.xlsx). O processamento roda em segundo plano no servidor: insumos e composições existentes são atualizados e os novos são inseridos — nada é apagado.</p>
+      <p class="field-hint">Selecione os XLSX oficiais baixados do site da CAIXA. O mês de referência é detectado pelo nome do arquivo (ex.: SINAPI_Referência_2026_04.xlsx). O processamento roda em segundo plano no servidor: insumos e composições existentes são atualizados e os novos são inseridos — nada é apagado. Apenas administradores podem realizar esta operação.</p>
       <div class="form-grid">
         <label>Referência XLSX (insumos + composições)<input id="sinapiFileReference" type="file" accept=".xlsx"></label>
         <label>Famílias e coeficientes XLSX<input id="sinapiFileFamilies" type="file" accept=".xlsx"></label>
@@ -5682,10 +5696,9 @@ function renderSinapiSettingsModule() {
         <label>Ano de referência<input id="sinapiAsyncYear" type="number" min="2000" max="2100" value="${Number(settings.defaultReferenceYear || 2026)}"></label>
       </div>
       <div class="actions">
-        <button class="primary" type="button" id="sinapiAsyncStart" ${canImport ? "" : "disabled"}>Importar e Atualizar Preços</button>
+        <button class="primary" type="button" id="sinapiAsyncStart" ${serverMode ? "" : "disabled"}>Importar e Atualizar Preços</button>
       </div>
       ${!serverMode ? '<p class="field-hint">A importação em background só está disponível com a API no servidor.</p>' : ""}
-      ${serverMode && !admin ? '<p class="field-hint">Apenas administradores podem importar a base SINAPI.</p>' : ""}
       <div id="sinapiAsyncStatus" class="empty hidden"></div>
     </section>
   `);
@@ -5694,6 +5707,41 @@ function renderSinapiSettingsModule() {
   });
   qs("sinapiAsyncStart")?.addEventListener("click", startSinapiAsyncImport);
   if (serverMode) resumeSinapiAsyncJob();
+}
+
+// Aviso de acesso restrito mostrado aos perfis não-admin nos painéis de importação.
+function sinapiLockedNoticeHtml(withLastImport) {
+  return `
+    <div class="permission-notice">
+      <span class="icon">🔒</span>
+      <div>
+        <strong>Acesso restrito</strong>
+        <p>A importação de tabelas SINAPI é permitida apenas para <strong>Administradores</strong>. Entre em contato com o administrador do sistema para solicitar a atualização dos preços.</p>
+        ${withLastImport ? '<p class="muted">Última importação: <strong id="sinapiLastImport">—</strong></p>' : ""}
+      </div>
+    </div>
+  `;
+}
+
+// Preenche a linha "Última importação" do painel bloqueado (visível a qualquer
+// perfil com leitura do módulo; falha silenciosa para quem não tem permissão).
+async function loadSinapiLastImportInfo() {
+  try {
+    const payload = await apiRequest("sinapi-import-status");
+    const element = qs("sinapiLastImport");
+    const job = payload.job;
+    if (!element || !job) return;
+    const reference = `${String(job.referenceMonth).padStart(2, "0")}/${job.referenceYear} — UF ${job.uf} — ${job.referenceType}`;
+    if (job.status === "done") {
+      element.textContent = `${reference}${job.finishedAt ? ` (concluída em ${String(job.finishedAt).slice(0, 16)})` : ""}`;
+    } else if (["queued", "running"].includes(job.status)) {
+      element.textContent = `${reference} — importação em andamento…`;
+    } else {
+      element.textContent = `${reference} — última tentativa falhou`;
+    }
+  } catch {
+    // Perfil sem permissão de leitura ou sem job anterior: mantém o traço.
+  }
 }
 
 // SINAPI_Referência_2026_04.xlsx → mês 04 / ano 2026 preenchidos automaticamente.

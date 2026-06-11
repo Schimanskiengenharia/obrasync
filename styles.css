@@ -2586,6 +2586,33 @@ dialog::backdrop {
   margin-top: 0;
 }
 
+/* Painel de importação SINAPI bloqueado para perfis não-admin */
+.sinapi-locked {
+  opacity: 0.85;
+}
+
+.permission-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 16px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--gold);
+  border-radius: 8px;
+}
+
+.permission-notice .icon {
+  font-size: 24px;
+  line-height: 1;
+}
+
+.permission-notice p {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
 .muted {
   color: var(--muted);
   font-size: 12px;

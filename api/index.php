@@ -91,15 +91,18 @@ try {
         respond(['ok' => true, 'imported' => migrate_payload($pdo, $resources, $payload)]);
     }
 
+    // Alterar a base SINAPI (upload e importação, síncrona ou em background) é
+    // exclusivo do admin. Os demais perfis apenas consultam preços (sinapiInputs,
+    // sinapiCompositions etc.) e o status da última importação.
     if ($resource === 'sinapi-upload') {
         require_method($method, ['POST']);
-        authorize_request($pdo, $authUser, 'sinapiSettings', 'edit');
+        require_admin($authUser);
         handle_safe_file_upload($config, 'sinapi', ['csv','txt','xlsx'], ['text/plain','text/csv','application/csv','application/vnd.ms-excel','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','application/zip','application/octet-stream']);
     }
 
     if ($resource === 'sinapi-import') {
         require_method($method, ['POST']);
-        authorize_request($pdo, $authUser, 'sinapiSettings', 'edit');
+        require_admin($authUser);
         handle_sinapi_import($pdo, $resources, $config);
     }
 
