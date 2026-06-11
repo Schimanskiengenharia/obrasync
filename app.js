@@ -1141,8 +1141,12 @@ const configs = {
     title: "Usuários",
     description: "Cadastro de logins do sistema. Apenas administradores podem criar, alterar ou excluir usuários.",
     fields: [
-      ["username", "Usuário", "text", true],
-      ["fullName", "Nome", "text", true],
+      ["username", "Nome de usuário", "text", true],
+      ["fullName", "Nome completo", "text", true],
+      ["email", "E-mail", "email", true],
+      ["cpf", "CPF", "text", true],
+      ["data_nascimento", "Data de nascimento", "text", true],
+      ["celular", "Celular", "text", true],
       ["password", "Senha", "password", true],
       ["role", "Perfil", "select", ["admin", "gerente", "financeiro", "comercial", "engenharia", "gestor_obra", "equipe_campo", "cliente_obra", "fornecedor_terceiro", "consulta", "operador", "visualizador"]],
       ["status", "Status", "select", ["Ativo", "Inativo"]],
@@ -1940,7 +1944,11 @@ function placeholderFor(field, label = "", key = "") {
   if (field === "name" && lower.includes("cliente")) return "João da Silva";
   if (field === "name" && lower.includes("serv")) return "Projeto elétrico comercial";
   if (field === "email") return "joao@gmail.com";
-  if (field === "phone") return "(67) 99999-9999";
+  if (field === "phone" || field === "celular") return "(67) 99999-9999";
+  if (field === "cpf") return "000.000.000-00";
+  if (field === "data_nascimento") return "15/08/1990";
+  if (field === "username") return "joao.silva";
+  if (field === "fullName") return "João da Silva";
   if (field === "document" && ["clients", "suppliers", "companySettings"].includes(key)) return "123.456.789-12 ou 12.345.678/0001-99";
   if (field === "document") return "NF-1001, BOL-450 ou recibo";
   if (["zipCode", "postalCode", "cep"].includes(field)) return "79000-000";
@@ -1990,6 +1998,85 @@ function maskDocument(value) {
 
 function maskCep(value) {
   return onlyDigits(value).slice(0, 8).replace(/^(\d{0,5})(\d{0,3}).*/, (_, a, b) => [a, b && `-${b}`].join(""));
+}
+
+// CPF estrito (11 dígitos): 000.000.000-00 — diferente de maskDocument, que aceita CNPJ.
+function maskCpf(value) {
+  return onlyDigits(value).slice(0, 11).replace(/^(\d{0,3})(\d{0,3})(\d{0,3})(\d{0,2}).*/, (_, a, b, c, d) => [a, b && `.${b}`, c && `.${c}`, d && `-${d}`].join(""));
+}
+
+// Data BR digitada: DD/MM/AAAA.
+function maskData(value) {
+  return onlyDigits(value).slice(0, 8).replace(/^(\d{0,2})(\d{0,2})(\d{0,4}).*/, (_, a, b, c) => [a, b && `/${b}`, c && `/${c}`].join(""));
+}
+
+// DD/MM/AAAA → AAAA-MM-DD (formato do banco).
+function dataBrToIso(value) {
+  const digits = onlyDigits(value);
+  if (digits.length !== 8) return null;
+  return `${digits.slice(4, 8)}-${digits.slice(2, 4)}-${digits.slice(0, 2)}`;
+}
+
+// AAAA-MM-DD (ou datetime do banco) → DD/MM/AAAA para exibição no formulário.
+function dataIsoToBr(value) {
+  const iso = String(value || "").slice(0, 10);
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  return match ? `${match[3]}/${match[2]}/${match[1]}` : String(value || "");
+}
+
+function validateDataNascimento(value) {
+  const digits = onlyDigits(value);
+  if (digits.length !== 8) return { ok: false, msg: "Data incompleta — use DD/MM/AAAA." };
+  const day = Number(digits.slice(0, 2));
+  const month = Number(digits.slice(2, 4));
+  const year = Number(digits.slice(4, 8));
+  const date = new Date(year, month - 1, day);
+  if (date.getFullYear() !== year || date.getMonth() + 1 !== month || date.getDate() !== day) {
+    return { ok: false, msg: "Data inválida." };
+  }
+  const today = new Date();
+  if (date > today) return { ok: false, msg: "Data não pode ser futura." };
+  let age = today.getFullYear() - year;
+  if (today.getMonth() + 1 < month || (today.getMonth() + 1 === month && today.getDate() < day)) age--;
+  if (age < 16) return { ok: false, msg: "Idade mínima: 16 anos." };
+  if (age > 100) return { ok: false, msg: "Data de nascimento inválida." };
+  return { ok: true, msg: "" };
+}
+
+function validateEmail(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(value || "").trim());
+}
+
+function validateCelular(value) {
+  const digits = onlyDigits(value);
+  if (digits.length !== 11) return false;
+  const ddd = Number(digits.slice(0, 2));
+  if (ddd < 11 || ddd > 99) return false;
+  return digits[2] === "9"; // celular começa com 9
+}
+
+function validateUsername(value) {
+  return /^[a-z0-9.]{3,30}$/.test(String(value || "").trim());
+}
+
+function validateNome(value) {
+  return String(value || "").trim().length >= 3;
+}
+
+// Feedback visual por campo (borda verde/vermelha + mensagem abaixo do input).
+function setFieldState(input, isValid, message) {
+  if (!input) return;
+  const wrapper = input.closest("label") || input.parentElement;
+  input.classList.remove("field-ok", "field-error");
+  wrapper.querySelectorAll(".field-hint-error, .field-hint-ok").forEach((el) => el.remove());
+  if (isValid === null) return; // neutro: sem feedback ainda
+  input.classList.add(isValid ? "field-ok" : "field-error");
+  if (message) {
+    const hint = document.createElement("span");
+    hint.className = isValid ? "field-hint-ok" : "field-hint-error";
+    hint.textContent = message;
+    wrapper.appendChild(hint);
+  }
 }
 
 function onlyDigits(value) {
@@ -3819,7 +3906,15 @@ function inputFor(key, field, label, type, options, value = "", row = {}) {
   if (isMoneyField(field) || type === "money") return `<label>${label}<input name="${field}" type="text" inputmode="decimal" value="${formatMoneyInput(value)}" placeholder="${placeholder}" data-format="money" ${required}></label>`;
   if (isPercentField(field)) return `<label>${label}<input name="${field}" type="text" inputmode="decimal" value="${formatPercentInput(value)}" placeholder="${placeholder}" data-format="percent" ${required}></label>`;
   if (type === "datetime-local") return `<label>${label}<input name="${field}" type="${type}" value="${escapeHtml(String(value || "").replace(" ", "T").slice(0, 16))}" placeholder="${placeholder}" ${required}></label>`;
-  const mask = field === "phone" ? 'data-mask="phone"' : field === "document" && ["clients", "suppliers", "companySettings"].includes(key) ? 'data-mask="document"' : ["zipCode", "postalCode", "cep"].includes(field) ? 'data-mask="cep"' : "";
+  const mask = field === "phone" || field === "celular" ? 'data-mask="phone"'
+    : field === "cpf" ? 'data-mask="cpf"'
+    : field === "data_nascimento" ? 'data-mask="data"'
+    : field === "document" && ["clients", "suppliers", "companySettings"].includes(key) ? 'data-mask="document"'
+    : ["zipCode", "postalCode", "cep"].includes(field) ? 'data-mask="cep"' : "";
+  // O banco guarda só dígitos (cpf/celular) e data ISO; o formulário exibe mascarado.
+  if (field === "cpf") value = maskCpf(value);
+  if (field === "celular") value = maskPhone(value);
+  if (field === "data_nascimento") value = maskData(dataIsoToBr(value));
   return `<label>${label}<input name="${field}" type="${type}" value="${escapeHtml(value || "")}" placeholder="${placeholder}" ${required} ${mask}></label>`;
 }
 
@@ -3833,6 +3928,13 @@ function applyFormEnhancements() {
   qs("formFields").querySelectorAll("[data-mask=cep]").forEach((input) => {
     input.addEventListener("input", () => input.value = maskCep(input.value));
   });
+  qs("formFields").querySelectorAll("[data-mask=cpf]").forEach((input) => {
+    input.addEventListener("input", () => input.value = maskCpf(input.value));
+  });
+  qs("formFields").querySelectorAll("[data-mask=data]").forEach((input) => {
+    input.addEventListener("input", () => input.value = maskData(input.value));
+  });
+  if (editing?.key === "users") setupUserFormValidation();
   qs("formFields").querySelectorAll("[data-format=money]").forEach((input) => {
     input.addEventListener("focus", () => input.value = input.value ? String(parseMoneyInput(input.value)).replace(".", ",") : "");
     input.addEventListener("blur", () => input.value = formatMoneyInput(parseMoneyInput(input.value)));
@@ -3862,6 +3964,29 @@ function applyFormEnhancements() {
     pwdInput.addEventListener("input", updateMeter);
   }
   if (editing?.key === "viabilityAnalyses") setupViabilityFormPreview();
+}
+
+// Validação em tempo real (no blur) dos campos do cadastro de usuários.
+// Os inputs do formulário genérico usam name= (sem id); seleção via #formFields.
+function setupUserFormValidation() {
+  const fieldEl = (name) => qs("formFields").querySelector(`[name="${name}"]`);
+  const rules = [
+    ["fullName", (v) => validateNome(v), () => "", () => "Nome muito curto — mínimo 3 caracteres."],
+    ["username", (v) => validateUsername(v), () => "Usuário válido ✓", () => "Use apenas letras minúsculas, números e ponto (3 a 30 caracteres)."],
+    ["email", (v) => validateEmail(v), () => "E-mail válido ✓", () => "Formato de e-mail inválido."],
+    ["cpf", (v) => validateCpf(onlyDigits(v)), () => "CPF válido ✓", () => "CPF inválido — verifique os dígitos."],
+    ["data_nascimento", (v) => validateDataNascimento(v).ok, () => "Data válida ✓", (v) => validateDataNascimento(v).msg],
+    ["celular", (v) => validateCelular(v), () => "Celular válido ✓", () => "Celular inválido — use (DDD) 9XXXX-XXXX."],
+  ];
+  rules.forEach(([name, check, okMsg, errorMsg]) => {
+    const input = fieldEl(name);
+    if (!input) return;
+    input.addEventListener("blur", () => {
+      if (!input.value.trim()) return setFieldState(input, null);
+      const ok = check(input.value);
+      setFieldState(input, ok, ok ? okMsg(input.value) : errorMsg(input.value));
+    });
+  });
 }
 
 async function saveForm(event) {
@@ -3897,6 +4022,26 @@ async function saveForm(event) {
   // Item 10: sanitizar campos de texto antes de salvar
   (configs[editing.key]?.fields || []).filter(([, , t]) => ["text", "email", "textarea"].includes(t)).forEach(([f]) => { if (data[f]) data[f] = sanitizeInput(data[f]); });
   if (editing.key === "users") {
+    // Bloqueia o save se houver campo inválido (mesmas regras da validação de blur).
+    const nascimento = validateDataNascimento(data.data_nascimento || "");
+    const userChecks = [
+      [validateNome(data.fullName), "Nome inválido — mínimo 3 caracteres."],
+      [validateUsername(data.username), "Nome de usuário inválido — use apenas letras minúsculas, números e ponto (3 a 30 caracteres)."],
+      [validateEmail(data.email), "E-mail inválido."],
+      [validateCpf(onlyDigits(data.cpf)), "CPF inválido — verifique os dígitos."],
+      [nascimento.ok, nascimento.msg || "Data de nascimento inválida."],
+      [validateCelular(data.celular), "Celular inválido — use (DDD) 9XXXX-XXXX."],
+    ];
+    const firstError = userChecks.find(([ok]) => !ok);
+    if (firstError) return alert(firstError[1]);
+    const cpfDigits = onlyDigits(data.cpf);
+    if (db.users.some((user) => onlyDigits(user.cpf || "") === cpfDigits && !sameId(user.id, editing.id))) {
+      return alert("CPF já cadastrado para outro usuário.");
+    }
+    // Banco recebe apenas dígitos (cpf/celular) e data ISO (AAAA-MM-DD).
+    data.cpf = cpfDigits;
+    data.celular = onlyDigits(data.celular);
+    data.data_nascimento = dataBrToIso(data.data_nascimento);
     if (data.password) {
       const pwdCheck = validatePassword(data.password);
       if (!pwdCheck.valid) return alert("Senha não atende aos critérios:\n• " + pwdCheck.errors.join("\n• "));

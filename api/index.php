@@ -119,6 +119,9 @@ try {
     if ($key === 'plugins') {
         ensure_plugins_table($pdo);
     }
+    if ($key === 'users' && in_array($method, ['POST', 'PUT', 'PATCH'], true)) {
+        ensure_users_extra_columns($pdo);
+    }
 
     if ($key === 'fiscalDocuments' && $id && isset($segments[2]) && $method === 'GET') {
         handle_fiscal_download($pdo, (int) $id, $segments[2]);
@@ -134,7 +137,11 @@ try {
     }
 
     if ($method === 'POST') {
-        $record = create_record($pdo, $resources[$key], read_json());
+        $payload = read_json();
+        if ($key === 'users') {
+            $payload = sanitize_user_profile_fields($pdo, $payload, null, true);
+        }
+        $record = create_record($pdo, $resources[$key], $payload);
         // Automations auxiliares APÓS o INSERT: uma falha aqui não pode devolver 500
         // com o registro já gravado (registro "fantasma"). Mesmo padrão da agenda:
         // try/catch + error_log + seguir.
@@ -275,7 +282,11 @@ try {
     }
 
     if ($method === 'PUT' || $method === 'PATCH') {
-        $record = update_record($pdo, $resources[$key], (int) $id, read_json());
+        $payload = read_json();
+        if ($key === 'users') {
+            $payload = sanitize_user_profile_fields($pdo, $payload, (int) $id, false);
+        }
+        $record = update_record($pdo, $resources[$key], (int) $id, $payload);
         if ($key === 'agendaEvents') {
             $record['automation'] = create_event_day_notification($pdo, $record);
         }
@@ -728,7 +739,7 @@ function resource_map(): array
         'taxDocuments' => r('tax_documents', ['documentos-fiscais'], ['document','date','type','clientId','supplierId','projectId','amount','status'], ['document']),
         'taxes' => r('taxes', ['impostos'], ['name','competenceDate','baseAmount','rate','amount','projectId','status'], ['name','competenceDate']),
         'companySettings' => r('company_settings', ['dados-empresa'], ['name','document','zipCode','address','email','phone','city','status'], ['document','name']),
-        'users' => r('system_users', ['usuarios','usuários'], ['username','fullName','email','password','role','status','blocked','mustChangePassword'], ['username'], ['password']),
+        'users' => r('system_users', ['usuarios','usuários'], ['username','fullName','email','password','role','status','blocked','mustChangePassword','cpf','data_nascimento','celular'], ['username'], ['password']),
         'permissions' => r('role_permissions', ['permissoes','permissões'], ['role','module','canView','canCreate','canEdit','canDelete','canExport','canApprove','canAttach','status'], ['role','module']),
         'systemVersion' => r('sistema_versoes', ['sistema-versoes','versoes-sistema'], ['versao','data_versao','descricao','alteracoes'], ['versao']),
         'reportModels' => r('modelos_relatorio', ['modelos-relatorios','modelos-relatórios'], ['name','workTypeId','serviceSubtypeId','body','variables','status'], ['name']),
@@ -1007,6 +1018,102 @@ function filter_data_by_columns(PDO $pdo, array $meta, array $data): array
 {
     $columns = table_columns($pdo, $meta['table']);
     return array_filter($data, fn ($field) => in_array($field, $columns, true), ARRAY_FILTER_USE_KEY);
+}
+
+// Colunas cadastrais extras dos usuários (cpf/data_nascimento/celular), criadas
+// sob demanda como as demais tabelas novas — dispensa migração manual em produção.
+function ensure_users_extra_columns(PDO $pdo): void
+{
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    try {
+        $pdo->exec("ALTER TABLE system_users
+            ADD COLUMN IF NOT EXISTS cpf VARCHAR(14) NULL,
+            ADD COLUMN IF NOT EXISTS data_nascimento DATE NULL,
+            ADD COLUMN IF NOT EXISTS celular VARCHAR(15) NULL");
+        $pdo->exec('CREATE UNIQUE INDEX IF NOT EXISTS uk_system_users_cpf ON system_users (cpf)');
+    } catch (PDOException $error) {
+        // Sem permissão de DDL: segue; filter_data_by_columns descarta os campos ausentes.
+        error_log('[ObraSync] ensure_users_extra_columns: ' . $error->getMessage());
+    }
+    $done = true;
+}
+
+// Validação de CPF com dígitos verificadores (mesma regra do frontend).
+function cpf_is_valid(string $digits): bool
+{
+    if (!preg_match('/^\d{11}$/', $digits) || preg_match('/^(\d)\1{10}$/', $digits)) {
+        return false;
+    }
+    foreach ([10, 11] as $factor) {
+        $sum = 0;
+        for ($i = 0; $i < $factor - 1; $i++) {
+            $sum += (int) $digits[$i] * ($factor - $i);
+        }
+        $rest = ($sum * 10) % 11;
+        if ($rest === 10) {
+            $rest = 0;
+        }
+        if ($rest !== (int) $digits[$factor - 1]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Sanitiza e valida cpf/data_nascimento/celular do cadastro de usuários
+// (dupla verificação: o frontend já valida, mas a API não confia nele).
+// No POST os três campos são obrigatórios; no PUT são validados quando enviados
+// com valor (toggles parciais, como bloquear usuário antigo sem CPF, seguem).
+function sanitize_user_profile_fields(PDO $pdo, array $payload, ?int $id, bool $required): array
+{
+    $cpf = preg_replace('/\D/', '', (string) ($payload['cpf'] ?? ''));
+    $nascimento = trim((string) ($payload['data_nascimento'] ?? ''));
+    $celular = preg_replace('/\D/', '', (string) ($payload['celular'] ?? ''));
+
+    if ($cpf !== '' || $required) {
+        if (!cpf_is_valid($cpf)) {
+            fail('CPF inválido. Confira os dígitos informados.', 422);
+        }
+        $stmt = $pdo->prepare('SELECT id FROM system_users WHERE cpf = ? AND id != ? LIMIT 1');
+        $stmt->execute([$cpf, $id ?? 0]);
+        if ($stmt->fetchColumn()) {
+            fail('CPF já cadastrado para outro usuário.', 422);
+        }
+        $payload['cpf'] = $cpf;
+    } else {
+        unset($payload['cpf']);
+    }
+
+    if ($nascimento !== '' || $required) {
+        $date = DateTime::createFromFormat('Y-m-d', $nascimento);
+        $valid = $date && $date->format('Y-m-d') === $nascimento;
+        if ($valid) {
+            $today = new DateTime('today');
+            $age = (int) $date->diff($today)->format('%y');
+            $valid = $date <= $today && $age >= 16 && $age <= 100;
+        }
+        if (!$valid) {
+            fail('Data de nascimento inválida (idade entre 16 e 100 anos, formato AAAA-MM-DD).', 422);
+        }
+        $payload['data_nascimento'] = $nascimento;
+    } else {
+        unset($payload['data_nascimento']);
+    }
+
+    if ($celular !== '' || $required) {
+        $ddd = (int) substr($celular, 0, 2);
+        if (strlen($celular) !== 11 || $ddd < 11 || $ddd > 99 || $celular[2] !== '9') {
+            fail('Celular inválido. Use DDD + 9 dígitos, por exemplo (67) 99999-9999.', 422);
+        }
+        $payload['celular'] = $celular;
+    } else {
+        unset($payload['celular']);
+    }
+
+    return $payload;
 }
 
 function bootstrap_data(PDO $pdo, array $resources, ?array $authUser = null): array
