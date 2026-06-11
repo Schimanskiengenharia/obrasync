@@ -33,6 +33,12 @@ try {
         handle_reset_password($pdo, read_json());
     }
 
+    // Troca obrigatória: autentica pelo token no corpo (evita falha em PHP-CGI que remove Authorization).
+    if ($resource === 'forced-change-password') {
+        require_method($method, ['POST']);
+        handle_forced_change_password($pdo, read_json());
+    }
+
     // Toda rota além das acima exige sessão válida emitida pelo próprio login.
     $authUser = authenticate_request($pdo, $config);
 
@@ -1367,6 +1373,51 @@ function handle_change_password(PDO $pdo, array $user, array $payload): never
         ->execute([$hash, $user['id']]);
     respond(['ok' => true, 'message' => 'Senha alterada com sucesso.']);
 }
+
+// Endpoint para troca obrigatória de senha sem depender do header Authorization.
+// Autentica pelo token enviado no corpo JSON (_token), necessário quando Apache/PHP-CGI remove o header.
+function handle_forced_change_password(PDO $pdo, array $payload): never
+{
+    $token = trim((string) ($payload['_token'] ?? ''));
+    if ($token === '') {
+        fail('Token de autenticação obrigatório.', 401);
+    }
+    $newPassword = (string) ($payload['newPassword'] ?? '');
+    $pwErr = validate_password_strength($newPassword);
+    if ($pwErr) {
+        fail($pwErr, 400);
+    }
+    ensure_api_sessions_table($pdo);
+    $stmt = $pdo->prepare(
+        'SELECT s.id AS sessionId, s.lastActivity, u.id, u.username, u.status, u.blocked, u.mustChangePassword
+           FROM api_sessions s
+           JOIN system_users u ON u.id = s.userId
+          WHERE s.tokenHash = ?
+          LIMIT 1'
+    );
+    $stmt->execute([hash('sha256', $token)]);
+    $session = $stmt->fetch();
+    if (!$session) {
+        fail('Sessão inválida. Faça login novamente.', 401);
+    }
+    if (strtotime((string) ($session['lastActivity'] ?? '')) < time() - AUTH_IDLE_SECONDS) {
+        $pdo->prepare('DELETE FROM api_sessions WHERE id = ?')->execute([$session['sessionId']]);
+        fail('Sessão expirada. Faça login novamente.', 401);
+    }
+    if (($session['status'] ?? '') !== 'Ativo' || !empty($session['blocked'])) {
+        fail('Usuário inativo ou bloqueado.', 403);
+    }
+    if (empty($session['mustChangePassword'])) {
+        fail('Esta operação é exclusiva para a troca obrigatória de senha.', 403);
+    }
+    $hash = password_hash($newPassword, PASSWORD_DEFAULT);
+    $pdo->prepare('UPDATE system_users SET password = ?, mustChangePassword = 0 WHERE id = ?')
+        ->execute([$hash, (int) $session['id']]);
+    // Remove a sessão: força novo login com a senha recém-definida.
+    $pdo->prepare('DELETE FROM api_sessions WHERE id = ?')->execute([$session['sessionId']]);
+    respond(['ok' => true, 'message' => 'Senha definida com sucesso.']);
+}
+
 
 function send_reset_email(array $config, string $email, string $username, string $token): bool
 {
