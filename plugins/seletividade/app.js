@@ -448,10 +448,13 @@ function drawChart(ctx, W, H, mode, options = {}) {
     ctx.setLineDash([]);
     ctx.restore();
     if (label) {
+      // Rótulo deslocado para a DIREITA da linha (o texto rotacionado se estende
+      // no sentido +x) e a 30% da altura do plot — fora do topo, onde as curvas
+      // e a legenda se acumulam.
       ctx.save();
       ctx.fillStyle = color;
       ctx.font = `${Math.max(10, Math.round(11 * scale))}px Inter, Arial, sans-serif`;
-      ctx.translate(xPos(I) - 4, pad.top + Math.round(8 * scale));
+      ctx.translate(xPos(I) + Math.round(8 * scale), pad.top + plotH * 0.30);
       ctx.rotate(Math.PI / 2);
       ctx.textAlign = "left";
       ctx.fillText(label, 0, 0);
