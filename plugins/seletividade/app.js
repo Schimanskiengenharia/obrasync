@@ -295,7 +295,12 @@ function renderResults() {
       ? `<tr class="group"><td colspan="2">${value}</td></tr>`
       : `<tr><td>${label}</td><td>${value}</td></tr>`
   ).join("");
-  qs("resultados").classList.remove("hidden");
+  // Re-trigger da animação de entrada ao recalcular (reflow reinicia o keyframe).
+  const el = qs("resultados");
+  el.classList.remove("hidden");
+  el.style.animation = "none";
+  el.offsetHeight; // reflow
+  el.style.animation = "";
 }
 
 function renderBadge() {
@@ -779,6 +784,27 @@ function runCalculation() {
   return true;
 }
 
+// Clique no botão Calcular: estado de loading visível antes do cálculo.
+// Wrapper separado para runCalculation() continuar síncrona — generatePdf()
+// e a primeira renderização dependem do retorno imediato dela.
+function runCalculationWithFeedback() {
+  const btn = qs("btnCalcular");
+  if (btn.disabled) return;
+  btn.disabled = true;
+  btn.textContent = "Calculando…";
+  btn.style.opacity = "0.75";
+  // Micro delay para o browser renderizar o estado de loading
+  setTimeout(() => {
+    try {
+      runCalculation();
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Calcular";
+      btn.style.opacity = "";
+    }
+  }, 30);
+}
+
 function clearAll() {
   if (!confirm("Limpar todos os dados informados?")) return;
   try { localStorage.removeItem(DRAFT_KEY); } catch { /* sem armazenamento */ }
@@ -799,7 +825,7 @@ async function init() {
 
   restoreDraft();
 
-  qs("btnCalcular").addEventListener("click", runCalculation);
+  qs("btnCalcular").addEventListener("click", runCalculationWithFeedback);
   qs("btnLimpar").addEventListener("click", clearAll);
   qs("btnPdf").addEventListener("click", generatePdf);
   window.addEventListener("afterprint", () => { qs("printReport").hidden = true; });
@@ -821,6 +847,16 @@ async function init() {
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(renderScreenChart, 150);
   });
+
+  // Sombra dinâmica no topbar ao rolar
+  const topbar = document.querySelector(".topbar");
+  if (topbar) {
+    window.addEventListener("scroll", () => {
+      topbar.style.boxShadow = window.scrollY > 8
+        ? "0 4px 24px rgba(0,0,0,0.13)"
+        : "4px 0 24px rgba(0,0,0,0.08)";
+    }, { passive: true });
+  }
 
   // Primeira renderização com os valores padrão/rascunho.
   runCalculation();
