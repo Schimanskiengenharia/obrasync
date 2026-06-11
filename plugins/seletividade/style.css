@@ -365,4 +365,23 @@ input, select {
     border-top: 1px solid #14211f;
     margin: 0 18px 6px;
   }
+
+  /* Memorial descritivo dinâmico (antes da seção 1) */
+  .memorial p {
+    text-align: justify;
+    font-size: 11px;
+    line-height: 1.65;
+    margin: 3px 0 10px;
+    color: #14211f;
+  }
+
+  .memorial h2 {
+    font-size: 11px;
+    margin: 12px 0 3px;
+    padding-bottom: 2px;
+    border-bottom: 1px solid #0f766e;
+    color: #134e4a;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
 }

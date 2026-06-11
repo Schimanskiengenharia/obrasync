@@ -628,6 +628,24 @@ function buildPrintReport(selectivity, logoSrc) {
       </div>
     </div>
 
+    <div class="memorial">
+      <h2>Finalidade</h2>
+      <p>O presente Estudo tem a finalidade de definir os requisitos mínimos necessários para a coordenação das proteções de sobrecorrente em tensão primária da subestação <strong>${txt("projNome") || "—"}</strong>, pertencente a <strong>${txt("projCliente") || "—"}</strong>, localizada em ${txt("projEndereco") || "—"}, dentro da área de concessão da distribuidora de energia elétrica local.</p>
+
+      <h2>Dados do Sistema e Fornecimento</h2>
+      <p>Conforme informações constantes no NCC (Nível de Curto-Circuito) fornecido pela concessionária, referência <strong>${txt("nccPe") || "—"}</strong>, o ponto de fornecimento está conectado à Subestação <strong>${txt("nccSe") || "—"}</strong>, Circuito <strong>${txt("nccCircuito") || "—"}</strong>, Montante <strong>${txt("nccMontante") || "—"}</strong>, Fabricante <strong>${txt("nccFabricante") || "—"}</strong>, com tensão nominal de <strong>${fmt(c.Vn)} kV</strong>. As correntes de curto-circuito no ponto de entrega são: trifásica máxima de <strong>${fmt(c.icc3f, 0)} A</strong> e fase-terra de <strong>${fmt(c.iccFt, 0)} A</strong>.</p>
+
+      <h2>Dados da Instalação</h2>
+      <p>A instalação é composta por transformador de <strong>${fmt(c.kva, 0)} kVA</strong>, tipo <strong>${qs("instIsolacao").selectedOptions[0].textContent}</strong>, com demanda prevista de <strong>${fmt(c.kw, 0)} kW</strong> e fator de potência de <strong>${fmt(c.fp, 2)}</strong>. A corrente nominal do transformador calculada é de <strong>${fmt(c.In)} A</strong> e a corrente de demanda prevista é de <strong>${fmt(c.InDem)} A</strong>. A corrente transitória de magnetização (INRUSH) de fase foi calculada em <strong>${fmt(c.inrushFase)} A @ 0,1 s</strong> (fator ×${c.inrushFactor}), e a de neutro em <strong>${fmt(c.inrushNeutro)} A @ 0,1 s</strong>. ${c.ansi.fase.i ? `O ponto ANSI do transformador corresponde a <strong>${fmt(c.ansi.fase.i, 0)} A @ ${fmt(c.ansi.fase.t)} s</strong>, conforme NBR 5356-11.` : ""}</p>
+
+      <h2>Critério de Ajuste das Proteções — Funções 50/51 Fase e Neutro</h2>
+      <p><strong>Função 51F — Temporizado de Fase:</strong> corrente de partida calculada aplicando fator de 125% sobre a corrente de demanda, refletida ao secundário do TC (RTC = ${fmt(c.rtc, 0)}), resultando em <strong>${fmt(c.aj51F)} A secundário / ${fmt(c.prim51F)} A primário</strong>. Curva adotada: IEC <strong>${c.curvaFase}</strong>, dial calculado <strong>${fmt(c.dialFase, 4)}</strong>, garantindo tempo máximo de atuação de 0,2 s para relação I/Ip = 20.</p>
+      <p><strong>Função 51N — Temporizado de Neutro:</strong> corrente de partida equivalente a 1/3 da corrente de fase, resultando em <strong>${fmt(c.aj51N)} A secundário / ${fmt(c.prim51N)} A primário</strong>. Curva adotada: IEC <strong>${c.curvaNeutro}</strong>, dial calculado <strong>${fmt(c.dialNeutro, 4)}</strong>.</p>
+      <p><strong>Função 50F — Instantâneo de Fase:</strong> corrente de partida definida em 110% da corrente de INRUSH de demanda, resultando em <strong>${fmt(c.aj50F)} A secundário / ${fmt(c.prim50F)} A primário</strong>, com atuação instantânea, evitando operação indevida do relé durante a energização do transformador.</p>
+      <p><strong>Função 50N — Instantâneo de Neutro:</strong> corrente de partida equivalente a 1/3 da corrente instantânea de fase, resultando em <strong>${fmt(c.aj50N)} A secundário / ${fmt(c.prim50N)} A primário</strong>, com atuação instantânea.</p>
+      <p>Os ajustes foram definidos atendendo ao intervalo de coordenação mínimo de <strong>0,3 s</strong> em relação à proteção de retaguarda da concessionária: Fase Ip = ${fmt(c.ret.fase.ip, 0)} A · Dial ${fmt(c.ret.fase.dial, 2)} · Curva ${c.ret.fase.curva} · Inst. ${fmt(c.ret.fase.inst, 0)} A — Neutro Ip = ${fmt(c.ret.neutro.ip, 0)} A · Dial ${fmt(c.ret.neutro.dial, 2)} · Curva ${c.ret.neutro.curva} · Inst. ${fmt(c.ret.neutro.inst, 0)} A, conforme recomendação da distribuidora.</p>
+    </div>
+
     <h2>1. Informações do NCC (Energisa)</h2>
     ${tableHtml([
       ["SE / Circuito", `${txt("nccSe") || "—"} / ${txt("nccCircuito") || "—"}`],
