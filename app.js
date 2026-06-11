@@ -83,6 +83,7 @@ const modules = [
   ["proposalActionTypes", "Tipos de atuação"],
   ["proposalServiceSubtypes", "Subtipos/Serviços"],
   ["sales", "Vendas/Contratos"],
+  ["viabilityAnalyses", "Análise de Viabilidade"],
   ["purchaseOrders", "Pedidos de compra"],
   ["projectSchedule", "Cronograma Físico-Financeiro"],
   ["projectMilestones", "Marcos da obra"],
@@ -129,12 +130,18 @@ const modules = [
   ["migration", "Migração para banco"],
 ];
 
+// Navegação lateral organizada pelo fluxo de trabalho da empresa:
+// Dashboard → Cadastros → Comercial → Viabilidade → Obras → Orçamento de Obra
+// → Planejamento → Financeiro → Contabilidade → Relatórios → Configurações.
 const sidebarSections = [
   { id: "dashboard", label: "Dashboard", icon: "D", module: "dashboard" },
   { id: "cadastros", label: "Cadastros", icon: "C", modules: ["clients", "suppliers", "products", "services", "categories", "costCenters", "bankAccounts"] },
-  { id: "obras", label: "Obras/Projetos", icon: "O", modules: ["projects", "projectCosts", "projectRevenues", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "projectSchedule", "projectMilestones", "projectNotifications", "projectTrackingLinks", "purchaseOrders", "technicalReports", "fiscalDocuments", "projectReport", "agenda", "kanban"] },
-  { id: "financeiro", label: "Financeiro", icon: "$", modules: ["receivable", "payable", "cashMoves", "cashFlow", "reconciliation"] },
   { id: "comercial", label: "Comercial", icon: "V", modules: ["budgets", "proposals", "proposalModels", "proposalAreas", "proposalActionTypes", "proposalServiceSubtypes", "sales"] },
+  { id: "viabilidade", label: "Viabilidade", icon: "%", modules: ["viabilityAnalyses"] },
+  { id: "obras", label: "Obras/Projetos", icon: "O", modules: ["projects", "projectCosts", "projectRevenues", "fiscalDocuments", "projectNotifications", "projectTrackingLinks", "projectReport"] },
+  { id: "orcamentoObra", label: "Orçamento de Obra", icon: "Σ", modules: ["workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "purchaseOrders"] },
+  { id: "planejamento", label: "Planejamento", icon: "P", modules: ["projectSchedule", "projectMilestones", "agenda", "kanban", "technicalReports"] },
+  { id: "financeiro", label: "Financeiro", icon: "$", modules: ["receivable", "payable", "cashMoves", "cashFlow", "reconciliation"] },
   { id: "contabilidade", label: "Contabilidade Gerencial", icon: "L", modules: ["chartAccounts", "journalEntries", "dre", "taxDocuments", "taxes"] },
   { id: "relatorios", label: "Relatórios", icon: "R", modules: ["reports", "reportFinancial", "reportClient", "reportSupplier", "reportCostCenter", "reportProject", "exports"] },
   { id: "config", label: "Configurações", icon: "S", modules: ["companySettings", "users", "permissions", "systemVersion", "workTypes", "workStatuses", "standardStages", "standardMilestones", "customFields", "reportModels", "documentTypes", "checklists", "measurementTypes", "paymentMethods", "whatsappTemplates", "visibilityRules", "sinapiSettings", "backupLocal", "preferences", "migration", "auditLog", "myProfile"] },
@@ -159,14 +166,14 @@ const roleModules = {
   admin: modules.map(([key]) => key),
   financeiro: [
     "dashboard", "clients", "suppliers", "categories", "costCenters", "bankAccounts", "projects", "projectSchedule", "agenda", "kanban",
-    "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "sinapiSettings", "ownCompositions", "quotes", "abcCurve",
+    "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "sinapiSettings", "ownCompositions", "quotes", "abcCurve", "viabilityAnalyses",
     "fiscalDocuments", "receivable", "payable", "cashMoves", "cashFlow", "reconciliation",
     "proposals", "sales", "chartAccounts", "journalEntries", "dre", "taxDocuments", "taxes",
     "reports", "reportFinancial", "reportClient", "reportSupplier", "reportCostCenter", "reportProject", "exports", "systemVersion",
   ],
-  comercial: ["dashboard", "clients", "projects", "projectSchedule", "agenda", "kanban", "workBudgets", "abcCurve", "budgets", "proposals", "proposalModels", "sales", "reportClient", "systemVersion"],
-  engenharia: ["dashboard", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "purchaseOrders", "technicalReports", "projectReport", "proposals", "reportProject", "systemVersion"],
-  gestor_obra: ["dashboard", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "purchaseOrders", "technicalReports", "projectReport", "proposals", "reportProject", "systemVersion"],
+  comercial: ["dashboard", "clients", "projects", "projectSchedule", "agenda", "kanban", "workBudgets", "abcCurve", "viabilityAnalyses", "budgets", "proposals", "proposalModels", "sales", "reportClient", "systemVersion"],
+  engenharia: ["dashboard", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "viabilityAnalyses", "purchaseOrders", "technicalReports", "projectReport", "proposals", "reportProject", "systemVersion"],
+  gestor_obra: ["dashboard", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "viabilityAnalyses", "purchaseOrders", "technicalReports", "projectReport", "proposals", "reportProject", "systemVersion"],
   equipe_campo: ["dashboard", "projectReport", "systemVersion"],
   cliente_obra: ["dashboard", "projectReport", "projectSchedule", "technicalReports", "systemVersion"],
   fornecedor_terceiro: ["dashboard", "systemVersion"],
@@ -215,6 +222,9 @@ let agendaProjectFilter = "";
 let agendaTypeFilter = "";
 let selectedKanbanBoardId = "";
 let agendaNewDate = "";
+let viabilityProjectFilter = "";
+let viabilityStatusFilter = "";
+let viabilityVerdictFilter = "";
 let kanbanNewColumnId = "";
 let favoritesDialogSelections = new Set();
 let sessionWarnTimer = null;
@@ -255,6 +265,7 @@ const apiResources = {
   proposalActionTypes: "proposta-tipos",
   proposalServiceSubtypes: "proposta-subtipos",
   sales: "vendas",
+  viabilityAnalyses: "analises-viabilidade",
   purchaseOrders: "pedidos-compra",
   projectSchedule: "cronograma-fisico-financeiro",
   projectMilestones: "marcos-obras",
@@ -381,6 +392,25 @@ const configs = {
       ["revenueContracted", "Receita contratada", "number"],
       ["costForecast", "Custo previsto", "number"],
       ["realizedCost", "Custo realizado", "number"],
+      ["notes", "Observações", "textarea"],
+    ],
+  },
+  viabilityAnalyses: {
+    title: "Análise de Viabilidade",
+    description: "Avaliação de custo x benefício por obra/projeto com margem, payback, VPL, TIR e parecer automático.",
+    fields: [
+      ["projectId", "Obra/Projeto", "project", true],
+      ["proposalId", "Proposta comercial (opcional)", "proposal"],
+      ["contractValue", "Valor total do contrato/proposta", "number", true],
+      ["estimatedCost", "Custo estimado total da obra", "number", true],
+      ["executionMonths", "Prazo de execução (meses)", "number", true],
+      ["tmaPercent", "TMA - Taxa mínima de atratividade (% a.a.)", "number"],
+      ["analysisDate", "Data da análise", "date"],
+      ["responsibleUserId", "Responsável pela análise", "user"],
+      ["status", "Status", "select", ["Em análise", "Aprovada", "Reprovada", "Arquivada"]],
+      ["verdict", "Parecer final", "select", ["Automático", "Viável", "Viável com ressalvas", "Inviável"]],
+      ["verdictJustification", "Justificativa (obrigatória ao alterar o parecer manualmente)", "textarea"],
+      ["risks", "Riscos identificados", "textarea"],
       ["notes", "Observações", "textarea"],
     ],
   },
@@ -1287,6 +1317,7 @@ const seed = {
     { id: "cf3", workTypeId: "wt1", fieldName: "área construída", fieldType: "Número", options: "", required: "Não", sortOrder: 1, status: "Ativo" },
   ],
   customFieldValues: [],
+  viabilityAnalyses: [],
   sinapiReferences: [
     { id: "sr1", uf: "MS", referenceMonth: 4, referenceYear: 2026, priceType: "Sem desoneração", source: "SINAPI/CAIXA", defaultUf: "MS", locationName: "Campo Grande/MS", issueDate: "2026-05-12", availableTypes: "Sem desoneração; Com desoneração; Sem encargos sociais", importDate: "2026-06-08", importUserId: "u1", status: "Ativo" },
     { id: "sr2", uf: "MS", referenceMonth: 4, referenceYear: 2026, priceType: "Com desoneração", source: "SINAPI/CAIXA", defaultUf: "MS", locationName: "Campo Grande/MS", issueDate: "2026-05-12", availableTypes: "Sem desoneração; Com desoneração; Sem encargos sociais", importDate: "2026-06-08", importUserId: "u1", status: "Ativo" },
@@ -1776,11 +1807,12 @@ function isMoneyField(field) {
     "directCost", "totalCost", "totalPrice", "unitCost", "unitPrice", "estimatedCost", "laborCost", "materialCost",
     "equipmentCost", "thirdPartyCost", "suggestedPrice", "unitValue", "totalValue", "precoUnitario", "custoUnitario",
     "entradasPrevistas", "entradasRealizadas", "saidasPrevistas", "saidasRealizadas", "saldoFinal",
+    "contractValue", "grossMargin", "estimatedProfit", "npv",
   ].includes(field);
 }
 
 function isPercentField(field) {
-  return ["rate", "margin", "expectedMargin", "realizedMargin", "physicalProgress", "financialProgress", "plannedPhysicalPercent", "actualPhysicalPercent", "bdiPercent", "chargesPercent", "discountPercent", "marginPercent", "defaultPhysicalPercent", "individualPercent", "accumulatedPercent", "percentAS", "laborPercent", "defaultBdiPercent"].includes(field);
+  return ["rate", "margin", "expectedMargin", "realizedMargin", "physicalProgress", "financialProgress", "plannedPhysicalPercent", "actualPhysicalPercent", "bdiPercent", "chargesPercent", "discountPercent", "marginPercent", "defaultPhysicalPercent", "individualPercent", "accumulatedPercent", "percentAS", "laborPercent", "defaultBdiPercent", "tmaPercent", "irrPercent"].includes(field);
 }
 
 function placeholderFor(field, label = "", key = "") {
@@ -1904,8 +1936,8 @@ function canEditModule(key = currentModule) {
   const permissionKey = { agendaEvents: "agenda", kanbanBoards: "kanban", kanbanColumns: "kanban", kanbanCards: "kanban" }[key] || key;
   if (currentUser?.role === "visualizador") return false;
   const editableByRole = {
-    financeiro: ["fiscalDocuments", "receivable", "payable", "cashMoves", "cashFlow", "reconciliation", "categories", "costCenters", "bankAccounts", "chartAccounts", "journalEntries", "taxDocuments", "taxes", "exports", "projectSchedule", "agenda", "kanban", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "sinapiSettings", "quotes", "sales"],
-    comercial: ["clients", "budgets", "proposals", "agenda", "kanban"],
+    financeiro: ["fiscalDocuments", "receivable", "payable", "cashMoves", "cashFlow", "reconciliation", "categories", "costCenters", "bankAccounts", "chartAccounts", "journalEntries", "taxDocuments", "taxes", "exports", "projectSchedule", "agenda", "kanban", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "sinapiSettings", "quotes", "sales", "viabilityAnalyses"],
+    comercial: ["clients", "budgets", "proposals", "agenda", "kanban", "viabilityAnalyses"],
     engenharia: ["projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "purchaseOrders", "technicalReports"],
     gestor_obra: ["projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "purchaseOrders", "technicalReports"],
     gerente: modules.map(([k]) => k).filter((k) => !["users", "permissions"].includes(k)),
@@ -2136,6 +2168,7 @@ function render() {
   if (currentModule === "projectCosts") return renderProjectCosts();
   if (currentModule === "projectRevenues") return renderProjectRevenues();
   if (currentModule === "workBudgets") return renderWorkBudgets();
+  if (currentModule === "viabilityAnalyses") return renderViability();
   if (currentModule === "sinapiReferences") return renderSinapiReferences();
   if (currentModule === "abcCurve") return renderAbcCurve();
   if (currentModule === "projectSchedule") return renderProjectSchedule();
@@ -2895,6 +2928,269 @@ function chartLegend(series) {
   return `<div class="chart-legend">${series.map((item) => `<span><i style="background:${item.color}"></i>${svgText(item.label)}</span>`).join("")}</div>`;
 }
 
+// ── Análise de Viabilidade ──────────────────────────────────────────────────
+
+const VIABILITY_VERDICTS = ["Viável", "Viável com ressalvas", "Inviável"];
+
+// Indicadores derivados dos dados da análise: margem, payback, VPL, TIR e parecer sugerido.
+function viabilityMetrics(record) {
+  const contractValue = Number(record.contractValue || 0);
+  const estimatedCost = Number(record.estimatedCost || 0);
+  const months = Math.max(1, Math.round(Number(record.executionMonths || 0)) || 1);
+  const tma = Number(record.tmaPercent || 0);
+  const grossMargin = contractValue - estimatedCost;
+  const marginPercent = contractValue ? (grossMargin / contractValue) * 100 : 0;
+  // Payback simples: meses até as receitas (distribuídas no prazo) cobrirem o custo estimado.
+  const paybackMonths = grossMargin > 0 && contractValue > 0 ? (estimatedCost / contractValue) * months : 0;
+  // VPL simplificado: custo como desembolso inicial e receita em parcelas mensais iguais,
+  // descontadas pela TMA anual convertida em taxa mensal equivalente.
+  const monthlyRate = Math.pow(1 + tma / 100, 1 / 12) - 1;
+  const monthlyInflow = contractValue / months;
+  let npv = -estimatedCost;
+  for (let t = 1; t <= months; t++) npv += monthlyInflow / Math.pow(1 + monthlyRate, t);
+  const irrPercent = viabilityIrr(estimatedCost, monthlyInflow, months);
+  let autoVerdict;
+  if (marginPercent < 5 || npv < 0) autoVerdict = "Inviável";
+  else if (marginPercent > 15 && npv > 0) autoVerdict = "Viável";
+  else autoVerdict = "Viável com ressalvas";
+  return { contractValue, estimatedCost, months, grossMargin, marginPercent, paybackMonths, npv, irrPercent, autoVerdict };
+}
+
+// TIR mensal por bissecção (fluxo: -custo em t0 e receita mensal constante), anualizada em %.
+function viabilityIrr(initialCost, monthlyInflow, months) {
+  if (initialCost <= 0 || monthlyInflow <= 0) return null;
+  const npvAt = (rate) => {
+    let total = -initialCost;
+    for (let t = 1; t <= months; t++) total += monthlyInflow / Math.pow(1 + rate, t);
+    return total;
+  };
+  let low = -0.99;
+  let high = 10;
+  if (npvAt(low) * npvAt(high) > 0) return null;
+  for (let i = 0; i < 80; i++) {
+    const mid = (low + high) / 2;
+    if (npvAt(low) * npvAt(mid) <= 0) high = mid;
+    else low = mid;
+  }
+  return (Math.pow(1 + (low + high) / 2, 12) - 1) * 100;
+}
+
+// Parecer efetivo: o manual prevalece; "Automático" usa o parecer calculado.
+function viabilityFinalVerdict(record) {
+  if (record.verdict && record.verdict !== "Automático") return record.verdict;
+  return record.autoVerdict || viabilityMetrics(record).autoVerdict;
+}
+
+function viabilityTone(verdict) {
+  if (verdict === "Viável") return "viable";
+  if (verdict === "Inviável") return "unviable";
+  return "caution";
+}
+
+function renderViability() {
+  const all = db.viabilityAnalyses || [];
+  const rows = all
+    .filter((row) => !viabilityProjectFilter || sameId(row.projectId, viabilityProjectFilter))
+    .filter((row) => !viabilityStatusFilter || (row.status || "Em análise") === viabilityStatusFilter)
+    .filter((row) => !viabilityVerdictFilter || viabilityFinalVerdict(row) === viabilityVerdictFilter)
+    .slice()
+    .sort((a, b) => String(b.analysisDate || "").localeCompare(String(a.analysisDate || "")) || String(b.id).localeCompare(String(a.id)));
+  const editable = canEditModule("viabilityAnalyses");
+  const verdictCount = (verdict) => all.filter((row) => viabilityFinalVerdict(row) === verdict).length;
+  const inAnalysis = all.filter((row) => (row.status || "Em análise") === "Em análise").length;
+  const chartRows = rows.slice(0, 8).map((row) => {
+    const m = viabilityMetrics(row);
+    return { label: nameOf("projects", row.projectId) || `Análise ${row.id}`, Receita: m.contractValue, Custo: m.estimatedCost, Margem: m.grossMargin };
+  });
+  qs("content").innerHTML = `
+    <section class="module-head">
+      <div>
+        <h2>Análise de Viabilidade</h2>
+        <p>Custo x benefício por obra/projeto com margem, payback, VPL, TIR e parecer automático.</p>
+      </div>
+      ${editable ? '<button class="primary" type="button" id="newViability">Nova análise</button>' : ""}
+    </section>
+    <section class="kpi-grid">
+      ${kpi("Total de análises", all.length, false)}
+      ${kpi("Viáveis", verdictCount("Viável"), false)}
+      ${kpi("Com ressalvas", verdictCount("Viável com ressalvas"), false)}
+      ${kpi("Inviáveis", verdictCount("Inviável"), false)}
+      ${kpi("Em análise", inAnalysis, false)}
+    </section>
+    <section class="viability-filters">
+      <label>Obra/Projeto
+        <select id="viabilityProjectFilter">
+          <option value="">Todas</option>
+          ${(db.projects || []).map((project) => `<option value="${escapeHtml(project.id)}" ${sameId(project.id, viabilityProjectFilter) ? "selected" : ""}>${escapeHtml(project.name)}</option>`).join("")}
+        </select>
+      </label>
+      <label>Status
+        <select id="viabilityStatusFilter">
+          <option value="">Todos</option>
+          ${["Em análise", "Aprovada", "Reprovada", "Arquivada"].map((status) => `<option ${status === viabilityStatusFilter ? "selected" : ""}>${status}</option>`).join("")}
+        </select>
+      </label>
+      <label>Parecer
+        <select id="viabilityVerdictFilter">
+          <option value="">Todos</option>
+          ${VIABILITY_VERDICTS.map((verdict) => `<option ${verdict === viabilityVerdictFilter ? "selected" : ""}>${verdict}</option>`).join("")}
+        </select>
+      </label>
+    </section>
+    ${chartRows.length ? chartPanel("Custo x Receita x Margem", "Comparativo das análises filtradas", groupedBarChart(chartRows, [
+      { key: "Receita", color: "#2563eb" },
+      { key: "Custo", color: "#b42318" },
+      { key: "Margem", color: "#147a47" },
+    ])) : ""}
+    ${rows.length
+      ? `<section class="viability-grid">${rows.map((row) => viabilityCard(row, editable)).join("")}</section>`
+      : '<div class="empty">Nenhuma análise de viabilidade para os filtros atuais.</div>'}
+  `;
+  qs("newViability")?.addEventListener("click", () => openForm("viabilityAnalyses"));
+  [["viabilityProjectFilter", (value) => viabilityProjectFilter = value],
+   ["viabilityStatusFilter", (value) => viabilityStatusFilter = value],
+   ["viabilityVerdictFilter", (value) => viabilityVerdictFilter = value]].forEach(([id, setter]) => {
+    qs(id)?.addEventListener("change", (event) => { setter(event.target.value); renderViability(); });
+  });
+  qs("content").querySelectorAll("[data-edit]").forEach((button) => button.addEventListener("click", () => openForm("viabilityAnalyses", button.dataset.edit)));
+  qs("content").querySelectorAll("[data-delete]").forEach((button) => button.addEventListener("click", () => removeRecord("viabilityAnalyses", button.dataset.delete)));
+}
+
+function viabilityCard(row, editable) {
+  const m = viabilityMetrics(row);
+  const verdict = viabilityFinalVerdict(row);
+  const tone = viabilityTone(verdict);
+  const manual = row.verdict && row.verdict !== "Automático";
+  const proposalName = row.proposalId ? nameOf("proposals", row.proposalId) : "";
+  return `
+    <article class="viability-card ${tone}">
+      <header>
+        <div>
+          <h3>${escapeHtml(nameOf("projects", row.projectId) || "Sem obra vinculada")}</h3>
+          <p>${asDate(row.analysisDate)}${row.responsibleUserId ? ` · ${escapeHtml(nameOf("users", row.responsibleUserId))}` : ""}${proposalName ? ` · Proposta: ${escapeHtml(proposalName)}` : ""}</p>
+        </div>
+        <span class="viability-verdict ${tone}">${escapeHtml(verdict)}${manual ? " (manual)" : ""}</span>
+      </header>
+      <div class="viability-indicators">
+        <div><span>Contrato</span><strong>${asMoney(m.contractValue)}</strong></div>
+        <div><span>Custo estimado</span><strong>${asMoney(m.estimatedCost)}</strong></div>
+        <div><span>Margem bruta</span><strong class="${m.grossMargin < 0 ? "neg" : ""}">${asMoney(m.grossMargin)}</strong></div>
+        <div><span>Margem %</span><strong>${asPercent(m.marginPercent)}</strong></div>
+        <div><span>Payback</span><strong>${m.paybackMonths ? `${m.paybackMonths.toFixed(1)} meses` : "—"}</strong></div>
+        <div><span>VPL (TMA ${asPercent(Number(row.tmaPercent || 0))})</span><strong class="${m.npv < 0 ? "neg" : ""}">${asMoney(m.npv)}</strong></div>
+        <div><span>TIR estimada</span><strong>${m.irrPercent === null ? "—" : asPercent(m.irrPercent)}</strong></div>
+        <div><span>Status</span><strong>${escapeHtml(row.status || "Em análise")}</strong></div>
+      </div>
+      ${viabilityMiniChart(m)}
+      ${row.risks ? `<p class="viability-note"><strong>Riscos:</strong> ${escapeHtml(row.risks)}</p>` : ""}
+      ${manual && row.verdictJustification ? `<p class="viability-note"><strong>Justificativa:</strong> ${escapeHtml(row.verdictJustification)}</p>` : ""}
+      ${row.verdictHistory ? `<details class="viability-history"><summary>Histórico do parecer</summary><pre>${escapeHtml(row.verdictHistory)}</pre></details>` : ""}
+      ${editable ? `<footer class="row-actions">
+        <button class="secondary" type="button" data-edit="${escapeHtml(row.id)}">Editar</button>
+        ${canDeleteRecord("viabilityAnalyses") ? `<button class="danger" type="button" data-delete="${escapeHtml(row.id)}">Excluir</button>` : ""}
+      </footer>` : ""}
+    </article>
+  `;
+}
+
+function viabilityMiniChart(m) {
+  const max = Math.max(m.contractValue, m.estimatedCost, Math.abs(m.grossMargin), 1);
+  const bar = (label, value, color) => `
+    <div class="hbar-row">
+      <span>${label}</span>
+      <div class="hbar-track"><div class="hbar-fill" style="width:${Math.max(4, Math.abs(value) / max * 100)}%; background:${value < 0 ? "#b42318" : color}"></div></div>
+      <strong>${compactMoney(value)}</strong>
+    </div>`;
+  return `<div class="hbar-list viability-mini-chart">
+    ${bar("Receita", m.contractValue, "#2563eb")}
+    ${bar("Custo", m.estimatedCost, "#b8872d")}
+    ${bar("Margem", m.grossMargin, "#147a47")}
+  </div>`;
+}
+
+// Calcula os indicadores, resolve o parecer final e registra o histórico de alterações.
+// Devolve uma mensagem de erro (string vazia = sucesso).
+function normalizeViabilityAnalysis(data) {
+  data.contractValue = Number(data.contractValue || 0);
+  data.estimatedCost = Number(data.estimatedCost || 0);
+  data.executionMonths = Number(data.executionMonths || 0);
+  data.tmaPercent = Number(data.tmaPercent || 0);
+  if (data.contractValue <= 0) return "Informe o valor total do contrato/proposta.";
+  if (data.executionMonths <= 0) return "Informe o prazo de execução em meses.";
+  const m = viabilityMetrics(data);
+  data.grossMargin = roundMoney(m.grossMargin);
+  data.marginPercent = Math.round(m.marginPercent * 100) / 100;
+  data.estimatedProfit = roundMoney(m.grossMargin);
+  data.paybackMonths = Math.round(m.paybackMonths * 10) / 10;
+  data.npv = roundMoney(m.npv);
+  data.irrPercent = m.irrPercent === null ? null : Math.round(m.irrPercent * 100) / 100;
+  data.autoVerdict = m.autoVerdict;
+  const isManual = Boolean(data.verdict) && data.verdict !== "Automático";
+  if (isManual && data.verdict !== m.autoVerdict && !String(data.verdictJustification || "").trim()) {
+    return `Informe a justificativa: o parecer manual "${data.verdict}" difere do parecer sugerido "${m.autoVerdict}".`;
+  }
+  data.finalVerdict = isManual ? data.verdict : m.autoVerdict;
+  if (!data.analysisDate) data.analysisDate = new Date().toISOString().slice(0, 10);
+  if (!data.responsibleUserId) data.responsibleUserId = currentUser?.id || "";
+  const previous = editing?.id ? byId("viabilityAnalyses", editing.id) : null;
+  const previousVerdict = previous ? (previous.finalVerdict || viabilityFinalVerdict(previous)) : "";
+  let history = previous?.verdictHistory || "";
+  if (data.finalVerdict !== previousVerdict) {
+    const stamp = new Date().toLocaleString("pt-BR");
+    const author = currentUser?.fullName || currentUser?.username || "sistema";
+    const detail = isManual ? `manual${String(data.verdictJustification || "").trim() ? `: ${String(data.verdictJustification).trim()}` : ""}` : "automático";
+    const line = `${stamp} — ${author}: parecer ${previousVerdict ? `alterado de "${previousVerdict}" para` : "definido como"} "${data.finalVerdict}" (${detail})`;
+    history = history ? `${history}\n${line}` : line;
+  }
+  data.verdictHistory = history;
+  return "";
+}
+
+// Pré-visualização em tempo real dos cálculos no formulário de viabilidade.
+function setupViabilityFormPreview() {
+  const fields = qs("formFields");
+  const preview = document.createElement("div");
+  preview.className = "full viability-form-preview";
+  fields.appendChild(preview);
+  const read = (name) => {
+    const input = fields.querySelector(`[name="${name}"]`);
+    if (!input) return 0;
+    if (input.dataset.format === "money") return parseMoneyInput(input.value);
+    if (input.dataset.format === "percent") return parsePercentInput(input.value);
+    return Number(input.value || 0);
+  };
+  const update = () => {
+    const m = viabilityMetrics({
+      contractValue: read("contractValue"),
+      estimatedCost: read("estimatedCost"),
+      executionMonths: read("executionMonths"),
+      tmaPercent: read("tmaPercent"),
+    });
+    const verdictSelect = fields.querySelector('[name="verdict"]');
+    const isManual = verdictSelect && verdictSelect.value !== "Automático";
+    const finalVerdict = isManual ? verdictSelect.value : m.autoVerdict;
+    preview.innerHTML = `
+      <h4>Cálculos automáticos</h4>
+      <div class="viability-indicators">
+        <div><span>Margem bruta</span><strong>${asMoney(m.grossMargin)}</strong></div>
+        <div><span>Margem %</span><strong>${asPercent(m.marginPercent)}</strong></div>
+        <div><span>Lucro estimado</span><strong>${asMoney(m.grossMargin)}</strong></div>
+        <div><span>Payback</span><strong>${m.paybackMonths ? `${m.paybackMonths.toFixed(1)} meses` : "—"}</strong></div>
+        <div><span>VPL</span><strong class="${m.npv < 0 ? "neg" : ""}">${asMoney(m.npv)}</strong></div>
+        <div><span>TIR estimada</span><strong>${m.irrPercent === null ? "—" : asPercent(m.irrPercent)}</strong></div>
+      </div>
+      <p class="viability-suggestion">Parecer sugerido: <span class="viability-verdict ${viabilityTone(m.autoVerdict)}">${m.autoVerdict}</span>${isManual ? ` · Parecer final (manual): <span class="viability-verdict ${viabilityTone(finalVerdict)}">${escapeHtml(finalVerdict)}</span>` : ""}</p>
+    `;
+  };
+  ["contractValue", "estimatedCost", "executionMonths", "tmaPercent"].forEach((name) => {
+    const input = fields.querySelector(`[name="${name}"]`);
+    input?.addEventListener("input", update);
+    input?.addEventListener("blur", update);
+  });
+  fields.querySelector('[name="verdict"]')?.addEventListener("change", update);
+  update();
+}
+
 function renderCrud(key) {
   const config = configs[key];
   const rows = visibleRowsForModule(key, applyFilters(db[key] || []));
@@ -3044,6 +3340,10 @@ function labelFor(field) {
     variables: "Variáveis", folder: "Subpasta", visibleToClientDefault: "Visível ao cliente", checklistId: "Checklist",
     allowsPhoto: "Permite foto", allowsAttachment: "Permite anexo", installments: "Parcelas", context: "Contexto",
     message: "Mensagem", rule: "Regra", predecessorIds: "Dependências", durationDays: "Duração",
+    contractValue: "Valor do contrato", executionMonths: "Prazo (meses)", tmaPercent: "TMA %", grossMargin: "Margem bruta",
+    estimatedProfit: "Lucro estimado", paybackMonths: "Payback (meses)", npv: "VPL", irrPercent: "TIR %",
+    verdict: "Parecer final", autoVerdict: "Parecer sugerido", verdictJustification: "Justificativa",
+    verdictHistory: "Histórico do parecer", analysisDate: "Data da análise", risks: "Riscos identificados",
     obra_id: "Obra/Projeto", cliente_id: "Cliente", usuario_id: "Responsável", titulo: "Título", tipo: "Tipo",
     data_inicio: "Início", data_fim: "Fim", dia_todo: "Dia todo", lembrete_minutos: "Lembrete",
     board_id: "Board", coluna_id: "Coluna", responsavel_id: "Responsável", data_vencimento: "Prazo",
@@ -3135,6 +3435,13 @@ function openForm(key, id = null) {
     row.coluna_id = kanbanNewColumnId || "";
     row.prioridade = "media";
     row.ordem = Date.now();
+  }
+  if (!id && key === "viabilityAnalyses") {
+    row.analysisDate = new Date().toISOString().slice(0, 10);
+    row.responsibleUserId = currentUser?.id || "";
+    row.status = "Em análise";
+    row.verdict = "Automático";
+    if (viabilityProjectFilter) row.projectId = viabilityProjectFilter;
   }
   qs("dialogTitle").textContent = id ? `Editar ${config.title}` : `Novo ${config.title}`;
   qs("formFields").innerHTML = config.fields.map(([field, label, type, options]) => inputFor(key, field, label, type, options, row[field], row)).join("");
@@ -3230,6 +3537,7 @@ function applyFormEnhancements() {
     };
     pwdInput.addEventListener("input", updateMeter);
   }
+  if (editing?.key === "viabilityAnalyses") setupViabilityFormPreview();
 }
 
 async function saveForm(event) {
@@ -3244,6 +3552,10 @@ async function saveForm(event) {
   if (editing.key === "ownCompositions") normalizeOwnComposition(data);
   if (editing.key === "agendaEvents") normalizeAgendaEvent(data);
   if (editing.key === "kanbanCards") normalizeKanbanCard(data);
+  if (editing.key === "viabilityAnalyses") {
+    const viabilityError = normalizeViabilityAnalysis(data);
+    if (viabilityError) return alert(viabilityError);
+  }
   if (["budgets", "proposals", "workBudgets"].includes(editing.key)) {
     if (!data.createdByUserId) data.createdByUserId = currentUser.id;
     if (!data.commercialUserId && currentUser.role === "comercial") data.commercialUserId = currentUser.id;

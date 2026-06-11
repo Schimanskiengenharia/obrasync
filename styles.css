@@ -162,6 +162,159 @@ button:disabled {
   padding: 0;
 }
 
+/* ── Análise de Viabilidade ────────────────────────────────────────────── */
+
+.viability-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.viability-filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  min-width: 180px;
+}
+
+.viability-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.viability-card {
+  background: var(--card, #fff);
+  border: 1px solid var(--line);
+  border-left: 6px solid var(--line);
+  border-radius: 10px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.viability-card.viable   { border-left-color: #147a47; }
+.viability-card.caution  { border-left-color: #b8872d; }
+.viability-card.unviable { border-left-color: #b42318; }
+
+.viability-card header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.viability-card header h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.viability-card header p {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.viability-verdict {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.viability-verdict.viable   { background: #e5f5ec; color: #147a47; }
+.viability-verdict.caution  { background: #fdf3df; color: #8a6418; }
+.viability-verdict.unviable { background: #fdebe9; color: #b42318; }
+
+.viability-indicators {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 8px 14px;
+}
+
+.viability-indicators div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.viability-indicators span {
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.viability-indicators strong {
+  font-size: 13px;
+}
+
+.viability-indicators strong.neg {
+  color: var(--red);
+}
+
+.viability-mini-chart {
+  border-top: 1px dashed var(--line);
+  padding-top: 10px;
+}
+
+.viability-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.viability-history summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.viability-history pre {
+  margin: 6px 0 0;
+  padding: 8px;
+  background: var(--bg, #f6f7f9);
+  border-radius: 6px;
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.viability-card footer {
+  margin-top: auto;
+  display: flex;
+  gap: 8px;
+}
+
+.viability-form-preview {
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--bg, #f6f7f9);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.viability-form-preview h4 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.viability-suggestion {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
 .app-toast {
   position: fixed;
   top: 24px;
