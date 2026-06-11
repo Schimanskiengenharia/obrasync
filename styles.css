@@ -1914,6 +1914,35 @@ button.danger:hover { background: #9b1d14; }
   border-left: 3px solid var(--teal);
 }
 
+/* Ações de editar/excluir nos cards da agenda (disponíveis em qualquer data) */
+.agenda-event-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.agenda-icon-btn {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
+  border: 1px solid var(--line);
+  background: var(--field);
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1;
+  padding: 0;
+}
+
+.agenda-icon-btn:hover {
+  background: var(--panel-2);
+}
+
+.agenda-icon-btn.danger {
+  color: var(--red);
+}
+
 .agenda-event.status-em_andamento {
   border-left: 3px solid var(--gold);
 }

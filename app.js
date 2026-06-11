@@ -301,6 +301,7 @@ let agendaNewDate = "";
 let viabilityProjectFilter = "";
 let viabilityStatusFilter = "";
 let viabilityVerdictFilter = "";
+let agendaEditingId = "";
 let kanbanNewColumnId = "";
 let favoritesDialogSelections = new Set();
 let sessionWarnTimer = null;
@@ -4327,6 +4328,14 @@ function renderAgendaWeek() {
     qs("agendaToday")?.addEventListener("click", () => { agendaCursorDate = agendaSafeDateString(new Date()); renderAgenda(); });
     qs("agendaNext")?.addEventListener("click", () => moveAgendaCursor(1));
     qs("agendaEventForm")?.addEventListener("submit", saveAgendaEvent);
+    qs("agendaCancelEdit")?.addEventListener("click", () => { agendaEditingId = ""; renderAgenda(); });
+    qs("content").querySelectorAll("[data-agenda-edit]").forEach((button) =>
+      button.addEventListener("click", () => editAgendaEvent(button.dataset.agendaEdit)));
+    qs("content").querySelectorAll("[data-agenda-delete]").forEach((button) =>
+      button.addEventListener("click", () => removeRecord("agendaEvents", button.dataset.agendaDelete)));
+    // Reentra no modo edição após re-render (ex.: ao navegar entre semanas).
+    if (agendaEditingId && byId("agendaEvents", agendaEditingId)) editAgendaEvent(agendaEditingId);
+    else agendaEditingId = "";
   } catch (err) {
     qs("content").innerHTML = `<div class="empty" style="padding:32px;color:var(--red)">Erro ao renderizar a agenda: ${err.message}</div>`;
     console.error("renderAgendaWeek:", err);
@@ -4374,8 +4383,9 @@ function agendaFormHtml(enabled, weekStart) {
   const disabled = enabled ? "" : "disabled";
   return `
     <section class="agenda-form-card">
-      <h3>Novo compromisso</h3>
+      <h3 id="agendaFormTitle">Novo compromisso</h3>
       <form id="agendaEventForm" class="agenda-event-form">
+        <input type="hidden" name="id" value="">
         <label>Data<input type="date" name="date" value="${defaultDate}" min="${today}" required ${disabled}></label>
         <label>Horario inicial<input type="time" name="startTime" value="09:00" required ${disabled}></label>
         <label>Horario final<input type="time" name="endTime" value="10:00" required ${disabled}></label>
@@ -4392,8 +4402,9 @@ function agendaFormHtml(enabled, weekStart) {
           <option value="cancelado">Cancelado</option>
         </select></label>
         <div class="agenda-form-actions">
-          <span>${enabled ? "" : "Semana anterior — disponível apenas para consulta."}</span>
-          <button type="submit" class="primary" ${disabled}>Salvar compromisso</button>
+          <span>${enabled ? "" : "Semana anterior — novos compromissos bloqueados; use ✎ para editar os existentes."}</span>
+          <button type="button" class="secondary hidden" id="agendaCancelEdit">Cancelar edição</button>
+          <button type="submit" class="primary" id="agendaSubmitBtn" ${disabled}>Salvar compromisso</button>
         </div>
       </form>
     </section>
@@ -4419,6 +4430,9 @@ function agendaEventCardHtml(event) {
   const start = agendaTimeLabel(event.data_inicio);
   const end = agendaTimeLabel(event.data_fim);
   const statusClass = event.status ? `status-${event.status}` : "status-agendado";
+  // Editar/excluir sempre disponíveis (inclusive para eventos em datas passadas);
+  // apenas a CRIAÇÃO retroativa é bloqueada.
+  const editable = canEditModule("agenda");
   return `
     <article class="agenda-event ${event.tipo || ""} ${statusClass}">
       <strong>${svgText(event.titulo || "Sem titulo")}</strong>
@@ -4426,6 +4440,10 @@ function agendaEventCardHtml(event) {
       <small>${agendaTypeLabel(event.tipo)}${event.usuario_id ? ` - ${nameOf("users", event.usuario_id)}` : ""}</small>
       ${event.cliente_id || event.obra_id ? `<small>${[nameOf("clients", event.cliente_id), nameOf("projects", event.obra_id)].filter(Boolean).join(" - ")}</small>` : ""}
       ${event.status ? `<em class="agenda-status-label">${svgText(agendaStatusLabel(event.status))}</em>` : ""}
+      ${editable ? `<div class="agenda-event-actions">
+        <button type="button" class="agenda-icon-btn" data-agenda-edit="${escapeHtml(event.id)}" title="Editar compromisso" aria-label="Editar">✎</button>
+        <button type="button" class="agenda-icon-btn danger" data-agenda-delete="${escapeHtml(event.id)}" title="Excluir compromisso" aria-label="Excluir">🗑</button>
+      </div>` : ""}
     </article>
   `;
 }
@@ -4460,10 +4478,13 @@ async function saveAgendaEvent(event) {
   if (!canEditModule("agenda")) return;
   const form = event.target;
   const data = Object.fromEntries(new FormData(form).entries());
+  const isEditing = Boolean(data.id);
   const today = agendaSafeDateString(new Date());
   const eventDate = agendaSafeDateString(data.date, "");
   if (!eventDate) return alert("Data invalida.");
-  if (eventDate < today) return alert("Nao e permitido cadastrar compromisso em data anterior ao dia atual.");
+  // Apenas bloqueia data passada em NOVOS compromissos; a edição de registros
+  // existentes (inclusive em datas passadas) é permitida.
+  if (!isEditing && eventDate < today) return alert("Nao e permitido cadastrar compromisso em data anterior ao dia atual.");
   if (data.endTime && data.startTime && data.endTime <= data.startTime) return alert("O horario final deve ser maior que o horario inicial.");
   const record = {
     obra_id: data.obra_id || "",
@@ -4479,13 +4500,45 @@ async function saveAgendaEvent(event) {
     status: data.status || "agendado",
   };
   try {
-    await createIntegratedRecord("agendaEvents", record);
+    if (isEditing) await updateIntegratedRecord("agendaEvents", data.id, record);
+    else await createIntegratedRecord("agendaEvents", record);
   } catch (error) {
     alert(`Nao foi possivel salvar o compromisso: ${error.message}`);
     return;
   }
+  agendaEditingId = "";
   agendaCursorDate = eventDate;
   await refreshAndRender();
+}
+
+// Preenche o formulário da agenda com um compromisso existente para edição.
+// Habilita os campos mesmo em semanas passadas (a trava vale só para criação)
+// e remove o min da data para permitir manter/ajustar datas anteriores.
+function editAgendaEvent(id) {
+  const eventRecord = byId("agendaEvents", id);
+  const form = qs("agendaEventForm");
+  if (!eventRecord || !form) return;
+  agendaEditingId = String(id);
+  form.querySelector('[name="id"]').value = eventRecord.id;
+  const dateInput = form.querySelector('[name="date"]');
+  dateInput.removeAttribute("min");
+  dateInput.value = agendaEventDateKey(eventRecord) || agendaSafeDateString(new Date());
+  form.querySelector('[name="startTime"]').value = agendaTimeLabel(eventRecord.data_inicio) || "09:00";
+  form.querySelector('[name="endTime"]').value = agendaTimeLabel(eventRecord.data_fim) || "10:00";
+  form.querySelector('[name="titulo"]').value = eventRecord.titulo || "";
+  form.querySelector('[name="tipo"]').value = eventRecord.tipo || "outro";
+  form.querySelector('[name="usuario_id"]').value = eventRecord.usuario_id || "";
+  form.querySelector('[name="cliente_id"]').value = eventRecord.cliente_id || "";
+  form.querySelector('[name="obra_id"]').value = eventRecord.obra_id || "";
+  form.querySelector('[name="descricao"]').value = eventRecord.descricao || "";
+  form.querySelector('[name="status"]').value = eventRecord.status || "agendado";
+  form.querySelectorAll("input, select, textarea, button").forEach((el) => el.removeAttribute("disabled"));
+  const title = qs("agendaFormTitle");
+  if (title) title.textContent = "Editar compromisso";
+  const submit = qs("agendaSubmitBtn");
+  if (submit) submit.textContent = "Salvar alterações";
+  qs("agendaCancelEdit")?.classList.remove("hidden");
+  form.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
 function agendaWeekStart(date) {
