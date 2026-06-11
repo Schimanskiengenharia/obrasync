@@ -1145,6 +1145,35 @@ function bearer_token(): string
     return trim((string) ($_GET['token'] ?? ''));
 }
 
+// LOG TEMPORÁRIO DE DIAGNÓSTICO do caso "Sessão inválida" ao excluir.
+// Registra em /var/lib/financeiro/auth-debug.log (e no error.log do Apache) o que
+// chega em cada requisição DELETE e em toda falha de autenticação: quais canais
+// trouxeram o token (header/X-Auth-Token/query), tamanho e prefixo do hash.
+// Remova esta função e as chamadas após o problema ser resolvido.
+function auth_debug_log(string $stage, string $token): void
+{
+    $method = (string) ($_SERVER['REQUEST_METHOD'] ?? '');
+    $isFailure = str_starts_with($stage, 'FALHA');
+    if ($method !== 'DELETE' && !$isFailure) {
+        return;
+    }
+    $line = sprintf(
+        "[%s] %s %s | auth_hdr=%s redirect_hdr=%s x_auth_token=%s query_token=%s | token_len=%d hash8=%s | %s\n",
+        date('Y-m-d H:i:s'),
+        $method,
+        (string) ($_SERVER['REQUEST_URI'] ?? ''),
+        isset($_SERVER['HTTP_AUTHORIZATION']) ? 'sim' : 'nao',
+        isset($_SERVER['REDIRECT_HTTP_AUTHORIZATION']) ? 'sim' : 'nao',
+        isset($_SERVER['HTTP_X_AUTH_TOKEN']) ? 'sim' : 'nao',
+        isset($_GET['token']) ? 'sim' : 'nao',
+        strlen($token),
+        $token === '' ? '-' : substr(hash('sha256', $token), 0, 8),
+        $stage
+    );
+    @file_put_contents('/var/lib/financeiro/auth-debug.log', $line, FILE_APPEND);
+    error_log('[ObraSync auth] ' . trim($line));
+}
+
 function authenticate_request(PDO $pdo, array $config): array
 {
     $auth = $config['auth'] ?? [];
@@ -1156,6 +1185,7 @@ function authenticate_request(PDO $pdo, array $config): array
 
     $token = bearer_token();
     if ($token === '') {
+        auth_debug_log('FALHA: nenhum token recebido (headers e query vazios)', $token);
         fail('Não autenticado. Faça login para acessar a API.', 401);
     }
     ensure_api_sessions_table($pdo);
@@ -1169,12 +1199,15 @@ function authenticate_request(PDO $pdo, array $config): array
     $stmt->execute([hash('sha256', $token)]);
     $session = $stmt->fetch();
     if (!$session) {
+        auth_debug_log('FALHA: token recebido mas sem sessão correspondente -> "Sessão inválida"', $token);
         fail('Sessão inválida. Faça login novamente.', 401);
     }
     if (strtotime((string) $session['lastActivity']) < time() - AUTH_IDLE_SECONDS) {
+        auth_debug_log('FALHA: sessão expirada por inatividade (lastActivity=' . $session['lastActivity'] . ')', $token);
         $pdo->prepare('DELETE FROM api_sessions WHERE id = ?')->execute([$session['sessionId']]);
         fail('Sessão expirada por inatividade. Faça login novamente.', 401);
     }
+    auth_debug_log('ok: sessão válida (usuário ' . $session['username'] . ')', $token);
     if (($session['status'] ?? '') !== 'Ativo' || !empty($session['blocked'])) {
         fail('Usuário inativo ou bloqueado.', 403);
     }

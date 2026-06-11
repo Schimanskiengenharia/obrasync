@@ -1687,6 +1687,16 @@ async function apiRequest(path, options = {}) {
     }
   }
   if (response.status === 401) {
+    // Renovação automática: o token em memória pode estar defasado (ex.: outra
+    // aba refez o login). Relê o armazenamento e tenta UMA vez com o token atual,
+    // sem exigir novo login.
+    if (!options._retried) {
+      const staleToken = authToken;
+      readAuthSession();
+      if (authToken && authToken !== staleToken) {
+        return apiRequest(path, { ...options, _retried: true });
+      }
+    }
     authToken = null;
     clearAuthSession();
     if (currentUser) showLogin(payload.error || "Sessão expirada. Faça login novamente.");

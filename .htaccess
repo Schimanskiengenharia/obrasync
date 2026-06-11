@@ -5,6 +5,11 @@ Options -Indexes
 </FilesMatch>
 
 <IfModule mod_headers.c>
+  # Força o navegador a revalidar HTML/JS/CSS a cada carga (responde 304 quando
+  # nada mudou). Evita que correções publicadas continuem servidas do cache.
+  <FilesMatch "\.(html|js|css)$">
+    Header set Cache-Control "no-cache, must-revalidate"
+  </FilesMatch>
   Header always set X-Content-Type-Options "nosniff"
   Header always set X-Frame-Options "SAMEORIGIN"
   Header always set Referrer-Policy "strict-origin-when-cross-origin"
