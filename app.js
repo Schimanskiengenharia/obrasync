@@ -125,6 +125,7 @@ const modules = [
   ["whatsappTemplates", "Mensagens padrão"],
   ["visibilityRules", "Regras de visualização"],
   ["sinapiSettings", "Configuração SINAPI"],
+  ["plugins", "Plugins"],
   ["backupLocal", "Backup local"],
   ["preferences", "Preferências do sistema"],
   ["migration", "Migração para banco"],
@@ -144,7 +145,9 @@ const sidebarSections = [
   { id: "financeiro", label: "Financeiro", icon: "$", modules: ["receivable", "payable", "cashMoves", "cashFlow", "reconciliation"] },
   { id: "contabilidade", label: "Contabilidade Gerencial", icon: "L", modules: ["chartAccounts", "journalEntries", "dre", "taxDocuments", "taxes"] },
   { id: "relatorios", label: "Relatórios", icon: "R", modules: ["reports", "reportFinancial", "reportClient", "reportSupplier", "reportCostCenter", "reportProject", "exports"] },
-  { id: "config", label: "Configurações", icon: "S", modules: ["companySettings", "users", "permissions", "systemVersion", "workTypes", "workStatuses", "standardStages", "standardMilestones", "customFields", "reportModels", "documentTypes", "checklists", "measurementTypes", "paymentMethods", "whatsappTemplates", "visibilityRules", "sinapiSettings", "backupLocal", "preferences", "migration", "auditLog", "myProfile"] },
+  // Lançador de plugins: itens dinâmicos vindos de db.plugins, abertos em nova aba.
+  { id: "pluginsLauncher", label: "Plugins", icon: "⚡", pluginLauncher: true },
+  { id: "config", label: "Configurações", icon: "S", modules: ["companySettings", "users", "permissions", "systemVersion", "workTypes", "workStatuses", "standardStages", "standardMilestones", "customFields", "reportModels", "documentTypes", "checklists", "measurementTypes", "paymentMethods", "whatsappTemplates", "visibilityRules", "sinapiSettings", "plugins", "backupLocal", "preferences", "migration", "auditLog", "myProfile"] },
 ];
 
 const roleLabels = {
@@ -301,6 +304,7 @@ const apiResources = {
   paymentMethods: "formas-pagamento",
   whatsappTemplates: "mensagens-padrao",
   visibilityRules: "regras-visualizacao",
+  plugins: "plugins",
   preferences: "preferencias",
 };
 
@@ -393,6 +397,19 @@ const configs = {
       ["costForecast", "Custo previsto", "number"],
       ["realizedCost", "Custo realizado", "number"],
       ["notes", "Observações", "textarea"],
+    ],
+  },
+  plugins: {
+    title: "Plugin",
+    description: "Sistemas externos exibidos no menu lateral e abertos em nova aba.",
+    fields: [
+      ["name", "Nome", "text", true],
+      ["url", "URL (abre em nova aba)", "url", true],
+      ["icon", "Ícone (emoji ou letra)", "text"],
+      ["description", "Descrição curta", "text"],
+      ["roles", "Perfis com acesso (separados por vírgula; vazio = todos)", "text"],
+      ["sortOrder", "Ordem de exibição", "number"],
+      ["status", "Status", "select", ["Ativo", "Inativo"]],
     ],
   },
   viabilityAnalyses: {
@@ -1318,6 +1335,9 @@ const seed = {
   ],
   customFieldValues: [],
   viabilityAnalyses: [],
+  plugins: [
+    { id: "pl1", name: "Portal do Cliente", url: "https://schimanskiengenharia.com.br/portal", icon: "🌐", description: "Acesso ao portal externo do cliente (URL configurável).", roles: "", sortOrder: 1, status: "Ativo" },
+  ],
   sinapiReferences: [
     { id: "sr1", uf: "MS", referenceMonth: 4, referenceYear: 2026, priceType: "Sem desoneração", source: "SINAPI/CAIXA", defaultUf: "MS", locationName: "Campo Grande/MS", issueDate: "2026-05-12", availableTypes: "Sem desoneração; Com desoneração; Sem encargos sociais", importDate: "2026-06-08", importUserId: "u1", status: "Ativo" },
     { id: "sr2", uf: "MS", referenceMonth: 4, referenceYear: 2026, priceType: "Com desoneração", source: "SINAPI/CAIXA", defaultUf: "MS", locationName: "Campo Grande/MS", issueDate: "2026-05-12", availableTypes: "Sem desoneração; Com desoneração; Sem encargos sociais", importDate: "2026-06-08", importUserId: "u1", status: "Ativo" },
@@ -1979,6 +1999,12 @@ function setupNav() {
       renderNav();
       return;
     }
+    // Link de plugin: deixa o navegador abrir a nova aba e apenas fecha o menu no mobile.
+    if (event.target.closest("a.nav-plugin")) {
+      qs("appShell").classList.remove("sidebar-open");
+      qs("sidebarBackdrop").classList.add("hidden");
+      return;
+    }
     const button = event.target.closest("button[data-module]");
     if (!button) return;
     currentModule = button.dataset.module;
@@ -2007,6 +2033,29 @@ function renderNav() {
     if (section.module) {
       if (!allowed.has(section.module)) return "";
       return navButton(section.module, section.label, section.icon);
+    }
+    if (section.pluginLauncher) {
+      const items = activePlugins();
+      if (!items.length) return "";
+      const open = openNavGroups.has(section.id);
+      return `
+        <div class="nav-section">
+          <button class="nav-section-toggle" type="button" data-nav-group="${section.id}" aria-expanded="${open}">
+            <span class="nav-icon">${section.icon}</span>
+            <span class="nav-label">${section.label}</span>
+            <span class="nav-caret">${open ? "−" : "+"}</span>
+          </button>
+          <div class="nav-submenu ${open ? "open" : ""}">
+            ${items.map((plugin) => `
+              <a class="nav-link nav-plugin" href="${escapeHtml(plugin.url)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(plugin.description || plugin.name)}">
+                <span class="nav-dot"></span>
+                <span class="nav-label">${escapeHtml(plugin.icon ? `${plugin.icon} ${plugin.name}` : plugin.name)}</span>
+                <span class="nav-caret">↗</span>
+              </a>
+            `).join("")}
+          </div>
+        </div>
+      `;
     }
     const items = section.modules.filter((moduleKey) => allowed.has(moduleKey));
     if (!items.length) return "";
@@ -2169,6 +2218,7 @@ function render() {
   if (currentModule === "projectRevenues") return renderProjectRevenues();
   if (currentModule === "workBudgets") return renderWorkBudgets();
   if (currentModule === "viabilityAnalyses") return renderViability();
+  if (currentModule === "plugins") return renderPlugins();
   if (currentModule === "sinapiReferences") return renderSinapiReferences();
   if (currentModule === "abcCurve") return renderAbcCurve();
   if (currentModule === "projectSchedule") return renderProjectSchedule();
@@ -3146,6 +3196,131 @@ function normalizeViabilityAnalysis(data) {
   return "";
 }
 
+// ── Plugins (sistemas externos no menu lateral) ─────────────────────────────
+
+function sortedPlugins() {
+  return (db.plugins || []).slice().sort((a, b) =>
+    Number(a.sortOrder || 0) - Number(b.sortOrder || 0) || String(a.name || "").localeCompare(String(b.name || "")));
+}
+
+// Plugins ativos visíveis para o perfil atual (com URL http/https válida).
+function activePlugins() {
+  return sortedPlugins()
+    .filter((plugin) => plugin.status !== "Inativo" && /^https?:\/\//i.test(String(plugin.url || "")))
+    .filter((plugin) => pluginAllowedForRole(plugin, currentUser?.role));
+}
+
+// roles vazio = todos os perfis; aceita chaves (financeiro) ou rótulos (Financeiro).
+function pluginAllowedForRole(plugin, role) {
+  if (role === "admin") return true;
+  const allowed = String(plugin.roles || "").split(/[;,]/).map((item) => item.trim().toLowerCase()).filter(Boolean);
+  if (!allowed.length) return true;
+  const roleKey = String(role || "").toLowerCase();
+  const roleLabel = String(roleLabels[role] || "").toLowerCase();
+  return allowed.includes(roleKey) || (Boolean(roleLabel) && allowed.includes(roleLabel));
+}
+
+function pluginRolesLabel(plugin) {
+  const list = String(plugin.roles || "").split(/[;,]/).map((item) => item.trim()).filter(Boolean);
+  if (!list.length) return "Todos os perfis";
+  return list.map((item) => roleLabels[item] || item).join(", ");
+}
+
+function renderPlugins() {
+  const editable = canEditModule("plugins");
+  const rows = sortedPlugins();
+  qs("content").innerHTML = `
+    <section class="module-head">
+      <div>
+        <h2>Plugins</h2>
+        <p>Sistemas externos exibidos no menu lateral e abertos em nova aba.${editable ? " Adicione, ative/desative, reordene e defina os perfis com acesso." : ""}</p>
+      </div>
+      ${editable ? '<button class="primary" type="button" id="newPlugin">Novo plugin</button>' : ""}
+    </section>
+    ${rows.length
+      ? `<section class="plugins-grid">${rows.map((row, index) => pluginCard(row, index, rows.length, editable)).join("")}</section>`
+      : '<div class="empty">Nenhum plugin cadastrado.</div>'}
+  `;
+  qs("newPlugin")?.addEventListener("click", () => openForm("plugins"));
+  qs("content").querySelectorAll("[data-edit]").forEach((button) => button.addEventListener("click", () => openForm("plugins", button.dataset.edit)));
+  qs("content").querySelectorAll("[data-delete]").forEach((button) => button.addEventListener("click", () => removeRecord("plugins", button.dataset.delete)));
+  qs("content").querySelectorAll("[data-toggle-plugin]").forEach((button) => button.addEventListener("click", () => togglePluginStatus(button.dataset.togglePlugin)));
+  qs("content").querySelectorAll("[data-move-plugin]").forEach((button) => button.addEventListener("click", () => {
+    const [id, direction] = button.dataset.movePlugin.split(":");
+    movePlugin(id, direction);
+  }));
+}
+
+function pluginCard(row, index, total, editable) {
+  const active = row.status !== "Inativo";
+  return `
+    <article class="plugin-card ${active ? "" : "inactive"}">
+      <header>
+        <span class="plugin-icon">${escapeHtml(row.icon || "🔌")}</span>
+        <div class="plugin-copy">
+          <h3>${escapeHtml(row.name)}</h3>
+          <p>${escapeHtml(row.description || "")}</p>
+        </div>
+        <span class="status ${active ? "success" : ""}">${active ? "Ativo" : "Inativo"}</span>
+      </header>
+      <p class="plugin-url"><a href="${escapeHtml(row.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(row.url)}</a></p>
+      <p class="plugin-roles">Perfis com acesso: ${escapeHtml(pluginRolesLabel(row))}</p>
+      ${editable ? `<footer class="row-actions">
+        <button class="secondary" type="button" data-move-plugin="${escapeHtml(row.id)}:up" ${index === 0 ? "disabled" : ""} aria-label="Mover para cima">↑</button>
+        <button class="secondary" type="button" data-move-plugin="${escapeHtml(row.id)}:down" ${index === total - 1 ? "disabled" : ""} aria-label="Mover para baixo">↓</button>
+        <button class="secondary" type="button" data-toggle-plugin="${escapeHtml(row.id)}">${active ? "Desativar" : "Ativar"}</button>
+        <button class="secondary" type="button" data-edit="${escapeHtml(row.id)}">Editar</button>
+        ${canDeleteRecord("plugins") ? `<button class="danger" type="button" data-delete="${escapeHtml(row.id)}">Excluir</button>` : ""}
+      </footer>` : ""}
+    </article>
+  `;
+}
+
+// Atualização parcial de um plugin (status/ordem) no servidor ou no modo local.
+async function savePluginPatch(id, patch) {
+  if (serverMode && apiResources.plugins) {
+    const payload = await apiRequest(`${apiResources.plugins}/${id}`, { method: "PUT", body: JSON.stringify(patch) });
+    db.plugins = (db.plugins || []).map((row) => sameId(row.id, id) ? payload.record : row);
+  } else {
+    db.plugins = (db.plugins || []).map((row) => sameId(row.id, id) ? { ...row, ...patch } : row);
+    saveDb();
+  }
+}
+
+async function togglePluginStatus(id) {
+  const record = byId("plugins", id);
+  if (!record) return;
+  const newStatus = record.status === "Inativo" ? "Ativo" : "Inativo";
+  try {
+    await savePluginPatch(id, { status: newStatus });
+  } catch (error) {
+    return alert(`Não foi possível atualizar o plugin: ${error.message}`);
+  }
+  logAudit("edit", "plugins", `Plugin ${record.name}: ${newStatus === "Ativo" ? "ativado" : "desativado"}`);
+  render();
+}
+
+// Reordena trocando a posição com o vizinho e regravando sortOrder sequencial.
+async function movePlugin(id, direction) {
+  const rows = sortedPlugins();
+  const index = rows.findIndex((row) => sameId(row.id, id));
+  const targetIndex = direction === "up" ? index - 1 : index + 1;
+  if (index < 0 || targetIndex < 0 || targetIndex >= rows.length) return;
+  const order = rows.map((row) => row.id);
+  [order[index], order[targetIndex]] = [order[targetIndex], order[index]];
+  try {
+    for (let position = 0; position < order.length; position++) {
+      const row = rows.find((item) => sameId(item.id, order[position]));
+      if (Number(row.sortOrder || 0) !== position + 1) {
+        await savePluginPatch(row.id, { sortOrder: position + 1 });
+      }
+    }
+  } catch (error) {
+    return alert(`Não foi possível reordenar os plugins: ${error.message}`);
+  }
+  render();
+}
+
 // Pré-visualização em tempo real dos cálculos no formulário de viabilidade.
 function setupViabilityFormPreview() {
   const fields = qs("formFields");
@@ -3344,6 +3519,7 @@ function labelFor(field) {
     estimatedProfit: "Lucro estimado", paybackMonths: "Payback (meses)", npv: "VPL", irrPercent: "TIR %",
     verdict: "Parecer final", autoVerdict: "Parecer sugerido", verdictJustification: "Justificativa",
     verdictHistory: "Histórico do parecer", analysisDate: "Data da análise", risks: "Riscos identificados",
+    icon: "Ícone", roles: "Perfis com acesso",
     obra_id: "Obra/Projeto", cliente_id: "Cliente", usuario_id: "Responsável", titulo: "Título", tipo: "Tipo",
     data_inicio: "Início", data_fim: "Fim", dia_todo: "Dia todo", lembrete_minutos: "Lembrete",
     board_id: "Board", coluna_id: "Coluna", responsavel_id: "Responsável", data_vencimento: "Prazo",
@@ -3555,6 +3731,12 @@ async function saveForm(event) {
   if (editing.key === "viabilityAnalyses") {
     const viabilityError = normalizeViabilityAnalysis(data);
     if (viabilityError) return alert(viabilityError);
+  }
+  if (editing.key === "plugins") {
+    const url = String(data.url || "").trim();
+    if (!/^https?:\/\//i.test(url)) return alert("Informe uma URL válida iniciando com http:// ou https://.");
+    data.url = url;
+    data.sortOrder = Number(data.sortOrder || 0) || (sortedPlugins().length + (editing.id ? 0 : 1));
   }
   if (["budgets", "proposals", "workBudgets"].includes(editing.key)) {
     if (!data.createdByUserId) data.createdByUserId = currentUser.id;

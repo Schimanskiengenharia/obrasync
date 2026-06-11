@@ -1,0 +1,27 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Arquivos e pastas que NUNCA devem ser sobrescritos ou removidos pelo deploy.
+#
+# - Linhas que começam com "/" são caminhos absolutos no servidor: o deploy.php
+#   verifica a existência de cada um após o git pull e registra ALERTA no
+#   deploy.log (e devolve HTTP 500 ao webhook) se algum estiver ausente.
+# - As demais linhas são padrões informativos, protegidos via .gitignore para
+#   nunca entrarem no repositório (e portanto nunca serem tocados pelo pull).
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Configuração com credenciais (fora do repositório, em /etc):
+/etc/financeiro/config.php
+
+# Dados persistentes do sistema (fora do repositório, em /var/lib):
+/var/lib/financeiro/backups
+/var/lib/financeiro/uploads
+
+# Padrões que nunca devem entrar no repositório nem ser publicados:
+.env
+.env.*
+*.env
+api/config.php
+api/config.local.php
+
+# Observação: os dados locais do navegador (localStorage) ficam apenas no
+# cliente e nunca são tocados pelo deploy: finconta.v1, finconta.auth,
+# finconta.favorites.*, finconta.ah.*, finconta.sidebarCollapsed.

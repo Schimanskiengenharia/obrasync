@@ -258,11 +258,12 @@ O arquivo `deploy.php` recebe eventos de push do GitHub e executa `git pull` aut
    - **Secret**: a mesma chave gerada acima
    - **Events**: `Just the push event`
 
-4. Permissão de sudo para o `www-data` rodar git pull como `alefschimanski`:
+4. Permissão de sudo para o `www-data` rodar git pull e o backup como `alefschimanski`:
    ```bash
    sudo visudo
    # Adicione:
    www-data ALL=(alefschimanski) NOPASSWD: /usr/bin/git -C /var/www/financeiro pull origin main
+   www-data ALL=(alefschimanski) NOPASSWD: /usr/bin/bash /var/www/financeiro/backup-pre-deploy.sh
    ```
 
 5. O log de deploy fica em `/var/lib/financeiro/deploy.log`.
@@ -271,6 +272,50 @@ O arquivo `deploy.php` recebe eventos de push do GitHub e executa `git pull` aut
 
 ```bash
 sudo -u alefschimanski git -C /var/www/financeiro pull origin main
+```
+
+### Arquivos protegidos — NUNCA sobrescrever em produção
+
+O arquivo `.deployignore` (raiz do repositório) lista tudo o que o deploy **não pode tocar**.
+O `git pull` só altera arquivos versionados, então os itens abaixo ficam naturalmente fora
+do alcance do deploy — mas o `deploy.php` confere a existência de cada um após o pull e
+registra `[ALERTA]` no `deploy.log` (devolvendo HTTP 500 ao webhook) se algum sumir:
+
+| Caminho | Conteúdo |
+| --- | --- |
+| `/etc/financeiro/config.php` | Credenciais do banco, SMTP e secret do deploy |
+| `/var/lib/financeiro/backups/` | Backups do banco (manuais, cron e pré-deploy) |
+| `/var/lib/financeiro/uploads/` | Anexos enviados (notas fiscais, cotações, SINAPI, projetos) |
+| `.env` / `*.env` / `api/config.php` | Bloqueados pelo `.gitignore` — nunca versionar |
+
+Os dados locais do navegador (localStorage: `finconta.v1`, `finconta.auth`,
+`finconta.favorites.*`, `finconta.ah.*`) ficam apenas no cliente e nunca são afetados
+pelo deploy.
+
+**Regras de ouro:**
+
+1. Nunca edite `/etc/financeiro/config.php` pelo repositório — ele vive fora de
+   `/var/www/financeiro` exatamente para não ser alcançado pelo `git pull`.
+2. Nunca rode `git clean -fdx` ou `git reset --hard` no servidor sem backup: esses
+   comandos podem apagar arquivos não versionados criados em produção.
+3. Antes de qualquer mudança estrutural, confirme que o backup pré-deploy mais
+   recente existe em `/var/lib/financeiro/backups/pre-deploy/`.
+
+### Backup automático pré-deploy
+
+O script `backup-pre-deploy.sh` roda automaticamente no início de cada deploy
+(chamado pelo `deploy.php`) e:
+
+1. Lê as credenciais do banco direto de `/etc/financeiro/config.php`;
+2. Gera `banco-<nome>.sql.gz` via `mysqldump --single-transaction`;
+3. Compacta a pasta de uploads em `uploads.tar.gz`;
+4. Salva tudo em `/var/lib/financeiro/backups/pre-deploy/AAAAMMDD-HHMMSS/`;
+5. Mantém apenas os 10 backups mais recentes (configurável via `KEEP`).
+
+Execução manual a qualquer momento:
+
+```bash
+sudo -u alefschimanski bash /var/www/financeiro/backup-pre-deploy.sh
 ```
 
 ---

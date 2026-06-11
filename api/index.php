@@ -100,9 +100,12 @@ try {
 
     authorize_request($pdo, $authUser, $key, action_for_method($method));
 
-    // O módulo de viabilidade cria a própria tabela sob demanda: dispensa migração manual.
+    // Módulos novos criam as próprias tabelas sob demanda: dispensam migração manual.
     if ($key === 'viabilityAnalyses') {
         ensure_viability_table($pdo);
+    }
+    if ($key === 'plugins') {
+        ensure_plugins_table($pdo);
     }
 
     if ($key === 'fiscalDocuments' && $id && isset($segments[2]) && $method === 'GET') {
@@ -681,6 +684,7 @@ function resource_map(): array
         'proposalVariables' => r('proposta_variaveis', ['proposta-variaveis','variaveis-proposta'], ['proposalId','variableName','variableValue'], ['proposalId','variableName']),
         'sales' => r('sales_contracts', ['vendas','contratos','vendas-contratos'], ['number','date','competenceDate','clientId','projectId','proposalId','costCenterId','description','amount','cost','status'], ['number']),
         'viabilityAnalyses' => r('viability_analyses', ['analises-viabilidade','análises-viabilidade'], ['projectId','proposalId','contractValue','estimatedCost','executionMonths','tmaPercent','grossMargin','marginPercent','estimatedProfit','paybackMonths','npv','irrPercent','autoVerdict','verdict','finalVerdict','verdictJustification','verdictHistory','risks','notes','analysisDate','responsibleUserId','status'], []),
+        'plugins' => r('system_plugins', ['plugins'], ['name','url','icon','description','roles','sortOrder','status'], ['name']),
         'receivable' => r('accounts_receivable', ['contas-receber','contas_a_receber'], ['document','issueDate','dueDate','receivedDate','clientId','projectId','proposalId','categoryId','costCenterId','bankAccount','amount','status'], ['document']),
         'payable' => r('accounts_payable', ['contas-pagar','contas_a_pagar'], ['document','issueDate','dueDate','paidDate','supplierId','projectId','categoryId','costCenterId','bankAccount','amount','status'], ['document']),
         'cashMoves' => r('cash_bank_movements', ['movimentacoes-caixa','movimentacoes','movimentações'], ['date','bankAccount','type','categoryId','projectId','costCenterId','history','amount','originDocument','status'], ['originDocument']),
@@ -973,6 +977,12 @@ function filter_data_by_columns(PDO $pdo, array $meta, array $data): array
 function bootstrap_data(PDO $pdo, array $resources, ?array $authUser = null): array
 {
     $role = (string) ($authUser['role'] ?? 'admin');
+    // Garante a tabela de plugins já no bootstrap: o menu lateral depende dela.
+    try {
+        ensure_plugins_table($pdo);
+    } catch (PDOException $error) {
+        // Sem permissão de DDL: o bootstrap segue e devolve a lista vazia.
+    }
     $data = [];
     foreach ($resources as $key => $meta) {
         if (!role_can($pdo, $role, permission_module_key($key), 'view')) {
@@ -1068,6 +1078,37 @@ function ensure_viability_table(PDO $pdo): void
             KEY idx_viability_status (status)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
     );
+    $done = true;
+}
+
+// Plugins: links para sistemas externos exibidos no menu lateral, geridos pelo admin.
+function ensure_plugins_table(PDO $pdo): void
+{
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    $pdo->exec(
+        "CREATE TABLE IF NOT EXISTS system_plugins (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(120) NOT NULL,
+            url VARCHAR(500) NOT NULL,
+            icon VARCHAR(40) NULL,
+            description VARCHAR(300) NULL,
+            roles VARCHAR(300) NULL,
+            sortOrder INT NOT NULL DEFAULT 0,
+            status VARCHAR(20) NOT NULL DEFAULT 'Ativo',
+            createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uk_plugins_name (name)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+    );
+    // Exemplo pré-cadastrado na primeira execução (URL configurável na tela de plugins).
+    $count = (int) $pdo->query('SELECT COUNT(*) FROM system_plugins')->fetchColumn();
+    if ($count === 0) {
+        $pdo->prepare('INSERT INTO system_plugins (name, url, icon, description, roles, sortOrder, status) VALUES (?,?,?,?,?,?,?)')
+            ->execute(['Portal do Cliente', 'https://schimanskiengenharia.com.br/portal', '🌐', 'Acesso ao portal externo do cliente (URL configurável).', '', 1, 'Ativo']);
+    }
     $done = true;
 }
 
@@ -1223,15 +1264,15 @@ function role_can(PDO $pdo, string $role, string $module, string $action): bool
 function default_role_view_modules(): array
 {
     return [
-        'financeiro' => ['dashboard', 'clients', 'suppliers', 'categories', 'costCenters', 'bankAccounts', 'projects', 'projectSchedule', 'agenda', 'kanban', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'sinapiLabor', 'sinapiFamilies', 'sinapiMaintenances', 'sinapiSettings', 'ownCompositions', 'quotes', 'abcCurve', 'viabilityAnalyses', 'fiscalDocuments', 'receivable', 'payable', 'cashMoves', 'cashFlow', 'reconciliation', 'proposals', 'sales', 'chartAccounts', 'journalEntries', 'dre', 'taxDocuments', 'taxes', 'reports', 'reportFinancial', 'reportClient', 'reportSupplier', 'reportCostCenter', 'reportProject', 'exports', 'systemVersion'],
-        'comercial' => ['dashboard', 'clients', 'projects', 'projectSchedule', 'agenda', 'kanban', 'workBudgets', 'abcCurve', 'viabilityAnalyses', 'budgets', 'proposals', 'proposalModels', 'proposalAreas', 'proposalActionTypes', 'proposalServiceSubtypes', 'sales', 'reportClient', 'systemVersion'],
-        'engenharia' => ['dashboard', 'projects', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban', 'projectNotifications', 'projectTrackingLinks', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'sinapiLabor', 'sinapiFamilies', 'sinapiMaintenances', 'ownCompositions', 'quotes', 'abcCurve', 'viabilityAnalyses', 'purchaseOrders', 'technicalReports', 'projectReport', 'proposals', 'reportProject', 'systemVersion'],
-        'gestor_obra' => ['dashboard', 'projects', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban', 'projectNotifications', 'projectTrackingLinks', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'sinapiLabor', 'sinapiFamilies', 'sinapiMaintenances', 'ownCompositions', 'quotes', 'abcCurve', 'viabilityAnalyses', 'purchaseOrders', 'technicalReports', 'projectReport', 'proposals', 'reportProject', 'systemVersion'],
-        'equipe_campo' => ['dashboard', 'projectReport', 'systemVersion'],
-        'cliente_obra' => ['dashboard', 'projectReport', 'projectSchedule', 'technicalReports', 'systemVersion'],
-        'fornecedor_terceiro' => ['dashboard', 'systemVersion'],
-        'consulta' => ['dashboard', 'projectReport', 'cashFlow', 'dre', 'reports', 'reportFinancial', 'reportClient', 'reportSupplier', 'reportCostCenter', 'reportProject', 'exports'],
-        'operador' => ['dashboard', 'clients', 'suppliers', 'products', 'services', 'categories', 'costCenters', 'bankAccounts', 'projects', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'ownCompositions', 'quotes', 'abcCurve', 'fiscalDocuments', 'receivable', 'payable', 'cashMoves', 'cashFlow', 'reconciliation', 'budgets', 'proposals', 'sales', 'purchaseOrders', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban', 'projectReport', 'reports', 'reportFinancial', 'reportClient', 'reportSupplier', 'reportCostCenter', 'reportProject', 'myProfile'],
+        'financeiro' => ['dashboard', 'clients', 'suppliers', 'categories', 'costCenters', 'bankAccounts', 'projects', 'projectSchedule', 'agenda', 'kanban', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'sinapiLabor', 'sinapiFamilies', 'sinapiMaintenances', 'sinapiSettings', 'ownCompositions', 'quotes', 'abcCurve', 'viabilityAnalyses', 'fiscalDocuments', 'receivable', 'payable', 'cashMoves', 'cashFlow', 'reconciliation', 'proposals', 'sales', 'chartAccounts', 'journalEntries', 'dre', 'taxDocuments', 'taxes', 'reports', 'reportFinancial', 'reportClient', 'reportSupplier', 'reportCostCenter', 'reportProject', 'exports', 'systemVersion', 'plugins'],
+        'comercial' => ['dashboard', 'clients', 'projects', 'projectSchedule', 'agenda', 'kanban', 'workBudgets', 'abcCurve', 'viabilityAnalyses', 'budgets', 'proposals', 'proposalModels', 'proposalAreas', 'proposalActionTypes', 'proposalServiceSubtypes', 'sales', 'reportClient', 'systemVersion', 'plugins'],
+        'engenharia' => ['dashboard', 'projects', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban', 'projectNotifications', 'projectTrackingLinks', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'sinapiLabor', 'sinapiFamilies', 'sinapiMaintenances', 'ownCompositions', 'quotes', 'abcCurve', 'viabilityAnalyses', 'purchaseOrders', 'technicalReports', 'projectReport', 'proposals', 'reportProject', 'systemVersion', 'plugins'],
+        'gestor_obra' => ['dashboard', 'projects', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban', 'projectNotifications', 'projectTrackingLinks', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'sinapiLabor', 'sinapiFamilies', 'sinapiMaintenances', 'ownCompositions', 'quotes', 'abcCurve', 'viabilityAnalyses', 'purchaseOrders', 'technicalReports', 'projectReport', 'proposals', 'reportProject', 'systemVersion', 'plugins'],
+        'equipe_campo' => ['dashboard', 'projectReport', 'systemVersion', 'plugins'],
+        'cliente_obra' => ['dashboard', 'projectReport', 'projectSchedule', 'technicalReports', 'systemVersion', 'plugins'],
+        'fornecedor_terceiro' => ['dashboard', 'systemVersion', 'plugins'],
+        'consulta' => ['dashboard', 'projectReport', 'cashFlow', 'dre', 'reports', 'reportFinancial', 'reportClient', 'reportSupplier', 'reportCostCenter', 'reportProject', 'exports', 'plugins'],
+        'operador' => ['dashboard', 'clients', 'suppliers', 'products', 'services', 'categories', 'costCenters', 'bankAccounts', 'projects', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'ownCompositions', 'quotes', 'abcCurve', 'fiscalDocuments', 'receivable', 'payable', 'cashMoves', 'cashFlow', 'reconciliation', 'budgets', 'proposals', 'sales', 'purchaseOrders', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban', 'projectReport', 'reports', 'reportFinancial', 'reportClient', 'reportSupplier', 'reportCostCenter', 'reportProject', 'myProfile', 'plugins'],
         'visualizador' => '*',
     ];
 }
