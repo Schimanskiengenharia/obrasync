@@ -297,6 +297,8 @@ let sinapiSourceFilter = "all";
 let sinapiUfFilter = "MS";
 let sinapiTypeFilter = "all";
 let sinapiLastImportHtml = "";
+let sinapiJobPollTimer = null;
+let sinapiJobPollSeq = 0; // invalida correntes de polling antigas após re-render
 let proposalGeneratorState = null;
 let agendaViewMode = "month";
 let agendaCursorDate = agendaSafeDateString(new Date());
@@ -2429,6 +2431,7 @@ function render() {
   if (currentModule === "plugins") return renderPlugins();
   if (currentModule === "preferences") return renderPreferences();
   if (currentModule === "sinapiReferences") return renderSinapiReferences();
+  if (currentModule === "sinapiSettings") return renderSinapiSettingsModule();
   if (currentModule === "abcCurve") return renderAbcCurve();
   if (currentModule === "projectSchedule") return renderProjectSchedule();
   if (currentModule === "agenda") return renderAgenda();
@@ -5644,6 +5647,184 @@ function sinapiImportSummaryHtml(mode, summary, samples, filePath) {
     ${filePath ? `<p class="muted">Arquivo salvo fora da pasta pública: ${svgText(filePath)}</p>` : ""}
     ${table("Resumo da importação", rows, ["name", "total", "created", "updated", "skipped"])}
     ${samples.length ? `<h4>Amostra</h4><pre>${svgText(JSON.stringify(samples.slice(0, 5), null, 2))}</pre>` : ""}
+  `;
+}
+
+// ── Importação SINAPI em background (módulo Configuração SINAPI) ─────────────
+// Envia os 4 XLSX oficiais do CEF de uma vez; o servidor processa em segundo
+// plano (worker CLI) e o progresso chega por polling em sinapi-import-status.
+
+const SINAPI_UFS = ["MS", "AC", "AL", "AM", "AP", "BA", "CE", "DF", "ES", "GO", "MA", "MG", "MT", "PA", "PB", "PE", "PI", "PR", "RJ", "RN", "RO", "RR", "RS", "SC", "SE", "SP", "TO"];
+const SINAPI_ASYNC_FILES = [
+  ["referenceFile", "sinapiFileReference"],
+  ["familiesFile", "sinapiFileFamilies"],
+  ["laborFile", "sinapiFileLabor"],
+  ["maintenanceFile", "sinapiFileMaintenance"],
+];
+
+function renderSinapiSettingsModule() {
+  renderCrud("sinapiSettings");
+  const settings = sinapiDefaultSettings();
+  const admin = isAdmin();
+  const canImport = admin && serverMode;
+  qs("content").insertAdjacentHTML("beforeend", `
+    <section class="panel import-panel" id="sinapiAsyncPanel">
+      <h3>📥 Importar Tabela SINAPI</h3>
+      <p class="field-hint">Selecione os XLSX oficiais baixados do site da CAIXA. O mês de referência é detectado pelo nome do arquivo (ex.: SINAPI_Referência_2026_04.xlsx). O processamento roda em segundo plano no servidor: insumos e composições existentes são atualizados e os novos são inseridos — nada é apagado.</p>
+      <div class="form-grid">
+        <label>Referência XLSX (insumos + composições)<input id="sinapiFileReference" type="file" accept=".xlsx"></label>
+        <label>Famílias e coeficientes XLSX<input id="sinapiFileFamilies" type="file" accept=".xlsx"></label>
+        <label>Mão de obra XLSX<input id="sinapiFileLabor" type="file" accept=".xlsx"></label>
+        <label>Manutenções XLSX<input id="sinapiFileMaintenance" type="file" accept=".xlsx"></label>
+        <label>UF padrão para importação<select id="sinapiAsyncUf">${SINAPI_UFS.map((uf) => `<option value="${uf}" ${(settings.defaultUf || "MS") === uf ? "selected" : ""}>${uf}</option>`).join("")}</select></label>
+        <label>Desoneração / tipo padrão<select id="sinapiAsyncType">${["Sem desoneração", "Com desoneração", "Sem encargos sociais"].map((type) => `<option ${(settings.defaultReferenceType || "Sem desoneração") === type ? "selected" : ""}>${type}</option>`).join("")}</select></label>
+        <label>Mês de referência<input id="sinapiAsyncMonth" type="number" min="1" max="12" value="${Number(settings.defaultReferenceMonth || 4)}"></label>
+        <label>Ano de referência<input id="sinapiAsyncYear" type="number" min="2000" max="2100" value="${Number(settings.defaultReferenceYear || 2026)}"></label>
+      </div>
+      <div class="actions">
+        <button class="primary" type="button" id="sinapiAsyncStart" ${canImport ? "" : "disabled"}>Importar e Atualizar Preços</button>
+      </div>
+      ${!serverMode ? '<p class="field-hint">A importação em background só está disponível com a API no servidor.</p>' : ""}
+      ${serverMode && !admin ? '<p class="field-hint">Apenas administradores podem importar a base SINAPI.</p>' : ""}
+      <div id="sinapiAsyncStatus" class="empty hidden"></div>
+    </section>
+  `);
+  SINAPI_ASYNC_FILES.forEach(([, inputId]) => {
+    qs(inputId)?.addEventListener("change", (event) => detectSinapiReferenceFromFile(event.target.files[0]));
+  });
+  qs("sinapiAsyncStart")?.addEventListener("click", startSinapiAsyncImport);
+  if (serverMode) resumeSinapiAsyncJob();
+}
+
+// SINAPI_Referência_2026_04.xlsx → mês 04 / ano 2026 preenchidos automaticamente.
+function detectSinapiReferenceFromFile(file) {
+  const match = /(20\d{2})[._-](0?[1-9]|1[0-2])(?=\D|$)/.exec(file?.name || "");
+  if (!match) return;
+  if (qs("sinapiAsyncYear")) qs("sinapiAsyncYear").value = Number(match[1]);
+  if (qs("sinapiAsyncMonth")) qs("sinapiAsyncMonth").value = Number(match[2]);
+}
+
+async function startSinapiAsyncImport() {
+  const form = new FormData();
+  let hasFile = false;
+  for (const [field, inputId] of SINAPI_ASYNC_FILES) {
+    const file = qs(inputId)?.files[0];
+    if (file) {
+      form.append(field, file);
+      hasFile = true;
+    }
+  }
+  if (!hasFile) return alert("Selecione ao menos um dos arquivos SINAPI (XLSX).");
+  form.append("uf", qs("sinapiAsyncUf").value);
+  form.append("referenceType", qs("sinapiAsyncType").value);
+  form.append("referenceMonth", qs("sinapiAsyncMonth").value);
+  form.append("referenceYear", qs("sinapiAsyncYear").value);
+  const button = qs("sinapiAsyncStart");
+  button.disabled = true;
+  button.textContent = "Enviando arquivos…";
+  try {
+    const payload = await fetchForm("sinapi-import-async", form);
+    pollSinapiAsyncJob(payload.jobId, { refreshOnDone: true });
+  } catch (error) {
+    alert(`Não foi possível iniciar a importação SINAPI: ${error.message}`);
+    button.disabled = false;
+    button.textContent = "Importar e Atualizar Preços";
+  }
+}
+
+// Ao abrir o módulo, retoma o acompanhamento de um job em andamento (ex.: após
+// recarregar a página) ou mostra o resultado da última importação.
+async function resumeSinapiAsyncJob() {
+  try {
+    const payload = await apiRequest("sinapi-import-status");
+    if (!payload.job) return;
+    if (["queued", "running"].includes(payload.job.status)) {
+      pollSinapiAsyncJob(payload.job.id, { refreshOnDone: true });
+    } else {
+      renderSinapiAsyncStatus(payload.job);
+    }
+  } catch {
+    // Sem job anterior ou sem permissão de leitura: painel fica como está.
+  }
+}
+
+function pollSinapiAsyncJob(jobId, { refreshOnDone = false } = {}) {
+  clearTimeout(sinapiJobPollTimer);
+  const seq = ++sinapiJobPollSeq;
+  const tick = async () => {
+    if (seq !== sinapiJobPollSeq) return; // outra corrente de polling assumiu
+    if (!document.getElementById("sinapiAsyncStatus")) return; // saiu do módulo
+    try {
+      const payload = await apiRequest(`sinapi-import-status?job=${encodeURIComponent(jobId)}`);
+      const job = payload.job;
+      if (!job) return;
+      renderSinapiAsyncStatus(job);
+      if (["queued", "running"].includes(job.status)) {
+        sinapiJobPollTimer = setTimeout(tick, 2000);
+        return;
+      }
+      const button = qs("sinapiAsyncStart");
+      if (button) {
+        button.disabled = !(isAdmin() && serverMode);
+        button.textContent = "Importar e Atualizar Preços";
+      }
+      if (job.status === "done" && refreshOnDone) {
+        await refreshAndRender(); // recarrega insumos/composições com os preços novos
+      }
+    } catch (error) {
+      const status = qs("sinapiAsyncStatus");
+      if (status) {
+        status.classList.remove("hidden");
+        status.textContent = `Falha ao consultar o progresso: ${error.message}. Nova tentativa em 5 s…`;
+      }
+      sinapiJobPollTimer = setTimeout(tick, 5000);
+    }
+  };
+  tick();
+}
+
+function renderSinapiAsyncStatus(job) {
+  const container = qs("sinapiAsyncStatus");
+  if (!container) return;
+  container.classList.remove("hidden");
+  const reference = `${String(job.referenceMonth).padStart(2, "0")}/${job.referenceYear} — UF: ${job.uf} — ${job.referenceType}`;
+  if (job.status === "error") {
+    container.innerHTML = `
+      <strong>❌ Importação falhou</strong>
+      <p>${svgText(job.errorMessage || "Erro desconhecido.")}</p>
+      <p class="muted">Log do worker: /var/lib/financeiro/sinapi_jobs/ — 🗓️ Referência: ${svgText(reference)}</p>
+    `;
+    return;
+  }
+  if (job.status === "done") {
+    const summary = job.summary || {};
+    const line = (label, key) => {
+      const stats = summary[key];
+      if (!stats) return "";
+      return `<li>✅ ${label}: ${Number(stats.updated || 0).toLocaleString("pt-BR")} atualizado(s), ${Number(stats.created || 0).toLocaleString("pt-BR")} inserido(s)${Number(stats.skipped || 0) ? `, ${Number(stats.skipped).toLocaleString("pt-BR")} ignorado(s)` : ""}</li>`;
+    };
+    container.innerHTML = `
+      <strong>✅ Importação concluída</strong>
+      <ul class="sinapi-import-log">
+        ${line("Insumos", "sinapiInputs")}
+        ${line("Composições", "sinapiCompositions")}
+        ${line("Itens analíticos das composições", "sinapiCompositionItems")}
+        ${line("Mão de obra", "sinapiLabor")}
+        ${line("Famílias e coeficientes", "sinapiFamilies")}
+        ${line("Manutenções registradas", "sinapiMaintenances")}
+      </ul>
+      <p class="muted">🗓️ Referência: ${svgText(reference)} — ${Number(job.progress || 0).toLocaleString("pt-BR")} registros processados</p>
+    `;
+    return;
+  }
+  const total = Number(job.total || 0);
+  const progress = Number(job.progress || 0);
+  const percent = total ? Math.min(100, Math.round((progress / total) * 100)) : 0;
+  container.innerHTML = `
+    <strong>⏳ ${job.status === "queued" ? "Na fila para processamento" : "Importando…"}</strong>
+    <p>${svgText(job.currentStep || "")}</p>
+    <div class="progress-line"><span style="width:${percent}%"></span></div>
+    <p class="muted">${total ? `${progress.toLocaleString("pt-BR")} de ${total.toLocaleString("pt-BR")} registros (${percent}%)` : "Lendo as planilhas — o total aparece quando a leitura termina."} — 🗓️ Referência: ${svgText(reference)}</p>
   `;
 }
 

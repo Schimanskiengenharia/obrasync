@@ -17,6 +17,10 @@ $config = load_config();
 $pdo = db($config);
 $resources = resource_map();
 
+// O roteamento HTTP abaixo só roda via web. No CLI (worker de importação SINAPI em
+// scripts/sinapi_import_worker.php), este arquivo é incluído apenas pelas funções e
+// pelas variáveis $config/$pdo/$resources já carregadas acima.
+if (PHP_SAPI !== 'cli') {
 try {
     $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
     $segments = route_segments();
@@ -97,6 +101,21 @@ try {
         require_method($method, ['POST']);
         authorize_request($pdo, $authUser, 'sinapiSettings', 'edit');
         handle_sinapi_import($pdo, $resources, $config);
+    }
+
+    // Importação SINAPI em background: recebe os 4 arquivos oficiais do CEF de uma vez,
+    // registra o job e dispara o worker CLI (scripts/sinapi_import_worker.php). O
+    // progresso é acompanhado por polling em sinapi-import-status.
+    if ($resource === 'sinapi-import-async') {
+        require_method($method, ['POST']);
+        require_admin($authUser);
+        handle_sinapi_import_async($pdo, $config, $authUser);
+    }
+
+    if ($resource === 'sinapi-import-status') {
+        require_method($method, ['GET']);
+        authorize_request($pdo, $authUser, 'sinapiSettings', 'view');
+        handle_sinapi_import_status($pdo);
     }
 
     if ($resource === 'project-upload') {
@@ -318,6 +337,7 @@ try {
 } catch (Throwable $error) {
     fail($error->getMessage(), 500);
 }
+} // fim do if (PHP_SAPI !== 'cli') — roteamento web
 
 function handle_agenda_module(PDO $pdo, string $method, array $query): never
 {
@@ -1997,6 +2017,202 @@ function handle_sinapi_import(PDO $pdo, array $resources, array $config): never
     }
 
     respond(['ok' => true, 'mode' => $mode, 'file' => $path, 'summary' => $summary, 'samples' => $samples]);
+}
+
+// Campos de upload aceitos pela importação em background e as abas que identificam
+// cada planilha oficial do CEF (validação antes de aceitar o arquivo).
+function sinapi_job_file_types(): array
+{
+    return [
+        'referenceFile' => ['fileType' => 'reference', 'label' => 'Referência', 'sheets' => ['ISD', 'ICD', 'ISE', 'CSD', 'CCD', 'CSE']],
+        'familiesFile' => ['fileType' => 'families', 'label' => 'Famílias e coeficientes', 'sheets' => ['Coeficientes']],
+        'laborFile' => ['fileType' => 'labor', 'label' => 'Mão de obra', 'sheets' => ['SEM Desoneração', 'COM Desoneração']],
+        'maintenanceFile' => ['fileType' => 'maintenance', 'label' => 'Manutenções', 'sheets' => ['Manutenções', 'Manutenção']],
+    ];
+}
+
+function ensure_sinapi_import_jobs_table(PDO $pdo): void
+{
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    $pdo->exec(
+        "CREATE TABLE IF NOT EXISTS sinapi_import_jobs (
+            id VARCHAR(60) PRIMARY KEY,
+            status VARCHAR(12) NOT NULL DEFAULT 'queued',
+            currentStep VARCHAR(200) NOT NULL DEFAULT '',
+            progress INT NOT NULL DEFAULT 0,
+            total INT NOT NULL DEFAULT 0,
+            uf VARCHAR(2) NOT NULL DEFAULT 'MS',
+            referenceMonth INT NOT NULL DEFAULT 0,
+            referenceYear INT NOT NULL DEFAULT 0,
+            referenceType VARCHAR(40) NOT NULL DEFAULT '',
+            paramsJson TEXT NULL,
+            summaryJson TEXT NULL,
+            errorMessage TEXT NULL,
+            createdByUserId BIGINT UNSIGNED NULL,
+            createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            finishedAt TIMESTAMP NULL DEFAULT NULL,
+            KEY idx_sinapi_job_status (status),
+            KEY idx_sinapi_job_created (createdAt)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+    );
+    $done = true;
+}
+
+function handle_sinapi_import_async(PDO $pdo, array $config, array $authUser): never
+{
+    set_time_limit(0); // só nesta action: uploads somados chegam a ~17 MB
+    ensure_sinapi_import_jobs_table($pdo);
+
+    // POST acima de post_max_size chega com $_POST e $_FILES vazios, sem erro
+    // explícito do PHP — sem este aviso o usuário veria uma mensagem enganosa.
+    if (empty($_FILES) && empty($_POST) && (int) ($_SERVER['CONTENT_LENGTH'] ?? 0) > 0) {
+        fail(sprintf(
+            'Upload excedeu o limite do PHP (post_max_size = %s). Confira o api/.user.ini no servidor ou envie os arquivos em importações separadas.',
+            (string) ini_get('post_max_size')
+        ), 413);
+    }
+
+    $uf = strtoupper(substr(preg_replace('/[^A-Za-z]/', '', (string) ($_POST['uf'] ?? 'MS')), 0, 2)) ?: 'MS';
+    $referenceMonth = max(1, min(12, (int) ($_POST['referenceMonth'] ?? date('n'))));
+    $referenceYear = (int) ($_POST['referenceYear'] ?? date('Y'));
+    $referenceType = (string) ($_POST['referenceType'] ?? 'Sem desoneração');
+
+    expire_stale_sinapi_jobs($pdo);
+    $running = $pdo->query("SELECT id FROM sinapi_import_jobs WHERE status IN ('queued','running') LIMIT 1")->fetchColumn();
+    if ($running) {
+        fail('Já existe uma importação SINAPI em andamento. Aguarde a conclusão antes de iniciar outra.', 409);
+    }
+
+    $uploadDir = rtrim($config['upload_dir'] ?? '/var/lib/financeiro/uploads', '/') . '/sinapi';
+    if (!is_dir($uploadDir)) {
+        mkdir($uploadDir, 0750, true);
+    }
+
+    $files = [];
+    foreach (sinapi_job_file_types() as $field => $info) {
+        if (empty($_FILES[$field]['tmp_name'])) {
+            continue;
+        }
+        $path = store_upload($_FILES[$field], $uploadDir, ['xlsx'], ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/zip', 'application/octet-stream']);
+        $issue = sinapi_workbook_issue($path, $info['sheets']);
+        if ($issue !== null) {
+            @unlink($path);
+            fail("Arquivo de {$info['label']} não parece ser a planilha SINAPI esperada ({$issue}).", 400);
+        }
+        $files[$field] = $path;
+    }
+    if (!$files) {
+        fail('Envie ao menos um dos arquivos SINAPI (Referência, Famílias, Mão de Obra ou Manutenções).', 400);
+    }
+
+    $jobId = uniqid('sinapi_', true);
+    $pdo->prepare('INSERT INTO sinapi_import_jobs (id, status, currentStep, uf, referenceMonth, referenceYear, referenceType, paramsJson, createdByUserId) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        ->execute([
+            $jobId,
+            'queued',
+            'Aguardando o processamento em background',
+            $uf,
+            $referenceMonth,
+            $referenceYear,
+            $referenceType,
+            json_encode(['files' => $files], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+            (int) ($authUser['id'] ?? 0) ?: null,
+        ]);
+
+    // Logs do worker fora da pasta pública, ao lado de uploads/ e backups/.
+    $logDir = dirname(rtrim($config['upload_dir'] ?? '/var/lib/financeiro/uploads', '/')) . '/sinapi_jobs';
+    if (!is_dir($logDir)) {
+        mkdir($logDir, 0750, true);
+    }
+    $worker = dirname(__DIR__) . '/scripts/sinapi_import_worker.php';
+    if (!is_file($worker)) {
+        fail('Worker não encontrado em scripts/sinapi_import_worker.php — confira o deploy.', 500);
+    }
+    // PHP_BINARY em CGI/FPM aponta para o binário do SAPI web; o worker precisa do CLI.
+    $php = PHP_BINDIR . '/php';
+    if (!is_file($php)) {
+        $php = trim((string) shell_exec('command -v php 2>/dev/null')) ?: 'php';
+    }
+    $logFile = $logDir . '/' . preg_replace('/[^A-Za-z0-9_.-]/', '', $jobId) . '.log';
+    exec(sprintf(
+        '%s %s --job %s >> %s 2>&1 &',
+        escapeshellarg($php),
+        escapeshellarg($worker),
+        escapeshellarg($jobId),
+        escapeshellarg($logFile)
+    ));
+
+    respond(['ok' => true, 'jobId' => $jobId], 201);
+}
+
+// Jobs abandonados não podem bloquear novas importações nem deixar o polling do
+// frontend girando para sempre: um "queued" que o worker nunca pegou (ex.: exec
+// falhou) expira em 10 min; um "running" sem heartbeat (updatedAt) há mais de
+// 2 horas é considerado morto.
+function expire_stale_sinapi_jobs(PDO $pdo): void
+{
+    $pdo->exec(
+        "UPDATE sinapi_import_jobs
+            SET status = 'error',
+                errorMessage = 'Job abandonado: o worker não iniciou ou parou de responder. Confira o log em /var/lib/financeiro/sinapi_jobs/.',
+                finishedAt = NOW()
+          WHERE (status = 'queued' AND updatedAt < DATE_SUB(NOW(), INTERVAL 10 MINUTE))
+             OR (status = 'running' AND updatedAt < DATE_SUB(NOW(), INTERVAL 2 HOUR))"
+    );
+}
+
+function handle_sinapi_import_status(PDO $pdo): never
+{
+    ensure_sinapi_import_jobs_table($pdo);
+    expire_stale_sinapi_jobs($pdo);
+    $jobId = trim((string) ($_GET['job'] ?? ''));
+    if ($jobId !== '') {
+        $stmt = $pdo->prepare('SELECT * FROM sinapi_import_jobs WHERE id = ? LIMIT 1');
+        $stmt->execute([$jobId]);
+    } else {
+        $stmt = $pdo->query('SELECT * FROM sinapi_import_jobs ORDER BY createdAt DESC, id DESC LIMIT 1');
+    }
+    $job = $stmt->fetch();
+    if (!$job) {
+        respond(['ok' => true, 'job' => null]);
+    }
+    $job['summary'] = !empty($job['summaryJson']) ? json_decode((string) $job['summaryJson'], true) : null;
+    unset($job['paramsJson'], $job['summaryJson']);
+    respond(['ok' => true, 'job' => $job]);
+}
+
+// Confere se o XLSX contém ao menos uma das abas esperadas da planilha SINAPI,
+// sem carregar os dados (lê só o xl/workbook.xml de dentro do zip).
+function sinapi_workbook_issue(string $path, array $expectedSheets): ?string
+{
+    if (!class_exists('ZipArchive')) {
+        return null; // sem php-zip a validação fica a cargo do worker
+    }
+    $zip = new ZipArchive();
+    if ($zip->open($path) !== true) {
+        return 'não foi possível abrir o XLSX';
+    }
+    $workbookXml = (string) $zip->getFromName('xl/workbook.xml');
+    $zip->close();
+    if ($workbookXml === '') {
+        return 'arquivo sem planilhas — xl/workbook.xml ausente';
+    }
+    $names = [];
+    if (preg_match_all('/<sheet[^>]*name="([^"]*)"/u', $workbookXml, $matches)) {
+        $names = array_map(static fn ($name) => html_entity_decode($name, ENT_QUOTES | ENT_XML1, 'UTF-8'), $matches[1]);
+    }
+    foreach ($expectedSheets as $expected) {
+        foreach ($names as $name) {
+            if (str_contains(upper_text(trim($name)), upper_text($expected))) {
+                return null;
+            }
+        }
+    }
+    return 'abas encontradas: ' . (implode(', ', array_slice($names, 0, 8)) ?: 'nenhuma') . '; esperava ' . implode(' / ', $expectedSheets);
 }
 
 function parse_sinapi_file(string $path, string $fileType, string $sheetName, string $uf, int $month, int $year, string $defaultReferenceType): array

@@ -5,6 +5,11 @@ DirectoryIndex index.php
   Require all denied
 </FilesMatch>
 
+# .user.ini contém diretivas do PHP (limites de upload) e não pode ser servido.
+<Files ".user.ini">
+  Require all denied
+</Files>
+
 # PHP-CGI/FastCGI: repassa o header Authorization (Bearer) ao PHP em todos os
 # métodos HTTP — sem isso, requisições DELETE/PUT podem chegar sem token e
 # falhar com "Sessão inválida".
