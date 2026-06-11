@@ -736,3 +736,106 @@ Após subir os arquivos, execute as migrations novas que ainda não foram rodada
 - Consolidar breakpoints e padrões repetidos no CSS.
 - Acessibilidade: dialogs, foco inicial, navegação por teclado, estados de erro.
 - Testes mínimos para login, bootstrap, agenda, propostas e backups.
+
+---
+
+## Auditoria de Código — 2026-06-11 (pendências PARA CORRIGIR)
+
+> **Como usar esta seção:** estes itens foram identificados em revisão de ponta a
+> ponta e **ainda NÃO foram corrigidos** (registro intencional para correção em
+> outra sessão). Ao corrigir: trate na ordem de prioridade, valide com
+> `php -l api/index.php` e `node --check app.js`, faça bump do `?v=` no
+> `index.html` quando alterar JS/CSS, e marque o item como ~~riscado~~ com a
+> data e o hash do commit.
+
+### A1 — Bugs reais e segurança (corrigir primeiro)
+
+1. **Bypass da troca obrigatória de senha ao recarregar a página.**
+   `restoreSession()` (app.js, ~linha 6588) restaura a sessão e chama `showApp()`
+   sem verificar `mustChangePassword` — nem no `user` do localStorage nem no
+   registro vindo de `db.users`. Quem recarregar (F5) durante o modal de troca
+   obrigatória entra no sistema sem trocar a senha.
+   *Correção sugerida:* em `restoreSession()`/`showApp()`, se
+   `user.mustChangePassword` for verdadeiro, abrir `openChangePasswordDialog(true)`
+   em vez de mostrar o app.
+
+2. **Senhas reais em texto plano versionadas no repositório.**
+   `schema.sql` (usuários iniciais) e
+   `migrations/2026-06-10-fix-login-usuarios-iniciais.sql` contêm `admin123` e
+   `Schimanski!@#` em texto plano, públicos no histórico do GitHub.
+   *Correção sugerida:* trocar a senha real do usuário em produção, substituir os
+   seeds por hash bcrypt ou placeholder `TROQUE_NO_PRIMEIRO_ACESSO`, e avaliar
+   reescrita/limpeza do histórico se o repositório não for privado.
+
+3. **Automations sem try/catch após save (mesma classe do bug da agenda já corrigido).**
+   No roteador da API (`api/index.php`, POST genérico ~linhas 139–145):
+   `ensure_project_kanban_boards()` (criação de obra) e
+   `create_purchase_order_kanban_card()` (pedido de compra) rodam **depois** do
+   INSERT sem try/catch — qualquer falha devolve 500 com o registro já gravado,
+   confundindo o usuário (registro "fantasma"). A automação da agenda já foi
+   blindada; aplicar o mesmo padrão (try/catch + `error_log` + seguir) nessas duas
+   e na automação de marcos/pedidos do caminho PUT.
+
+4. **`handle_login` cancela silenciosamente a troca obrigatória definida pelo admin.**
+   Se `mustChangePassword = 1` mas a senha atual já atende aos requisitos de
+   força, o login zera a flag (api/index.php, `handle_login`). Cenário quebrado:
+   admin define senha temporária FORTE para um usuário e marca "trocar no primeiro
+   acesso" — a flag é cancelada no login e o usuário permanece com a senha
+   temporária. *Correção sugerida:* remover esse auto-clear (a flag só deve ser
+   zerada pela troca efetiva de senha).
+
+5. **Backup pré-deploy pode nunca executar (sudo × sudoers).**
+   `deploy.php` executa `sudo -u alefschimanski bash /var/www/financeiro/backup-pre-deploy.sh`
+   (sem caminho completo do bash e sem `-n`), enquanto o sudoers documentado exige
+   match exato `/usr/bin/bash /var/www/financeiro/backup-pre-deploy.sh`. Se o
+   `bash` resolver para outro caminho ou a regra não casar, o sudo aguarda senha
+   sem TTY e o backup falha silenciosamente (só aparece no deploy.log).
+   *Verificar:* `grep backup /var/lib/financeiro/deploy.log`. *Correção sugerida:*
+   usar `/usr/bin/bash` explícito + flag `-n` no sudo e alertar no log se falhar.
+
+### A2 — Funcionais
+
+6. **Log de Auditoria não é um registro real.** `logAudit()` grava apenas no
+   localStorage do navegador (máx. 500 entradas, apagável pelo próprio usuário,
+   não compartilhado entre máquinas). Em modo servidor o módulo "Log de Auditoria"
+   mostra só o que aconteceu naquele navegador. *Correção sugerida:* criar tabela
+   `audit_log` na API e gravar server-side nas mutações autenticadas.
+
+7. **`fetchForm` (uploads) sem as proteções do `apiRequest`.** Não tem o retry de
+   401 com token relido nem o fallback `?token=` — uploads de notas fiscais/SINAPI
+   /projetos podem falhar nos mesmos cenários de header removido que afetavam o
+   DELETE. Replicar o tratamento do `apiRequest`.
+
+8. **Tokens de sessão expostos em URLs.** O fallback `?token=` (DELETE/PUT/PATCH)
+   e os links de download PDF/XML (`hasPdf`/`hasXml`) colocam o token de sessão na
+   query string — fica registrado nos access logs do Apache e em históricos.
+   *Mitigação sugerida:* tokens de download de uso único/curta duração, ou
+   suprimir a query de token no log do Apache.
+
+9. **Troca voluntária de senha não invalida as outras sessões** do usuário
+   (`handle_change_password` não limpa `api_sessions`); a troca forçada já limpa.
+   Decidir e alinhar o comportamento.
+
+10. **Selects da agenda listam registros Inativos.** `agendaOptions()` não filtra
+    `status === "Ativo"` para usuários/clientes/obras — compromissos podem ser
+    atribuídos a cadastros desativados.
+
+11. **Migração (`/migrate`) pode casar registros errados.** `find_existing_id()`
+    testa cada campo `unique` isoladamente (OR) — ex.: cliente é considerado
+    "existente" só pelo nome igual, e o registro é ATUALIZADO. Risco de
+    sobrescrever cadastro homônimo ao migrar. Considerar matching por combinação
+    de campos ou só por `document`.
+
+### A3 — Visuais e menores
+
+12. **Tema escuro:** badges `.audit-action.a-login` e `.a-create` (styles.css
+    ~967/969) sem override escuro — ficam com fundo pastel claro no dark.
+13. **Plugin Seletividade:** `qs("instIsolacao").selectedOptions[0].textContent`
+    (buildPrintReport) sem guarda — exceção teórica se não houver opção
+    selecionada. Usar fallback.
+14. **HSTS desativado:** header `Strict-Transport-Security` permanece comentado no
+    `.htaccess` raiz — ativar após confirmar HTTPS 100% estável.
+15. **`verdictHistory` da viabilidade cresce sem limite** (texto concatenado a cada
+    mudança de parecer) — truncar para as últimas N entradas.
+16. **Tema após logout** mantém a preferência do último usuário no login
+    (cosmético; o tema correto é reaplicado ao logar).
