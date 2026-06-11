@@ -1202,14 +1202,17 @@ CREATE TABLE IF NOT EXISTS regras_visualizacao (
 -- ─────────────────────────────────────────────────────────────────────────────
 
 -- Usuários iniciais: criados apenas se ainda não existirem (re-executar o schema
--- nunca reativa, desbloqueia ou altera usuários reais). A senha padrão exige troca
--- obrigatória no primeiro acesso (mustChangePassword = 1).
+-- nunca reativa, desbloqueia ou altera usuários reais). Nenhuma senha real fica
+-- versionada no repositório: o placeholder abaixo é a senha temporária do primeiro
+-- login (o PHP aceita plaintext e converte para bcrypt) e mustChangePassword = 1
+-- força a troca imediata. Em instalações novas, troque o placeholder antes de
+-- executar ou faça o primeiro login imediatamente.
 INSERT INTO system_users (username, fullName, password, role, status, blocked, mustChangePassword)
-SELECT 'admin', 'Administrador', 'admin123', 'admin', 'Ativo', 0, 1
+SELECT 'admin', 'Administrador', 'TROQUE_NO_PRIMEIRO_ACESSO', 'admin', 'Ativo', 0, 1
 WHERE NOT EXISTS (SELECT 1 FROM system_users WHERE username = 'admin');
 
 INSERT INTO system_users (username, fullName, password, role, status, blocked, mustChangePassword)
-SELECT 'alefschimanski', 'alefschimanski', 'Schimanski!@#', 'admin', 'Ativo', 0, 1
+SELECT 'alefschimanski', 'alefschimanski', 'TROQUE_NO_PRIMEIRO_ACESSO', 'admin', 'Ativo', 0, 1
 WHERE NOT EXISTS (SELECT 1 FROM system_users WHERE username = 'alefschimanski');
 
 INSERT INTO sinapi_referencias (uf, referenceMonth, referenceYear, priceType, source, defaultUf, locationName, issueDate, availableTypes, importDate, status)

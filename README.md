@@ -315,19 +315,18 @@ O script `backup-pre-deploy.sh` roda automaticamente no início de cada deploy
 Execução manual a qualquer momento:
 
 ```bash
-sudo -u alefschimanski bash /var/www/financeiro/backup-pre-deploy.sh
+sudo -u alefschimanski /usr/bin/bash /var/www/financeiro/backup-pre-deploy.sh
 ```
 
 ---
 
 ## Login e Autenticação
 
-O `schema.sql` cria usuários iniciais:
-
-- `admin` / `admin123`
-- `alefschimanski` / `Schimanski!@#`
-
-**Troque as senhas imediatamente após o primeiro login.**
+O `schema.sql` cria usuários iniciais (`admin` e `alefschimanski`) com a senha
+temporária `TROQUE_NO_PRIMEIRO_ACESSO` e `mustChangePassword = 1` — o sistema
+exige a troca no primeiro login. Nenhuma senha real fica versionada no
+repositório; em instalações novas, faça o primeiro login imediatamente após
+executar o schema (ou edite o placeholder antes).
 
 ### Fluxo de sessão
 

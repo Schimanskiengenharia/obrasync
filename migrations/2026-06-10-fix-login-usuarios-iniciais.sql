@@ -18,12 +18,17 @@ ALTER TABLE system_users
 ALTER TABLE system_users
   MODIFY COLUMN role ENUM('admin', 'financeiro', 'comercial', 'engenharia', 'gestor_obra', 'equipe_campo', 'cliente_obra', 'fornecedor_terceiro', 'consulta', 'gerente', 'operador', 'visualizador') NOT NULL DEFAULT 'financeiro';
 
+ALTER TABLE system_users
+  ADD COLUMN IF NOT EXISTS mustChangePassword TINYINT(1) NOT NULL DEFAULT 0 AFTER blocked;
+
 -- Cria os usuários iniciais apenas se ainda não existirem: re-executar esta
 -- migração nunca reativa, desbloqueia ou altera usuários reais de produção.
-INSERT INTO system_users (username, fullName, password, role, status)
-SELECT 'admin', 'Administrador', 'admin123', 'admin', 'Ativo'
+-- Nenhuma senha real fica versionada: o placeholder é a senha temporária do
+-- primeiro login e mustChangePassword = 1 força a troca imediata.
+INSERT INTO system_users (username, fullName, password, role, status, mustChangePassword)
+SELECT 'admin', 'Administrador', 'TROQUE_NO_PRIMEIRO_ACESSO', 'admin', 'Ativo', 1
 WHERE NOT EXISTS (SELECT 1 FROM system_users WHERE username = 'admin');
 
-INSERT INTO system_users (username, fullName, password, role, status)
-SELECT 'alefschimanski', 'Alef Schimanski', 'Schimanski!@#', 'admin', 'Ativo'
+INSERT INTO system_users (username, fullName, password, role, status, mustChangePassword)
+SELECT 'alefschimanski', 'Alef Schimanski', 'TROQUE_NO_PRIMEIRO_ACESSO', 'admin', 'Ativo', 1
 WHERE NOT EXISTS (SELECT 1 FROM system_users WHERE username = 'alefschimanski');

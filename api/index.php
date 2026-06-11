@@ -135,11 +135,22 @@ try {
 
     if ($method === 'POST') {
         $record = create_record($pdo, $resources[$key], read_json());
+        // Automations auxiliares APÓS o INSERT: uma falha aqui não pode devolver 500
+        // com o registro já gravado (registro "fantasma"). Mesmo padrão da agenda:
+        // try/catch + error_log + seguir.
         if ($key === 'projects') {
-            $record['automation'] = ensure_project_kanban_boards($pdo, (int) $record['id'], (string) ($record['name'] ?? 'Obra'));
+            try {
+                $record['automation'] = ensure_project_kanban_boards($pdo, (int) $record['id'], (string) ($record['name'] ?? 'Obra'));
+            } catch (Throwable $error) {
+                error_log('[ObraSync] Automação de kanban da obra falhou: ' . $error->getMessage());
+            }
         }
         if ($key === 'purchaseOrders') {
-            $record['automation'] = create_purchase_order_kanban_card($pdo, (int) $record['id']);
+            try {
+                $record['automation'] = create_purchase_order_kanban_card($pdo, (int) $record['id']);
+            } catch (Throwable $error) {
+                error_log('[ObraSync] Automação de card do pedido de compra falhou: ' . $error->getMessage());
+            }
         }
         if ($key === 'agendaEvents') {
             $record['automation'] = create_event_day_notification($pdo, $record);
@@ -1397,12 +1408,8 @@ function handle_login(PDO $pdo, array $payload): never
     }
     unset($user['password']);
     $user['mustChangePassword'] = !empty($user['mustChangePassword']);
-    // Se a flag está ativa mas a senha já atende todos os requisitos atuais, desativa-a
-    // automaticamente — o usuário entra direto sem ser forçado a trocar novamente.
-    if ($user['mustChangePassword'] && validate_password_strength($password) === null) {
-        $pdo->prepare('UPDATE system_users SET mustChangePassword = 0 WHERE id = ?')->execute([$user['id']]);
-        $user['mustChangePassword'] = false;
-    }
+    // A flag mustChangePassword só é zerada pela troca efetiva de senha: o admin pode
+    // definir uma senha temporária forte e ainda exigir a troca no primeiro acesso.
 
     ensure_api_sessions_table($pdo);
     $pdo->prepare('DELETE FROM api_sessions WHERE lastActivity < (NOW() - INTERVAL ' . AUTH_IDLE_SECONDS . ' SECOND)')->execute();

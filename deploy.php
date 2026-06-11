@@ -33,7 +33,16 @@ $logDir = '/var/lib/financeiro';
 $backupScript = $appDir . '/backup-pre-deploy.sh';
 $backupOutput = 'backup-pre-deploy.sh não encontrado; backup pulado';
 if (is_file($backupScript)) {
-    $backupOutput = (string) shell_exec('sudo -u alefschimanski bash ' . escapeshellarg($backupScript) . ' 2>&1');
+    // /usr/bin/bash explícito: o sudoers exige match exato do comando; "bash" sem
+    // caminho pode resolver para outro binário e não casar com a regra. O -n faz o
+    // sudo falhar na hora em vez de aguardar senha sem TTY (travamento silencioso).
+    $backupLines = [];
+    $backupExit  = 0;
+    exec('sudo -n -u alefschimanski /usr/bin/bash ' . escapeshellarg($backupScript) . ' 2>&1', $backupLines, $backupExit);
+    $backupOutput = implode("\n", $backupLines);
+    if ($backupExit !== 0) {
+        $backupOutput = "[ALERTA] Backup pré-deploy FALHOU (exit {$backupExit}) — confira a regra do sudoers.\n" . $backupOutput;
+    }
 }
 
 // 2) Atualização do código. Rodar git pull como alefschimanski (tem permissão no repositório).

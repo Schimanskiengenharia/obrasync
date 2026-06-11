@@ -1848,7 +1848,7 @@ function readAuthSession() {
 function writeAuthSession(user) {
   const session = JSON.stringify({
     userId: user.id,
-    user: { id: user.id, username: user.username, fullName: user.fullName, role: user.role, status: user.status },
+    user: { id: user.id, username: user.username, fullName: user.fullName, role: user.role, status: user.status, mustChangePassword: Number(user.mustChangePassword) ? 1 : 0 },
     token: authToken,
     lastActivity: nowMs(),
   });
@@ -6607,8 +6607,18 @@ function restoreSession() {
   const user = session
     ? db.users.find((item) => String(item.id) === String(session.userId) && item.status === "Ativo") || session.user
     : null;
-  if (user) showApp(user);
-  else showLogin();
+  if (!user) return showLogin();
+  // Troca obrigatória pendente: recarregar a página (F5) não pode liberar o app
+  // sem a nova senha. Number() cobre 1/"1"/true vindos da API ou do localStorage.
+  if (Number(user.mustChangePassword)) {
+    // Mesmo visual do login: tela de login ao fundo, modal de troca por cima.
+    currentUser = user;
+    qs("loginScreen").classList.remove("hidden");
+    qs("appShell").classList.add("hidden");
+    openChangePasswordDialog(true);
+    return;
+  }
+  showApp(user);
 }
 
 // ── Barra de favoritos ──────────────────────────────────────────────────────
