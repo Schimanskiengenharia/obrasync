@@ -1180,36 +1180,6 @@ function bearer_token(): string
     return trim((string) ($_GET['token'] ?? ''));
 }
 
-// LOG TEMPORÁRIO DE DIAGNÓSTICO do caso "Sessão inválida".
-// Registra em /var/lib/financeiro/auth-debug.log (e no error.log do Apache):
-// toda requisição DELETE, toda falha de autenticação e a criação de sessão no
-// login — com os canais que trouxeram o token (header/X-Auth-Token/query),
-// tamanho e prefixo do hash. Remova a função e as chamadas após resolver.
-function auth_debug_log(string $stage, string $token): void
-{
-    $method = (string) ($_SERVER['REQUEST_METHOD'] ?? '');
-    $isFailure = str_starts_with($stage, 'FALHA');
-    $isLogin = str_starts_with($stage, 'login');
-    if ($method !== 'DELETE' && !$isFailure && !$isLogin) {
-        return;
-    }
-    $line = sprintf(
-        "[%s] %s %s | auth_hdr=%s redirect_hdr=%s x_auth_token=%s query_token=%s | token_len=%d hash8=%s | %s\n",
-        date('Y-m-d H:i:s'),
-        $method,
-        (string) ($_SERVER['REQUEST_URI'] ?? ''),
-        isset($_SERVER['HTTP_AUTHORIZATION']) ? 'sim' : 'nao',
-        isset($_SERVER['REDIRECT_HTTP_AUTHORIZATION']) ? 'sim' : 'nao',
-        isset($_SERVER['HTTP_X_AUTH_TOKEN']) ? 'sim' : 'nao',
-        isset($_GET['token']) ? 'sim' : 'nao',
-        strlen($token),
-        $token === '' ? '-' : substr(hash('sha256', $token), 0, 8),
-        $stage
-    );
-    @file_put_contents('/var/lib/financeiro/auth-debug.log', $line, FILE_APPEND);
-    error_log('[ObraSync auth] ' . trim($line));
-}
-
 function authenticate_request(PDO $pdo, array $config): array
 {
     $auth = $config['auth'] ?? [];
@@ -1221,7 +1191,6 @@ function authenticate_request(PDO $pdo, array $config): array
 
     $token = bearer_token();
     if ($token === '') {
-        auth_debug_log('FALHA: nenhum token recebido (headers e query vazios)', $token);
         fail('Não autenticado. Faça login para acessar a API.', 401);
     }
     ensure_api_sessions_table($pdo);
@@ -1240,15 +1209,12 @@ function authenticate_request(PDO $pdo, array $config): array
     $stmt->execute([hash('sha256', $token)]);
     $session = $stmt->fetch();
     if (!$session) {
-        auth_debug_log('FALHA: token recebido mas sem sessão correspondente -> "Sessão inválida"', $token);
         fail('Sessão inválida. Faça login novamente.', 401);
     }
     if ((int) $session['idleSeconds'] > AUTH_IDLE_SECONDS) {
-        auth_debug_log('FALHA: sessão expirada por inatividade (lastActivity=' . $session['lastActivity'] . ', idleSeconds=' . $session['idleSeconds'] . ')', $token);
         $pdo->prepare('DELETE FROM api_sessions WHERE id = ?')->execute([$session['sessionId']]);
         fail('Sessão expirada por inatividade. Faça login novamente.', 401);
     }
-    auth_debug_log('ok: sessão válida (usuário ' . $session['username'] . ')', $token);
     if (($session['status'] ?? '') !== 'Ativo' || !empty($session['blocked'])) {
         fail('Usuário inativo ou bloqueado.', 403);
     }
@@ -1422,18 +1388,16 @@ function handle_login(PDO $pdo, array $payload): never
         $pdo->prepare('INSERT INTO api_sessions (userId, tokenHash, createdAt, lastActivity) VALUES (?, ?, NOW(), NOW())')
             ->execute([$user['id'], $tokenHash]);
     } catch (PDOException $error) {
-        auth_debug_log('FALHA no INSERT da sessão de login: ' . $error->getMessage(), $token);
+        error_log('[ObraSync] Falha no INSERT da sessão de login: ' . $error->getMessage());
         fail('Não foi possível criar a sessão de acesso. Contate o administrador.', 500);
     }
     // Confirma que a sessão foi gravada antes de devolver o token ao navegador.
     $check = $pdo->prepare('SELECT id FROM api_sessions WHERE tokenHash = ? LIMIT 1');
     $check->execute([$tokenHash]);
-    $sessionId = $check->fetchColumn();
-    if (!$sessionId) {
-        auth_debug_log('FALHA: INSERT da sessão não deu erro, mas a linha não foi encontrada', $token);
+    if (!$check->fetchColumn()) {
+        error_log('[ObraSync] INSERT da sessão de login não deu erro, mas a linha não foi encontrada.');
         fail('Não foi possível registrar a sessão de acesso. Contate o administrador.', 500);
     }
-    auth_debug_log('login ok: sessão ' . $sessionId . ' criada para ' . $user['username'], $token);
 
     respond(['ok' => true, 'user' => $user, 'token' => $token, 'idleTimeoutMs' => AUTH_IDLE_SECONDS * 1000]);
 }
