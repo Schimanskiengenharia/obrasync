@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Estudo de Seletividade — ObraSync</title>
+    <link rel="icon" type="image/png" href="../../assets/favicon.png" />
+    <script>
+      // Aplica o tema do ObraSync (claro/escuro/automático) antes do primeiro paint.
+      (function () {
+        var pref = "auto";
+        try { pref = localStorage.getItem("finconta.theme") || "auto"; } catch (e) { /* sem armazenamento */ }
+        if (pref !== "light" && pref !== "dark" && pref !== "auto") pref = "auto";
+        var dark = pref === "dark" || (pref === "auto" && window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+        document.documentElement.dataset.theme = dark ? "dark" : "light";
+        document.documentElement.dataset.themePref = pref;
+      })();
+    </script>
+    <link rel="stylesheet" href="style.css?v=1" />
+  </head>
+  <body class="checking">
+    <div id="sessionGate" class="session-gate">Verificando sessão do ObraSync…</div>
+
+    <div id="app" class="app hidden">
+      <header class="topbar no-print">
+        <div class="brand">
+          <img src="../../assets/logo.png" alt="ObraSync" />
+          <div>
+            <h1>Estudo de Seletividade</h1>
+            <p>Coordenograma e ajustes de proteção 50/51 — curvas IEC 60255</p>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <span id="userBadge" class="user-badge"></span>
+          <button id="btnPdf" class="primary" type="button">Gerar PDF</button>
+          <a class="secondary btn-link" href="../../">Voltar ao ObraSync</a>
+        </div>
+      </header>
+
+      <main class="layout">
+        <!-- ── Coluna esquerda: entradas e resultados ─────────────────────── -->
+        <section class="panel-left no-print">
+          <details open>
+            <summary>1. Dados do Projeto</summary>
+            <div class="grid-2">
+              <label class="full">Nome do empreendimento<input id="projNome" placeholder="Ex.: Subestação Comercial 300 kVA" /></label>
+              <label>Cliente<input id="projCliente" placeholder="Razão social" /></label>
+              <label>CNPJ<input id="projCnpj" placeholder="00.000.000/0001-00" /></label>
+              <label class="full">Endereço<input id="projEndereco" placeholder="Rua, número, cidade/UF" /></label>
+              <label>Engenheiro responsável<input id="projEngenheiro" placeholder="Nome do engenheiro" /></label>
+              <label>CREA (projeto)<input id="projCrea" placeholder="CREA-MS 000000" /></label>
+              <label>Responsável execução<input id="projExecutor" placeholder="Nome" /></label>
+              <label>CREA (execução)<input id="projCreaExec" placeholder="CREA-MS 000000" /></label>
+            </div>
+          </details>
+
+          <details open>
+            <summary>2. Dados do NCC (Energisa)</summary>
+            <div class="grid-2">
+              <label>SE<input id="nccSe" placeholder="Subestação" /></label>
+              <label>Circuito<input id="nccCircuito" placeholder="Alimentador" /></label>
+              <label>Montante<input id="nccMontante" placeholder="Equipamento a montante" /></label>
+              <label>Fabricante<input id="nccFabricante" placeholder="Fabricante do religador/relé" /></label>
+              <label>PE de referência<input id="nccPe" placeholder="Ponto de entrega" /></label>
+              <label>Tensão nominal (kV)<input id="nccTensao" type="number" step="0.01" value="13.8" /></label>
+              <label>Z1 — parte real (pu)<input id="nccZ1Re" type="number" step="0.0001" /></label>
+              <label>Z1 — parte imaginária (pu)<input id="nccZ1Im" type="number" step="0.0001" /></label>
+              <label>Z0 — parte real (pu)<input id="nccZ0Re" type="number" step="0.0001" /></label>
+              <label>Z0 — parte imaginária (pu)<input id="nccZ0Im" type="number" step="0.0001" /></label>
+              <label>Icc trifásico (A)<input id="nccIcc3f" type="number" step="1" value="2000" /></label>
+              <label>Ângulo Icc 3Ø (°)<input id="nccIcc3fAng" type="number" step="0.1" /></label>
+              <label>Icc fase-terra (A)<input id="nccIccFt" type="number" step="1" value="800" /></label>
+              <label>Ângulo Icc FT (°)<input id="nccIccFtAng" type="number" step="0.1" /></label>
+            </div>
+            <h4>Retaguarda — Fase (51F Energisa)</h4>
+            <div class="grid-2">
+              <label>I partida (A primário)<input id="retFaseIp" type="number" step="0.1" value="240" /></label>
+              <label>Dial (DT)<input id="retFaseDial" type="number" step="0.01" value="0.30" /></label>
+              <label>Curva IEC<select id="retFaseCurva"><option>NI</option><option>MI</option><option>EI</option><option>LTI</option></select></label>
+              <label>Instantâneo 50F (A)<input id="retFaseInst" type="number" step="1" value="1200" /></label>
+            </div>
+            <h4>Retaguarda — Neutro (51N Energisa)</h4>
+            <div class="grid-2">
+              <label>I partida (A primário)<input id="retNeutroIp" type="number" step="0.1" value="48" /></label>
+              <label>Dial (DT)<input id="retNeutroDial" type="number" step="0.01" value="0.20" /></label>
+              <label>Curva IEC<select id="retNeutroCurva"><option>NI</option><option>MI</option><option>EI</option><option>LTI</option></select></label>
+              <label>Instantâneo 50N (A)<input id="retNeutroInst" type="number" step="1" value="400" /></label>
+            </div>
+          </details>
+
+          <details open>
+            <summary>3. Dados da Instalação</summary>
+            <div class="grid-2">
+              <label>Potência do transformador (kVA)<input id="instKva" type="number" step="0.1" value="300" /></label>
+              <label>Demanda prevista (kW)<input id="instDemandaKw" type="number" step="0.1" value="250" /></label>
+              <label>Fator de potência<input id="instFp" type="number" step="0.01" min="0.1" max="1" value="0.92" /></label>
+              <label>Tipo de isolação
+                <select id="instIsolacao">
+                  <option value="seco">Seco (INRUSH ×14)</option>
+                  <option value="oleo_menor" selected>Óleo &lt; 1 MVA (INRUSH ×10)</option>
+                  <option value="oleo_maior">Óleo &gt; 1 MVA (INRUSH ×8)</option>
+                </select>
+              </label>
+              <label>RTC — relação do TC<input id="instRtc" type="number" step="0.1" value="12" /></label>
+              <label>&nbsp;<span class="hint">Ex.: TC 60/5 → RTC = 12</span></label>
+              <label>Curva IEC — Fase<select id="instCurvaFase"><option selected>NI</option><option>MI</option><option>EI</option><option>LTI</option></select></label>
+              <label>Curva IEC — Neutro<select id="instCurvaNeutro"><option selected>NI</option><option>MI</option><option>EI</option><option>LTI</option></select></label>
+            </div>
+          </details>
+
+          <details>
+            <summary>4. Dados dos Equipamentos</summary>
+            <h4>TC — Transformador de Corrente</h4>
+            <div class="grid-3">
+              <label>Primário (A)<input id="tcPrim" type="number" step="1" value="60" /></label>
+              <label>Secundário (A)<input id="tcSec" type="number" step="1" value="5" /></label>
+              <label>Classe<input id="tcClasse" placeholder="10B100" /></label>
+            </div>
+            <h4>TP — Transformador de Potencial</h4>
+            <div class="grid-3">
+              <label>Primário (V)<input id="tpPrim" type="number" step="1" value="13800" /></label>
+              <label>Secundário (V)<input id="tpSec" type="number" step="1" value="115" /></label>
+              <label>Classe<input id="tpClasse" placeholder="0,3P75" /></label>
+            </div>
+            <h4>Disjuntor</h4>
+            <div class="grid-2">
+              <label>Tipo<input id="djTipo" placeholder="A vácuo, tripolar" /></label>
+              <label>In (A)<input id="djIn" type="number" step="1" value="630" /></label>
+              <label>Vn (kV)<input id="djVn" type="number" step="0.1" value="17.5" /></label>
+              <label>Cap. interrupção (kA)<input id="djIcc" type="number" step="0.1" value="20" /></label>
+            </div>
+            <h4>Relé de proteção</h4>
+            <div class="grid-2">
+              <label>Fabricante<input id="releFabricante" placeholder="Ex.: Pextron" /></label>
+              <label>Modelo<input id="releModelo" placeholder="Ex.: URP6000" /></label>
+            </div>
+            <h4>Ponto ANSI (suportabilidade do transformador)</h4>
+            <div class="grid-2">
+              <label>ANSI fase — corrente (A)<input id="ansiFaseI" type="number" step="1" /></label>
+              <label>ANSI fase — tempo (s)<input id="ansiFaseT" type="number" step="0.01" /></label>
+              <label>ANSI neutro — corrente (A)<input id="ansiNeutroI" type="number" step="1" /></label>
+              <label>ANSI neutro — tempo (s)<input id="ansiNeutroT" type="number" step="0.01" /></label>
+            </div>
+            <h4>Nobreak (opcional)</h4>
+            <div class="grid-3">
+              <label>Marca<input id="nbMarca" /></label>
+              <label>Modelo<input id="nbModelo" /></label>
+              <label>Potência (VA)<input id="nbPotencia" type="number" step="1" /></label>
+            </div>
+          </details>
+
+          <div class="actions-row">
+            <button id="btnCalcular" class="primary" type="button">Calcular</button>
+            <button id="btnLimpar" class="secondary" type="button">Limpar dados</button>
+          </div>
+
+          <section id="resultados" class="results hidden">
+            <h3>Resultados calculados</h3>
+            <table>
+              <tbody id="resultadosBody"></tbody>
+            </table>
+          </section>
+        </section>
+
+        <!-- ── Coluna direita: coordenograma ──────────────────────────────── -->
+        <section class="panel-right">
+          <div class="chart-toolbar no-print">
+            <div class="mode-switch" role="group" aria-label="Curvas exibidas">
+              <button class="mode-btn active" data-mode="ambos" type="button">Fase + Neutro</button>
+              <button class="mode-btn" data-mode="fase" type="button">Fase</button>
+              <button class="mode-btn" data-mode="neutro" type="button">Neutro</button>
+            </div>
+            <span id="badgeSeletividade" class="badge hidden"></span>
+          </div>
+          <div class="chart-card">
+            <canvas id="coordenograma" aria-label="Coordenograma log-log corrente x tempo"></canvas>
+          </div>
+          <p id="seletividadeDetalhe" class="seletividade-detalhe no-print"></p>
+        </section>
+      </main>
+
+      <footer class="footer no-print">
+        <span>Estudo de Seletividade v1.0 — Schimanski Engenharia e Soluções</span>
+        <a href="../../">Voltar ao ObraSync</a>
+      </footer>
+    </div>
+
+    <!-- Relatório de impressão (A4) montado pelo JS ao clicar em "Gerar PDF" -->
+    <div id="printReport" class="print-report" hidden></div>
+
+    <script src="app.js?v=1"></script>
+  </body>
+</html>

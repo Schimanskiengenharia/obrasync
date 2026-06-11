@@ -1,0 +1,346 @@
+/* Estudo de Seletividade — paleta espelhada do ObraSync (styles.css) para
+   compatibilidade visual e com os temas Light/Dark/Auto. */
+:root {
+  --bg: #f4f7f6;
+  --panel: #ffffff;
+  --panel-2: #eef4f2;
+  --ink: #172322;
+  --muted: #60716e;
+  --line: #d8e1de;
+  --teal: #0f766e;
+  --teal-2: #134e4a;
+  --gold: #b8872d;
+  --red: #b42318;
+  --green: #147a47;
+  --shadow: 0 14px 40px rgba(24, 40, 38, 0.09);
+  --field: #ffffff;
+  color-scheme: light;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+html[data-theme="dark"] {
+  --bg: #0e1615;
+  --panel: #17211f;
+  --panel-2: #22322f;
+  --ink: #e6f1ee;
+  --muted: #9ab1ac;
+  --line: #2c3c38;
+  --teal-2: #5eead4;
+  --shadow: 0 14px 40px rgba(0, 0, 0, 0.5);
+  --field: #101a18;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+.hidden { display: none !important; }
+
+.session-gate {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+body:not(.checking) .session-gate { display: none; }
+
+/* ── Cabeçalho ─────────────────────────────────────────────────────────── */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 14px 22px;
+  background: var(--panel);
+  box-shadow: 4px 0 24px rgba(0, 0, 0, 0.08);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.brand img { width: 64px; height: 64px; }
+
+.brand h1 { margin: 0; font-size: 20px; }
+
+.brand p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.user-badge {
+  padding: 7px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+button, .btn-link {
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  border-radius: 6px;
+  padding: 9px 16px;
+  font-weight: 600;
+  text-decoration: none;
+  display: inline-block;
+}
+
+.primary { background: var(--teal); color: #fff; }
+.secondary { background: var(--field); color: var(--ink); border: 1px solid var(--line); }
+
+/* ── Layout em duas colunas ────────────────────────────────────────────── */
+
+.layout {
+  display: grid;
+  grid-template-columns: 2fr 3fr; /* esquerda 40% / direita 60% */
+  gap: 18px;
+  padding: 18px 22px;
+  align-items: start;
+}
+
+.panel-left { display: grid; gap: 12px; min-width: 0; }
+
+details {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  padding: 0 14px 12px;
+}
+
+summary {
+  cursor: pointer;
+  font-weight: 800;
+  padding: 12px 0;
+  color: var(--teal-2);
+}
+
+details h4 {
+  margin: 14px 0 6px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.grid-2 .full { grid-column: 1 / -1; }
+
+label {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+input, select {
+  width: 100%;
+  min-height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 7px 9px;
+  background: var(--field);
+  color: var(--ink);
+  font: inherit;
+}
+
+.hint { font-weight: 500; font-size: 12px; color: var(--muted); align-self: center; }
+
+.actions-row { display: flex; gap: 10px; }
+.actions-row .primary { flex: 1; }
+
+/* Resultados */
+.results {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  padding: 14px;
+}
+
+.results h3 { margin: 0 0 10px; font-size: 15px; }
+
+.results table { width: 100%; border-collapse: collapse; }
+
+.results td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+
+.results tr:last-child td { border-bottom: 0; }
+.results td:last-child { text-align: right; font-weight: 700; white-space: nowrap; }
+.results tr.group td {
+  background: var(--panel-2);
+  font-weight: 800;
+  font-size: 11px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* ── Coordenograma ─────────────────────────────────────────────────────── */
+
+.panel-right { display: grid; gap: 10px; min-width: 0; }
+
+.chart-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.mode-switch { display: flex; gap: 6px; }
+
+.mode-btn {
+  background: var(--field);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  padding: 7px 14px;
+  font-size: 13px;
+}
+
+.mode-btn.active { background: var(--teal); border-color: var(--teal); color: #fff; }
+
+.badge {
+  padding: 7px 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.badge.ok { background: rgba(20, 122, 71, 0.16); color: var(--green); }
+.badge.nok { background: rgba(180, 35, 24, 0.16); color: var(--red); }
+
+.chart-card {
+  background: #ffffff; /* gráfico sempre claro: legibilidade e consistência com o PDF */
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  padding: 8px;
+}
+
+#coordenograma { display: block; width: 100%; height: auto; }
+
+.seletividade-detalhe { margin: 0; color: var(--muted); font-size: 13px; }
+
+/* ── Rodapé ────────────────────────────────────────────────────────────── */
+
+.footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 14px 22px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.footer a { color: var(--teal); font-weight: 700; text-decoration: none; }
+
+@media (max-width: 1100px) {
+  .layout { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 700px) {
+  .grid-2, .grid-3 { grid-template-columns: 1fr; }
+}
+
+/* ── Relatório de impressão (PDF via window.print) ─────────────────────── */
+
+.print-report { display: none; }
+
+@media print {
+  @page { size: A4; margin: 14mm 12mm; }
+
+  body { background: #fff; color: #14211f; }
+  .app, .session-gate { display: none !important; }
+  .no-print { display: none !important; }
+
+  .print-report {
+    display: block !important;
+    font-size: 12px;
+    color: #14211f;
+  }
+
+  .print-report h1 { font-size: 19px; margin: 0 0 2px; color: #134e4a; }
+  .print-report h2 {
+    font-size: 13px;
+    margin: 16px 0 6px;
+    padding-bottom: 3px;
+    border-bottom: 2px solid #0f766e;
+    color: #134e4a;
+    text-transform: uppercase;
+  }
+
+  .print-head {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    border-bottom: 3px solid #0f766e;
+    padding-bottom: 10px;
+  }
+
+  .print-head img { width: 70px; height: 70px; }
+  .print-head p { margin: 1px 0; font-size: 11px; color: #444; }
+
+  .print-report table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 4px 0;
+  }
+
+  .print-report th, .print-report td {
+    border: 1px solid #b9c6c2;
+    padding: 4px 7px;
+    text-align: left;
+    font-size: 11px;
+  }
+
+  .print-report th { background: #eef4f2; font-weight: 700; }
+
+  .print-chart { page-break-inside: avoid; }
+  .print-chart img { width: 100%; border: 1px solid #b9c6c2; }
+  .page-break { page-break-before: always; }
+
+  .print-badge { font-weight: 800; }
+  .print-badge.ok { color: #147a47; }
+  .print-badge.nok { color: #b42318; }
+
+  .print-signatures {
+    display: flex;
+    justify-content: space-around;
+    gap: 30px;
+    margin-top: 48px;
+    page-break-inside: avoid;
+  }
+
+  .print-signatures div {
+    flex: 1;
+    text-align: center;
+    border-top: 1px solid #14211f;
+    padding-top: 6px;
+    font-size: 11px;
+  }
+}

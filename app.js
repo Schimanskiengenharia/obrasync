@@ -1410,6 +1410,7 @@ const seed = {
   viabilityAnalyses: [],
   plugins: [
     { id: "pl1", name: "Portal do Cliente", url: "https://schimanskiengenharia.com.br/portal", icon: "🌐", description: "Acesso ao portal externo do cliente (URL configurável).", roles: "", sortOrder: 1, status: "Ativo" },
+    { id: "pl2", name: "Estudo de Seletividade", url: "./plugins/seletividade/", icon: "⚡", description: "Coordenograma e ajustes de proteção (50/51) com curvas IEC e PDF.", roles: "", sortOrder: 2, status: "Ativo" },
   ],
   sinapiReferences: [
     { id: "sr1", uf: "MS", referenceMonth: 4, referenceYear: 2026, priceType: "Sem desoneração", source: "SINAPI/CAIXA", defaultUf: "MS", locationName: "Campo Grande/MS", issueDate: "2026-05-12", availableTypes: "Sem desoneração; Com desoneração; Sem encargos sociais", importDate: "2026-06-08", importUserId: "u1", status: "Ativo" },
@@ -3296,10 +3297,16 @@ function sortedPlugins() {
     Number(a.sortOrder || 0) - Number(b.sortOrder || 0) || String(a.name || "").localeCompare(String(b.name || "")));
 }
 
-// Plugins ativos visíveis para o perfil atual (com URL http/https válida).
+// URL de plugin aceita: https://..., http://..., caminho absoluto (/...) ou
+// relativo explícito (./...) para plugins hospedados dentro do próprio sistema.
+function isValidPluginUrl(url) {
+  return /^(https?:\/\/|\.?\/)/i.test(String(url || "").trim());
+}
+
+// Plugins ativos visíveis para o perfil atual (com URL válida).
 function activePlugins() {
   return sortedPlugins()
-    .filter((plugin) => plugin.status !== "Inativo" && /^https?:\/\//i.test(String(plugin.url || "")))
+    .filter((plugin) => plugin.status !== "Inativo" && isValidPluginUrl(plugin.url))
     .filter((plugin) => pluginAllowedForRole(plugin, currentUser?.role));
 }
 
@@ -3847,7 +3854,7 @@ async function saveForm(event) {
   }
   if (editing.key === "plugins") {
     const url = String(data.url || "").trim();
-    if (!/^https?:\/\//i.test(url)) return alert("Informe uma URL válida iniciando com http:// ou https://.");
+    if (!isValidPluginUrl(url)) return alert("Informe uma URL válida: https://... ou caminho interno iniciando com / ou ./");
     data.url = url;
     data.sortOrder = Number(data.sortOrder || 0) || (sortedPlugins().length + (editing.id ? 0 : 1));
   }

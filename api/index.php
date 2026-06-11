@@ -47,6 +47,13 @@ try {
     // Toda rota além das acima exige sessão válida emitida pelo próprio login.
     $authUser = authenticate_request($pdo, $config);
 
+    // Verificação de sessão usada pelos plugins (ex.: Estudo de Seletividade):
+    // valida o token e devolve os dados básicos do usuário logado.
+    if ($resource === 'check-session' || $resource === 'checkSession') {
+        require_method($method, ['GET']);
+        handle_check_session($pdo, $authUser);
+    }
+
     $module = strtolower((string) ($_GET['module'] ?? ''));
     if (in_array($module, ['agenda', 'agenda_eventos', 'agenda-eventos'], true)) {
         authorize_request($pdo, $authUser, 'agenda', action_for_method($method));
@@ -1224,6 +1231,25 @@ function authenticate_request(PDO $pdo, array $config): array
         'username' => (string) $session['username'],
         'role' => (string) ($session['role'] ?? ''),
     ];
+}
+
+// Confirma a sessão ativa e devolve o usuário logado (consumido pelos plugins).
+function handle_check_session(PDO $pdo, array $user): never
+{
+    $stmt = $pdo->prepare('SELECT fullName, email FROM system_users WHERE id = ? LIMIT 1');
+    $stmt->execute([$user['id']]);
+    $row = $stmt->fetch() ?: [];
+    respond([
+        'ok' => true,
+        'success' => true,
+        'user' => [
+            'id' => $user['id'],
+            'username' => $user['username'],
+            'name' => (string) (($row['fullName'] ?? '') !== '' ? $row['fullName'] : $user['username']),
+            'email' => (string) ($row['email'] ?? ''),
+            'role' => $user['role'],
+        ],
+    ]);
 }
 
 function handle_logout(PDO $pdo): never
