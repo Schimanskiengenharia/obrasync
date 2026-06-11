@@ -1,6 +1,11 @@
 <?php
 declare(strict_types=1);
 
+// Fuso horário do PHP alinhado ao do servidor MySQL (Campo Grande/MS, UTC-4,
+// sem horário de verão desde 2019). Sem isso, o PHP em UTC considerava as
+// sessões recém-criadas pelo MySQL (-04) como expiradas há 4 horas.
+date_default_timezone_set('America/Campo_Grande');
+
 header('Content-Type: application/json; charset=utf-8');
 header('X-Content-Type-Options: nosniff');
 
@@ -1220,8 +1225,13 @@ function authenticate_request(PDO $pdo, array $config): array
         fail('Não autenticado. Faça login para acessar a API.', 401);
     }
     ensure_api_sessions_table($pdo);
+    // idleSeconds calculado pelo relógio do PRÓPRIO MySQL (TIMESTAMPDIFF x NOW()):
+    // a expiração não depende do fuso do PHP — comparar strtotime() com time()
+    // descartava sessões válidas quando PHP e MySQL estavam em fusos diferentes.
     $stmt = $pdo->prepare(
-        'SELECT s.id AS sessionId, s.lastActivity, u.id, u.username, u.role, u.status, u.blocked
+        'SELECT s.id AS sessionId, s.lastActivity,
+                TIMESTAMPDIFF(SECOND, s.lastActivity, NOW()) AS idleSeconds,
+                u.id, u.username, u.role, u.status, u.blocked
            FROM api_sessions s
            JOIN system_users u ON u.id = s.userId
           WHERE s.tokenHash = ?
@@ -1233,8 +1243,8 @@ function authenticate_request(PDO $pdo, array $config): array
         auth_debug_log('FALHA: token recebido mas sem sessão correspondente -> "Sessão inválida"', $token);
         fail('Sessão inválida. Faça login novamente.', 401);
     }
-    if (strtotime((string) $session['lastActivity']) < time() - AUTH_IDLE_SECONDS) {
-        auth_debug_log('FALHA: sessão expirada por inatividade (lastActivity=' . $session['lastActivity'] . ')', $token);
+    if ((int) $session['idleSeconds'] > AUTH_IDLE_SECONDS) {
+        auth_debug_log('FALHA: sessão expirada por inatividade (lastActivity=' . $session['lastActivity'] . ', idleSeconds=' . $session['idleSeconds'] . ')', $token);
         $pdo->prepare('DELETE FROM api_sessions WHERE id = ?')->execute([$session['sessionId']]);
         fail('Sessão expirada por inatividade. Faça login novamente.', 401);
     }
@@ -1510,13 +1520,15 @@ function handle_reset_password(PDO $pdo, array $payload): never
         fail($pwErr, 400);
     }
     ensure_password_reset_table($pdo);
-    $stmt = $pdo->prepare('SELECT id, userId, expiresAt, usedAt FROM password_reset_tokens WHERE tokenHash = ? LIMIT 1');
+    // Expiração avaliada pelo relógio do próprio MySQL (mesmo clock que gravou
+    // expiresAt via DATE_ADD(NOW(), ...)): imune a diferenças de fuso com o PHP.
+    $stmt = $pdo->prepare('SELECT id, userId, usedAt, (expiresAt < NOW()) AS expired FROM password_reset_tokens WHERE tokenHash = ? LIMIT 1');
     $stmt->execute([hash('sha256', $token)]);
     $row = $stmt->fetch();
     if (!$row || $row['usedAt'] !== null) {
         fail('Token inválido ou já utilizado. Solicite uma nova redefinição.', 400);
     }
-    if (strtotime((string) $row['expiresAt']) < time()) {
+    if (!empty($row['expired'])) {
         $pdo->prepare('DELETE FROM password_reset_tokens WHERE id = ?')->execute([$row['id']]);
         fail('Token expirado. Solicite uma nova redefinição de senha.', 400);
     }
