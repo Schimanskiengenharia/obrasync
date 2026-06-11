@@ -749,48 +749,56 @@ Após subir os arquivos, execute as migrations novas que ainda não foram rodada
 
 ### A1 — Bugs reais e segurança (corrigir primeiro)
 
-1. **Bypass da troca obrigatória de senha ao recarregar a página.**
+1. ~~**Bypass da troca obrigatória de senha ao recarregar a página.**
    `restoreSession()` (app.js, ~linha 6588) restaura a sessão e chama `showApp()`
    sem verificar `mustChangePassword` — nem no `user` do localStorage nem no
    registro vindo de `db.users`. Quem recarregar (F5) durante o modal de troca
-   obrigatória entra no sistema sem trocar a senha.
-   *Correção sugerida:* em `restoreSession()`/`showApp()`, se
-   `user.mustChangePassword` for verdadeiro, abrir `openChangePasswordDialog(true)`
-   em vez de mostrar o app.
+   obrigatória entra no sistema sem trocar a senha.~~
+   ✅ **Corrigido em 2026-06-11 (commit `80ee8a2`):** `restoreSession()` verifica
+   `mustChangePassword` (do `db.users` ou da sessão persistida) e reabre o modal
+   forçado sobre a tela de login; `writeAuthSession()` agora persiste a flag.
 
-2. **Senhas reais em texto plano versionadas no repositório.**
+2. ~~**Senhas reais em texto plano versionadas no repositório.**
    `schema.sql` (usuários iniciais) e
    `migrations/2026-06-10-fix-login-usuarios-iniciais.sql` contêm `admin123` e
-   `Schimanski!@#` em texto plano, públicos no histórico do GitHub.
-   *Correção sugerida:* trocar a senha real do usuário em produção, substituir os
-   seeds por hash bcrypt ou placeholder `TROQUE_NO_PRIMEIRO_ACESSO`, e avaliar
-   reescrita/limpeza do histórico se o repositório não for privado.
+   `Schimanski!@#` em texto plano, públicos no histórico do GitHub.~~
+   ✅ **Corrigido em 2026-06-11 (commit `80ee8a2`):** seeds substituídos pelo
+   placeholder `TROQUE_NO_PRIMEIRO_ACESSO` com `mustChangePassword = 1`.
+   ⚠️ **Pendências manuais:** trocar a senha real do usuário em produção (a
+   antiga continua no histórico do Git) e avaliar limpeza do histórico se o
+   repositório não for privado.
 
-3. **Automations sem try/catch após save (mesma classe do bug da agenda já corrigido).**
+3. ~~**Automations sem try/catch após save (mesma classe do bug da agenda já corrigido).**
    No roteador da API (`api/index.php`, POST genérico ~linhas 139–145):
    `ensure_project_kanban_boards()` (criação de obra) e
    `create_purchase_order_kanban_card()` (pedido de compra) rodam **depois** do
    INSERT sem try/catch — qualquer falha devolve 500 com o registro já gravado,
-   confundindo o usuário (registro "fantasma"). A automação da agenda já foi
-   blindada; aplicar o mesmo padrão (try/catch + `error_log` + seguir) nessas duas
-   e na automação de marcos/pedidos do caminho PUT.
+   confundindo o usuário (registro "fantasma").~~
+   ✅ **Corrigido em 2026-06-11 (commit `80ee8a2`):** as duas automations do POST
+   ganharam try/catch + `error_log` (padrão da agenda). O caminho PUT de
+   marcos/pedidos **não precisou de mudança**: `update_record()` já roda a
+   automação dentro de transação com rollback — uma falha desfaz também o UPDATE,
+   sem deixar registro fantasma.
 
-4. **`handle_login` cancela silenciosamente a troca obrigatória definida pelo admin.**
+4. ~~**`handle_login` cancela silenciosamente a troca obrigatória definida pelo admin.**
    Se `mustChangePassword = 1` mas a senha atual já atende aos requisitos de
    força, o login zera a flag (api/index.php, `handle_login`). Cenário quebrado:
    admin define senha temporária FORTE para um usuário e marca "trocar no primeiro
    acesso" — a flag é cancelada no login e o usuário permanece com a senha
-   temporária. *Correção sugerida:* remover esse auto-clear (a flag só deve ser
-   zerada pela troca efetiva de senha).
+   temporária.~~
+   ✅ **Corrigido em 2026-06-11 (commit `80ee8a2`):** auto-clear removido — a
+   flag só é zerada pela troca efetiva de senha.
 
-5. **Backup pré-deploy pode nunca executar (sudo × sudoers).**
+5. ~~**Backup pré-deploy pode nunca executar (sudo × sudoers).**
    `deploy.php` executa `sudo -u alefschimanski bash /var/www/financeiro/backup-pre-deploy.sh`
    (sem caminho completo do bash e sem `-n`), enquanto o sudoers documentado exige
    match exato `/usr/bin/bash /var/www/financeiro/backup-pre-deploy.sh`. Se o
    `bash` resolver para outro caminho ou a regra não casar, o sudo aguarda senha
-   sem TTY e o backup falha silenciosamente (só aparece no deploy.log).
-   *Verificar:* `grep backup /var/lib/financeiro/deploy.log`. *Correção sugerida:*
-   usar `/usr/bin/bash` explícito + flag `-n` no sudo e alertar no log se falhar.
+   sem TTY e o backup falha silenciosamente (só aparece no deploy.log).~~
+   ✅ **Corrigido em 2026-06-11 (commit `80ee8a2`):** `deploy.php` usa
+   `sudo -n -u alefschimanski /usr/bin/bash ...` e grava `[ALERTA]` no deploy.log
+   com o exit code quando o backup falha.
+   ⚠️ **Verificação manual após o próximo deploy:** `grep backup /var/lib/financeiro/deploy.log`.
 
 ### A2 — Funcionais
 
