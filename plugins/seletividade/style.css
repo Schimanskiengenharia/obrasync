@@ -272,7 +272,10 @@ input, select {
 .print-report { display: none; }
 
 @media print {
-  @page { size: A4; margin: 14mm 12mm; }
+  /* Páginas de texto em A4 retrato; coordenogramas em A4 PAISAGEM (página
+     nomeada), com a imagem auto-ajustada para ocupar a folha inteira. */
+  @page { size: A4 portrait; margin: 14mm 12mm; }
+  @page coordenograma { size: A4 landscape; margin: 10mm; }
 
   body { background: #fff; color: #14211f; }
   .app, .session-gate { display: none !important; }
@@ -320,8 +323,24 @@ input, select {
 
   .print-report th { background: #eef4f2; font-weight: 700; }
 
-  .print-chart { page-break-inside: avoid; }
-  .print-chart img { width: 100%; border: 1px solid #b9c6c2; }
+  /* Cada coordenograma em página própria, A4 paisagem, auto-ajustado:
+     o canvas 1600×1100 (proporção 1,45) casa com a área útil 277×190mm. */
+  .print-chart {
+    page: coordenograma;
+    page-break-before: always;
+    page-break-inside: avoid;
+  }
+
+  .print-chart h2 { margin-top: 0; }
+
+  .print-chart img {
+    display: block;
+    width: 100%;
+    max-height: 175mm;
+    object-fit: contain;
+    border: 1px solid #b9c6c2;
+  }
+
   .page-break { page-break-before: always; }
 
   .print-badge { font-weight: 800; }

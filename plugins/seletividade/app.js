@@ -715,6 +715,20 @@ function buildPrintReport(selectivity, logoSrc) {
   report.hidden = false;
 }
 
+// Aguarda todas as imagens do relatório serem decodificadas antes do print.
+// Sem isso, os PNGs dos coordenogramas (data URLs grandes inseridos no DOM um
+// instante antes do window.print) ainda não estão prontos quando o navegador
+// tira o snapshot de impressão — e saem em branco no PDF.
+async function waitForImages(rootEl) {
+  const images = [...rootEl.querySelectorAll("img")];
+  await Promise.all(images.map(async (img) => {
+    try {
+      if (img.decode) await img.decode();
+      else if (!img.complete) await new Promise((resolve) => { img.onload = img.onerror = resolve; });
+    } catch { /* imagem indisponível: imprime sem ela */ }
+  }));
+}
+
 async function generatePdf() {
   if (!calc) {
     if (!runCalculation()) return;
@@ -723,6 +737,7 @@ async function generatePdf() {
   // Logo em base64: garante a imagem renderizada no PDF sem corrida de rede.
   const logoSrc = await loadLogoBase64();
   buildPrintReport(selectivity, logoSrc);
+  await waitForImages(qs("printReport"));
   const previousTitle = document.title;
   document.title = `Seletividade - ${txt("projNome") || "ObraSync"}`;
   window.print();
