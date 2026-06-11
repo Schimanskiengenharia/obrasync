@@ -1189,20 +1189,38 @@ button.danger:hover { background: #9b1d14; }
   transform: translateY(-110%);
   opacity: 0;
 
-  /* Saída suave: sobe em 1,4s */
+  /* Saída suave: sobe em 2s */
   transition:
-    transform 1.4s cubic-bezier(0.4, 0, 0.2, 1),
-    opacity 1.2s ease;
+    transform 2s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 1.7s ease;
 }
 
 .favorites-bar.fav-visible {
   transform: translateY(0);
   opacity: 1;
 
-  /* Entrada um pouco mais rápida que a saída: desce em 1s */
+  /* Entrada um pouco mais rápida que a saída: desce em 1,8s */
   transition:
-    transform 1s cubic-bezier(0.4, 0, 0.2, 1),
-    opacity 0.8s ease;
+    transform 1.8s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 1.4s ease;
+}
+
+/* A regra global de prefers-reduced-motion zera todas as transições com
+   !important — em Windows com "Efeitos de animação" desligados a barra descia
+   instantânea. O deslizamento da barra é requisito explícito do produto, então
+   só ele fica isento da regra (seletor de classe vence o * do bloco global). */
+@media (prefers-reduced-motion: reduce) {
+  .favorites-bar {
+    transition:
+      transform 2s cubic-bezier(0.4, 0, 0.2, 1),
+      opacity 1.7s ease !important;
+  }
+
+  .favorites-bar.fav-visible {
+    transition:
+      transform 1.8s cubic-bezier(0.4, 0, 0.2, 1),
+      opacity 1.4s ease !important;
+  }
 }
 
 .fav-trigger-strip {
