@@ -31,6 +31,11 @@ const IEC_CURVES = {
 
 const INRUSH_FACTORS = { seco: 14, oleo_menor: 10, oleo_maior: 8 };
 
+// Tempo de atuação da unidade instantânea (função 50), em segundos.
+// Usado tanto no desenho da queda vertical do coordenograma quanto na
+// verificação de seletividade — gráfico e badge sempre coerentes.
+const INST_TRIP_TIME = 0.05;
+
 // Tempo (s) de atuação da unidade 51 para a corrente I (mesma base de Ip).
 function calcTime(I, Ip, DT, curve) {
   if (!(Ip > 0) || !(DT > 0)) return Infinity;
@@ -220,7 +225,7 @@ function tripTimeInstalacao(I, fase) {
   const curva = fase ? calc.curvaFase : calc.curvaNeutro;
   const inst = fase ? calc.prim50F : calc.prim50N;
   let t = calcTime(I, Ip, dial, curva);
-  if (inst > 0 && I >= inst) t = Math.min(t, 0.1);
+  if (inst > 0 && I >= inst) t = Math.min(t, INST_TRIP_TIME);
   return t;
 }
 
@@ -228,7 +233,7 @@ function tripTimeInstalacao(I, fase) {
 function tripTimeRetaguarda(I, fase) {
   const ret = fase ? calc.ret.fase : calc.ret.neutro;
   let t = calcTime(I, ret.ip, ret.dial, ret.curva);
-  if (ret.inst > 0 && I >= ret.inst) t = Math.min(t, 0.1);
+  if (ret.inst > 0 && I >= ret.inst) t = Math.min(t, INST_TRIP_TIME);
   return t;
 }
 
@@ -411,26 +416,33 @@ function drawChart(ctx, W, H, mode, options = {}) {
 
   const clip = () => { ctx.save(); ctx.beginPath(); ctx.rect(pad.left, pad.top, plotW, plotH); ctx.clip(); };
 
-  // Curva 51 (instalação ou retaguarda) em corrente primária.
+  // Curva 51 em corrente primária com o comportamento real da função 50:
+  // a curva temporizada vai até o pick-up do instantâneo e cai VERTICALMENTE
+  // até o tempo de atuação instantânea; além desse ponto nada é desenhado
+  // (o disjuntor abriu) — como nos coordenogramas profissionais (Supercoord).
   const plotCurve = (Ip, dial, curve, instLevel, color, dashed) => {
     if (!(Ip > 0) || !(dial > 0)) return;
     clip();
     ctx.strokeStyle = color;
     ctx.lineWidth = Math.max(2, 2.2 * scale);
     ctx.setLineDash(dashed ? [9 * scale, 6 * scale] : []);
+    const hasInst = instLevel > Ip * 1.02 && instLevel < CHART.iMax;
+    const logStart = Math.log10(Ip * 1.02);
+    const logEnd = Math.log10(hasInst ? instLevel : CHART.iMax);
     ctx.beginPath();
     let started = false;
     const steps = 400;
-    const logStart = Math.log10(Ip * 1.02);
-    const logEnd = Math.log10(CHART.iMax);
     for (let i = 0; i <= steps; i++) {
       const I = Math.pow(10, logStart + (i / steps) * (logEnd - logStart));
-      let t = calcTime(I, Ip, dial, curve);
-      if (instLevel > 0 && I >= instLevel) t = Math.min(t, 0.1);
+      const t = calcTime(I, Ip, dial, curve);
       if (!Number.isFinite(t)) continue;
       const tc = Math.min(Math.max(t, CHART.tMin), CHART.tMax);
       if (!started) { ctx.moveTo(xPos(I), yPos(tc)); started = true; }
       else ctx.lineTo(xPos(I), yPos(tc));
+    }
+    // Queda vertical abrupta no pick-up do instantâneo (continuação do traço).
+    if (hasInst && started) {
+      ctx.lineTo(xPos(instLevel), yPos(Math.max(INST_TRIP_TIME, CHART.tMin)));
     }
     ctx.stroke();
     ctx.setLineDash([]);
