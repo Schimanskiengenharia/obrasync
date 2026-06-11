@@ -149,6 +149,9 @@ try {
     if ($key === 'plugins') {
         ensure_plugins_table($pdo);
     }
+    if (str_starts_with($key, 'qualidade')) {
+        ensure_qualidade_tables($pdo);
+    }
     if ($key === 'users' && in_array($method, ['POST', 'PUT', 'PATCH'], true)) {
         ensure_users_extra_columns($pdo);
     }
@@ -164,6 +167,22 @@ try {
 
     if ($method === 'GET') {
         respond(['ok' => true, 'data' => list_records($pdo, $resources[$key])]);
+    }
+
+    // Qualidade PBQP-H: numeração automática da NC e automações pós-gravação
+    // (NC por FVS/FVM reprovada, PES vigente único, totais de auditoria).
+    if (str_starts_with($key, 'qualidade') && $method === 'POST') {
+        $payload = read_json();
+        if ($key === 'qualidadeNc' && empty(normalize_payload_aliases($payload)['numero'])) {
+            $payload['numero'] = qualidade_proximo_numero_nc($pdo);
+        }
+        $record = create_record($pdo, $resources[$key], $payload);
+        try {
+            $record = qualidade_pos_gravacao($pdo, $key, $record, null) ?? $record;
+        } catch (Throwable $error) {
+            error_log('[ObraSync] Automação de qualidade (create) falhou: ' . $error->getMessage());
+        }
+        respond(['ok' => true, 'record' => $record], 201);
     }
 
     if ($method === 'POST') {
@@ -197,6 +216,30 @@ try {
 
     if (!$id) {
         fail('Informe o id do registro.', 400);
+    }
+
+    // Etapa de serviço controlado PBQP-H: conclusão exige FVS aprovada e NCs fechadas.
+    if ($key === 'projectSchedule' && ($method === 'PUT' || $method === 'PATCH')) {
+        ensure_qualidade_tables($pdo);
+        $payload = read_json();
+        $bloqueio = qualidade_bloqueio_etapa($pdo, (int) $id, normalize_payload_aliases($payload));
+        if ($bloqueio !== null) {
+            fail($bloqueio, 422);
+        }
+        $record = update_record($pdo, $resources[$key], (int) $id, $payload);
+        respond(['ok' => true, 'record' => $record]);
+    }
+
+    if (str_starts_with($key, 'qualidade') && ($method === 'PUT' || $method === 'PATCH')) {
+        $payload = read_json();
+        $previous = raw_record($pdo, $resources[$key], (int) $id);
+        $record = update_record($pdo, $resources[$key], (int) $id, $payload);
+        try {
+            $record = qualidade_pos_gravacao($pdo, $key, $record, $previous) ?? $record;
+        } catch (Throwable $error) {
+            error_log('[ObraSync] Automação de qualidade (update) falhou: ' . $error->getMessage());
+        }
+        respond(['ok' => true, 'record' => $record]);
     }
 
     if ($key === 'proposals' && ($method === 'PUT' || $method === 'PATCH')) {
@@ -749,7 +792,7 @@ function resource_map(): array
         'workBudgetItems' => r('orcamento_obra_itens', ['itens-orcamentos-obras','itens-orçamentos-obras'], ['workBudgetId','projectId','origin','sinapiReferenceId','sinapiUf','sinapiReferenceType','code','description','unit','quantity','unitCost','totalCost','bdiPercent','unitPrice','totalPrice','stageName','costCenterId','categoryId','notes'], ['workBudgetId','code','description']),
         'quotes' => r('cotacoes', ['cotacoes','cotações'], ['supplierId','description','unit','quantity','unitValue','totalValue','quoteDate','validityDate','attachmentPath','projectId','workBudgetId','notes','status'], ['supplierId','description','quoteDate']),
         'fiscalDocuments' => r('fiscal_documents', ['notas-fiscais','documentos-fiscais-obra'], ['projectId','supplierId','documentNumber','issueDate','amount','type','status','payableId','receivableId','saleId','costCenterId','categoryId','pdfPath','xmlPath','notes'], ['documentNumber'], ['pdfPath','xmlPath']),
-        'projectSchedule' => r('obra_cronograma_etapas', ['cronograma-fisico-financeiro','cronograma-obras','cronograma'], ['projectId','stageName','description','sortOrder','plannedStartDate','plannedEndDate','actualStartDate','actualEndDate','plannedPhysicalPercent','actualPhysicalPercent','plannedFinancialAmount','actualFinancialAmount','workBudgetId','workBudgetItemId','predecessorIds','durationDays','status','responsible','isMilestone','milestoneName','milestoneMessage','visibleToClient','notes'], ['projectId','stageName']),
+        'projectSchedule' => r('obra_cronograma_etapas', ['cronograma-fisico-financeiro','cronograma-obras','cronograma'], ['projectId','stageName','description','sortOrder','plannedStartDate','plannedEndDate','actualStartDate','actualEndDate','plannedPhysicalPercent','actualPhysicalPercent','plannedFinancialAmount','actualFinancialAmount','workBudgetId','workBudgetItemId','predecessorIds','durationDays','status','responsible','isMilestone','milestoneName','milestoneMessage','visibleToClient','notes','servicoSiacId'], ['projectId','stageName']),
         'projectMilestones' => r('obra_cronograma_marcos', ['marcos-obras','marcos-da-obra'], ['projectId','scheduleStepId','name','defaultMessage','visibleToClient','plannedDate','completedDate','status','notes'], ['projectId','name']),
         'projectNotifications' => r('obra_notificacoes', ['notificacoes-obras','notificacoes-da-obra'], ['projectId','scheduleStepId','milestoneId','recipient','phone','type','message','generatedLink','status','responsibleUserId'], ['generatedLink']),
         'projectTrackingLinks' => r('obra_links_acompanhamento', ['links-acompanhamento-obras','links-obras'], ['projectId','token','url','visibility','status','notes'], ['token']),
@@ -759,6 +802,16 @@ function resource_map(): array
         'kanbanCards' => r('kanban_cards', ['kanban-cards','cards-kanban'], ['coluna_id','obra_id','titulo','descricao','responsavel_id','data_vencimento','prioridade','referencia_tipo','referencia_id','ordem'], ['referencia_tipo','referencia_id','titulo']),
         'purchaseOrders' => r('purchase_orders', ['pedidos-compra','pedidos-de-compra'], ['number','date','projectId','supplierId','costCenterId','categoryId','amount','expectedDate','status','notes'], ['number']),
         'technicalReports' => r('technical_reports', ['relatorios-tecnicos','relatórios-técnicos'], ['projectId','title','date','responsible','visibleToClient','status','notes'], ['projectId','title','date']),
+        // Qualidade PBQP-H Nível B — tabelas criadas sob demanda por ensure_qualidade_tables().
+        // Campos JSON (itensVerificacao, servicosControlados, checklistSiac) trafegam como string.
+        'qualidadePolitica' => r('qualidade_politica', ['qualidade-politica','politica-qualidade'], ['conteudo','versao','aprovadoPor','dataAprovacao','status'], ['versao']),
+        'qualidadePes' => r('qualidade_pes', ['qualidade-pes','procedimentos-execucao'], ['servicoSiacId','servicoNome','servicoGrupo','versao','objetivo','materiaisNecessarios','equipamentosEpi','procedimento','criteriosAceitacao','normasReferencia','responsavelElaboracao','dataElaboracao','status'], ['servicoSiacId','versao']),
+        'qualidadePqo' => r('qualidade_pqo', ['qualidade-pqo','plano-qualidade-obra'], ['projectId','versao','responsavelTecnico','crea','dataInicioPrevisto','dataFimPrevisto','escopo','servicosControlados','materiaisControlados','metasQualidade','status','dataAprovacao','aprovadoPor'], ['projectId']),
+        'qualidadeFvs' => r('qualidade_fvs', ['qualidade-fvs','fichas-verificacao-servico'], ['pqoId','projectId','etapaId','pesId','servicoSiacId','servicoNome','dataExecucao','localObra','responsavelExecucao','responsavelInspecao','itensVerificacao','resultado','observacoes','acaoCorretiva','dataInspecao','assinaturaExecutor','assinaturaInspetor','status'], ['projectId','servicoSiacId','dataExecucao','localObra']),
+        'qualidadeFvm' => r('qualidade_fvm', ['qualidade-fvm','fichas-verificacao-material'], ['pqoId','projectId','materialNome','materialCodigo','fornecedor','notaFiscal','quantidade','unidade','dataRecebimento','responsavelRecebimento','itensVerificacao','resultado','observacoes','status'], ['projectId','materialNome','notaFiscal','dataRecebimento']),
+        'qualidadeNc' => r('qualidade_nc', ['qualidade-nc','nao-conformidades'], ['projectId','pqoId','numero','origem','fvsId','fvmId','descricaoNC','servicoSiacId','servicoNome','localObra','grau','responsavelDeteccao','dataDeteccao','prazoAcao','acaoCorretiva','responsavelAcao','dataAcao','verificacaoEficacia','responsavelVerificacao','dataVerificacao','status'], ['numero']),
+        'qualidadeTreinamentos' => r('qualidade_treinamentos', ['qualidade-treinamentos','treinamentos-qualidade'], ['projectId','pqoId','servicoSiacId','servicoNome','dataTreinamento','instrutor','participantes','conteudo','cargaHoraria','observacoes'], ['projectId','servicoSiacId','dataTreinamento']),
+        'qualidadeAuditorias' => r('qualidade_auditorias', ['qualidade-auditorias','auditorias-internas'], ['projectId','tipo','dataAuditoria','auditor','escopo','checklistSiac','totalItens','itensConformes','ncsAbertas','resultado','relatorioTexto','status'], ['tipo','dataAuditoria','auditor']),
         'products' => r('products', ['produtos'], ['name','sku','categoryId','costCenterId','projectId','cost','price','stock','status'], ['sku','name']),
         'services' => r('services', ['servicos','serviços'], ['name','categoryId','costCenterId','projectId','cost','price','status'], ['name']),
         'budgets' => r('budgets', ['orcamentos','orçamentos'], ['number','date','clientId','projectId','proposalId','costCenterId','createdByUserId','commercialUserId','description','amount','status'], ['number']),
@@ -1169,6 +1222,13 @@ function bootstrap_data(PDO $pdo, array $resources, ?array $authUser = null): ar
     } catch (PDOException $error) {
         // Sem permissão de DDL: o bootstrap segue e devolve a lista vazia.
     }
+    // Tabelas de qualidade no bootstrap: os módulos PBQP-H aparecem populados
+    // já no primeiro acesso (CREATE IF NOT EXISTS é barato quando já existem).
+    try {
+        ensure_qualidade_tables($pdo);
+    } catch (PDOException $error) {
+        // Sem permissão de DDL: listas voltam vazias até as tabelas existirem.
+    }
     $data = [];
     foreach ($resources as $key => $meta) {
         if (!role_can($pdo, $role, permission_module_key($key), 'view')) {
@@ -1295,6 +1355,400 @@ function ensure_viability_table(PDO $pdo): void
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
     );
     $done = true;
+}
+
+// ── Qualidade PBQP-H Nível B ─────────────────────────────────────────────────
+// Os 27 serviços de execução controlados do SiAC (espelho de SERVICOS_SIAC no app.js).
+function servicos_siac(): array
+{
+    return [
+        1 => ['grupo' => 'Preliminares', 'nome' => 'Compactação de aterro'],
+        2 => ['grupo' => 'Preliminares', 'nome' => 'Locação de obra'],
+        3 => ['grupo' => 'Fundações', 'nome' => 'Execução de fundação'],
+        4 => ['grupo' => 'Estrutura', 'nome' => 'Execução de fôrma'],
+        5 => ['grupo' => 'Estrutura', 'nome' => 'Montagem de armadura'],
+        6 => ['grupo' => 'Estrutura', 'nome' => 'Concretagem de peça estrutural'],
+        7 => ['grupo' => 'Estrutura', 'nome' => 'Execução de alvenaria estrutural'],
+        8 => ['grupo' => 'Vedações Verticais', 'nome' => 'Alvenaria não estrutural e divisória leve'],
+        9 => ['grupo' => 'Vedações Verticais', 'nome' => 'Revestimento interno área seca'],
+        10 => ['grupo' => 'Vedações Verticais', 'nome' => 'Revestimento interno área úmida'],
+        11 => ['grupo' => 'Vedações Verticais', 'nome' => 'Revestimento externo'],
+        12 => ['grupo' => 'Vedações Horizontais', 'nome' => 'Execução de contrapiso'],
+        13 => ['grupo' => 'Vedações Horizontais', 'nome' => 'Revestimento piso interno área seca'],
+        14 => ['grupo' => 'Vedações Horizontais', 'nome' => 'Revestimento piso interno área úmida'],
+        15 => ['grupo' => 'Vedações Horizontais', 'nome' => 'Revestimento piso externo'],
+        16 => ['grupo' => 'Vedações Horizontais', 'nome' => 'Execução de forro'],
+        17 => ['grupo' => 'Vedações Horizontais', 'nome' => 'Execução de impermeabilização'],
+        18 => ['grupo' => 'Vedações Horizontais', 'nome' => 'Cobertura em telhado (estrutura + telhamento)'],
+        19 => ['grupo' => 'Esquadrias', 'nome' => 'Colocação de porta'],
+        20 => ['grupo' => 'Esquadrias', 'nome' => 'Colocação de janela'],
+        21 => ['grupo' => 'Esquadrias', 'nome' => 'Colocação de guarda-corpo'],
+        22 => ['grupo' => 'Instalações', 'nome' => 'Instalação elétrica'],
+        23 => ['grupo' => 'Instalações', 'nome' => 'Instalação hidrossanitária'],
+        24 => ['grupo' => 'Instalações', 'nome' => 'Instalação de gás'],
+        25 => ['grupo' => 'Instalações', 'nome' => 'Instalação de SPDA'],
+        26 => ['grupo' => 'Acabamentos', 'nome' => 'Pintura interna'],
+        27 => ['grupo' => 'Acabamentos', 'nome' => 'Pintura externa'],
+    ];
+}
+
+// Tabelas do módulo de qualidade criadas sob demanda (padrão de viabilityAnalyses
+// e plugins — dispensa migration manual). Campos de listas usam LONGTEXT com JSON
+// serializado pelo frontend: o tipo JSON do MariaDB recusaria string vazia.
+function ensure_qualidade_tables(PDO $pdo): void
+{
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    $charset = 'ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci';
+    $pdo->exec("CREATE TABLE IF NOT EXISTS qualidade_politica (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        conteudo TEXT NOT NULL,
+        versao VARCHAR(20) NOT NULL DEFAULT '1.0',
+        aprovadoPor VARCHAR(120) NULL,
+        dataAprovacao DATE NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'Rascunho',
+        createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP
+    ) {$charset}");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS qualidade_pes (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        servicoSiacId TINYINT UNSIGNED NOT NULL,
+        servicoNome VARCHAR(200) NOT NULL,
+        servicoGrupo VARCHAR(100) NOT NULL DEFAULT '',
+        versao VARCHAR(20) NOT NULL DEFAULT '1.0',
+        objetivo TEXT NULL,
+        materiaisNecessarios TEXT NULL,
+        equipamentosEpi TEXT NULL,
+        procedimento LONGTEXT NULL,
+        criteriosAceitacao TEXT NULL,
+        normasReferencia VARCHAR(500) NULL,
+        responsavelElaboracao VARCHAR(120) NULL,
+        dataElaboracao DATE NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'Rascunho',
+        createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+        KEY idx_pes_servico (servicoSiacId)
+    ) {$charset}");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS qualidade_pqo (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        projectId BIGINT UNSIGNED NOT NULL,
+        versao VARCHAR(20) NOT NULL DEFAULT '1.0',
+        responsavelTecnico VARCHAR(120) NULL,
+        crea VARCHAR(60) NULL,
+        dataInicioPrevisto DATE NULL,
+        dataFimPrevisto DATE NULL,
+        escopo TEXT NULL,
+        servicosControlados LONGTEXT NULL,
+        materiaisControlados LONGTEXT NULL,
+        metasQualidade TEXT NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'Rascunho',
+        dataAprovacao DATE NULL,
+        aprovadoPor VARCHAR(120) NULL,
+        createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uk_pqo_project (projectId)
+    ) {$charset}");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS qualidade_fvs (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        pqoId BIGINT UNSIGNED NULL,
+        projectId BIGINT UNSIGNED NOT NULL,
+        etapaId BIGINT UNSIGNED NULL,
+        pesId BIGINT UNSIGNED NULL,
+        servicoSiacId TINYINT UNSIGNED NOT NULL,
+        servicoNome VARCHAR(200) NOT NULL DEFAULT '',
+        dataExecucao DATE NULL,
+        localObra VARCHAR(200) NULL,
+        responsavelExecucao VARCHAR(120) NULL,
+        responsavelInspecao VARCHAR(120) NULL,
+        itensVerificacao LONGTEXT NULL,
+        resultado VARCHAR(30) NULL,
+        observacoes TEXT NULL,
+        acaoCorretiva TEXT NULL,
+        dataInspecao DATE NULL,
+        assinaturaExecutor VARCHAR(120) NULL,
+        assinaturaInspetor VARCHAR(120) NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'Pendente',
+        createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+        KEY idx_fvs_project (projectId),
+        KEY idx_fvs_etapa (etapaId)
+    ) {$charset}");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS qualidade_fvm (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        pqoId BIGINT UNSIGNED NULL,
+        projectId BIGINT UNSIGNED NOT NULL,
+        materialNome VARCHAR(200) NOT NULL,
+        materialCodigo VARCHAR(80) NULL,
+        fornecedor VARCHAR(200) NULL,
+        notaFiscal VARCHAR(80) NULL,
+        quantidade DECIMAL(14,3) NULL,
+        unidade VARCHAR(40) NULL,
+        dataRecebimento DATE NULL,
+        responsavelRecebimento VARCHAR(120) NULL,
+        itensVerificacao LONGTEXT NULL,
+        resultado VARCHAR(30) NULL,
+        observacoes TEXT NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'Pendente',
+        createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+        KEY idx_fvm_project (projectId)
+    ) {$charset}");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS qualidade_nc (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        projectId BIGINT UNSIGNED NOT NULL,
+        pqoId BIGINT UNSIGNED NULL,
+        numero VARCHAR(20) NOT NULL,
+        origem VARCHAR(20) NOT NULL DEFAULT 'Manual',
+        fvsId BIGINT UNSIGNED NULL,
+        fvmId BIGINT UNSIGNED NULL,
+        descricaoNC TEXT NOT NULL,
+        servicoSiacId TINYINT UNSIGNED NULL,
+        servicoNome VARCHAR(200) NULL,
+        localObra VARCHAR(200) NULL,
+        grau VARCHAR(20) NOT NULL DEFAULT 'Menor',
+        responsavelDeteccao VARCHAR(120) NULL,
+        dataDeteccao DATE NOT NULL,
+        prazoAcao DATE NULL,
+        acaoCorretiva TEXT NULL,
+        responsavelAcao VARCHAR(120) NULL,
+        dataAcao DATE NULL,
+        verificacaoEficacia TEXT NULL,
+        responsavelVerificacao VARCHAR(120) NULL,
+        dataVerificacao DATE NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'Aberta',
+        createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uk_nc_numero (numero),
+        KEY idx_nc_project (projectId),
+        KEY idx_nc_status (status)
+    ) {$charset}");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS qualidade_treinamentos (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        projectId BIGINT UNSIGNED NOT NULL,
+        pqoId BIGINT UNSIGNED NULL,
+        servicoSiacId TINYINT UNSIGNED NOT NULL,
+        servicoNome VARCHAR(200) NULL,
+        dataTreinamento DATE NOT NULL,
+        instrutor VARCHAR(120) NULL,
+        participantes TEXT NULL,
+        conteudo TEXT NULL,
+        cargaHoraria DECIMAL(5,1) NULL,
+        observacoes TEXT NULL,
+        createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+        KEY idx_treino_project (projectId)
+    ) {$charset}");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS qualidade_auditorias (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        projectId BIGINT UNSIGNED NULL,
+        tipo VARCHAR(20) NOT NULL DEFAULT 'Obra',
+        dataAuditoria DATE NOT NULL,
+        auditor VARCHAR(120) NULL,
+        escopo TEXT NULL,
+        checklistSiac LONGTEXT NULL,
+        totalItens INT NOT NULL DEFAULT 0,
+        itensConformes INT NOT NULL DEFAULT 0,
+        ncsAbertas INT NOT NULL DEFAULT 0,
+        resultado VARCHAR(30) NULL,
+        relatorioTexto TEXT NULL,
+        status VARCHAR(30) NOT NULL DEFAULT 'Agendada',
+        createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+        KEY idx_audit_project (projectId)
+    ) {$charset}");
+    // Vínculo do cronograma com a qualidade: etapa de serviço controlado fica
+    // bloqueada para conclusão até a FVS ser aprovada e as NCs fechadas.
+    try {
+        $pdo->exec('ALTER TABLE obra_cronograma_etapas
+            ADD COLUMN IF NOT EXISTS servicoSiacId TINYINT UNSIGNED NULL,
+            ADD COLUMN IF NOT EXISTS fvsId BIGINT UNSIGNED NULL,
+            ADD COLUMN IF NOT EXISTS qualidadeBloqueada TINYINT(1) NOT NULL DEFAULT 0');
+    } catch (Throwable $error) {
+        // Sem permissão de DDL ou MariaDB antigo sem IF NOT EXISTS: segue sem o vínculo.
+    }
+    $done = true;
+}
+
+function qualidade_proximo_numero_nc(PDO $pdo): string
+{
+    $ano = date('Y');
+    $stmt = $pdo->prepare("SELECT MAX(CAST(SUBSTRING_INDEX(numero, '-', -1) AS UNSIGNED)) FROM qualidade_nc WHERE numero LIKE ?");
+    $stmt->execute(["NC-{$ano}-%"]);
+    $ultimo = (int) $stmt->fetchColumn();
+    return 'NC-' . $ano . '-' . str_pad((string) ($ultimo + 1), 3, '0', STR_PAD_LEFT);
+}
+
+function criar_nc_automatica(PDO $pdo, int $projectId, ?int $pqoId, string $origem, ?int $fvsId, ?int $fvmId, string $descricao, ?int $servicoSiacId, ?string $servicoNome, ?string $localObra): string
+{
+    $numero = qualidade_proximo_numero_nc($pdo);
+    if ($servicoSiacId && !$servicoNome) {
+        $servicoNome = servicos_siac()[$servicoSiacId]['nome'] ?? null;
+    }
+    $pdo->prepare("INSERT INTO qualidade_nc
+            (projectId, pqoId, numero, origem, fvsId, fvmId, descricaoNC, servicoSiacId, servicoNome, localObra, grau, dataDeteccao, status)
+        VALUES (?,?,?,?,?,?,?,?,?,?,'Menor',CURDATE(),'Aberta')")
+        ->execute([$projectId, $pqoId, $numero, $origem, $fvsId, $fvmId, $descricao, $servicoSiacId, $servicoNome, $localObra]);
+    if ($fvsId) {
+        $stmt = $pdo->prepare('SELECT etapaId FROM qualidade_fvs WHERE id = ?');
+        $stmt->execute([$fvsId]);
+        $etapaId = (int) $stmt->fetchColumn();
+        if ($etapaId) {
+            $pdo->prepare('UPDATE obra_cronograma_etapas SET qualidadeBloqueada = 1 WHERE id = ?')->execute([$etapaId]);
+        }
+    }
+    return $numero;
+}
+
+// Bloqueio de conclusão de etapa de serviço controlado: sem FVS aprovada (e sem
+// NC aberta vinculada), a etapa não pode ser marcada como concluída.
+function qualidade_bloqueio_etapa(PDO $pdo, int $etapaId, array $payload): ?string
+{
+    $concluindo = (($payload['status'] ?? '') === 'Concluída') || !empty($payload['actualEndDate']);
+    if (!$concluindo) {
+        return null;
+    }
+    try {
+        $stmt = $pdo->prepare('SELECT servicoSiacId FROM obra_cronograma_etapas WHERE id = ?');
+        $stmt->execute([$etapaId]);
+        $servicoSiacId = $stmt->fetchColumn();
+    } catch (PDOException $error) {
+        return null; // colunas de qualidade ausentes (sem DDL): não bloqueia
+    }
+    if (!$servicoSiacId) {
+        return null;
+    }
+    $stmt = $pdo->prepare('SELECT id, status FROM qualidade_fvs WHERE etapaId = ? ORDER BY id DESC LIMIT 1');
+    $stmt->execute([$etapaId]);
+    $fvs = $stmt->fetch();
+    if (!$fvs) {
+        return 'Esta etapa é de serviço controlado PBQP-H e requer FVS preenchida e aprovada para ser concluída.';
+    }
+    if ($fvs['status'] !== 'Aprovada') {
+        return 'A FVS desta etapa ainda não foi aprovada. Aprove a Ficha de Verificação de Serviço antes de concluir.';
+    }
+    $stmt = $pdo->prepare("SELECT numero FROM qualidade_nc WHERE fvsId = ? AND status <> 'Fechada' LIMIT 1");
+    $stmt->execute([(int) $fvs['id']]);
+    $numero = $stmt->fetchColumn();
+    if ($numero) {
+        return "A Não Conformidade {$numero} vinculada à FVS desta etapa está aberta. Resolva a NC antes de concluir.";
+    }
+    $pdo->prepare('UPDATE obra_cronograma_etapas SET qualidadeBloqueada = 0 WHERE id = ?')->execute([$etapaId]);
+    return null;
+}
+
+// Automações após gravar registros de qualidade. Devolve o registro atualizado
+// (ou null quando nada mudou) e anota em $record['automation'] o que foi feito.
+function qualidade_pos_gravacao(PDO $pdo, string $key, array $record, ?array $previous): ?array
+{
+    $id = (int) ($record['id'] ?? 0);
+    $notes = [];
+
+    // Apenas um documento Vigente por vez (política da empresa e PES por serviço).
+    if ($key === 'qualidadePolitica' && ($record['status'] ?? '') === 'Vigente') {
+        $pdo->prepare("UPDATE qualidade_politica SET status = 'Obsoleto' WHERE id <> ? AND status = 'Vigente'")->execute([$id]);
+    }
+    if ($key === 'qualidadePes' && ($record['status'] ?? '') === 'Vigente') {
+        $stmt = $pdo->prepare("UPDATE qualidade_pes SET status = 'Obsoleto' WHERE servicoSiacId = ? AND id <> ? AND status = 'Vigente'");
+        $stmt->execute([(int) $record['servicoSiacId'], $id]);
+        if ($stmt->rowCount() > 0) {
+            $notes[] = 'Versões anteriores do PES deste serviço marcadas como obsoletas.';
+        }
+    }
+
+    if ($key === 'qualidadeFvs') {
+        $etapaId = (int) ($record['etapaId'] ?? 0);
+        if ($etapaId) {
+            // Marca a etapa como serviço controlado e guarda o vínculo da FVS.
+            try {
+                $pdo->prepare('UPDATE obra_cronograma_etapas SET fvsId = ?, servicoSiacId = COALESCE(servicoSiacId, ?) WHERE id = ?')
+                    ->execute([$id, (int) $record['servicoSiacId'], $etapaId]);
+            } catch (PDOException $error) {
+                // Colunas de qualidade ausentes: segue sem vínculo de cronograma.
+            }
+        }
+        $reprovada = ($record['resultado'] ?? '') === 'Reprovado' || ($record['status'] ?? '') === 'Reprovada';
+        if ($reprovada) {
+            $stmt = $pdo->prepare("SELECT numero FROM qualidade_nc WHERE fvsId = ? AND status <> 'Fechada' LIMIT 1");
+            $stmt->execute([$id]);
+            $existente = $stmt->fetchColumn();
+            if (!$existente) {
+                $numero = criar_nc_automatica($pdo, (int) $record['projectId'], (int) ($record['pqoId'] ?? 0) ?: null, 'FVS', $id, null,
+                    'FVS reprovada: ' . ($record['servicoNome'] ?? '') . ' — ' . ($record['localObra'] ?? ''), (int) $record['servicoSiacId'], $record['servicoNome'] ?? null, $record['localObra'] ?? null);
+                $notes[] = "Não Conformidade {$numero} criada automaticamente pela FVS reprovada.";
+            } elseif ($etapaId) {
+                $pdo->prepare('UPDATE obra_cronograma_etapas SET qualidadeBloqueada = 1 WHERE id = ?')->execute([$etapaId]);
+            }
+        } elseif (($record['status'] ?? '') === 'Aprovada' && $etapaId) {
+            $stmt = $pdo->prepare("SELECT COUNT(*) FROM qualidade_nc WHERE fvsId = ? AND status <> 'Fechada'");
+            $stmt->execute([$id]);
+            if ((int) $stmt->fetchColumn() === 0) {
+                $pdo->prepare('UPDATE obra_cronograma_etapas SET qualidadeBloqueada = 0 WHERE id = ?')->execute([$etapaId]);
+                $notes[] = 'Etapa do cronograma desbloqueada pela FVS aprovada.';
+            }
+        }
+    }
+
+    if ($key === 'qualidadeFvm') {
+        $reprovada = ($record['resultado'] ?? '') === 'Reprovado' || ($record['status'] ?? '') === 'Reprovada';
+        if ($reprovada) {
+            $stmt = $pdo->prepare("SELECT numero FROM qualidade_nc WHERE fvmId = ? AND status <> 'Fechada' LIMIT 1");
+            $stmt->execute([$id]);
+            if (!$stmt->fetchColumn()) {
+                $numero = criar_nc_automatica($pdo, (int) $record['projectId'], (int) ($record['pqoId'] ?? 0) ?: null, 'FVM', null, $id,
+                    'FVM reprovada: ' . ($record['materialNome'] ?? '') . ' — NF ' . ($record['notaFiscal'] ?? ''), null, null, null);
+                $notes[] = "Não Conformidade {$numero} criada automaticamente pela FVM reprovada.";
+            }
+        }
+    }
+
+    if ($key === 'qualidadeNc' && ($record['status'] ?? '') === 'Fechada' && !empty($record['fvsId'])) {
+        $stmt = $pdo->prepare('SELECT etapaId, status FROM qualidade_fvs WHERE id = ?');
+        $stmt->execute([(int) $record['fvsId']]);
+        $fvs = $stmt->fetch();
+        $stmt = $pdo->prepare("SELECT COUNT(*) FROM qualidade_nc WHERE fvsId = ? AND status <> 'Fechada'");
+        $stmt->execute([(int) $record['fvsId']]);
+        if ($fvs && !empty($fvs['etapaId']) && $fvs['status'] === 'Aprovada' && (int) $stmt->fetchColumn() === 0) {
+            $pdo->prepare('UPDATE obra_cronograma_etapas SET qualidadeBloqueada = 0 WHERE id = ?')->execute([(int) $fvs['etapaId']]);
+            $notes[] = 'Etapa do cronograma desbloqueada com o fechamento da NC.';
+        }
+    }
+
+    if ($key === 'qualidadeAuditorias') {
+        $itens = json_decode((string) ($record['checklistSiac'] ?? '[]'), true) ?: [];
+        $avaliados = array_filter($itens, static fn ($item) => in_array($item['resultado'] ?? '', ['Conforme', 'Não Conforme'], true));
+        $conformes = array_filter($avaliados, static fn ($item) => ($item['resultado'] ?? '') === 'Conforme');
+        $naoConformes = array_filter($avaliados, static fn ($item) => ($item['resultado'] ?? '') === 'Não Conforme');
+        $percent = count($avaliados) ? (count($conformes) / count($avaliados)) * 100 : 0;
+        $resultado = !count($avaliados) ? null : (count($naoConformes) === 0 ? 'Conforme' : ($percent >= 70 ? 'Conforme com Ressalvas' : 'Nao Conforme'));
+        // NCs por item não conforme só na transição para Realizada (evita duplicar a cada edição).
+        $virouRealizada = in_array($record['status'] ?? '', ['Realizada', 'Relatorio emitido'], true)
+            && (!$previous || ($previous['status'] ?? 'Agendada') === 'Agendada');
+        $ncsCriadas = 0;
+        if ($virouRealizada && !empty($record['projectId'])) {
+            foreach ($naoConformes as $item) {
+                criar_nc_automatica($pdo, (int) $record['projectId'], null, 'Auditoria', null, null,
+                    'Auditoria SiAC ' . ($record['dataAuditoria'] ?? '') . ' — cláusula ' . ($item['clausula'] ?? '') . ': ' . ($item['desc'] ?? '') . (!empty($item['observacao']) ? ' — ' . $item['observacao'] : ''),
+                    null, null, null);
+                $ncsCriadas++;
+            }
+            if ($ncsCriadas) {
+                $notes[] = "{$ncsCriadas} NC(s) criada(s) automaticamente pelos itens não conformes da auditoria.";
+            }
+        }
+        $pdo->prepare('UPDATE qualidade_auditorias SET totalItens = ?, itensConformes = ?, ncsAbertas = ncsAbertas + ?, resultado = ? WHERE id = ?')
+            ->execute([count($avaliados), count($conformes), $ncsCriadas, $resultado, $id]);
+        $record['totalItens'] = count($avaliados);
+        $record['itensConformes'] = count($conformes);
+        $record['resultado'] = $resultado;
+    }
+
+    if ($notes) {
+        $record['automation'] = implode(' ', $notes);
+        return $record;
+    }
+    return null;
 }
 
 // Plugins: links para sistemas externos exibidos no menu lateral, geridos pelo admin.
@@ -1506,14 +1960,14 @@ function role_can(PDO $pdo, string $role, string $module, string $action): bool
 function default_role_view_modules(): array
 {
     return [
-        'financeiro' => ['dashboard', 'clients', 'suppliers', 'categories', 'costCenters', 'bankAccounts', 'projects', 'projectSchedule', 'agenda', 'kanban', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'sinapiLabor', 'sinapiFamilies', 'sinapiMaintenances', 'sinapiSettings', 'ownCompositions', 'quotes', 'abcCurve', 'viabilityAnalyses', 'fiscalDocuments', 'receivable', 'payable', 'cashMoves', 'cashFlow', 'reconciliation', 'proposals', 'sales', 'chartAccounts', 'journalEntries', 'dre', 'taxDocuments', 'taxes', 'reports', 'reportFinancial', 'reportClient', 'reportSupplier', 'reportCostCenter', 'reportProject', 'exports', 'systemVersion', 'plugins'],
+        'financeiro' => ['dashboard', 'clients', 'suppliers', 'categories', 'costCenters', 'bankAccounts', 'projects', 'projectSchedule', 'agenda', 'kanban', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'sinapiLabor', 'sinapiFamilies', 'sinapiMaintenances', 'sinapiSettings', 'ownCompositions', 'quotes', 'abcCurve', 'viabilityAnalyses', 'fiscalDocuments', 'receivable', 'payable', 'cashMoves', 'cashFlow', 'reconciliation', 'proposals', 'sales', 'chartAccounts', 'journalEntries', 'dre', 'taxDocuments', 'taxes', 'reports', 'reportFinancial', 'reportClient', 'reportSupplier', 'reportCostCenter', 'reportProject', 'exports', 'systemVersion', 'plugins', 'qualidadeDashboard'],
         'comercial' => ['dashboard', 'clients', 'projects', 'projectSchedule', 'agenda', 'kanban', 'workBudgets', 'abcCurve', 'viabilityAnalyses', 'budgets', 'proposals', 'proposalModels', 'proposalAreas', 'proposalActionTypes', 'proposalServiceSubtypes', 'sales', 'reportClient', 'systemVersion', 'plugins'],
-        'engenharia' => ['dashboard', 'projects', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban', 'projectNotifications', 'projectTrackingLinks', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'sinapiLabor', 'sinapiFamilies', 'sinapiMaintenances', 'ownCompositions', 'quotes', 'abcCurve', 'viabilityAnalyses', 'purchaseOrders', 'technicalReports', 'projectReport', 'proposals', 'reportProject', 'systemVersion', 'plugins'],
-        'gestor_obra' => ['dashboard', 'projects', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban', 'projectNotifications', 'projectTrackingLinks', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'sinapiLabor', 'sinapiFamilies', 'sinapiMaintenances', 'ownCompositions', 'quotes', 'abcCurve', 'viabilityAnalyses', 'purchaseOrders', 'technicalReports', 'projectReport', 'proposals', 'reportProject', 'systemVersion', 'plugins'],
+        'engenharia' => ['dashboard', 'projects', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban', 'projectNotifications', 'projectTrackingLinks', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'sinapiLabor', 'sinapiFamilies', 'sinapiMaintenances', 'ownCompositions', 'quotes', 'abcCurve', 'viabilityAnalyses', 'purchaseOrders', 'technicalReports', 'projectReport', 'proposals', 'reportProject', 'systemVersion', 'plugins', 'qualidadeDashboard', 'qualidadePes', 'qualidadePqo', 'qualidadeFvs', 'qualidadeFvm', 'qualidadeNc', 'qualidadeTreinamentos'],
+        'gestor_obra' => ['dashboard', 'projects', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban', 'projectNotifications', 'projectTrackingLinks', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'sinapiLabor', 'sinapiFamilies', 'sinapiMaintenances', 'ownCompositions', 'quotes', 'abcCurve', 'viabilityAnalyses', 'purchaseOrders', 'technicalReports', 'projectReport', 'proposals', 'reportProject', 'systemVersion', 'plugins', 'qualidadeDashboard', 'qualidadePes', 'qualidadePqo', 'qualidadeFvs', 'qualidadeFvm', 'qualidadeNc', 'qualidadeTreinamentos'],
         'equipe_campo' => ['dashboard', 'projectReport', 'systemVersion', 'plugins'],
         'cliente_obra' => ['dashboard', 'projectReport', 'projectSchedule', 'technicalReports', 'systemVersion', 'plugins'],
         'fornecedor_terceiro' => ['dashboard', 'systemVersion', 'plugins'],
-        'consulta' => ['dashboard', 'projectReport', 'cashFlow', 'dre', 'reports', 'reportFinancial', 'reportClient', 'reportSupplier', 'reportCostCenter', 'reportProject', 'exports', 'plugins'],
+        'consulta' => ['dashboard', 'projectReport', 'cashFlow', 'dre', 'reports', 'reportFinancial', 'reportClient', 'reportSupplier', 'reportCostCenter', 'reportProject', 'exports', 'plugins', 'qualidadeDashboard'],
         'operador' => ['dashboard', 'clients', 'suppliers', 'products', 'services', 'categories', 'costCenters', 'bankAccounts', 'projects', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'ownCompositions', 'quotes', 'abcCurve', 'fiscalDocuments', 'receivable', 'payable', 'cashMoves', 'cashFlow', 'reconciliation', 'budgets', 'proposals', 'sales', 'purchaseOrders', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban', 'projectReport', 'reports', 'reportFinancial', 'reportClient', 'reportSupplier', 'reportCostCenter', 'reportProject', 'myProfile', 'plugins'],
         'visualizador' => '*',
     ];
@@ -1525,9 +1979,9 @@ function default_role_edit_modules(): array
     return [
         'financeiro' => ['fiscalDocuments', 'receivable', 'payable', 'cashMoves', 'cashFlow', 'reconciliation', 'categories', 'costCenters', 'bankAccounts', 'chartAccounts', 'journalEntries', 'taxDocuments', 'taxes', 'exports', 'projectSchedule', 'agenda', 'kanban', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'sinapiLabor', 'sinapiFamilies', 'sinapiMaintenances', 'sinapiSettings', 'quotes', 'sales', 'viabilityAnalyses'],
         'comercial' => ['clients', 'budgets', 'proposals', 'agenda', 'kanban', 'viabilityAnalyses'],
-        'engenharia' => ['projects', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban', 'projectNotifications', 'projectTrackingLinks', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'sinapiLabor', 'sinapiFamilies', 'sinapiMaintenances', 'ownCompositions', 'quotes', 'purchaseOrders', 'technicalReports'],
-        'gestor_obra' => ['projects', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban', 'projectNotifications', 'projectTrackingLinks', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'sinapiLabor', 'sinapiFamilies', 'sinapiMaintenances', 'ownCompositions', 'quotes', 'purchaseOrders', 'technicalReports'],
-        'operador' => ['clients', 'suppliers', 'products', 'services', 'categories', 'costCenters', 'bankAccounts', 'projects', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'ownCompositions', 'quotes', 'fiscalDocuments', 'receivable', 'payable', 'cashMoves', 'reconciliation', 'budgets', 'proposals', 'sales', 'purchaseOrders', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban'],
+        'engenharia' => ['projects', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban', 'projectNotifications', 'projectTrackingLinks', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'sinapiLabor', 'sinapiFamilies', 'sinapiMaintenances', 'ownCompositions', 'quotes', 'purchaseOrders', 'technicalReports', 'qualidadePes', 'qualidadePqo', 'qualidadeFvs', 'qualidadeFvm', 'qualidadeNc', 'qualidadeTreinamentos'],
+        'gestor_obra' => ['projects', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban', 'projectNotifications', 'projectTrackingLinks', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'sinapiLabor', 'sinapiFamilies', 'sinapiMaintenances', 'ownCompositions', 'quotes', 'purchaseOrders', 'technicalReports', 'qualidadePes', 'qualidadePqo', 'qualidadeFvs', 'qualidadeFvm', 'qualidadeNc', 'qualidadeTreinamentos'],
+        'operador' => ['clients', 'suppliers', 'products', 'services', 'categories', 'costCenters', 'bankAccounts', 'projects', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'ownCompositions', 'quotes', 'fiscalDocuments', 'receivable', 'payable', 'cashMoves', 'reconciliation', 'budgets', 'proposals', 'sales', 'purchaseOrders', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban', 'qualidadeFvs', 'qualidadeFvm', 'qualidadeNc'],
     ];
 }
 

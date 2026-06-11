@@ -66,6 +66,15 @@ const modules = [
   ["abcCurve", "Curva ABC"],
   ["fiscalDocuments", "Notas Fiscais / Documentos Fiscais"],
   ["projectReport", "Relatório por obra"],
+  ["qualidadeDashboard", "Dashboard Qualidade"],
+  ["qualidadePolitica", "Política da Qualidade"],
+  ["qualidadePes", "Procedimentos (PES)"],
+  ["qualidadePqo", "Plano da Obra (PQO)"],
+  ["qualidadeFvs", "Fichas de Serviço (FVS)"],
+  ["qualidadeFvm", "Fichas de Material (FVM)"],
+  ["qualidadeNc", "Não Conformidades (NC)"],
+  ["qualidadeTreinamentos", "Treinamentos"],
+  ["qualidadeAuditorias", "Auditorias Internas"],
   ["receivable", "Contas a receber"],
   ["payable", "Contas a pagar"],
   ["cashMoves", "Movimentações de caixa"],
@@ -140,6 +149,7 @@ const sidebarSections = [
   { id: "comercial", label: "Comercial", icon: "V", modules: ["budgets", "proposals", "proposalModels", "proposalAreas", "proposalActionTypes", "proposalServiceSubtypes", "sales"] },
   { id: "viabilidade", label: "Viabilidade", icon: "%", modules: ["viabilityAnalyses"] },
   { id: "obras", label: "Obras/Projetos", icon: "O", modules: ["projects", "projectCosts", "projectRevenues", "fiscalDocuments", "projectNotifications", "projectTrackingLinks", "projectReport"] },
+  { id: "qualidadePbqph", label: "Qualidade PBQP-H", icon: "✅", modules: ["qualidadeDashboard", "qualidadePolitica", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos", "qualidadeAuditorias"] },
   { id: "orcamentoObra", label: "Orçamento de Obra", icon: "Σ", modules: ["workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "purchaseOrders"] },
   { id: "planejamento", label: "Planejamento", icon: "P", modules: ["projectSchedule", "projectMilestones", "agenda", "kanban", "technicalReports"] },
   { id: "financeiro", label: "Financeiro", icon: "$", modules: ["receivable", "payable", "cashMoves", "cashFlow", "reconciliation"] },
@@ -172,17 +182,17 @@ const roleModules = {
     "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "sinapiSettings", "ownCompositions", "quotes", "abcCurve", "viabilityAnalyses",
     "fiscalDocuments", "receivable", "payable", "cashMoves", "cashFlow", "reconciliation",
     "proposals", "sales", "chartAccounts", "journalEntries", "dre", "taxDocuments", "taxes",
-    "reports", "reportFinancial", "reportClient", "reportSupplier", "reportCostCenter", "reportProject", "exports", "systemVersion",
+    "reports", "reportFinancial", "reportClient", "reportSupplier", "reportCostCenter", "reportProject", "exports", "systemVersion", "qualidadeDashboard",
   ],
   comercial: ["dashboard", "clients", "projects", "projectSchedule", "agenda", "kanban", "workBudgets", "abcCurve", "viabilityAnalyses", "budgets", "proposals", "proposalModels", "sales", "reportClient", "systemVersion"],
-  engenharia: ["dashboard", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "viabilityAnalyses", "purchaseOrders", "technicalReports", "projectReport", "proposals", "reportProject", "systemVersion"],
-  gestor_obra: ["dashboard", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "viabilityAnalyses", "purchaseOrders", "technicalReports", "projectReport", "proposals", "reportProject", "systemVersion"],
+  engenharia: ["dashboard", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "viabilityAnalyses", "purchaseOrders", "technicalReports", "projectReport", "proposals", "reportProject", "systemVersion", "qualidadeDashboard", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
+  gestor_obra: ["dashboard", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "viabilityAnalyses", "purchaseOrders", "technicalReports", "projectReport", "proposals", "reportProject", "systemVersion", "qualidadeDashboard", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
   equipe_campo: ["dashboard", "projectReport", "systemVersion"],
   cliente_obra: ["dashboard", "projectReport", "projectSchedule", "technicalReports", "systemVersion"],
   fornecedor_terceiro: ["dashboard", "systemVersion"],
-  consulta: ["dashboard", "projectReport", "cashFlow", "dre", "reports", "reportFinancial", "reportClient", "reportSupplier", "reportCostCenter", "reportProject", "exports"],
+  consulta: ["dashboard", "projectReport", "cashFlow", "dre", "reports", "reportFinancial", "reportClient", "reportSupplier", "reportCostCenter", "reportProject", "exports", "qualidadeDashboard"],
   gerente: modules.map(([key]) => key).filter((k) => !["users", "permissions"].includes(k)),
-  operador: ["dashboard", "clients", "suppliers", "products", "services", "categories", "costCenters", "bankAccounts", "projects", "projectCosts", "projectRevenues", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "ownCompositions", "quotes", "abcCurve", "fiscalDocuments", "receivable", "payable", "cashMoves", "cashFlow", "reconciliation", "budgets", "proposals", "sales", "purchaseOrders", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectReport", "reports", "reportFinancial", "reportClient", "reportSupplier", "reportCostCenter", "reportProject", "myProfile"],
+  operador: ["dashboard", "clients", "suppliers", "products", "services", "categories", "costCenters", "bankAccounts", "projects", "projectCosts", "projectRevenues", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "ownCompositions", "quotes", "abcCurve", "fiscalDocuments", "receivable", "payable", "cashMoves", "cashFlow", "reconciliation", "budgets", "proposals", "sales", "purchaseOrders", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectReport", "reports", "reportFinancial", "reportClient", "reportSupplier", "reportCostCenter", "reportProject", "myProfile", "qualidadeDashboard", "qualidadeFvs", "qualidadeFvm", "qualidadeNc"],
   visualizador: modules.map(([key]) => key),
 };
 
@@ -335,6 +345,14 @@ const apiResources = {
   sinapiFamilies: "sinapi-familias-coeficientes",
   sinapiMaintenances: "sinapi-manutencoes",
   sinapiSettings: "sinapi-configuracoes",
+  qualidadePolitica: "qualidade-politica",
+  qualidadePes: "qualidade-pes",
+  qualidadePqo: "qualidade-pqo",
+  qualidadeFvs: "qualidade-fvs",
+  qualidadeFvm: "qualidade-fvm",
+  qualidadeNc: "qualidade-nc",
+  qualidadeTreinamentos: "qualidade-treinamentos",
+  qualidadeAuditorias: "qualidade-auditorias",
   ownCompositions: "composicoes-proprias",
   quotes: "cotacoes",
   fiscalDocuments: "notas-fiscais",
@@ -2147,10 +2165,10 @@ function canEditModule(key = currentModule) {
   const editableByRole = {
     financeiro: ["fiscalDocuments", "receivable", "payable", "cashMoves", "cashFlow", "reconciliation", "categories", "costCenters", "bankAccounts", "chartAccounts", "journalEntries", "taxDocuments", "taxes", "exports", "projectSchedule", "agenda", "kanban", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "sinapiSettings", "quotes", "sales", "viabilityAnalyses"],
     comercial: ["clients", "budgets", "proposals", "agenda", "kanban", "viabilityAnalyses"],
-    engenharia: ["projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "purchaseOrders", "technicalReports"],
-    gestor_obra: ["projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "purchaseOrders", "technicalReports"],
+    engenharia: ["projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "purchaseOrders", "technicalReports", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
+    gestor_obra: ["projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "purchaseOrders", "technicalReports", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
     gerente: modules.map(([k]) => k).filter((k) => !["users", "permissions"].includes(k)),
-    operador: ["clients", "suppliers", "products", "services", "categories", "costCenters", "bankAccounts", "projects", "projectCosts", "projectRevenues", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "ownCompositions", "quotes", "fiscalDocuments", "receivable", "payable", "cashMoves", "reconciliation", "budgets", "proposals", "sales", "purchaseOrders", "projectSchedule", "projectMilestones", "agenda", "kanban"],
+    operador: ["clients", "suppliers", "products", "services", "categories", "costCenters", "bankAccounts", "projects", "projectCosts", "projectRevenues", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "ownCompositions", "quotes", "fiscalDocuments", "receivable", "payable", "cashMoves", "reconciliation", "budgets", "proposals", "sales", "purchaseOrders", "projectSchedule", "projectMilestones", "agenda", "kanban", "qualidadeFvs", "qualidadeFvm", "qualidadeNc"],
   };
   return (editableByRole[currentUser?.role] || []).includes(permissionKey);
 }
@@ -2432,6 +2450,15 @@ function render() {
   if (currentModule === "preferences") return renderPreferences();
   if (currentModule === "sinapiReferences") return renderSinapiReferences();
   if (currentModule === "sinapiSettings") return renderSinapiSettingsModule();
+  if (currentModule === "qualidadeDashboard") return renderQualidadeDashboard();
+  if (currentModule === "qualidadePolitica") return renderQualidadePolitica();
+  if (currentModule === "qualidadePes") return renderQualidadePes();
+  if (currentModule === "qualidadePqo") return renderQualidadePqo();
+  if (currentModule === "qualidadeFvs") return renderQualidadeFvs();
+  if (currentModule === "qualidadeFvm") return renderQualidadeFvm();
+  if (currentModule === "qualidadeNc") return renderQualidadeNc();
+  if (currentModule === "qualidadeTreinamentos") return renderQualidadeTreinamentos();
+  if (currentModule === "qualidadeAuditorias") return renderQualidadeAuditorias();
   if (currentModule === "abcCurve") return renderAbcCurve();
   if (currentModule === "projectSchedule") return renderProjectSchedule();
   if (currentModule === "agenda") return renderAgenda();
@@ -3726,6 +3753,14 @@ function labelFor(field) {
     commercialResponsible: "Responsável comercial", commercialNotes: "Observações comerciais",
     versao: "Versão", data_versao: "Data da versão",
     descricao: "Descrição", alteracoes: "Alterações",
+    servico: "Serviço SiAC", servicoNome: "Serviço", servicoGrupo: "Grupo", criteriosAceitacao: "Critérios de aceitação",
+    responsavelElaboracao: "Elaborado por", dataElaboracao: "Elaboração", responsavelTecnico: "Responsável técnico",
+    servicosQtd: "Serviços controlados", materiaisQtd: "Materiais", localObra: "Local", dataExecucao: "Execução",
+    responsavelInspecao: "Inspetor", resultado: "Resultado", treinamento: "Treinamento", materialNome: "Material",
+    notaFiscal: "Nota fiscal", quantidade: "Qtde", unidade: "Unid.", dataRecebimento: "Recebimento", numero: "Número",
+    grau: "Grau", dataDeteccao: "Detecção", prazo: "Prazo da ação", prazoAcao: "Prazo da ação", dataTreinamento: "Data",
+    instrutor: "Instrutor", cargaHoraria: "Carga (h)", tipo: "Tipo", dataAuditoria: "Data", auditor: "Auditor",
+    conformidade: "Conformidade", aprovadoPor: "Aprovado por", dataAprovacao: "Aprovação",
     entradasPrevistas: "Entradas previstas", entradasRealizadas: "Entradas realizadas",
     saidasPrevistas: "Saídas previstas", saidasRealizadas: "Saídas realizadas", saldoFinal: "Saldo final",
     workBudgetId: "Orçamento de obra", workBudgetItemId: "Item do orçamento", sinapiReferenceId: "Referência SINAPI",
@@ -5924,6 +5959,1098 @@ async function reprocessSinapiJob(jobId) {
       button.textContent = "🔄 Reprocessar";
     }
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// QUALIDADE PBQP-H NÍVEL B — PQO, PES, FVS, FVM, NC, Treinamentos e Auditorias
+// Metas do Nível B: mín. 11 dos 27 serviços SiAC controlados com FVS e mín. 10
+// materiais controlados com FVM por obra. Espelho PHP: servicos_siac().
+// ═══════════════════════════════════════════════════════════════════════════
+
+const SERVICOS_SIAC = [
+  { id: 1, grupo: "Preliminares", nome: "Compactação de aterro" },
+  { id: 2, grupo: "Preliminares", nome: "Locação de obra" },
+  { id: 3, grupo: "Fundações", nome: "Execução de fundação" },
+  { id: 4, grupo: "Estrutura", nome: "Execução de fôrma" },
+  { id: 5, grupo: "Estrutura", nome: "Montagem de armadura" },
+  { id: 6, grupo: "Estrutura", nome: "Concretagem de peça estrutural" },
+  { id: 7, grupo: "Estrutura", nome: "Execução de alvenaria estrutural" },
+  { id: 8, grupo: "Vedações Verticais", nome: "Alvenaria não estrutural e divisória leve" },
+  { id: 9, grupo: "Vedações Verticais", nome: "Revestimento interno área seca" },
+  { id: 10, grupo: "Vedações Verticais", nome: "Revestimento interno área úmida" },
+  { id: 11, grupo: "Vedações Verticais", nome: "Revestimento externo" },
+  { id: 12, grupo: "Vedações Horizontais", nome: "Execução de contrapiso" },
+  { id: 13, grupo: "Vedações Horizontais", nome: "Revestimento piso interno área seca" },
+  { id: 14, grupo: "Vedações Horizontais", nome: "Revestimento piso interno área úmida" },
+  { id: 15, grupo: "Vedações Horizontais", nome: "Revestimento piso externo" },
+  { id: 16, grupo: "Vedações Horizontais", nome: "Execução de forro" },
+  { id: 17, grupo: "Vedações Horizontais", nome: "Execução de impermeabilização" },
+  { id: 18, grupo: "Vedações Horizontais", nome: "Cobertura em telhado (estrutura + telhamento)" },
+  { id: 19, grupo: "Esquadrias", nome: "Colocação de porta" },
+  { id: 20, grupo: "Esquadrias", nome: "Colocação de janela" },
+  { id: 21, grupo: "Esquadrias", nome: "Colocação de guarda-corpo" },
+  { id: 22, grupo: "Instalações", nome: "Instalação elétrica" },
+  { id: 23, grupo: "Instalações", nome: "Instalação hidrossanitária" },
+  { id: 24, grupo: "Instalações", nome: "Instalação de gás" },
+  { id: 25, grupo: "Instalações", nome: "Instalação de SPDA" },
+  { id: 26, grupo: "Acabamentos", nome: "Pintura interna" },
+  { id: 27, grupo: "Acabamentos", nome: "Pintura externa" },
+];
+
+const CHECKLIST_SIAC_NIVEL_B = [
+  { clausula: "4.1", desc: "Contexto da organização — partes interessadas identificadas" },
+  { clausula: "4.2", desc: "Escopo do SGQ definido e documentado" },
+  { clausula: "5.1", desc: "Liderança demonstra comprometimento com o SGQ" },
+  { clausula: "5.2", desc: "Política da Qualidade definida, comunicada e vigente" },
+  { clausula: "5.3", desc: "Responsabilidades e autoridades definidas" },
+  { clausula: "6.2", desc: "Objetivos da qualidade definidos e mensuráveis" },
+  { clausula: "7.1.1", desc: "Recursos necessários determinados e disponibilizados" },
+  { clausula: "7.1.2", desc: "Pessoas competentes para execução dos serviços" },
+  { clausula: "7.1.3", desc: "Infraestrutura adequada para execução das obras" },
+  { clausula: "7.2", desc: "Competência da equipe determinada e registrada" },
+  { clausula: "7.3", desc: "Conscientização da equipe sobre a política e objetivos" },
+  { clausula: "7.5", desc: "Informações documentadas (PES, FVS, FVM, NC) controladas" },
+  { clausula: "8.1", desc: "Processos de execução planejados e controlados" },
+  { clausula: "8.1.1", desc: "PQO elaborado e implementado para cada obra" },
+  { clausula: "8.4.1", desc: "Fornecedores externos controlados (básico)" },
+  { clausula: "8.4.2", desc: "Tipo e extensão do controle de fornecedores definidos" },
+  { clausula: "8.4.3", desc: "Informações fornecidas aos fornecedores externos" },
+  { clausula: "8.5.1", desc: "Execução controlada — PES implementados na obra" },
+  { clausula: "8.5.2", desc: "Identificação e rastreabilidade nos serviços controlados" },
+  { clausula: "8.7", desc: "Saídas não conformes (NC) identificadas e tratadas" },
+  { clausula: "9.2", desc: "Auditoria interna realizada conforme programa" },
+  { clausula: "9.3", desc: "Análise crítica pela direção realizada" },
+  { clausula: "10.2", desc: "NC e ação corretiva — processo implementado" },
+];
+
+const FVM_CHECKLIST_PADRAO = [
+  "NF conforme o pedido",
+  "Quantidade conforme o pedido",
+  "Material sem danos visíveis",
+  "Especificação técnica conforme",
+  "Prazo de validade dentro do limite",
+  "Certificado do fabricante presente",
+];
+
+const QUALIDADE_METAS = { servicos: 11, materiais: 10 };
+
+let qualidadeObraFiltro = "";
+let qualidadeEdit = null; // { key, id } — formulário aberto no módulo de qualidade atual
+let qualidadeDraft = null; // rascunho de formulários com re-render (FVS, FVM, PQO)
+let qualidadePrintWired = false;
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function qrows(key) {
+  db[key] = db[key] || [];
+  return db[key];
+}
+
+function qjson(value, fallback) {
+  try {
+    const parsed = typeof value === "string" ? JSON.parse(value || "null") : value;
+    return parsed ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function qHoje() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function servicoSiac(id) {
+  return SERVICOS_SIAC.find((s) => s.id === Number(id)) || null;
+}
+
+function qPqoDaObra(projectId) {
+  return qrows("qualidadePqo").find((p) => sameId(p.projectId, projectId)) || null;
+}
+
+function qPesVigente(servicoSiacId) {
+  return qrows("qualidadePes").find((p) => Number(p.servicoSiacId) === Number(servicoSiacId) && p.status === "Vigente") || null;
+}
+
+function qTemTreinamento(projectId, servicoSiacId) {
+  return qrows("qualidadeTreinamentos").some((t) => sameId(t.projectId, projectId) && Number(t.servicoSiacId) === Number(servicoSiacId));
+}
+
+function qObrasAtivas() {
+  return (db.projects || []).filter((p) => p.status !== "Cancelada");
+}
+
+function qObraSelectHtml(domId, value, { onlyWithPqo = false, optional = false } = {}) {
+  const comPqo = new Set(qrows("qualidadePqo").map((p) => String(p.projectId)));
+  const options = qObrasAtivas()
+    .filter((p) => !onlyWithPqo || comPqo.has(String(p.id)))
+    .map((p) => `<option value="${p.id}" ${sameId(p.id, value) ? "selected" : ""}>${svgText(p.name)}</option>`)
+    .join("");
+  return `<select id="${domId}"><option value="">${optional ? "Todas as obras" : "Selecione a obra"}</option>${options}</select>`;
+}
+
+function qServicoSelectHtml(domId, value, restrictIds = null) {
+  const groups = {};
+  SERVICOS_SIAC.filter((s) => !restrictIds || restrictIds.map(Number).includes(s.id)).forEach((s) => {
+    (groups[s.grupo] = groups[s.grupo] || []).push(s);
+  });
+  const body = Object.entries(groups)
+    .map(([grupo, list]) => `<optgroup label="${svgText(grupo)}">${list.map((s) => `<option value="${s.id}" ${Number(value) === s.id ? "selected" : ""}>${s.id} — ${svgText(s.nome)}</option>`).join("")}</optgroup>`)
+    .join("");
+  return `<select id="${domId}"><option value="">Selecione o serviço</option>${body}</select>`;
+}
+
+function qBadge(text, tone) {
+  return `<span class="q-badge q-${tone}">${svgText(text)}</span>`;
+}
+
+function qKpiCard(label, value, hint, tone = "neutro") {
+  return `<div class="q-kpi q-${tone}"><span>${svgText(label)}</span><strong>${value}</strong><small>${hint}</small></div>`;
+}
+
+function qBarChartSvg(pairs) {
+  if (!pairs.length || pairs.every(([, v]) => !v)) return '<div class="empty">Sem dados para exibir</div>';
+  const max = Math.max(1, ...pairs.map(([, v]) => v));
+  const barW = 64;
+  const gap = 20;
+  const h = 140;
+  const width = pairs.length * (barW + gap) + gap;
+  return `<svg viewBox="0 0 ${width} ${h + 40}" class="q-chart" role="img">${pairs
+    .map(([label, value], index) => {
+      const bh = Math.max(2, Math.round((value / max) * h));
+      const x = gap + index * (barW + gap);
+      return `<rect x="${x}" y="${h - bh + 12}" width="${barW}" height="${bh}" rx="6"></rect>
+        <text x="${x + barW / 2}" y="${h - bh + 4}" text-anchor="middle" class="q-chart-num">${value}</text>
+        <text x="${x + barW / 2}" y="${h + 32}" text-anchor="middle" class="q-chart-label">${svgText(label)}</text>`;
+    })
+    .join("")}</svg>`;
+}
+
+function qualidadePrint(html) {
+  let area = document.getElementById("qualidadePrintArea");
+  if (!area) {
+    area = document.createElement("div");
+    area.id = "qualidadePrintArea";
+    document.body.appendChild(area);
+  }
+  area.innerHTML = html;
+  if (!qualidadePrintWired) {
+    window.addEventListener("afterprint", () => document.body.classList.remove("printing-qualidade"));
+    qualidadePrintWired = true;
+  }
+  document.body.classList.add("printing-qualidade");
+  window.print();
+}
+
+function qualidadeHead(key, title, description) {
+  const editable = canEditModule(key);
+  return `
+    <section class="module-head">
+      <div>
+        <h2>${svgText(title)}</h2>
+        <p>${svgText(description)}</p>
+      </div>
+      <div class="actions">
+        ${editable && key !== "qualidadeDashboard" ? `<button class="primary" type="button" id="qNovoRegistro">Novo</button>` : ""}
+      </div>
+    </section>
+  `;
+}
+
+function qWire(key, { onEdit = null } = {}) {
+  qs("qNovoRegistro")?.addEventListener("click", () => {
+    qualidadeEdit = { key, id: null };
+    qualidadeDraft = null;
+    render();
+  });
+  qs("qFormCancelar")?.addEventListener("click", () => {
+    qualidadeEdit = null;
+    qualidadeDraft = null;
+    render();
+  });
+  qs("content").querySelectorAll("[data-edit]").forEach((button) => button.addEventListener("click", () => {
+    qualidadeEdit = { key, id: button.dataset.edit };
+    qualidadeDraft = null;
+    if (onEdit) onEdit(button.dataset.edit);
+    render();
+  }));
+  qs("content").querySelectorAll("[data-delete]").forEach((button) => button.addEventListener("click", () => removeRecord(key, button.dataset.delete)));
+  qs("qFiltroObraQualidade")?.addEventListener("change", (event) => {
+    qualidadeObraFiltro = event.target.value;
+    render();
+  });
+}
+
+async function qSalvar(key, data, id) {
+  try {
+    const record = id ? await updateIntegratedRecord(key, id, data) : await createIntegratedRecord(key, data);
+    logAudit(id ? "update" : "create", key, String(record?.numero || data.servicoNome || data.materialNome || data.versao || record?.id || ""));
+    if (record?.automation) alert(record.automation);
+    qualidadeEdit = null;
+    qualidadeDraft = null;
+    await refreshAndRender();
+    return true;
+  } catch (error) {
+    alert(`Não foi possível salvar: ${error.message}`);
+    return false;
+  }
+}
+
+function qVal(domId) {
+  return qs(domId)?.value?.trim() ?? "";
+}
+
+// ── Dashboard ────────────────────────────────────────────────────────────────
+
+function renderQualidadeDashboard() {
+  const obraId = qualidadeObraFiltro;
+  const porObra = (rows) => rows.filter((r) => !obraId || sameId(r.projectId, obraId));
+  const fvs = porObra(qrows("qualidadeFvs"));
+  const fvm = porObra(qrows("qualidadeFvm"));
+  const ncs = porObra(qrows("qualidadeNc"));
+  const hoje = qHoje();
+  const pqo = obraId ? qPqoDaObra(obraId) : null;
+  const servicosControlados = pqo ? qjson(pqo.servicosControlados, []) : [];
+  const materiaisControlados = pqo ? qjson(pqo.materiaisControlados, []) : [];
+
+  const fvsAprovadas = fvs.filter((f) => f.status === "Aprovada");
+  const servicosComFvs = obraId
+    ? servicosControlados.filter((idServico) => fvsAprovadas.some((f) => Number(f.servicoSiacId) === Number(idServico))).length
+    : new Set(fvsAprovadas.map((f) => `${f.projectId}:${f.servicoSiacId}`)).size;
+  const fvmAprovadas = fvm.filter((f) => f.status === "Aprovada").length;
+  const ncsAbertas = ncs.filter((n) => n.status !== "Fechada");
+  const ncsVencidas = ncsAbertas.filter((n) => n.prazoAcao && n.prazoAcao < hoje);
+  const metaServicosOk = obraId && servicosControlados.length >= QUALIDADE_METAS.servicos;
+
+  const ncPorStatus = ["Aberta", "Em andamento", "Verificando", "Fechada"].map((status) => [status, ncs.filter((n) => n.status === status).length]);
+  const fvsPorResultado = ["Aprovado", "Aprovado com ressalvas", "Reprovado"].map((resultado) => [resultado.replace("Aprovado com ressalvas", "C/ ressalvas"), fvs.filter((f) => f.resultado === resultado).length]);
+
+  const alertas = [];
+  ncsAbertas.forEach((nc) => {
+    if (!nc.prazoAcao) return;
+    const dias = Math.ceil((new Date(nc.prazoAcao) - new Date(hoje)) / 86400000);
+    if (dias < 0) alertas.push(`❌ ${nc.numero} está com o prazo de ação vencido desde ${nc.prazoAcao}.`);
+    else if (dias <= 3) alertas.push(`⚠️ ${nc.numero} vence em ${dias} dia(s) — ${nc.descricaoNC?.slice(0, 80) || ""}`);
+  });
+  (db.projectSchedule || []).filter((e) => Number(e.qualidadeBloqueada) === 1 && (!obraId || sameId(e.projectId, obraId))).forEach((e) => {
+    alertas.push(`❌ Etapa "${e.stageName}" bloqueada por pendência de qualidade (FVS/NC).`);
+  });
+  if (pqo) {
+    qjson(pqo.servicosControlados, []).forEach((idServico) => {
+      if (!qPesVigente(idServico)) alertas.push(`⚠️ Serviço "${servicoSiac(idServico)?.nome || idServico}" no PQO sem PES vigente.`);
+      else if (!qTemTreinamento(obraId, idServico)) alertas.push(`⚠️ Serviço "${servicoSiac(idServico)?.nome || idServico}" sem treinamento registrado nesta obra.`);
+    });
+  }
+
+  qs("content").innerHTML = `
+    <section class="module-head">
+      <div>
+        <h2>Qualidade PBQP-H — Nível B</h2>
+        <p>Visão consolidada do SGQ: FVS, FVM, NCs e metas do SiAC Nível B (mín. ${QUALIDADE_METAS.servicos} serviços e ${QUALIDADE_METAS.materiais} materiais controlados por obra).</p>
+      </div>
+      <label>Obra ${qObraSelectHtml("qFiltroObraQualidade", obraId, { optional: true })}</label>
+    </section>
+    <section class="q-kpis">
+      ${qKpiCard("FVS aprovadas", `${fvsAprovadas.length}/${fvs.length || 0}`, obraId ? `${servicosComFvs} de ${servicosControlados.length || "—"} serviços com FVS aprovada` : `${servicosComFvs} serviço(s)/obra com FVS aprovada`, fvsAprovadas.length ? "ok" : "neutro")}
+      ${qKpiCard("FVM aprovadas", `${fvmAprovadas}/${fvm.length || 0}`, obraId ? `Meta Nível B: ${QUALIDADE_METAS.materiais} materiais controlados` : "Fichas de material aprovadas", fvmAprovadas >= QUALIDADE_METAS.materiais ? "ok" : "neutro")}
+      ${qKpiCard("NCs abertas", String(ncsAbertas.length), `${ncsVencidas.length} com prazo vencido`, ncsVencidas.length ? "ruim" : ncsAbertas.length ? "atencao" : "ok")}
+      ${obraId
+        ? qKpiCard("Serviços controlados", `${servicosControlados.length}/27`, metaServicosOk ? "✅ Meta do Nível B atingida" : `Mínimo Nível B: ${QUALIDADE_METAS.servicos}`, metaServicosOk ? "ok" : "atencao")
+        : qKpiCard("PQOs vigentes", String(qrows("qualidadePqo").filter((p) => p.status === "Vigente").length), `${qrows("qualidadePqo").length} plano(s) no total`, "neutro")}
+    </section>
+    <div class="q-grid-2">
+      <section class="panel"><h3>NCs por status</h3>${qBarChartSvg(ncPorStatus)}</section>
+      <section class="panel"><h3>FVS por resultado</h3>${qBarChartSvg(fvsPorResultado)}</section>
+    </div>
+    <section class="panel">
+      <h3>Alertas</h3>
+      ${alertas.length ? `<ul class="q-alertas">${alertas.slice(0, 12).map((a) => `<li>${svgText(a)}</li>`).join("")}</ul>` : '<div class="empty">Nenhum alerta de qualidade. ✅</div>'}
+    </section>
+  `;
+  qWire("qualidadeDashboard");
+}
+
+// ── Política da Qualidade ────────────────────────────────────────────────────
+
+function renderQualidadePolitica() {
+  const key = "qualidadePolitica";
+  const editable = canEditModule(key);
+  const rows = qrows(key);
+  const vigente = rows.find((r) => r.status === "Vigente");
+  const editing = qualidadeEdit?.key === key;
+  const row = editing && qualidadeEdit.id ? byId(key, qualidadeEdit.id) || {} : {};
+  const formHtml = editing ? `
+    <section class="panel import-panel">
+      <h3>${qualidadeEdit.id ? "Editar versão" : "Nova versão da Política da Qualidade"}</h3>
+      <div class="form-grid">
+        <label>Versão<input id="qPolVersao" value="${svgText(row.versao || (vigente ? `${(parseFloat(vigente.versao) + 0.1).toFixed(1)}` : "1.0"))}"></label>
+        <label>Status<select id="qPolStatus">${["Rascunho", "Vigente", "Obsoleto"].map((s) => `<option ${(row.status || "Rascunho") === s ? "selected" : ""}>${s}</option>`).join("")}</select></label>
+        <label>Aprovado por<input id="qPolAprovadoPor" value="${svgText(row.aprovadoPor || "")}"></label>
+        <label>Data de aprovação<input id="qPolDataAprovacao" type="date" value="${svgText(row.dataAprovacao || "")}"></label>
+        <label class="full">Conteúdo da política<textarea id="qPolConteudo" rows="10">${svgText(row.conteudo || vigente?.conteudo || "")}</textarea></label>
+      </div>
+      <div class="actions">
+        <button class="primary" type="button" id="qPolSalvar">Salvar</button>
+        <button class="secondary" type="button" id="qFormCancelar">Cancelar</button>
+      </div>
+    </section>` : "";
+  qs("content").innerHTML = `
+    ${qualidadeHead(key, "Política da Qualidade", "Documento único da empresa exigido pelo SiAC (cláusula 5.2). Ao tornar uma versão Vigente, as anteriores ficam obsoletas automaticamente.")}
+    ${formHtml}
+    <section class="panel">
+      <h3>Versão vigente ${vigente ? qBadge(`v${vigente.versao}`, "ok") : qBadge("Inexistente", "ruim")}</h3>
+      ${vigente
+        ? `<pre class="q-doc">${svgText(vigente.conteudo || "")}</pre>
+           <p class="muted">Aprovada por ${svgText(vigente.aprovadoPor || "—")} em ${svgText(vigente.dataAprovacao || "—")}</p>
+           <div class="actions">${editable ? `<button class="secondary" type="button" id="qPolEditarVigente">Editar</button>` : ""}<button class="secondary" type="button" id="qPolImprimir">Exportar PDF</button></div>`
+        : '<div class="empty">Nenhuma política vigente. Crie a primeira versão em "Novo".</div>'}
+    </section>
+    ${table("Histórico de versões", rows, ["versao", "aprovadoPor", "dataAprovacao", "status"], editable, key)}
+  `;
+  qWire(key);
+  qs("qPolEditarVigente")?.addEventListener("click", () => {
+    qualidadeEdit = { key, id: vigente.id };
+    render();
+  });
+  qs("qPolImprimir")?.addEventListener("click", () => {
+    if (!vigente) return;
+    qualidadePrint(`
+      <h1>Política da Qualidade — v${svgText(vigente.versao)}</h1>
+      <p class="q-print-sub">${svgText((db.companySettings || [])[0]?.name || "ObraSync")} — PBQP-H SiAC Nível B</p>
+      <div class="q-print-body">${svgText(vigente.conteudo || "").replaceAll("\n", "<br>")}</div>
+      <p>Aprovado por: ${svgText(vigente.aprovadoPor || "____________")} — Data: ${svgText(vigente.dataAprovacao || "____/____/____")}</p>
+    `);
+  });
+  qs("qPolSalvar")?.addEventListener("click", async () => {
+    const conteudo = qVal("qPolConteudo");
+    if (!conteudo) return alert("Informe o conteúdo da política.");
+    await qSalvar(key, {
+      conteudo,
+      versao: qVal("qPolVersao") || "1.0",
+      aprovadoPor: qVal("qPolAprovadoPor"),
+      dataAprovacao: qVal("qPolDataAprovacao") || null,
+      status: qVal("qPolStatus") || "Rascunho",
+    }, qualidadeEdit?.id || null);
+  });
+}
+
+// ── PES — Procedimentos de Execução de Serviço ───────────────────────────────
+
+function renderQualidadePes() {
+  const key = "qualidadePes";
+  const editable = canEditModule(key);
+  const rows = qrows(key);
+  const editing = qualidadeEdit?.key === key;
+  const row = editing && qualidadeEdit.id ? byId(key, qualidadeEdit.id) || {} : {};
+  const formHtml = editing ? `
+    <section class="panel import-panel">
+      <h3>${qualidadeEdit.id ? "Editar PES" : "Novo PES"}</h3>
+      <div class="form-grid">
+        <label>Serviço SiAC${qServicoSelectHtml("qPesServico", row.servicoSiacId)}</label>
+        <label>Versão<input id="qPesVersao" value="${svgText(row.versao || "1.0")}"></label>
+        <label>Status<select id="qPesStatus">${["Rascunho", "Vigente", "Obsoleto"].map((s) => `<option ${(row.status || "Rascunho") === s ? "selected" : ""}>${s}</option>`).join("")}</select></label>
+        <label>Responsável pela elaboração<input id="qPesResponsavel" value="${svgText(row.responsavelElaboracao || "")}"></label>
+        <label>Data de elaboração<input id="qPesData" type="date" value="${svgText(row.dataElaboracao || qHoje())}"></label>
+        <label>Normas de referência<input id="qPesNormas" value="${svgText(row.normasReferencia || "")}" placeholder="NBR..."></label>
+        <label class="full">Objetivo<textarea id="qPesObjetivo" rows="2">${svgText(row.objetivo || "")}</textarea></label>
+        <label class="full">Materiais necessários<textarea id="qPesMateriais" rows="2">${svgText(row.materiaisNecessarios || "")}</textarea></label>
+        <label class="full">Equipamentos e EPIs<textarea id="qPesEpi" rows="2">${svgText(row.equipamentosEpi || "")}</textarea></label>
+        <label class="full">Procedimento de execução<textarea id="qPesProcedimento" rows="6">${svgText(row.procedimento || "")}</textarea></label>
+        <label class="full">Critérios de aceitação — um por linha (cada linha vira um item da FVS)<textarea id="qPesCriterios" rows="5">${svgText(row.criteriosAceitacao || "")}</textarea></label>
+      </div>
+      <div class="actions">
+        <button class="primary" type="button" id="qPesSalvar">Salvar</button>
+        <button class="secondary" type="button" id="qFormCancelar">Cancelar</button>
+      </div>
+    </section>` : "";
+  const listRows = rows.map((r) => ({ ...r, servico: `${r.servicoSiacId} — ${r.servicoNome}` }));
+  qs("content").innerHTML = `
+    ${qualidadeHead(key, "Procedimentos de Execução de Serviço (PES)", "Biblioteca reutilizável dos 27 serviços controlados do SiAC. Ao salvar um PES Vigente, as versões anteriores do mesmo serviço ficam obsoletas.")}
+    ${formHtml}
+    ${table("PES cadastrados", listRows, ["servico", "servicoGrupo", "versao", "responsavelElaboracao", "dataElaboracao", "status"], editable, key)}
+  `;
+  qWire(key);
+  qs("qPesSalvar")?.addEventListener("click", async () => {
+    const servicoId = Number(qVal("qPesServico"));
+    const servico = servicoSiac(servicoId);
+    if (!servico) return alert("Selecione o serviço SiAC.");
+    const criterios = qVal("qPesCriterios");
+    if (!criterios) return alert("Informe os critérios de aceitação — eles geram os itens da FVS.");
+    await qSalvar(key, {
+      servicoSiacId: servicoId,
+      servicoNome: servico.nome,
+      servicoGrupo: servico.grupo,
+      versao: qVal("qPesVersao") || "1.0",
+      objetivo: qVal("qPesObjetivo"),
+      materiaisNecessarios: qVal("qPesMateriais"),
+      equipamentosEpi: qVal("qPesEpi"),
+      procedimento: qVal("qPesProcedimento"),
+      criteriosAceitacao: criterios,
+      normasReferencia: qVal("qPesNormas"),
+      responsavelElaboracao: qVal("qPesResponsavel"),
+      dataElaboracao: qVal("qPesData") || null,
+      status: qVal("qPesStatus") || "Rascunho",
+    }, qualidadeEdit?.id || null);
+  });
+}
+
+// ── PQO — Plano da Qualidade da Obra ────────────────────────────────────────
+
+function qPqoDraft(row) {
+  return {
+    id: row?.id || null,
+    projectId: row?.projectId || "",
+    versao: row?.versao || "1.0",
+    responsavelTecnico: row?.responsavelTecnico || "",
+    crea: row?.crea || "",
+    dataInicioPrevisto: row?.dataInicioPrevisto || "",
+    dataFimPrevisto: row?.dataFimPrevisto || "",
+    escopo: row?.escopo || "",
+    metasQualidade: row?.metasQualidade || "",
+    status: row?.status || "Rascunho",
+    dataAprovacao: row?.dataAprovacao || "",
+    aprovadoPor: row?.aprovadoPor || "",
+    servicos: qjson(row?.servicosControlados, []).map(Number),
+    materiais: qjson(row?.materiaisControlados, []),
+  };
+}
+
+function qPqoCollect() {
+  const draft = qualidadeDraft;
+  draft.projectId = qVal("qPqoObra");
+  draft.versao = qVal("qPqoVersao") || "1.0";
+  draft.responsavelTecnico = qVal("qPqoResponsavel");
+  draft.crea = qVal("qPqoCrea");
+  draft.dataInicioPrevisto = qVal("qPqoInicio");
+  draft.dataFimPrevisto = qVal("qPqoFim");
+  draft.escopo = qVal("qPqoEscopo");
+  draft.metasQualidade = qVal("qPqoMetas");
+  draft.status = qVal("qPqoStatus") || "Rascunho";
+  draft.aprovadoPor = qVal("qPqoAprovadoPor");
+  draft.dataAprovacao = qVal("qPqoDataAprovacao");
+  draft.servicos = [...qs("content").querySelectorAll("[data-q-servico]:checked")].map((c) => Number(c.dataset.qServico));
+  draft.materiais = [...qs("content").querySelectorAll("[data-q-material-row]")].map((tr) => ({
+    nome: tr.querySelector("[data-q-mat-nome]").value.trim(),
+    especificacao: tr.querySelector("[data-q-mat-espec]").value.trim(),
+    norma: tr.querySelector("[data-q-mat-norma]").value.trim(),
+  })).filter((m) => m.nome);
+  return draft;
+}
+
+function renderQualidadePqo() {
+  const key = "qualidadePqo";
+  const editable = canEditModule(key);
+  const rows = qrows(key);
+  const editing = qualidadeEdit?.key === key;
+  if (editing && !qualidadeDraft) qualidadeDraft = qPqoDraft(qualidadeEdit.id ? byId(key, qualidadeEdit.id) : null);
+  const draft = qualidadeDraft;
+  const grupos = {};
+  SERVICOS_SIAC.forEach((s) => (grupos[s.grupo] = grupos[s.grupo] || []).push(s));
+  const formHtml = editing ? `
+    <section class="panel import-panel">
+      <h3>${draft.id ? "Editar PQO" : "Gerar PQO"}</h3>
+      <div class="form-grid">
+        <label>Obra${qObraSelectHtml("qPqoObra", draft.projectId)}</label>
+        <label>Versão<input id="qPqoVersao" value="${svgText(draft.versao)}"></label>
+        <label>Responsável técnico<input id="qPqoResponsavel" value="${svgText(draft.responsavelTecnico)}"></label>
+        <label>CREA<input id="qPqoCrea" value="${svgText(draft.crea)}"></label>
+        <label>Início previsto<input id="qPqoInicio" type="date" value="${svgText(draft.dataInicioPrevisto)}"></label>
+        <label>Fim previsto<input id="qPqoFim" type="date" value="${svgText(draft.dataFimPrevisto)}"></label>
+        <label>Status<select id="qPqoStatus">${["Rascunho", "Vigente", "Encerrado"].map((s) => `<option ${draft.status === s ? "selected" : ""}>${s}</option>`).join("")}</select></label>
+        <label>Aprovado por<input id="qPqoAprovadoPor" value="${svgText(draft.aprovadoPor)}"></label>
+        <label>Data de aprovação<input id="qPqoDataAprovacao" type="date" value="${svgText(draft.dataAprovacao)}"></label>
+        <label class="full">Escopo<textarea id="qPqoEscopo" rows="3">${svgText(draft.escopo)}</textarea></label>
+        <label class="full">Metas da qualidade<textarea id="qPqoMetas" rows="2">${svgText(draft.metasQualidade)}</textarea></label>
+      </div>
+      <fieldset class="q-fieldset">
+        <legend>Serviços controlados (mín. ${QUALIDADE_METAS.servicos} para o Nível B) — <span id="qPqoContadorServicos"></span></legend>
+        ${Object.entries(grupos).map(([grupo, list]) => `
+          <div class="q-servico-grupo"><strong>${svgText(grupo)}</strong>
+            ${list.map((s) => {
+              const pes = qPesVigente(s.id);
+              return `<label class="q-check"><input type="checkbox" data-q-servico="${s.id}" ${draft.servicos.includes(s.id) ? "checked" : ""}> ${s.id} — ${svgText(s.nome)} ${pes ? qBadge(`PES v${pes.versao}`, "ok") : qBadge("Sem PES vigente — crie antes de usar", "atencao")}</label>`;
+            }).join("")}
+          </div>`).join("")}
+      </fieldset>
+      <fieldset class="q-fieldset">
+        <legend>Materiais controlados (mín. ${QUALIDADE_METAS.materiais} para o Nível B) — <span id="qPqoContadorMateriais"></span></legend>
+        <table class="q-mat-table"><thead><tr><th>Material</th><th>Especificação</th><th>Norma</th><th></th></tr></thead>
+          <tbody>${(draft.materiais.length ? draft.materiais : [{}]).map((m, i) => `
+            <tr data-q-material-row>
+              <td><input data-q-mat-nome value="${svgText(m.nome || "")}"></td>
+              <td><input data-q-mat-espec value="${svgText(m.especificacao || "")}"></td>
+              <td><input data-q-mat-norma value="${svgText(m.norma || "")}"></td>
+              <td><button class="secondary" type="button" data-q-mat-remove="${i}">×</button></td>
+            </tr>`).join("")}
+          </tbody>
+        </table>
+        <button class="secondary" type="button" id="qPqoAddMaterial">+ Adicionar material</button>
+      </fieldset>
+      <div class="actions">
+        <button class="primary" type="button" id="qPqoSalvar">Salvar PQO</button>
+        <button class="secondary" type="button" id="qFormCancelar">Cancelar</button>
+      </div>
+    </section>` : "";
+  const listRows = rows.map((r) => ({
+    ...r,
+    servicosQtd: `${qjson(r.servicosControlados, []).length}/27`,
+    materiaisQtd: String(qjson(r.materiaisControlados, []).length),
+  }));
+  qs("content").innerHTML = `
+    ${qualidadeHead(key, "Plano da Qualidade da Obra (PQO)", "Um plano por obra (SiAC 8.1.1) com os serviços e materiais controlados. As FVS só podem ser abertas para serviços incluídos no PQO da obra.")}
+    ${formHtml}
+    ${table("Planos da Qualidade", listRows, ["projectId", "versao", "responsavelTecnico", "servicosQtd", "materiaisQtd", "status"], editable, key)}
+    ${rows.length ? `<section class="panel"><div class="actions">${rows.map((r) => `<button class="secondary" type="button" data-q-print-pqo="${r.id}">🖨️ PQO — ${svgText(byId("projects", r.projectId)?.name || r.projectId)}</button>`).join("")}</div></section>` : ""}
+  `;
+  qWire(key);
+  const atualizarContadores = () => {
+    const marcados = qs("content").querySelectorAll("[data-q-servico]:checked").length;
+    const materiais = [...qs("content").querySelectorAll("[data-q-mat-nome]")].filter((i) => i.value.trim()).length;
+    const elS = qs("qPqoContadorServicos");
+    const elM = qs("qPqoContadorMateriais");
+    if (elS) elS.innerHTML = `${marcados} de 27 selecionados ${marcados >= QUALIDADE_METAS.servicos ? qBadge("Meta OK", "ok") : qBadge(`Faltam ${QUALIDADE_METAS.servicos - marcados}`, "atencao")}`;
+    if (elM) elM.innerHTML = `${materiais} informado(s) ${materiais >= QUALIDADE_METAS.materiais ? qBadge("Meta OK", "ok") : qBadge(`Faltam ${QUALIDADE_METAS.materiais - materiais}`, "atencao")}`;
+  };
+  if (editing) {
+    atualizarContadores();
+    qs("content").querySelectorAll("[data-q-servico]").forEach((c) => c.addEventListener("change", atualizarContadores));
+    qs("content").querySelectorAll("[data-q-mat-nome]").forEach((i) => i.addEventListener("input", atualizarContadores));
+    qs("qPqoAddMaterial")?.addEventListener("click", () => {
+      qPqoCollect().materiais.push({ nome: "", especificacao: "", norma: "" });
+      render();
+    });
+    qs("content").querySelectorAll("[data-q-mat-remove]").forEach((b) => b.addEventListener("click", () => {
+      qPqoCollect();
+      qualidadeDraft.materiais.splice(Number(b.dataset.qMatRemove), 1);
+      render();
+    }));
+    qs("qPqoSalvar")?.addEventListener("click", async () => {
+      const draftFinal = qPqoCollect();
+      if (!draftFinal.projectId) return alert("Selecione a obra.");
+      if (!draftFinal.id && qPqoDaObra(draftFinal.projectId)) return alert("Esta obra já possui PQO — edite o existente.");
+      if (draftFinal.status === "Vigente") {
+        if (!draftFinal.responsavelTecnico) return alert("Informe o responsável técnico para tornar o PQO vigente.");
+        if (draftFinal.servicos.length < QUALIDADE_METAS.servicos) return alert(`Selecione ao menos ${QUALIDADE_METAS.servicos} serviços controlados (Nível B).`);
+        if (draftFinal.materiais.length < QUALIDADE_METAS.materiais) return alert(`Informe ao menos ${QUALIDADE_METAS.materiais} materiais controlados (Nível B).`);
+      }
+      await qSalvar(key, {
+        projectId: draftFinal.projectId,
+        versao: draftFinal.versao,
+        responsavelTecnico: draftFinal.responsavelTecnico,
+        crea: draftFinal.crea,
+        dataInicioPrevisto: draftFinal.dataInicioPrevisto || null,
+        dataFimPrevisto: draftFinal.dataFimPrevisto || null,
+        escopo: draftFinal.escopo,
+        servicosControlados: JSON.stringify(draftFinal.servicos),
+        materiaisControlados: JSON.stringify(draftFinal.materiais),
+        metasQualidade: draftFinal.metasQualidade,
+        status: draftFinal.status,
+        dataAprovacao: draftFinal.dataAprovacao || null,
+        aprovadoPor: draftFinal.aprovadoPor,
+      }, draftFinal.id);
+    });
+  }
+  qs("content").querySelectorAll("[data-q-print-pqo]").forEach((b) => b.addEventListener("click", () => {
+    const pqo = byId(key, b.dataset.qPrintPqo);
+    if (!pqo) return;
+    const servicos = qjson(pqo.servicosControlados, []);
+    const materiais = qjson(pqo.materiaisControlados, []);
+    qualidadePrint(`
+      <h1>Plano da Qualidade da Obra — v${svgText(pqo.versao)}</h1>
+      <p class="q-print-sub">Obra: ${svgText(byId("projects", pqo.projectId)?.name || "")} — PBQP-H SiAC Nível B</p>
+      <p><strong>Responsável técnico:</strong> ${svgText(pqo.responsavelTecnico || "—")} (CREA ${svgText(pqo.crea || "—")}) — <strong>Período:</strong> ${svgText(pqo.dataInicioPrevisto || "—")} a ${svgText(pqo.dataFimPrevisto || "—")}</p>
+      <h2>Escopo</h2><div class="q-print-body">${svgText(pqo.escopo || "—").replaceAll("\n", "<br>")}</div>
+      <h2>Serviços controlados (${servicos.length}/27)</h2>
+      <ol>${servicos.map((idS) => `<li>${svgText(`${idS} — ${servicoSiac(idS)?.nome || ""}`)}${qPesVigente(idS) ? ` (PES v${svgText(qPesVigente(idS).versao)})` : " (sem PES vigente)"}</li>`).join("")}</ol>
+      <h2>Materiais controlados (${materiais.length})</h2>
+      <table border="1" cellspacing="0" cellpadding="6" width="100%"><tr><th>Material</th><th>Especificação</th><th>Norma</th></tr>
+        ${materiais.map((m) => `<tr><td>${svgText(m.nome || "")}</td><td>${svgText(m.especificacao || "")}</td><td>${svgText(m.norma || "")}</td></tr>`).join("")}
+      </table>
+      <h2>Metas da qualidade</h2><div class="q-print-body">${svgText(pqo.metasQualidade || "—").replaceAll("\n", "<br>")}</div>
+      <p>Aprovado por: ${svgText(pqo.aprovadoPor || "____________")} — Data: ${svgText(pqo.dataAprovacao || "____/____/____")}</p>
+    `);
+  }));
+}
+
+// ── FVS / FVM — fichas de verificação ───────────────────────────────────────
+
+function qChecklistHtml(itens, { editableLabels = false } = {}) {
+  return `
+    <table class="q-mat-table q-checklist"><thead><tr><th>Item de verificação</th><th>Avaliação</th><th>Observação</th></tr></thead><tbody>
+      ${itens.map((item, i) => `
+        <tr data-q-check-row>
+          <td>${editableLabels ? `<input data-q-check-label value="${svgText(item.item || "")}">` : `<span data-q-check-fixed="${svgText(item.item || "")}">${svgText(item.item || "")}</span>`}</td>
+          <td class="q-radio-group">
+            <label><input type="radio" name="qCheck${i}" value="sim" ${item.conforme === "sim" ? "checked" : ""}> ✅ Conforme</label>
+            <label><input type="radio" name="qCheck${i}" value="nao" ${item.conforme === "nao" ? "checked" : ""}> ❌ Não conforme</label>
+            <label><input type="radio" name="qCheck${i}" value="na" ${item.conforme === "na" ? "checked" : ""}> N/A</label>
+          </td>
+          <td><input data-q-check-obs value="${svgText(item.observacao || "")}"></td>
+        </tr>`).join("")}
+    </tbody></table>`;
+}
+
+function qChecklistCollect() {
+  return [...qs("content").querySelectorAll("[data-q-check-row]")].map((tr, i) => ({
+    item: tr.querySelector("[data-q-check-label]")?.value.trim() ?? tr.querySelector("[data-q-check-fixed]")?.dataset.qCheckFixed ?? "",
+    conforme: tr.querySelector(`input[name="qCheck${i}"]:checked`)?.value || "",
+    observacao: tr.querySelector("[data-q-check-obs]")?.value.trim() || "",
+  })).filter((item) => item.item);
+}
+
+function qFvsDraft(row) {
+  return {
+    id: row?.id || null,
+    projectId: row?.projectId || "",
+    servicoSiacId: row?.servicoSiacId || "",
+    etapaId: row?.etapaId || "",
+    pesId: row?.pesId || null,
+    dataExecucao: row?.dataExecucao || qHoje(),
+    localObra: row?.localObra || "",
+    responsavelExecucao: row?.responsavelExecucao || "",
+    responsavelInspecao: row?.responsavelInspecao || "",
+    itens: qjson(row?.itensVerificacao, []),
+    resultado: row?.resultado || "",
+    observacoes: row?.observacoes || "",
+    acaoCorretiva: row?.acaoCorretiva || "",
+    dataInspecao: row?.dataInspecao || "",
+    assinaturaExecutor: row?.assinaturaExecutor || "",
+    assinaturaInspetor: row?.assinaturaInspetor || "",
+  };
+}
+
+function qFvsCollectCampos() {
+  const draft = qualidadeDraft;
+  draft.dataExecucao = qVal("qFvsDataExec");
+  draft.localObra = qVal("qFvsLocal");
+  draft.responsavelExecucao = qVal("qFvsRespExec");
+  draft.responsavelInspecao = qVal("qFvsRespInsp");
+  draft.resultado = qVal("qFvsResultado");
+  draft.observacoes = qVal("qFvsObservacoes");
+  draft.acaoCorretiva = qVal("qFvsAcaoCorretiva");
+  draft.dataInspecao = qVal("qFvsDataInsp");
+  draft.assinaturaExecutor = qVal("qFvsAssExec");
+  draft.assinaturaInspetor = qVal("qFvsAssInsp");
+  draft.itens = qChecklistCollect();
+  return draft;
+}
+
+function renderQualidadeFvs() {
+  const key = "qualidadeFvs";
+  const editable = canEditModule(key);
+  const editing = qualidadeEdit?.key === key;
+  if (editing && !qualidadeDraft) qualidadeDraft = qFvsDraft(qualidadeEdit.id ? byId(key, qualidadeEdit.id) : null);
+  const draft = qualidadeDraft;
+  const rows = qrows(key).filter((r) => !qualidadeObraFiltro || sameId(r.projectId, qualidadeObraFiltro));
+  const pqo = editing && draft.projectId ? qPqoDaObra(draft.projectId) : null;
+  const servicosPqo = pqo ? qjson(pqo.servicosControlados, []) : null;
+  const etapas = editing && draft.projectId ? (db.projectSchedule || []).filter((e) => sameId(e.projectId, draft.projectId)) : [];
+  const pesVigente = editing && draft.servicoSiacId ? qPesVigente(draft.servicoSiacId) : null;
+  const temNaoConforme = editing && draft.itens.some((i) => i.conforme === "nao");
+  const formHtml = editing ? `
+    <section class="panel import-panel">
+      <h3>${draft.id ? "Editar FVS" : "Nova FVS"}</h3>
+      <div class="form-grid">
+        <label>Obra (com PQO)${qObraSelectHtml("qFvsObra", draft.projectId, { onlyWithPqo: true })}</label>
+        <label>Serviço (do PQO da obra)${qServicoSelectHtml("qFvsServico", draft.servicoSiacId, servicosPqo)}</label>
+        <label>Etapa do cronograma (recomendado)<select id="qFvsEtapa"><option value="">Sem vínculo</option>${etapas.map((e) => `<option value="${e.id}" ${sameId(e.id, draft.etapaId) ? "selected" : ""}>${svgText(e.stageName)}</option>`).join("")}</select></label>
+        <label>PES utilizado<input value="${pesVigente ? svgText(`v${pesVigente.versao} — ${pesVigente.servicoNome}`) : "Sem PES vigente para o serviço"}" disabled></label>
+        <label>Data de execução<input id="qFvsDataExec" type="date" value="${svgText(draft.dataExecucao)}"></label>
+        <label>Data de inspeção<input id="qFvsDataInsp" type="date" value="${svgText(draft.dataInspecao)}"></label>
+        <label>Local na obra<input id="qFvsLocal" value="${svgText(draft.localObra)}" placeholder="Bloco A — 2º pav."></label>
+        <label>Responsável pela execução<input id="qFvsRespExec" value="${svgText(draft.responsavelExecucao)}"></label>
+        <label>Responsável pela inspeção<input id="qFvsRespInsp" value="${svgText(draft.responsavelInspecao)}"></label>
+      </div>
+      ${draft.servicoSiacId && !pesVigente ? `<p class="field-hint">⚠️ Sem PES vigente para este serviço — crie o PES antes: os critérios de aceitação geram os itens abaixo.</p>` : ""}
+      ${draft.itens.length ? qChecklistHtml(draft.itens) : '<div class="empty">Selecione o serviço para gerar os itens de verificação a partir do PES vigente.</div>'}
+      <div class="form-grid">
+        <label>Resultado ${temNaoConforme ? qBadge("Há item não conforme — sugerido Reprovado", "ruim") : ""}<select id="qFvsResultado">${["", "Aprovado", "Aprovado com ressalvas", "Reprovado"].map((r) => `<option value="${r}" ${(temNaoConforme && !draft.resultado ? "Reprovado" : draft.resultado) === r ? "selected" : ""}>${r || "Em preenchimento"}</option>`).join("")}</select></label>
+        <label>Assinatura do executor (obrigatória)<input id="qFvsAssExec" value="${svgText(draft.assinaturaExecutor)}"></label>
+        <label>Assinatura do inspetor (obrigatória)<input id="qFvsAssInsp" value="${svgText(draft.assinaturaInspetor)}"></label>
+        <label class="full">Observações<textarea id="qFvsObservacoes" rows="2">${svgText(draft.observacoes)}</textarea></label>
+        <label class="full">Ação corretiva (se reprovada)<textarea id="qFvsAcaoCorretiva" rows="2">${svgText(draft.acaoCorretiva)}</textarea></label>
+      </div>
+      <div class="actions">
+        <button class="primary" type="button" id="qFvsSalvar">Salvar FVS</button>
+        <button class="secondary" type="button" id="qFormCancelar">Cancelar</button>
+      </div>
+    </section>` : "";
+  const listRows = rows.map((r) => ({ ...r, servico: `${r.servicoSiacId} — ${r.servicoNome}`, treinamento: qTemTreinamento(r.projectId, r.servicoSiacId) ? "✅" : "⚠️ Sem treinamento" }));
+  qs("content").innerHTML = `
+    ${qualidadeHead(key, "Fichas de Verificação de Serviço (FVS)", "Itens gerados automaticamente dos critérios de aceitação do PES vigente. FVS reprovada abre NC automaticamente; FVS aprovada desbloqueia a etapa vinculada do cronograma.")}
+    <section class="schedule-toolbar"><label>Obra ${qObraSelectHtml("qFiltroObraQualidade", qualidadeObraFiltro, { optional: true })}</label></section>
+    ${formHtml}
+    ${table("FVS registradas", listRows, ["projectId", "servico", "localObra", "dataExecucao", "responsavelInspecao", "treinamento", "resultado", "status"], editable, key)}
+  `;
+  qWire(key);
+  if (!editing) return;
+  qs("qFvsObra")?.addEventListener("change", (event) => {
+    qFvsCollectCampos();
+    qualidadeDraft.projectId = event.target.value;
+    qualidadeDraft.servicoSiacId = "";
+    qualidadeDraft.etapaId = "";
+    qualidadeDraft.itens = [];
+    render();
+  });
+  qs("qFvsServico")?.addEventListener("change", (event) => {
+    qFvsCollectCampos();
+    qualidadeDraft.servicoSiacId = event.target.value;
+    const pes = qPesVigente(event.target.value);
+    qualidadeDraft.pesId = pes?.id || null;
+    qualidadeDraft.itens = pes
+      ? String(pes.criteriosAceitacao || "").split("\n").map((l) => l.trim()).filter(Boolean).map((item) => ({ item, conforme: "", observacao: "" }))
+      : [];
+    render();
+  });
+  qs("qFvsEtapa")?.addEventListener("change", (event) => {
+    qualidadeDraft.etapaId = event.target.value;
+  });
+  qs("qFvsSalvar")?.addEventListener("click", async () => {
+    const d = qFvsCollectCampos();
+    if (!d.projectId) return alert("Selecione a obra (apenas obras com PQO).");
+    const servico = servicoSiac(d.servicoSiacId);
+    if (!servico) return alert("Selecione o serviço.");
+    if (!d.itens.length) return alert("A FVS precisa dos itens de verificação (crie o PES vigente do serviço).");
+    if (d.itens.some((i) => i.conforme === "nao") && d.resultado !== "Reprovado") {
+      if (!confirm("Há item não conforme — o resultado sugerido é Reprovado. Salvar mesmo assim com o resultado escolhido?")) return;
+    }
+    if (d.resultado && (!d.assinaturaExecutor || !d.assinaturaInspetor)) return alert("As duas assinaturas são obrigatórias para concluir a FVS.");
+    const status = d.resultado === "Reprovado" ? "Reprovada" : d.resultado ? "Aprovada" : d.itens.some((i) => i.conforme) ? "Preenchida" : "Pendente";
+    await qSalvar(key, {
+      pqoId: qPqoDaObra(d.projectId)?.id || null,
+      projectId: d.projectId,
+      etapaId: d.etapaId || null,
+      pesId: d.pesId,
+      servicoSiacId: Number(d.servicoSiacId),
+      servicoNome: servico.nome,
+      dataExecucao: d.dataExecucao || null,
+      localObra: d.localObra,
+      responsavelExecucao: d.responsavelExecucao,
+      responsavelInspecao: d.responsavelInspecao,
+      itensVerificacao: JSON.stringify(d.itens),
+      resultado: d.resultado || null,
+      observacoes: d.observacoes,
+      acaoCorretiva: d.acaoCorretiva,
+      dataInspecao: d.dataInspecao || null,
+      assinaturaExecutor: d.assinaturaExecutor,
+      assinaturaInspetor: d.assinaturaInspetor,
+      status,
+    }, d.id);
+  });
+}
+
+function qFvmDraft(row) {
+  return {
+    id: row?.id || null,
+    projectId: row?.projectId || "",
+    materialNome: row?.materialNome || "",
+    materialCodigo: row?.materialCodigo || "",
+    fornecedor: row?.fornecedor || "",
+    notaFiscal: row?.notaFiscal || "",
+    quantidade: row?.quantidade || "",
+    unidade: row?.unidade || "",
+    dataRecebimento: row?.dataRecebimento || qHoje(),
+    responsavelRecebimento: row?.responsavelRecebimento || "",
+    itens: qjson(row?.itensVerificacao, FVM_CHECKLIST_PADRAO.map((item) => ({ item, conforme: "", observacao: "" }))),
+    resultado: row?.resultado || "",
+    observacoes: row?.observacoes || "",
+  };
+}
+
+function renderQualidadeFvm() {
+  const key = "qualidadeFvm";
+  const editable = canEditModule(key);
+  const editing = qualidadeEdit?.key === key;
+  if (editing && !qualidadeDraft) qualidadeDraft = qFvmDraft(qualidadeEdit.id ? byId(key, qualidadeEdit.id) : null);
+  const draft = qualidadeDraft;
+  const rows = qrows(key).filter((r) => !qualidadeObraFiltro || sameId(r.projectId, qualidadeObraFiltro));
+  const temNaoConforme = editing && draft.itens.some((i) => i.conforme === "nao");
+  const formHtml = editing ? `
+    <section class="panel import-panel">
+      <h3>${draft.id ? "Editar FVM" : "Nova FVM"}</h3>
+      <div class="form-grid">
+        <label>Obra${qObraSelectHtml("qFvmObra", draft.projectId)}</label>
+        <label>Material<input id="qFvmMaterial" value="${svgText(draft.materialNome)}"></label>
+        <label>Código<input id="qFvmCodigo" value="${svgText(draft.materialCodigo)}"></label>
+        <label>Fornecedor<input id="qFvmFornecedor" value="${svgText(draft.fornecedor)}"></label>
+        <label>Nota fiscal<input id="qFvmNf" value="${svgText(draft.notaFiscal)}"></label>
+        <label>Quantidade<input id="qFvmQtd" type="number" step="0.001" value="${svgText(String(draft.quantidade || ""))}"></label>
+        <label>Unidade<input id="qFvmUnidade" value="${svgText(draft.unidade)}"></label>
+        <label>Data de recebimento<input id="qFvmData" type="date" value="${svgText(draft.dataRecebimento)}"></label>
+        <label>Responsável pelo recebimento<input id="qFvmResponsavel" value="${svgText(draft.responsavelRecebimento)}"></label>
+      </div>
+      ${qChecklistHtml(draft.itens, { editableLabels: true })}
+      <button class="secondary" type="button" id="qFvmAddItem">+ Item personalizado para este material</button>
+      <div class="form-grid">
+        <label>Resultado ${temNaoConforme ? qBadge("Há item não conforme — sugerido Reprovado", "ruim") : ""}<select id="qFvmResultado">${["", "Aprovado", "Aprovado com ressalvas", "Reprovado"].map((r) => `<option value="${r}" ${(temNaoConforme && !draft.resultado ? "Reprovado" : draft.resultado) === r ? "selected" : ""}>${r || "Em preenchimento"}</option>`).join("")}</select></label>
+        <label class="full">Observações<textarea id="qFvmObservacoes" rows="2">${svgText(draft.observacoes)}</textarea></label>
+      </div>
+      <div class="actions">
+        <button class="primary" type="button" id="qFvmSalvar">Salvar FVM</button>
+        <button class="secondary" type="button" id="qFormCancelar">Cancelar</button>
+      </div>
+    </section>` : "";
+  qs("content").innerHTML = `
+    ${qualidadeHead(key, "Fichas de Verificação de Material (FVM)", "Checklist padrão de recebimento com itens personalizáveis por material. FVM reprovada abre NC automaticamente com origem FVM.")}
+    <section class="schedule-toolbar"><label>Obra ${qObraSelectHtml("qFiltroObraQualidade", qualidadeObraFiltro, { optional: true })}</label></section>
+    ${formHtml}
+    ${table("FVM registradas", rows, ["projectId", "materialNome", "fornecedor", "notaFiscal", "quantidade", "unidade", "dataRecebimento", "resultado", "status"], editable, key)}
+  `;
+  qWire(key);
+  if (!editing) return;
+  const collect = () => {
+    const d = qualidadeDraft;
+    d.projectId = qVal("qFvmObra");
+    d.materialNome = qVal("qFvmMaterial");
+    d.materialCodigo = qVal("qFvmCodigo");
+    d.fornecedor = qVal("qFvmFornecedor");
+    d.notaFiscal = qVal("qFvmNf");
+    d.quantidade = qVal("qFvmQtd");
+    d.unidade = qVal("qFvmUnidade");
+    d.dataRecebimento = qVal("qFvmData");
+    d.responsavelRecebimento = qVal("qFvmResponsavel");
+    d.resultado = qVal("qFvmResultado");
+    d.observacoes = qVal("qFvmObservacoes");
+    d.itens = qChecklistCollect();
+    return d;
+  };
+  qs("qFvmAddItem")?.addEventListener("click", () => {
+    collect().itens.push({ item: "Novo item de verificação", conforme: "", observacao: "" });
+    render();
+  });
+  qs("qFvmSalvar")?.addEventListener("click", async () => {
+    const d = collect();
+    if (!d.projectId) return alert("Selecione a obra.");
+    if (!d.materialNome) return alert("Informe o material.");
+    const status = d.resultado === "Reprovado" ? "Reprovada" : d.resultado ? "Aprovada" : "Pendente";
+    await qSalvar(key, {
+      pqoId: qPqoDaObra(d.projectId)?.id || null,
+      projectId: d.projectId,
+      materialNome: d.materialNome,
+      materialCodigo: d.materialCodigo,
+      fornecedor: d.fornecedor,
+      notaFiscal: d.notaFiscal,
+      quantidade: d.quantidade ? Number(d.quantidade) : null,
+      unidade: d.unidade,
+      dataRecebimento: d.dataRecebimento || null,
+      responsavelRecebimento: d.responsavelRecebimento,
+      itensVerificacao: JSON.stringify(d.itens),
+      resultado: d.resultado || null,
+      observacoes: d.observacoes,
+      status,
+    }, d.id);
+  });
+}
+
+// ── NC — Não Conformidades ───────────────────────────────────────────────────
+
+function renderQualidadeNc() {
+  const key = "qualidadeNc";
+  const editable = canEditModule(key);
+  const editing = qualidadeEdit?.key === key;
+  const row = editing && qualidadeEdit.id ? byId(key, qualidadeEdit.id) || {} : {};
+  const hoje = qHoje();
+  const todas = qrows(key);
+  const rows = todas.filter((r) => !qualidadeObraFiltro || sameId(r.projectId, qualidadeObraFiltro));
+  const abertas = rows.filter((n) => n.status === "Aberta").length;
+  const emAndamento = rows.filter((n) => n.status === "Em andamento").length;
+  const vencidas = rows.filter((n) => n.status !== "Fechada" && n.prazoAcao && n.prazoAcao < hoje).length;
+  const fechadasMes = rows.filter((n) => n.status === "Fechada" && (n.dataVerificacao || n.dataAcao || "").slice(0, 7) === hoje.slice(0, 7)).length;
+  const formHtml = editing ? `
+    <section class="panel import-panel">
+      <h3>${qualidadeEdit.id ? `Editar ${row.numero || "NC"}` : "Nova Não Conformidade"}</h3>
+      <div class="form-grid">
+        <label>Número<input value="${svgText(row.numero || "Gerado automaticamente (NC-ANO-SEQ)")}" disabled></label>
+        <label>Obra${qObraSelectHtml("qNcObra", row.projectId)}</label>
+        <label>Origem<select id="qNcOrigem">${["Manual", "FVS", "FVM", "Auditoria"].map((o) => `<option ${(row.origem || "Manual") === o ? "selected" : ""}>${o}</option>`).join("")}</select></label>
+        <label>Grau<select id="qNcGrau">${["Menor", "Maior", "Critica"].map((g) => `<option ${(row.grau || "Menor") === g ? "selected" : ""}>${g}</option>`).join("")}</select></label>
+        <label>Serviço relacionado${qServicoSelectHtml("qNcServico", row.servicoSiacId)}</label>
+        <label>Local na obra<input id="qNcLocal" value="${svgText(row.localObra || "")}"></label>
+        <label>Detectada por<input id="qNcDeteccao" value="${svgText(row.responsavelDeteccao || "")}"></label>
+        <label>Data de detecção<input id="qNcDataDeteccao" type="date" value="${svgText(row.dataDeteccao || hoje)}"></label>
+        <label>Prazo da ação<input id="qNcPrazo" type="date" value="${svgText(row.prazoAcao || "")}"></label>
+        <label>Status<select id="qNcStatus">${["Aberta", "Em andamento", "Verificando", "Fechada"].map((s) => `<option ${(row.status || "Aberta") === s ? "selected" : ""}>${s}</option>`).join("")}</select></label>
+        <label class="full">Descrição da NC<textarea id="qNcDescricao" rows="3">${svgText(row.descricaoNC || "")}</textarea></label>
+        <label class="full">Ação corretiva<textarea id="qNcAcao" rows="2">${svgText(row.acaoCorretiva || "")}</textarea></label>
+        <label>Responsável pela ação<input id="qNcRespAcao" value="${svgText(row.responsavelAcao || "")}"></label>
+        <label>Data da ação<input id="qNcDataAcao" type="date" value="${svgText(row.dataAcao || "")}"></label>
+        <label class="full">Verificação de eficácia — como confirmar que resolveu<textarea id="qNcEficacia" rows="2">${svgText(row.verificacaoEficacia || "")}</textarea></label>
+        <label>Responsável pela verificação<input id="qNcRespVerif" value="${svgText(row.responsavelVerificacao || "")}"></label>
+        <label>Data da verificação<input id="qNcDataVerif" type="date" value="${svgText(row.dataVerificacao || "")}"></label>
+      </div>
+      <div class="actions">
+        <button class="primary" type="button" id="qNcSalvar">Salvar NC</button>
+        <button class="secondary" type="button" id="qFormCancelar">Cancelar</button>
+      </div>
+    </section>` : "";
+  const listRows = rows.map((r) => ({ ...r, prazo: r.prazoAcao ? (r.status === "Fechada" ? r.prazoAcao : r.prazoAcao < hoje ? `🔴 ${r.prazoAcao}` : r.prazoAcao <= new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10) ? `🟡 ${r.prazoAcao}` : `🟢 ${r.prazoAcao}`) : "—" }));
+  qs("content").innerHTML = `
+    ${qualidadeHead(key, "Não Conformidades (NC)", "Registro e tratamento de NCs (SiAC 8.7 e 10.2). NC fechada vinculada a FVS aprovada desbloqueia a etapa do cronograma automaticamente.")}
+    <section class="q-kpis">
+      ${qKpiCard("Abertas", String(abertas), "Aguardando plano de ação", abertas ? "atencao" : "ok")}
+      ${qKpiCard("Em andamento", String(emAndamento), "Ação corretiva em execução", "neutro")}
+      ${qKpiCard("Vencidas", String(vencidas), "Prazo de ação estourado", vencidas ? "ruim" : "ok")}
+      ${qKpiCard("Fechadas no mês", String(fechadasMes), "Eficácia verificada", "ok")}
+    </section>
+    <section class="schedule-toolbar"><label>Obra ${qObraSelectHtml("qFiltroObraQualidade", qualidadeObraFiltro, { optional: true })}</label></section>
+    ${formHtml}
+    ${table("Não conformidades", listRows, ["numero", "projectId", "origem", "servicoNome", "grau", "dataDeteccao", "prazo", "status"], editable, key)}
+  `;
+  qWire(key);
+  qs("qNcSalvar")?.addEventListener("click", async () => {
+    const projectId = qVal("qNcObra");
+    if (!projectId) return alert("Selecione a obra.");
+    const descricao = qVal("qNcDescricao");
+    if (!descricao) return alert("Descreva a não conformidade.");
+    const servico = servicoSiac(qVal("qNcServico"));
+    await qSalvar(key, {
+      projectId,
+      pqoId: qPqoDaObra(projectId)?.id || null,
+      numero: row.numero || "",
+      origem: qVal("qNcOrigem") || "Manual",
+      descricaoNC: descricao,
+      servicoSiacId: servico?.id || null,
+      servicoNome: servico?.nome || null,
+      localObra: qVal("qNcLocal"),
+      grau: qVal("qNcGrau") || "Menor",
+      responsavelDeteccao: qVal("qNcDeteccao"),
+      dataDeteccao: qVal("qNcDataDeteccao") || qHoje(),
+      prazoAcao: qVal("qNcPrazo") || null,
+      acaoCorretiva: qVal("qNcAcao"),
+      responsavelAcao: qVal("qNcRespAcao"),
+      dataAcao: qVal("qNcDataAcao") || null,
+      verificacaoEficacia: qVal("qNcEficacia"),
+      responsavelVerificacao: qVal("qNcRespVerif"),
+      dataVerificacao: qVal("qNcDataVerif") || null,
+      status: qVal("qNcStatus") || "Aberta",
+    }, qualidadeEdit?.id || null);
+  });
+}
+
+// ── Treinamentos ─────────────────────────────────────────────────────────────
+
+function renderQualidadeTreinamentos() {
+  const key = "qualidadeTreinamentos";
+  const editable = canEditModule(key);
+  const editing = qualidadeEdit?.key === key;
+  const row = editing && qualidadeEdit.id ? byId(key, qualidadeEdit.id) || {} : {};
+  const rows = qrows(key).filter((r) => !qualidadeObraFiltro || sameId(r.projectId, qualidadeObraFiltro));
+  const formHtml = editing ? `
+    <section class="panel import-panel">
+      <h3>${qualidadeEdit.id ? "Editar treinamento" : "Novo treinamento"}</h3>
+      <div class="form-grid">
+        <label>Obra${qObraSelectHtml("qTreinoObra", row.projectId)}</label>
+        <label>Serviço SiAC${qServicoSelectHtml("qTreinoServico", row.servicoSiacId)}</label>
+        <label>Data<input id="qTreinoData" type="date" value="${svgText(row.dataTreinamento || qHoje())}"></label>
+        <label>Instrutor<input id="qTreinoInstrutor" value="${svgText(row.instrutor || "")}"></label>
+        <label>Carga horária (h)<input id="qTreinoCarga" type="number" step="0.5" value="${svgText(String(row.cargaHoraria || ""))}"></label>
+        <label class="full">Participantes<textarea id="qTreinoParticipantes" rows="2">${svgText(row.participantes || "")}</textarea></label>
+        <label class="full">Conteúdo<textarea id="qTreinoConteudo" rows="2">${svgText(row.conteudo || "")}</textarea></label>
+        <label class="full">Observações<textarea id="qTreinoObs" rows="2">${svgText(row.observacoes || "")}</textarea></label>
+      </div>
+      <div class="actions">
+        <button class="primary" type="button" id="qTreinoSalvar">Salvar</button>
+        <button class="secondary" type="button" id="qFormCancelar">Cancelar</button>
+      </div>
+    </section>` : "";
+  qs("content").innerHTML = `
+    ${qualidadeHead(key, "Treinamentos", "Registro de treinamentos da equipe por obra e serviço SiAC (cláusulas 7.2 e 7.3). FVS e PQO indicam serviços sem treinamento registrado.")}
+    <section class="schedule-toolbar"><label>Obra ${qObraSelectHtml("qFiltroObraQualidade", qualidadeObraFiltro, { optional: true })}</label></section>
+    ${formHtml}
+    ${table("Treinamentos registrados", rows, ["projectId", "servicoNome", "dataTreinamento", "instrutor", "cargaHoraria"], editable, key)}
+  `;
+  qWire(key);
+  qs("qTreinoSalvar")?.addEventListener("click", async () => {
+    const projectId = qVal("qTreinoObra");
+    const servico = servicoSiac(qVal("qTreinoServico"));
+    if (!projectId || !servico) return alert("Selecione a obra e o serviço.");
+    await qSalvar(key, {
+      projectId,
+      pqoId: qPqoDaObra(projectId)?.id || null,
+      servicoSiacId: servico.id,
+      servicoNome: servico.nome,
+      dataTreinamento: qVal("qTreinoData") || qHoje(),
+      instrutor: qVal("qTreinoInstrutor"),
+      participantes: qVal("qTreinoParticipantes"),
+      conteudo: qVal("qTreinoConteudo"),
+      cargaHoraria: qVal("qTreinoCarga") ? Number(qVal("qTreinoCarga")) : null,
+      observacoes: qVal("qTreinoObs"),
+    }, qualidadeEdit?.id || null);
+  });
+}
+
+// ── Auditorias internas SiAC ─────────────────────────────────────────────────
+
+function renderQualidadeAuditorias() {
+  const key = "qualidadeAuditorias";
+  const editable = canEditModule(key);
+  const editing = qualidadeEdit?.key === key;
+  const row = editing && qualidadeEdit.id ? byId(key, qualidadeEdit.id) || {} : {};
+  const itens = editing
+    ? (qjson(row.checklistSiac, null) || CHECKLIST_SIAC_NIVEL_B.map((c) => ({ ...c, resultado: "", observacao: "" })))
+    : [];
+  const rows = qrows(key);
+  const formHtml = editing ? `
+    <section class="panel import-panel">
+      <h3>${qualidadeEdit.id ? "Editar auditoria" : "Nova auditoria interna"}</h3>
+      <div class="form-grid">
+        <label>Tipo<select id="qAudTipo">${["Obra", "Corporativa"].map((t) => `<option ${(row.tipo || "Obra") === t ? "selected" : ""}>${t}</option>`).join("")}</select></label>
+        <label>Obra (para auditoria de obra)${qObraSelectHtml("qAudObra", row.projectId)}</label>
+        <label>Data<input id="qAudData" type="date" value="${svgText(row.dataAuditoria || qHoje())}"></label>
+        <label>Auditor<input id="qAudAuditor" value="${svgText(row.auditor || "")}"></label>
+        <label>Status<select id="qAudStatus">${["Agendada", "Realizada", "Relatorio emitido"].map((s) => `<option ${(row.status || "Agendada") === s ? "selected" : ""}>${s}</option>`).join("")}</select></label>
+        <label class="full">Escopo<textarea id="qAudEscopo" rows="2">${svgText(row.escopo || "")}</textarea></label>
+      </div>
+      <h4>Checklist SiAC Nível B (${CHECKLIST_SIAC_NIVEL_B.length} requisitos)</h4>
+      <p class="field-hint">Itens "Não Conforme" geram NC automaticamente quando a auditoria passa para Realizada.</p>
+      <table class="q-mat-table q-checklist"><thead><tr><th>Cláusula</th><th>Requisito</th><th>Avaliação</th><th>Observação</th></tr></thead><tbody>
+        ${itens.map((item, i) => `
+          <tr data-q-aud-row data-q-aud-clausula="${svgText(item.clausula)}" data-q-aud-desc="${svgText(item.desc)}">
+            <td>${svgText(item.clausula)}</td>
+            <td>${svgText(item.desc)}</td>
+            <td class="q-radio-group">
+              <label><input type="radio" name="qAud${i}" value="Conforme" ${item.resultado === "Conforme" ? "checked" : ""}> Conforme</label>
+              <label><input type="radio" name="qAud${i}" value="Não Conforme" ${item.resultado === "Não Conforme" ? "checked" : ""}> Não Conf.</label>
+              <label><input type="radio" name="qAud${i}" value="N/A" ${item.resultado === "N/A" ? "checked" : ""}> N/A</label>
+            </td>
+            <td><input data-q-aud-obs value="${svgText(item.observacao || "")}"></td>
+          </tr>`).join("")}
+      </tbody></table>
+      <div class="form-grid">
+        <label class="full">Relatório / conclusões<textarea id="qAudRelatorio" rows="3">${svgText(row.relatorioTexto || "")}</textarea></label>
+      </div>
+      <div class="actions">
+        <button class="primary" type="button" id="qAudSalvar">Salvar auditoria</button>
+        <button class="secondary" type="button" id="qFormCancelar">Cancelar</button>
+      </div>
+    </section>` : "";
+  const listRows = rows.map((r) => ({ ...r, conformidade: r.totalItens ? `${r.itensConformes}/${r.totalItens} (${Math.round((r.itensConformes / r.totalItens) * 100)}%)` : "—" }));
+  qs("content").innerHTML = `
+    ${qualidadeHead(key, "Auditorias Internas SiAC", "Checklist dos requisitos obrigatórios do SiAC Nível B (cláusulas 4 a 10). O resultado é calculado pelos itens conformes sobre os avaliados.")}
+    ${formHtml}
+    ${table("Auditorias", listRows, ["tipo", "projectId", "dataAuditoria", "auditor", "conformidade", "resultado", "status"], editable, key)}
+  `;
+  qWire(key);
+  qs("qAudSalvar")?.addEventListener("click", async () => {
+    const checklist = [...qs("content").querySelectorAll("[data-q-aud-row]")].map((tr, i) => ({
+      clausula: tr.dataset.qAudClausula,
+      desc: tr.dataset.qAudDesc,
+      resultado: tr.querySelector(`input[name="qAud${i}"]:checked`)?.value || "",
+      observacao: tr.querySelector("[data-q-aud-obs]")?.value.trim() || "",
+    }));
+    const tipo = qVal("qAudTipo") || "Obra";
+    const projectId = qVal("qAudObra");
+    if (tipo === "Obra" && !projectId) return alert("Selecione a obra auditada.");
+    await qSalvar(key, {
+      projectId: projectId || null,
+      tipo,
+      dataAuditoria: qVal("qAudData") || qHoje(),
+      auditor: qVal("qAudAuditor"),
+      escopo: qVal("qAudEscopo"),
+      checklistSiac: JSON.stringify(checklist),
+      relatorioTexto: qVal("qAudRelatorio"),
+      status: qVal("qAudStatus") || "Agendada",
+    }, qualidadeEdit?.id || null);
+  });
 }
 
 async function importSinapiCsvLocal({ type, sheetName, uf, referenceMonth, referenceYear, referenceType, file }) {
