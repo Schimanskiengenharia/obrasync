@@ -1050,6 +1050,36 @@ function ensure_api_sessions_table(PDO $pdo): void
             KEY idx_api_sessions_user (userId)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
     );
+    // Repara tabelas criadas por versões anteriores: sem as colunas/defaults
+    // esperados, a sessão era gravada com data zero e descartada imediatamente
+    // como "expirada" — deixando api_sessions sempre vazia ("Sessão inválida").
+    try {
+        $columns = [];
+        foreach ($pdo->query('DESCRIBE api_sessions') as $column) {
+            $columns[strtolower((string) $column['Field'])] = $column;
+        }
+        if (!isset($columns['userid'])) {
+            $pdo->exec('ALTER TABLE api_sessions ADD COLUMN userId BIGINT UNSIGNED NOT NULL');
+        }
+        if (!isset($columns['tokenhash'])) {
+            $pdo->exec('ALTER TABLE api_sessions ADD COLUMN tokenHash CHAR(64) NOT NULL');
+        }
+        if (!isset($columns['createdat'])) {
+            $pdo->exec('ALTER TABLE api_sessions ADD COLUMN createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP');
+        }
+        if (!isset($columns['lastactivity'])) {
+            $pdo->exec('ALTER TABLE api_sessions ADD COLUMN lastActivity TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP');
+        } else {
+            $default = strtoupper((string) ($columns['lastactivity']['Default'] ?? ''));
+            if (!str_contains($default, 'CURRENT_TIMESTAMP')) {
+                $pdo->exec('ALTER TABLE api_sessions MODIFY COLUMN lastActivity TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP');
+            }
+        }
+    } catch (PDOException $error) {
+        // Sem permissão de DDL: registra e segue — o INSERT do login define as
+        // datas explicitamente e não depende dos defaults da tabela.
+        error_log('[ObraSync auth] reparo da api_sessions falhou: ' . $error->getMessage());
+    }
     $done = true;
 }
 
@@ -1145,16 +1175,17 @@ function bearer_token(): string
     return trim((string) ($_GET['token'] ?? ''));
 }
 
-// LOG TEMPORÁRIO DE DIAGNÓSTICO do caso "Sessão inválida" ao excluir.
-// Registra em /var/lib/financeiro/auth-debug.log (e no error.log do Apache) o que
-// chega em cada requisição DELETE e em toda falha de autenticação: quais canais
-// trouxeram o token (header/X-Auth-Token/query), tamanho e prefixo do hash.
-// Remova esta função e as chamadas após o problema ser resolvido.
+// LOG TEMPORÁRIO DE DIAGNÓSTICO do caso "Sessão inválida".
+// Registra em /var/lib/financeiro/auth-debug.log (e no error.log do Apache):
+// toda requisição DELETE, toda falha de autenticação e a criação de sessão no
+// login — com os canais que trouxeram o token (header/X-Auth-Token/query),
+// tamanho e prefixo do hash. Remova a função e as chamadas após resolver.
 function auth_debug_log(string $stage, string $token): void
 {
     $method = (string) ($_SERVER['REQUEST_METHOD'] ?? '');
     $isFailure = str_starts_with($stage, 'FALHA');
-    if ($method !== 'DELETE' && !$isFailure) {
+    $isLogin = str_starts_with($stage, 'login');
+    if ($method !== 'DELETE' && !$isFailure && !$isLogin) {
         return;
     }
     $line = sprintf(
@@ -1374,8 +1405,25 @@ function handle_login(PDO $pdo, array $payload): never
     ensure_api_sessions_table($pdo);
     $pdo->prepare('DELETE FROM api_sessions WHERE lastActivity < (NOW() - INTERVAL ' . AUTH_IDLE_SECONDS . ' SECOND)')->execute();
     $token = bin2hex(random_bytes(32));
-    $pdo->prepare('INSERT INTO api_sessions (userId, tokenHash) VALUES (?, ?)')
-        ->execute([$user['id'], hash('sha256', $token)]);
+    $tokenHash = hash('sha256', $token);
+    try {
+        // Datas com NOW() explícito: não depende de DEFAULT nas colunas — tabelas
+        // antigas sem default gravavam data zero e a sessão era descartada na hora.
+        $pdo->prepare('INSERT INTO api_sessions (userId, tokenHash, createdAt, lastActivity) VALUES (?, ?, NOW(), NOW())')
+            ->execute([$user['id'], $tokenHash]);
+    } catch (PDOException $error) {
+        auth_debug_log('FALHA no INSERT da sessão de login: ' . $error->getMessage(), $token);
+        fail('Não foi possível criar a sessão de acesso. Contate o administrador.', 500);
+    }
+    // Confirma que a sessão foi gravada antes de devolver o token ao navegador.
+    $check = $pdo->prepare('SELECT id FROM api_sessions WHERE tokenHash = ? LIMIT 1');
+    $check->execute([$tokenHash]);
+    $sessionId = $check->fetchColumn();
+    if (!$sessionId) {
+        auth_debug_log('FALHA: INSERT da sessão não deu erro, mas a linha não foi encontrada', $token);
+        fail('Não foi possível registrar a sessão de acesso. Contate o administrador.', 500);
+    }
+    auth_debug_log('login ok: sessão ' . $sessionId . ' criada para ' . $user['username'], $token);
 
     respond(['ok' => true, 'user' => $user, 'token' => $token, 'idleTimeoutMs' => AUTH_IDLE_SECONDS * 1000]);
 }
