@@ -1654,9 +1654,18 @@ function authHeaders() {
 }
 
 async function apiRequest(path, options = {}) {
+  const method = String(options.method || "GET").toUpperCase();
+  let url = `${API_BASE}/${path}`;
+  // Alguns servidores Apache/PHP-CGI removem os headers de autenticação em
+  // métodos não convencionais (DELETE/PUT/PATCH), causando "Sessão inválida".
+  // O token vai também na query string — o bearer_token() do backend usa esse
+  // fallback — garantindo autenticação em TODAS as requisições.
+  if (authToken && ["DELETE", "PUT", "PATCH"].includes(method)) {
+    url += `${url.includes("?") ? "&" : "?"}token=${encodeURIComponent(authToken)}`;
+  }
   let response;
   try {
-    response = await fetch(`${API_BASE}/${path}`, {
+    response = await fetch(url, {
       headers: { "Content-Type": "application/json", ...authHeaders(), ...(options.headers || {}) },
       ...options,
     });

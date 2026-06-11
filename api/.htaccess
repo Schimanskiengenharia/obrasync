@@ -5,8 +5,17 @@ DirectoryIndex index.php
   Require all denied
 </FilesMatch>
 
+# PHP-CGI/FastCGI: repassa o header Authorization (Bearer) ao PHP em todos os
+# métodos HTTP — sem isso, requisições DELETE/PUT podem chegar sem token e
+# falhar com "Sessão inválida".
+<IfModule mod_setenvif.c>
+  SetEnvIf Authorization "(.*)" HTTP_AUTHORIZATION=$1
+</IfModule>
+
 <IfModule mod_rewrite.c>
   RewriteEngine On
+  RewriteCond %{HTTP:Authorization} .
+  RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
   RewriteCond %{REQUEST_FILENAME} !-f
   RewriteCond %{REQUEST_FILENAME} !-d
   RewriteRule ^ index.php [QSA,L]

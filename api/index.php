@@ -1100,6 +1100,7 @@ function ensure_plugins_table(PDO $pdo): void
     if ($done) {
         return;
     }
+    $tableExisted = (bool) $pdo->query("SHOW TABLES LIKE 'system_plugins'")->fetchColumn();
     $pdo->exec(
         "CREATE TABLE IF NOT EXISTS system_plugins (
             id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -1115,14 +1116,12 @@ function ensure_plugins_table(PDO $pdo): void
             UNIQUE KEY uk_plugins_name (name)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
     );
-    // Exemplo "Portal do Cliente" SOMENTE em ambiente local (app_env = 'local' no config).
-    // Em produção a tabela nasce vazia: nenhum dado fictício é inserido automaticamente.
-    if (app_env() === 'local') {
-        $count = (int) $pdo->query('SELECT COUNT(*) FROM system_plugins')->fetchColumn();
-        if ($count === 0) {
-            $pdo->prepare('INSERT INTO system_plugins (name, url, icon, description, roles, sortOrder, status) VALUES (?,?,?,?,?,?,?)')
-                ->execute(['Portal do Cliente', 'https://schimanskiengenharia.com.br/portal', '🌐', 'Acesso ao portal externo do cliente (URL configurável).', '', 1, 'Ativo']);
-        }
+    // Exemplo "Portal do Cliente" SOMENTE em ambiente local (app_env = 'local' no
+    // config) e apenas na criação da tabela: se o usuário excluir o exemplo, ele
+    // não é recriado. Em produção a tabela nasce vazia, sem dado fictício algum.
+    if (!$tableExisted && app_env() === 'local') {
+        $pdo->prepare('INSERT INTO system_plugins (name, url, icon, description, roles, sortOrder, status) VALUES (?,?,?,?,?,?,?)')
+            ->execute(['Portal do Cliente', 'https://schimanskiengenharia.com.br/portal', '🌐', 'Acesso ao portal externo do cliente (URL configurável).', '', 1, 'Ativo']);
     }
     $done = true;
 }
