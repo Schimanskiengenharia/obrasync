@@ -9,7 +9,18 @@
     <meta name="robots" content="noindex, nofollow" />
     <title>ObraSync</title>
     <link rel="icon" type="image/png" href="assets/favicon.png" />
-    <link rel="stylesheet" href="styles.css?v=1707" />
+    <script>
+      // Aplica o tema salvo ANTES do primeiro paint para evitar flash de tema errado.
+      (function () {
+        var pref = "auto";
+        try { pref = localStorage.getItem("finconta.theme") || "auto"; } catch (e) { /* sem armazenamento */ }
+        if (pref !== "light" && pref !== "dark" && pref !== "auto") pref = "auto";
+        var dark = pref === "dark" || (pref === "auto" && window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+        document.documentElement.dataset.theme = dark ? "dark" : "light";
+        document.documentElement.dataset.themePref = pref;
+      })();
+    </script>
+    <link rel="stylesheet" href="styles.css?v=1708" />
   </head>
   <body>
     <section id="loginScreen" class="login-screen">
@@ -109,6 +120,7 @@
           </div>
           <button id="sidebarToggle" class="sidebar-toggle" type="button" aria-label="Recolher menu">‹</button>
         </div>
+        <div id="themeSwitch" class="theme-switch" role="group" aria-label="Tema do sistema"></div>
         <nav id="moduleNav" class="nav" aria-label="Módulos"></nav>
       </aside>
       <button id="sidebarBackdrop" class="sidebar-backdrop hidden" type="button" aria-label="Fechar menu"></button>
@@ -260,6 +272,6 @@
       </menu>
     </dialog>
 
-    <script src="app.js?v=1706"></script>
+    <script src="app.js?v=1708"></script>
   </body>
 </html>

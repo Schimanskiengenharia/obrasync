@@ -206,6 +206,79 @@ function safeLocalSet(key, value) {
   }
 }
 
+// ── Tema (claro / escuro / automático) ──────────────────────────────────────
+// O tema efetivo já foi aplicado pelo script inline do index.html antes do
+// primeiro paint; aqui ficam a troca em tempo real e a persistência por usuário.
+
+const THEME_KEY = "finconta.theme";
+const themeMedia = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+let themePreference = document.documentElement.dataset.themePref || "auto";
+
+function themeStorageKey() {
+  return currentUser?.id ? `${THEME_KEY}.${currentUser.id}` : THEME_KEY;
+}
+
+function effectiveTheme(pref) {
+  if (pref === "dark" || pref === "light") return pref;
+  return themeMedia?.matches ? "dark" : "light";
+}
+
+function applyThemePreference(pref, persist = true) {
+  themePreference = ["light", "dark", "auto"].includes(pref) ? pref : "auto";
+  document.documentElement.dataset.theme = effectiveTheme(themePreference);
+  document.documentElement.dataset.themePref = themePreference;
+  if (persist) {
+    safeLocalSet(themeStorageKey(), themePreference);
+    // Último tema usado: aplicado antes do login (script inline do index.html).
+    safeLocalSet(THEME_KEY, themePreference);
+  }
+  syncThemeSwitches();
+}
+
+// Restaura a preferência salva do usuário logado (com fallback no último tema usado).
+function loadUserThemePreference() {
+  const saved = safeLocalGet(themeStorageKey()) || safeLocalGet(THEME_KEY) || "auto";
+  applyThemePreference(saved, false);
+}
+
+function themeSwitchButtonsHtml() {
+  const options = [
+    ["light", "☀️", "Tema claro"],
+    ["dark", "🌙", "Tema escuro"],
+    ["auto", "💻", "Automático (segue o sistema operacional)"],
+  ];
+  return options.map(([value, icon, label]) => `
+    <button type="button" class="theme-btn ${themePreference === value ? "active" : ""}" data-theme-pref="${value}"
+      title="${label}" aria-label="${label}" aria-pressed="${themePreference === value}">${icon}</button>
+  `).join("");
+}
+
+function syncThemeSwitches() {
+  document.querySelectorAll(".theme-btn").forEach((button) => {
+    const active = button.dataset.themePref === themePreference;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+}
+
+function wireThemeSwitch(rootEl) {
+  rootEl.querySelectorAll("[data-theme-pref]").forEach((button) => {
+    button.addEventListener("click", () => applyThemePreference(button.dataset.themePref));
+  });
+}
+
+function setupThemeSwitch() {
+  const host = document.getElementById("themeSwitch");
+  if (host) {
+    host.innerHTML = themeSwitchButtonsHtml();
+    wireThemeSwitch(host);
+  }
+  // Modo automático: acompanha mudanças do tema do SO em tempo real.
+  themeMedia?.addEventListener?.("change", () => {
+    if (themePreference === "auto") applyThemePreference("auto", false);
+  });
+}
+
 let sidebarCollapsed = safeLocalGet("finconta.sidebarCollapsed") === "true";
 let serverMode = false;
 let serverStatus = "Conectando ao servidor";
@@ -2219,6 +2292,7 @@ function render() {
   if (currentModule === "workBudgets") return renderWorkBudgets();
   if (currentModule === "viabilityAnalyses") return renderViability();
   if (currentModule === "plugins") return renderPlugins();
+  if (currentModule === "preferences") return renderPreferences();
   if (currentModule === "sinapiReferences") return renderSinapiReferences();
   if (currentModule === "abcCurve") return renderAbcCurve();
   if (currentModule === "projectSchedule") return renderProjectSchedule();
@@ -3274,6 +3348,26 @@ function pluginCard(row, index, total, editable) {
       </footer>` : ""}
     </article>
   `;
+}
+
+// Preferências do sistema: CRUD padrão + card de seleção de tema.
+function renderPreferences() {
+  renderCrud("preferences");
+  const section = document.createElement("section");
+  section.className = "theme-pref-card";
+  section.innerHTML = `
+    <div>
+      <h3>Tema do sistema</h3>
+      <p>Claro, escuro ou automático (segue o tema do sistema operacional). A preferência é salva neste navegador para o seu usuário.</p>
+    </div>
+    <div class="theme-switch theme-switch-large" role="group" aria-label="Tema do sistema">
+      ${themeSwitchButtonsHtml()}
+    </div>
+  `;
+  const head = qs("content").querySelector(".module-head");
+  if (head) head.after(section);
+  else qs("content").prepend(section);
+  wireThemeSwitch(section);
 }
 
 // Atualização parcial de um plugin (status/ordem) no servidor ou no modo local.
@@ -6373,6 +6467,7 @@ function showLogin(message = "") {
 
 function showApp(user) {
   currentUser = user;
+  loadUserThemePreference();
   writeAuthSession(user);
   qs("loginScreen").classList.add("hidden");
   qs("appShell").classList.remove("hidden");
@@ -6414,6 +6509,7 @@ async function handleLogin(event) {
 function restoreSession() {
   applySidebarWidth();
   setupNav();
+  setupThemeSwitch();
   setupFavoritesDialog();
   setupFavoritesHover();
   setupSessionWarning();
