@@ -846,3 +846,82 @@ Após subir os arquivos, execute as migrations novas que ainda não foram rodada
     mudança de parecer) — truncar para as últimas N entradas.
 16. **Tema após logout** mantém a preferência do último usuário no login
     (cosmético; o tema correto é reaplicado ao logar).
+
+## Auditoria de Código — 2026-06-11 (2ª rodada, pendências PARA CORRIGIR)
+
+> Revisão de ponta a ponta após os módulos SINAPI assíncrono, permissões e
+> Qualidade PBQP-H. Mesma mecânica da seção anterior: corrigir na ordem,
+> validar com `php -l` / `node --check`, bump do `?v=` quando tocar JS/CSS e
+> riscar com data + hash. Os itens A2 (6–11) e A3 (12–16) da 1ª rodada
+> CONTINUAM pendentes.
+
+### B1 — Alta prioridade
+
+17. **Bootstrap sem paginação × base SINAPI completa (bomba-relógio).**
+    `bootstrap_data()` devolve TODAS as linhas de TODOS os recursos visíveis —
+    incluindo `sinapi_insumos`, `sinapi_composicoes` e `sinapi_composicao_itens`.
+    Com o importador assíncrono agora é fácil carregar a base oficial inteira
+    (Analítico tem dezenas/centenas de milhares de linhas): o JSON do bootstrap
+    pode passar de dezenas de MB e o login/refresh ficará inutilizável.
+    *Correção sugerida:* excluir as tabelas SINAPI grandes do bootstrap e criar
+    busca paginada na API (`?search=&limit=`), carregando-as sob demanda no
+    módulo Base SINAPI.
+
+18. **Login sem proteção contra força bruta.** `handle_login` aceita tentativas
+    ilimitadas (sem rate limit por IP/usuário, sem atraso progressivo, sem
+    bloqueio temporário). O mesmo vale para `request-password-reset` (permite
+    disparar e-mails sem limite). *Correção:* tabela `login_attempts` com
+    janela deslizante + atraso/bloqueio temporário.
+
+19. **Enumeração de e-mails no reset de senha.** `handle_request_password_reset`
+    responde 404 "E-mail não cadastrado" — confirma quais e-mails existem no
+    sistema. *Correção:* responder sempre 200 com mensagem genérica.
+
+20. **Fallback de senha em texto plano no login.** `handle_login` aceita
+    `hash_equals($stored, $password)` — qualquer valor não-hash na coluna
+    `password` é tratado como senha válida (necessário hoje para o seed
+    `TROQUE_NO_PRIMEIRO_ACESSO`). *Correção:* restringir o fallback a
+    `mustChangePassword = 1` ou removê-lo após migrar os usuários legados.
+
+### B2 — Médios
+
+21. **Sessões sem expiração absoluta.** Só há timeout de inatividade (30 min);
+    um token usado continuamente (ou roubado e mantido vivo) nunca expira.
+    Adicionar TTL absoluto (ex.: 12 h desde `createdAt`).
+
+22. **Regras de qualidade sem validação server-side.** A API aceita FVS com
+    `status = 'Aprovada'` sem assinaturas/resultado e NC fechada sem
+    verificação — as regras (assinaturas obrigatórias, resultado × status)
+    existem só no frontend. Validar em `qualidade_pos_gravacao`/gancho de PUT,
+    inclusive por exigência de registros controlados do próprio SiAC (7.5).
+
+23. **Corrida na numeração de NC.** `qualidade_proximo_numero_nc` usa MAX+1 sem
+    lock — duas NCs simultâneas podem colidir no UNIQUE `numero` e devolver 500.
+    Retry no insert ou sequência dedicada.
+
+24. **Importador SINAPI síncrono antigo continua carregando o XLSX inteiro no
+    PHP-CGI** (memória/timeout com o arquivo de 13 MB). Com o assíncrono no ar,
+    limitar tamanho do arquivo no caminho síncrono ou aposentá-lo.
+
+25. **`sleep(2)` no disparo do worker SINAPI** segura a requisição (e um worker
+    FPM/CGI) por 2 s só para conferir se o job saiu de `queued`. Mover a
+    detecção para o primeiro poll de `sinapi-import-status`.
+
+26. **`generatedLink` vira `<a href>` sem validação de esquema** — um valor
+    `javascript:...` passa pelo `escapeHtml` (que não cobre URI scheme).
+    Validar `^https?://` antes de renderizar como link.
+
+### B3 — Hardening / menores
+
+27. **Sem Content-Security-Policy.** Com o token de sessão no `localStorage`,
+    XSS = roubo de sessão; CSP é a defesa em profundidade que falta. O
+    `index.html` tem script inline (tema) — exigirá nonce ou mover para arquivo.
+
+28. **`list_records` sem LIMIT/paginação** — todo GET devolve a tabela inteira
+    (mesma classe do item 17, em menor escala).
+
+29. **Caminho absoluto do servidor exposto nas respostas de upload**
+    (`respond(['file' => $path])`) — divulgação menor de estrutura interna.
+
+30. **Operador pode fechar NC** (edição em `qualidadeNc`) — avaliar se o
+    fechamento deve exigir gestor/engenharia (decisão de negócio do SGQ).
