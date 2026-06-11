@@ -8,18 +8,17 @@
     <meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin" />
     <meta name="robots" content="noindex, nofollow" />
     <title>ObraSync</title>
-    <link rel="stylesheet" href="styles.css?v=1706" />
+    <link rel="icon" type="image/png" href="assets/favicon.png" />
+    <link rel="stylesheet" href="styles.css?v=1707" />
   </head>
   <body>
     <section id="loginScreen" class="login-screen">
       <!-- Painel 1: login normal -->
       <form id="loginForm" class="login-card login-panel" data-panel="login">
-        <div class="brand login-brand">
-          <div class="brand-mark">OS</div>
-          <div>
-            <strong>ObraSync</strong>
-            <span>Acesso ao sistema</span>
-          </div>
+        <div class="login-brand-logo">
+          <img src="assets/logo.png" alt="ObraSync" />
+          <strong>ObraSync</strong>
+          <span>Acesso ao sistema</span>
         </div>
         <label>
           Usuário
@@ -37,9 +36,10 @@
 
       <!-- Painel 2: solicitar redefinição por e-mail -->
       <form id="forgotForm" class="login-card login-panel hidden" data-panel="forgot">
-        <div class="brand login-brand">
-          <div class="brand-mark">OS</div>
-          <div><strong>ObraSync</strong><span>Redefinir senha</span></div>
+        <div class="login-brand-logo">
+          <img src="assets/logo.png" alt="ObraSync" />
+          <strong>ObraSync</strong>
+          <span>Redefinir senha</span>
         </div>
         <p class="login-help">Informe o e-mail cadastrado na sua conta. Se encontrado, enviaremos um link de redefinição válido por 2 horas.</p>
         <label>
@@ -53,9 +53,10 @@
 
       <!-- Painel 3: redefinir senha via token do e-mail -->
       <form id="resetForm" class="login-card login-panel hidden" data-panel="reset">
-        <div class="brand login-brand">
-          <div class="brand-mark">OS</div>
-          <div><strong>ObraSync</strong><span>Nova senha</span></div>
+        <div class="login-brand-logo">
+          <img src="assets/logo.png" alt="ObraSync" />
+          <strong>ObraSync</strong>
+          <span>Nova senha</span>
         </div>
         <input id="resetToken" type="hidden" />
         <label>
@@ -99,7 +100,8 @@
       <aside id="sidebar" class="sidebar">
         <div class="sidebar-head">
           <div class="brand">
-            <div class="brand-mark">OS</div>
+            <img class="brand-logo" src="assets/logo.png" alt="ObraSync" />
+            <img class="brand-logo-mini" src="assets/favicon.png" alt="" aria-hidden="true" />
             <div class="brand-copy">
               <strong>ObraSync</strong>
               <span>Obras, financeiro e gestão</span>

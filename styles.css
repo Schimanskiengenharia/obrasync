@@ -63,9 +63,22 @@ button {
   box-shadow: 0 28px 80px rgba(0, 0, 0, 0.28);
 }
 
-.login-brand {
-  padding: 0 0 16px;
-  border-bottom-color: var(--line);
+/* Logo centralizada acima dos campos de login. */
+.login-brand-logo {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  padding: 0 0 12px;
+}
+
+.login-brand-logo img {
+  width: 140px;
+  max-width: 140px;
+  height: auto;
+}
+
+.login-brand-logo strong {
+  font-size: 18px;
   color: var(--ink);
 }
 
@@ -91,8 +104,10 @@ button:disabled {
   opacity: 0.55;
 }
 
-.login-brand span {
+.login-brand-logo span {
   color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .login-error {
@@ -454,23 +469,31 @@ button:disabled {
 
 .brand {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 12px;
+  gap: 6px;
   min-width: 0;
   padding: 4px;
   border-bottom: 0;
   flex: 1;
 }
 
-.brand-mark {
-  display: grid;
-  place-items: center;
-  width: 42px;
-  height: 42px;
-  border-radius: 8px;
-  background: var(--teal);
-  color: #fff;
-  font-weight: 800;
+/* Logo da empresa no topo da sidebar: completa quando expandida, ícone quando recolhida. */
+.brand-logo {
+  display: block;
+  width: 120px;
+  max-width: 100%;
+  height: auto;
+}
+
+.brand-logo-mini {
+  display: none;
+  width: 36px;
+  height: 36px;
+}
+
+.brand-copy {
+  text-align: center;
 }
 
 .brand strong,
@@ -574,15 +597,24 @@ button:disabled {
 }
 
 .sidebar-collapsed .brand-copy,
-.sidebar-collapsed .brand,
 .sidebar-collapsed .nav-label,
 .sidebar-collapsed .nav-caret,
 .sidebar-collapsed .nav-submenu {
   display: none;
 }
 
+.sidebar-collapsed .brand-logo {
+  display: none;
+}
+
+.sidebar-collapsed .brand-logo-mini {
+  display: block;
+}
+
 .sidebar-collapsed .sidebar-head {
   justify-content: center;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .sidebar-collapsed .brand,
@@ -2318,12 +2350,22 @@ menu {
     --sidebar-w: 288px;
   }
 
-  .sidebar-collapsed .brand {
-    display: flex;
+  /* No mobile a sidebar abre completa: logo cheia, texto e cabeçalho em linha. */
+  .sidebar-collapsed .brand-logo {
+    display: block;
+  }
+
+  .sidebar-collapsed .brand-logo-mini {
+    display: none;
   }
 
   .sidebar-collapsed .brand-copy {
     display: block;
+  }
+
+  .sidebar-collapsed .sidebar-head {
+    flex-direction: row;
+    gap: 8px;
   }
 
   .sidebar-collapsed .nav-label,
