@@ -121,6 +121,14 @@ try {
         handle_sinapi_import_status($pdo);
     }
 
+    // Redispara o worker de um job preso em queued (exec falhou) ou com erro,
+    // reaproveitando os arquivos já salvos em uploads/sinapi.
+    if ($resource === 'sinapi-reprocess-job') {
+        require_method($method, ['POST']);
+        require_admin($authUser);
+        handle_sinapi_reprocess_job($pdo, $config, read_json());
+    }
+
     if ($resource === 'project-upload') {
         require_method($method, ['POST']);
         authorize_request($pdo, $authUser, 'projectSchedule', 'edit');
@@ -2126,30 +2134,101 @@ function handle_sinapi_import_async(PDO $pdo, array $config, array $authUser): n
             (int) ($authUser['id'] ?? 0) ?: null,
         ]);
 
-    // Logs do worker fora da pasta pública, ao lado de uploads/ e backups/.
-    $logDir = dirname(rtrim($config['upload_dir'] ?? '/var/lib/financeiro/uploads', '/')) . '/sinapi_jobs';
-    if (!is_dir($logDir)) {
-        mkdir($logDir, 0750, true);
-    }
+    spawn_sinapi_worker($pdo, $config, $jobId);
+
+    respond(['ok' => true, 'jobId' => $jobId], 201);
+}
+
+// Dispara o worker CLI em background com verificações explícitas: pasta de logs
+// gravável, binário PHP CLI resolvido por lista de candidatos (PHP_BINARY em
+// CGI/FPM aponta para o SAPI web, não serve) e nohup para o worker não morrer
+// junto com o request. Usada pela importação e pelo reprocessamento.
+function spawn_sinapi_worker(PDO $pdo, array $config, string $jobId): void
+{
     $worker = dirname(__DIR__) . '/scripts/sinapi_import_worker.php';
     if (!is_file($worker)) {
         fail('Worker não encontrado em scripts/sinapi_import_worker.php — confira o deploy.', 500);
     }
-    // PHP_BINARY em CGI/FPM aponta para o binário do SAPI web; o worker precisa do CLI.
-    $php = PHP_BINDIR . '/php';
-    if (!is_file($php)) {
-        $php = trim((string) shell_exec('command -v php 2>/dev/null')) ?: 'php';
+
+    // Logs do worker fora da pasta pública, ao lado de uploads/ e backups/.
+    $logDir = dirname(rtrim($config['upload_dir'] ?? '/var/lib/financeiro/uploads', '/')) . '/sinapi_jobs';
+    if (!is_dir($logDir) && !@mkdir($logDir, 0750, true)) {
+        fail("Não foi possível criar a pasta de logs em {$logDir}. Verifique as permissões do usuário do Apache.", 500);
     }
+    if (!is_writable($logDir)) {
+        fail("Sem permissão de escrita em {$logDir} — o log do worker não poderia ser gravado.", 500);
+    }
+
+    $php = null;
+    $candidates = [
+        PHP_BINDIR . '/php',
+        '/usr/bin/php',
+        '/usr/local/bin/php',
+        '/usr/bin/php8.4',
+        '/usr/bin/php8.3',
+        '/usr/bin/php8.2',
+        '/usr/bin/php8.1',
+        '/usr/bin/php8',
+        trim((string) shell_exec('command -v php 2>/dev/null')),
+    ];
+    foreach ($candidates as $candidate) {
+        if ($candidate !== null && $candidate !== '' && @is_executable($candidate)) {
+            $php = $candidate;
+            break;
+        }
+    }
+    if (!$php) {
+        fail('Binário PHP CLI não encontrado no servidor (procurado em ' . PHP_BINDIR . ', /usr/bin e /usr/local/bin). Instale o pacote php-cli.', 500);
+    }
+
     $logFile = $logDir . '/' . preg_replace('/[^A-Za-z0-9_.-]/', '', $jobId) . '.log';
     exec(sprintf(
-        '%s %s --job %s >> %s 2>&1 &',
+        'nohup %s %s --job %s >> %s 2>&1 &',
         escapeshellarg($php),
         escapeshellarg($worker),
         escapeshellarg($jobId),
         escapeshellarg($logFile)
     ));
 
-    respond(['ok' => true, 'jobId' => $jobId], 201);
+    // O worker marca o job como running logo ao iniciar. Se em 2 s continuar
+    // queued, registra o aviso no log (o frontend alerta o usuário após 30 s).
+    sleep(2);
+    $stmt = $pdo->prepare('SELECT status FROM sinapi_import_jobs WHERE id = ? LIMIT 1');
+    $stmt->execute([$jobId]);
+    if ($stmt->fetchColumn() === 'queued') {
+        @file_put_contents(
+            $logFile,
+            date('[Y-m-d H:i:s] ') . "AVISO: worker ainda não iniciou 2 s após o exec ({$php}). Se o job continuar em queued, verifique permissões/exec do usuário do Apache.\n",
+            FILE_APPEND
+        );
+    }
+}
+
+function handle_sinapi_reprocess_job(PDO $pdo, array $config, array $payload): never
+{
+    ensure_sinapi_import_jobs_table($pdo);
+    $jobId = trim((string) ($payload['jobId'] ?? ''));
+    if ($jobId === '') {
+        fail('Informe o jobId.', 400);
+    }
+    $stmt = $pdo->prepare('SELECT * FROM sinapi_import_jobs WHERE id = ? LIMIT 1');
+    $stmt->execute([$jobId]);
+    $job = $stmt->fetch();
+    if (!$job) {
+        fail('Job não encontrado.', 404);
+    }
+    if ($job['status'] === 'running') {
+        fail('Este job já está em processamento.', 409);
+    }
+    $files = (array) (json_decode((string) ($job['paramsJson'] ?? '{}'), true)['files'] ?? []);
+    $missing = array_filter($files, static fn ($path) => !is_file((string) $path));
+    if (!$files || $missing) {
+        fail('Os arquivos deste job não estão mais no servidor. Envie os XLSX novamente em uma nova importação.', 410);
+    }
+    $pdo->prepare("UPDATE sinapi_import_jobs SET status = 'queued', currentStep = 'Aguardando reprocessamento', progress = 0, total = 0, errorMessage = NULL, finishedAt = NULL WHERE id = ?")
+        ->execute([$jobId]);
+    spawn_sinapi_worker($pdo, $config, $jobId);
+    respond(['ok' => true, 'jobId' => $jobId]);
 }
 
 // Jobs abandonados não podem bloquear novas importações nem deixar o polling do

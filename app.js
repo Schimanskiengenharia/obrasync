@@ -5799,6 +5799,7 @@ async function resumeSinapiAsyncJob() {
 function pollSinapiAsyncJob(jobId, { refreshOnDone = false } = {}) {
   clearTimeout(sinapiJobPollTimer);
   const seq = ++sinapiJobPollSeq;
+  const startedWaiting = Date.now(); // relógio local: evita problemas de fuso com job.createdAt
   const tick = async () => {
     if (seq !== sinapiJobPollSeq) return; // outra corrente de polling assumiu
     if (!document.getElementById("sinapiAsyncStatus")) return; // saiu do módulo
@@ -5806,6 +5807,16 @@ function pollSinapiAsyncJob(jobId, { refreshOnDone = false } = {}) {
       const payload = await apiRequest(`sinapi-import-status?job=${encodeURIComponent(jobId)}`);
       const job = payload.job;
       if (!job) return;
+      if (job.status === "queued" && Date.now() - startedWaiting > 30000) {
+        // Worker nunca saiu de queued: o exec() do Apache provavelmente falhou.
+        renderSinapiAsyncStuck(job);
+        const startButton = qs("sinapiAsyncStart");
+        if (startButton) {
+          startButton.disabled = !(isAdmin() && serverMode);
+          startButton.textContent = "Importar e Atualizar Preços";
+        }
+        return;
+      }
       renderSinapiAsyncStatus(job);
       if (["queued", "running"].includes(job.status)) {
         sinapiJobPollTimer = setTimeout(tick, 2000);
@@ -5841,7 +5852,9 @@ function renderSinapiAsyncStatus(job) {
       <strong>❌ Importação falhou</strong>
       <p>${svgText(job.errorMessage || "Erro desconhecido.")}</p>
       <p class="muted">Log do worker: /var/lib/financeiro/sinapi_jobs/ — 🗓️ Referência: ${svgText(reference)}</p>
+      ${isAdmin() ? '<div class="actions"><button class="secondary" type="button" id="sinapiReprocessBtn">🔄 Reprocessar</button></div>' : ""}
     `;
+    wireSinapiReprocess(job.id);
     return;
   }
   if (job.status === "done") {
@@ -5874,6 +5887,43 @@ function renderSinapiAsyncStatus(job) {
     <div class="progress-line"><span style="width:${percent}%"></span></div>
     <p class="muted">${total ? `${progress.toLocaleString("pt-BR")} de ${total.toLocaleString("pt-BR")} registros (${percent}%)` : "Lendo as planilhas — o total aparece quando a leitura termina."} — 🗓️ Referência: ${svgText(reference)}</p>
   `;
+}
+
+// Job que não saiu de "queued" em 30 s: o worker não iniciou (exec/permissão).
+function renderSinapiAsyncStuck(job) {
+  const container = qs("sinapiAsyncStatus");
+  if (!container) return;
+  container.classList.remove("hidden");
+  container.innerHTML = `
+    <strong>⚠️ O worker de importação não iniciou após 30 segundos</strong>
+    <p>Possível causa: o servidor não conseguiu executar o PHP CLI via exec() (permissões do Apache ou pacote php-cli ausente). Verifique o log em /var/lib/financeiro/sinapi_jobs/ ou contate o administrador.</p>
+    ${isAdmin() ? '<div class="actions"><button class="secondary" type="button" id="sinapiReprocessBtn">🔄 Reprocessar</button></div>' : ""}
+  `;
+  wireSinapiReprocess(job.id);
+}
+
+function wireSinapiReprocess(jobId) {
+  qs("sinapiReprocessBtn")?.addEventListener("click", () => reprocessSinapiJob(jobId));
+}
+
+// Redispara o worker reaproveitando os XLSX já enviados (job preso ou com erro).
+async function reprocessSinapiJob(jobId) {
+  if (!confirm("Reprocessar esta importação SINAPI com os arquivos já enviados?")) return;
+  const button = qs("sinapiReprocessBtn");
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Reprocessando…";
+  }
+  try {
+    await apiRequest("sinapi-reprocess-job", { method: "POST", body: JSON.stringify({ jobId }) });
+    pollSinapiAsyncJob(jobId, { refreshOnDone: true });
+  } catch (error) {
+    alert(`Erro ao reprocessar: ${error.message}`);
+    if (button) {
+      button.disabled = false;
+      button.textContent = "🔄 Reprocessar";
+    }
+  }
 }
 
 async function importSinapiCsvLocal({ type, sheetName, uf, referenceMonth, referenceYear, referenceType, file }) {
