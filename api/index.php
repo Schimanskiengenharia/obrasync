@@ -287,6 +287,19 @@ try {
             $payload = sanitize_user_profile_fields($pdo, $payload, (int) $id, false);
         }
         $record = update_record($pdo, $resources[$key], (int) $id, $payload);
+        if ($key === 'users' && !empty($payload['password']) && !empty($payload['logoutOtherSessions'])) {
+            // Troca de senha com "deslogar outras sessões": derruba todas as sessões
+            // do usuário editado, EXCETO a do token desta requisição — invalidar a
+            // sessão atual aqui quebraria a própria resposta e o logout ordenado
+            // que o frontend faz na sequência.
+            try {
+                $currentTokenHash = hash('sha256', bearer_token());
+                $pdo->prepare('DELETE FROM api_sessions WHERE userId = ? AND tokenHash != ?')
+                    ->execute([(int) $id, $currentTokenHash]);
+            } catch (Throwable $error) {
+                error_log('[ObraSync] Falha ao encerrar outras sessões após troca de senha: ' . $error->getMessage());
+            }
+        }
         if ($key === 'agendaEvents') {
             $record['automation'] = create_event_day_notification($pdo, $record);
         }

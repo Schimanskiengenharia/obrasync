@@ -3989,12 +3989,56 @@ function setupUserFormValidation() {
   });
 }
 
+// Confirmação ao alterar a própria senha: encerrar as outras sessões ou manter.
+// Precisa ser um <dialog> com showModal(): o formulário de usuário já está
+// aberto no top layer e um <div> overlay comum ficaria atrás dele.
+function confirmPasswordChange() {
+  return new Promise((resolve) => {
+    document.getElementById("modalSenhaConfirm")?.remove();
+    const modal = document.createElement("dialog");
+    modal.id = "modalSenhaConfirm";
+    modal.className = "pwd-confirm-dialog";
+    modal.innerHTML = `
+      <div class="modal-box">
+        <h3>Alteração da sua senha</h3>
+        <p>Você está alterando a sua própria senha. Deseja encerrar as outras sessões ativas
+        (outros navegadores e dispositivos) ou permanecer conectado normalmente?</p>
+        <menu>
+          <button type="button" class="secondary" data-choice="cancel">Cancelar</button>
+          <button type="button" class="secondary" data-choice="manter">🔒 Manter conectado</button>
+          <button type="button" class="primary pwd-confirm-logout" data-choice="logout">🚪 Deslogar e redirecionar</button>
+        </menu>
+      </div>`;
+    document.body.appendChild(modal);
+    modal.showModal();
+    requestAnimationFrame(() => modal.classList.add("visible"));
+    let settled = false;
+    const close = (result) => {
+      if (settled) return;
+      settled = true;
+      modal.classList.remove("visible");
+      setTimeout(() => { try { modal.close(); } catch { /* já fechado */ } modal.remove(); }, 280);
+      resolve(result);
+    };
+    modal.querySelectorAll("[data-choice]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const choice = button.dataset.choice;
+        close(choice === "cancel" ? null : choice);
+      });
+    });
+    // Esc e clique no backdrop equivalem a cancelar.
+    modal.addEventListener("cancel", (event) => { event.preventDefault(); close(null); });
+    modal.addEventListener("click", (event) => { if (event.target === modal) close(null); });
+  });
+}
+
 async function saveForm(event) {
   event.preventDefault();
   if (!canEditModule(editing.key)) return;
   const validation = validateCurrentForm(event.target);
   if (!validation.ok) return alert(validation.message);
   const data = formDataToRecord(event.target, editing.key);
+  let selfPasswordChanged = false;
   if (editing.key === "workBudgetItems") normalizeWorkBudgetItem(data);
   if (editing.key === "workBudgets") normalizeWorkBudget(data);
   if (editing.key === "quotes") normalizeQuote(data);
@@ -4046,12 +4090,22 @@ async function saveForm(event) {
       const pwdCheck = validatePassword(data.password);
       if (!pwdCheck.valid) return alert("Senha não atende aos critérios:\n• " + pwdCheck.errors.join("\n• "));
     }
-    const duplicate = db.users.some((user) => user.username.toLowerCase() === String(data.username || "").toLowerCase() && user.id !== editing.id);
+    // sameId em todas as comparações: o id do banco é numérico e o editing.id
+    // vem do dataset do botão (string) — !== estrito nunca excluía o próprio
+    // registro e o usuário "colidia" consigo mesmo ("já existe um usuário...").
+    const duplicate = db.users.some((user) => user.username.toLowerCase() === String(data.username || "").toLowerCase() && !sameId(user.id, editing.id));
     if (duplicate) return alert("Já existe um usuário com esse login.");
-    if (editing.id === currentUser.id && data.role !== "admin") return alert("O administrador logado não pode remover o próprio perfil de administrador.");
-    const usersAfterSave = db.users.map((user) => user.id === editing.id ? { ...user, ...data } : user);
+    if (sameId(editing.id, currentUser.id) && data.role !== "admin") return alert("O administrador logado não pode remover o próprio perfil de administrador.");
+    const usersAfterSave = db.users.map((user) => sameId(user.id, editing.id) ? { ...user, ...data } : user);
     if (!usersAfterSave.some((user) => user.role === "admin" && user.status === "Ativo")) {
       return alert("Mantenha ao menos um administrador ativo no sistema.");
+    }
+    // Troca da própria senha: pergunta se as outras sessões devem ser encerradas.
+    if (sameId(editing.id, currentUser.id) && data.password) {
+      const choice = await confirmPasswordChange();
+      if (choice === null) return; // cancelou: não salva nada
+      selfPasswordChanged = true;
+      if (choice === "logout") data.logoutOtherSessions = true;
     }
   }
   const previousRecord = editing.id ? byId(editing.key, editing.id) : null;
@@ -4111,8 +4165,21 @@ async function saveForm(event) {
   }
   const savedName = data.name || data.titulo || data.username || data.number || editing.id || "";
   logAudit(editing.id ? "edit" : "create", editing.key, String(savedName));
+  if (editing.key === "users" && data.logoutOtherSessions) {
+    // API já derrubou as demais sessões; encerra também a local e volta ao login.
+    qs("recordDialog").close();
+    logAudit("logout", "sistema", `Logout: ${currentUser?.username}`);
+    if (serverMode && authToken) apiRequest("logout", { method: "POST" }).catch(() => {});
+    clearAuthSession();
+    clearTimeout(sessionWarnTimer);
+    clearInterval(sessionWarnIntervalId);
+    currentModuleTracked = "";
+    showLogin("Senha alterada com sucesso! Faça login com a nova senha.");
+    return;
+  }
   qs("recordDialog").close();
   await refreshAndRender();
+  if (editing.key === "users" && selfPasswordChanged) showToast("Senha atualizada com sucesso!");
 }
 
 function validateCurrentForm(form) {
@@ -4279,7 +4346,7 @@ async function removeRecord(key, id) {
   if (!canEditModule(key)) return;
   if (!canDeleteRecord(key)) return alert("Seu perfil não tem permissão para excluir registros.");
   const removed = byId(key, id);
-  if (key === "users" && id === currentUser.id) return alert("O administrador logado não pode excluir o próprio usuário.");
+  if (key === "users" && sameId(id, currentUser.id)) return alert("O administrador logado não pode excluir o próprio usuário.");
   if (key === "users" && byId("users", id)?.role === "admin" && db.users.filter((user) => user.role === "admin").length === 1) {
     return alert("Mantenha ao menos um administrador ativo no sistema.");
   }

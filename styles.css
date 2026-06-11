@@ -264,6 +264,62 @@ button:disabled {
 .pwd-reqs .req-ok  { color: var(--green, #16a34a); }
 .pwd-reqs .req-fail { color: var(--red); }
 
+/* Confirmação ao alterar a própria senha (manter conectado × deslogar) */
+.pwd-confirm-dialog {
+  width: min(440px, 92vw);
+  border: 0;
+  border-radius: 12px;
+  padding: 0;
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.28);
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+
+.pwd-confirm-dialog.visible {
+  opacity: 1;
+}
+
+.pwd-confirm-dialog::backdrop {
+  background: rgba(10, 20, 19, 0.58);
+}
+
+.pwd-confirm-dialog .modal-box {
+  display: grid;
+  gap: 12px;
+  padding: 24px;
+  transform: scale(0.94) translateY(12px);
+  transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.pwd-confirm-dialog.visible .modal-box {
+  transform: scale(1) translateY(0);
+}
+
+.pwd-confirm-dialog h3 {
+  margin: 0;
+}
+
+.pwd-confirm-dialog p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.pwd-confirm-dialog menu {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 8px 0 0;
+  padding: 0;
+}
+
+.pwd-confirm-dialog .pwd-confirm-logout {
+  background: var(--red);
+}
+
 .change-pwd-dialog {
   width: min(420px, 92vw);
   border: none;
