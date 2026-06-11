@@ -596,10 +596,13 @@ function renderScreenChart() {
 }
 
 // PDF: canvas offscreen real em alta resolução, exportado como PNG.
+// Proporção 10:7 (1600×1120) pensada para A4 RETRATO: com largura útil de
+// ~186mm a imagem fica com ~130mm de altura — cabe na página com título e
+// margens, sem esticamento vertical.
 function chartImage(mode, title) {
   const canvas = document.createElement("canvas");
   canvas.width = 1600;
-  canvas.height = 1100;
+  canvas.height = 1120;
   drawChart(canvas.getContext("2d"), canvas.width, canvas.height, mode, { title });
   return canvas.toDataURL("image/png");
 }
