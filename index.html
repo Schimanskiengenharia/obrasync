@@ -8,7 +8,7 @@
     <meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin" />
     <meta name="robots" content="noindex, nofollow" />
     <title>ObraSync</title>
-    <link rel="stylesheet" href="styles.css?v=1703" />
+    <link rel="stylesheet" href="styles.css?v=1704" />
   </head>
   <body>
     <section id="loginScreen" class="login-screen">
@@ -75,11 +75,12 @@
 
     <!-- Diálogo de troca de senha obrigatória (mustChangePassword) -->
     <dialog id="changePasswordDialog" class="change-pwd-dialog">
-      <form id="changePasswordForm">
+      <!-- method="dialog" impede que um submit nativo navegue/abra outra página caso o JS falhe -->
+      <form id="changePasswordForm" method="dialog">
         <div class="dialog-head">
           <h2>Altere sua senha</h2>
         </div>
-        <p class="login-help" style="margin-bottom:12px">Seu acesso requer a definição de uma nova senha segura antes de continuar.</p>
+        <p class="login-help" style="margin-bottom:12px">Confirme sua senha atual e defina uma nova senha segura para continuar.</p>
         <label>Senha atual<input name="currentPassword" type="password" autocomplete="current-password" required /></label>
         <label>
           Nova senha
@@ -257,6 +258,6 @@
       </menu>
     </dialog>
 
-    <script src="app.js?v=1703"></script>
+    <script src="app.js?v=1704"></script>
   </body>
 </html>

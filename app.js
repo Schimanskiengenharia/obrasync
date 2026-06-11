@@ -6392,57 +6392,71 @@ async function handleResetPassword(event) {
   }
 }
 
+// Toast de confirmação exibido dentro do próprio site (sem abrir abas/janelas).
+function showToast(message, duration = 2000) {
+  document.getElementById("appToast")?.remove();
+  const toast = document.createElement("div");
+  toast.id = "appToast";
+  toast.className = "app-toast";
+  toast.setAttribute("role", "status");
+  toast.textContent = message;
+  document.body.appendChild(toast);
+  setTimeout(() => toast.remove(), duration);
+}
+
 async function handleChangePassword(event) {
   event.preventDefault();
   const form      = event.target;
-  const currentPw = (form.querySelector('[name="currentPassword"]')?.value) || "";
+  const currentPw = form.querySelector('[name="currentPassword"]').value;
   const newPw     = form.querySelector('[name="newPassword"]').value;
   const confirmPw = form.querySelector('[name="confirmPassword"]').value;
   const msgEl     = form.querySelector(".pwd-change-msg");
   const dialog    = document.getElementById("changePasswordDialog");
   const isForced  = dialog?.dataset.forced === "1";
+  const showError = (text) => {
+    msgEl.textContent = text;
+    msgEl.className = "pwd-change-msg login-error";
+  };
 
   msgEl.className = "pwd-change-msg";
   msgEl.textContent = "";
 
-  if (newPw !== confirmPw) {
-    msgEl.textContent = "As senhas não coincidem.";
-    msgEl.className = "pwd-change-msg login-error";
-    return;
-  }
-  if (!passwordMeetsAllRules(newPw)) {
-    msgEl.textContent = "A senha não atende a todos os requisitos de segurança.";
-    msgEl.className = "pwd-change-msg login-error";
-    return;
-  }
+  if (!currentPw) return showError("Informe a senha atual.");
+  if (newPw !== confirmPw) return showError("As senhas não coincidem.");
+  if (!passwordMeetsAllRules(newPw)) return showError("A senha não atende a todos os requisitos de segurança.");
 
   const btn = form.querySelector("button[type=submit]");
   btn.disabled = true;
   try {
     if (isForced) {
-      // Troca obrigatória: endpoint dedicado com token no corpo para contornar
-      // remoção do header Authorization em Apache/PHP-CGI.
+      // Troca obrigatória: endpoint dedicado que recebe o token de sessão no corpo
+      // (_token) para contornar a remoção do header Authorization em Apache/PHP-CGI.
+      // Usuário + senha atual servem de fallback de identidade se a sessão não
+      // for localizada no servidor — evita o erro "Sessão inválida".
       const res = await fetch(`${API_BASE}/forced-change-password`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders() },
-        body: JSON.stringify({ newPassword: newPw, _token: authToken || "" }),
+        body: JSON.stringify({
+          username: currentUser?.username || "",
+          currentPassword: currentPw,
+          newPassword: newPw,
+          _token: authToken || "",
+        }),
       });
       let payload = {};
       try { payload = JSON.parse(await res.text()); } catch { /* ignore */ }
       if (!res.ok || payload.ok === false) {
-        msgEl.textContent = payload.error || `Erro ao salvar (HTTP ${res.status}). Faça login novamente.`;
-        msgEl.className = "pwd-change-msg login-error";
+        // Senha atual incorreta, requisitos não atendidos etc.: erro inline,
+        // modal permanece aberto.
+        showError(payload.error || `Erro ao salvar (HTTP ${res.status}). Tente novamente.`);
         return;
       }
-      // Sessão invalidada pelo servidor — limpa localmente também.
+      // Sessões invalidadas pelo servidor — limpa localmente também.
       authToken = null;
       clearAuthSession();
-      msgEl.textContent = "Senha definida com sucesso!";
-      msgEl.className = "pwd-change-msg login-success";
-      setTimeout(() => {
-        if (dialog?.open) dialog.close();
-        showLogin("Senha definida com sucesso! Faça login com a nova senha.");
-      }, 2000);
+      if (dialog?.open) dialog.close();
+      showToast("Senha atualizada com sucesso!");
+      setTimeout(() => showLogin("Senha atualizada com sucesso! Faça login com a nova senha."), 2000);
     } else {
       // Troca voluntária: usa apiRequest padrão com verificação de senha atual.
       await apiRequest("change-password", {
@@ -6450,13 +6464,11 @@ async function handleChangePassword(event) {
         body: JSON.stringify({ currentPassword: currentPw, newPassword: newPw }),
       });
       if (currentUser) currentUser.mustChangePassword = false;
-      msgEl.textContent = "Senha alterada com sucesso!";
-      msgEl.className = "pwd-change-msg login-success";
-      setTimeout(() => { if (dialog?.open) dialog.close(); }, 1500);
+      if (dialog?.open) dialog.close();
+      showToast("Senha atualizada com sucesso!");
     }
   } catch (error) {
-    msgEl.textContent = error.message || "Erro ao salvar a senha. Tente novamente.";
-    msgEl.className = "pwd-change-msg login-error";
+    showError(error.message || "Erro ao salvar a senha. Tente novamente.");
   } finally {
     btn.disabled = false;
   }
@@ -6467,14 +6479,10 @@ function openChangePasswordDialog(isForced = false) {
   if (!dialog) return;
   const form = document.getElementById("changePasswordForm");
   form.reset();
-  form.querySelector(".pwd-change-msg").textContent = "";
+  const msgEl = form.querySelector(".pwd-change-msg");
+  msgEl.textContent = "";
+  msgEl.className = "pwd-change-msg";
   document.getElementById("changePwdStrength").innerHTML = "";
-  // Em troca obrigatória (mustChangePassword), oculta o campo de senha atual — a sessão
-  // já comprova a identidade. Em troca voluntária, exibe e exige o campo.
-  const currentPwLabel = form.querySelector('[name="currentPassword"]')?.closest("label");
-  const currentPwInput = form.querySelector('[name="currentPassword"]');
-  if (currentPwLabel) currentPwLabel.hidden = isForced;
-  if (currentPwInput) currentPwInput.required = !isForced;
   dialog.dataset.forced = isForced ? "1" : "";
   dialog.showModal();
 }
@@ -6567,19 +6575,23 @@ qs("changePasswordForm").addEventListener("submit", handleChangePassword);
   });
 });
 
-// Feedback em tempo real para o campo de confirmação de senha no diálogo de troca.
-document.getElementById("changePwdConfirm")?.addEventListener("input", (e) => {
-  const form  = e.target.closest("form");
-  const newPw = form?.querySelector('[name="newPassword"]')?.value || "";
-  const msgEl = form?.querySelector(".pwd-change-msg");
+// Feedback em tempo real do confronto nova senha × confirmação no diálogo de troca.
+function syncPwdMatchFeedback() {
+  const form = document.getElementById("changePasswordForm");
+  if (!form) return;
+  const newPw     = form.querySelector('[name="newPassword"]')?.value || "";
+  const confirmPw = form.querySelector('[name="confirmPassword"]')?.value || "";
+  const msgEl     = form.querySelector(".pwd-change-msg");
   if (!msgEl) return;
-  if (e.target.value && newPw !== e.target.value) {
+  if (confirmPw && newPw !== confirmPw) {
     msgEl.textContent = "As senhas não coincidem.";
     msgEl.className = "pwd-change-msg login-error";
   } else if (msgEl.textContent === "As senhas não coincidem.") {
     msgEl.textContent = "";
     msgEl.className = "pwd-change-msg";
   }
-});
+}
+document.getElementById("changePwdConfirm")?.addEventListener("input", syncPwdMatchFeedback);
+document.getElementById("changePwdNew")?.addEventListener("input", syncPwdMatchFeedback);
 
 bootstrapApp();
