@@ -225,8 +225,14 @@ function effectiveTheme(pref) {
 
 function applyThemePreference(pref, persist = true) {
   themePreference = ["light", "dark", "auto"].includes(pref) ? pref : "auto";
+  // Fade suave na troca de tema (o prefers-reduced-motion do CSS sobrepõe
+  // esta transição inline com !important quando o usuário pede menos movimento).
+  document.documentElement.style.transition = "background-color 0.35s ease, color 0.35s ease";
   document.documentElement.dataset.theme = effectiveTheme(themePreference);
   document.documentElement.dataset.themePref = themePreference;
+  setTimeout(() => {
+    document.documentElement.style.transition = "";
+  }, 400);
   if (persist) {
     safeLocalSet(themeStorageKey(), themePreference);
     // Último tema usado: aplicado antes do login (script inline do index.html).
@@ -2088,9 +2094,20 @@ function setupNav() {
     const groupButton = event.target.closest("[data-nav-group]");
     if (groupButton) {
       const groupId = groupButton.dataset.navGroup;
-      if (openNavGroups.has(groupId)) openNavGroups.delete(groupId);
-      else openNavGroups.add(groupId);
-      renderNav();
+      const open = !openNavGroups.has(groupId);
+      if (open) openNavGroups.add(groupId);
+      else openNavGroups.delete(groupId);
+      // Alterna a classe no DOM existente (sem renderNav): a transição de
+      // max-height do accordion só anima se o submenu não for recriado.
+      const submenu = groupButton.closest(".nav-section")?.querySelector(".nav-submenu");
+      if (submenu) {
+        submenu.classList.toggle("open", open);
+        groupButton.setAttribute("aria-expanded", String(open));
+        const caret = groupButton.querySelector(".nav-caret");
+        if (caret) caret.textContent = open ? "−" : "+";
+      } else {
+        renderNav();
+      }
       return;
     }
     // Link de plugin: deixa o navegador abrir a nova aba e apenas fecha o menu no mobile.
@@ -2299,7 +2316,17 @@ function applyFilters(rows, options = {}) {
 function render() {
   if (!currentUser) return;
   if (!canAccessModule(currentModule)) currentModule = "dashboard";
-  if (currentModule !== currentModuleTracked) { logAccess(currentModule); currentModuleTracked = currentModule; }
+  if (currentModule !== currentModuleTracked) {
+    logAccess(currentModule);
+    currentModuleTracked = currentModule;
+    // Animação de entrada ao trocar de módulo (não em re-renders de filtros/CRUD).
+    const content = qs("content");
+    if (content) {
+      content.style.animation = "none";
+      content.offsetHeight; // reflow para reiniciar o keyframe
+      content.style.animation = "moduleIn 0.22s ease forwards";
+    }
+  }
   renderNav();
   renderFavoritesBar();
   populateFilters();
@@ -7198,6 +7225,30 @@ qs("filterToggle").addEventListener("click", () => {
   qs("filterToggle").textContent = open ? "Ocultar filtros" : "Mostrar filtros";
   qs("filterToggle").setAttribute("aria-expanded", String(open));
 });
+
+// Sombra dinâmica no topbar ao rolar a página.
+{
+  const topbar = document.querySelector(".topbar");
+  if (topbar) {
+    window.addEventListener("scroll", () => {
+      topbar.style.boxShadow = window.scrollY > 8
+        ? "0 4px 24px rgba(0,0,0,0.13)"
+        : "";
+    }, { passive: true });
+  }
+}
+
+// Skeleton loading: preenche um tbody com linhas-fantasma enquanto dados são
+// buscados de forma assíncrona (usar antes do fetch e sobrescrever ao concluir).
+function showTableSkeleton(tbodyId, cols = 5, rows = 6) {
+  const tbody = document.getElementById(tbodyId);
+  if (!tbody) return;
+  tbody.innerHTML = Array.from({ length: rows }, () =>
+    `<tr>${Array.from({ length: cols }, () =>
+      `<td><span class="skeleton">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span></td>`
+    ).join("")}</tr>`
+  ).join("");
+}
 qs("excelBtn").addEventListener("click", exportExcel);
 qs("pdfBtn").addEventListener("click", () => window.print());
 qs("seedBtn").addEventListener("click", () => {
