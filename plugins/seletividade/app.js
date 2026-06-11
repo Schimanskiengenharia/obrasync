@@ -2,6 +2,9 @@
 // Estudo de Seletividade — plugin do ObraSync (Schimanski Engenharia)
 // HTML + CSS + JS puro, canvas próprio (sem CDN). Sessão validada na API do
 // ObraSync via token Bearer compartilhado pelo localStorage (mesma origem).
+// v1.1 — logo em base64 no PDF (evita corrida de carregamento da imagem no
+// window.print) e tipografia do gráfico proporcional ao tamanho do canvas
+// (legível nas imagens de alta resolução do PDF, nítido em telas high-DPI).
 // ─────────────────────────────────────────────────────────────────────────────
 
 "use strict";
@@ -41,6 +44,29 @@ function calcTime(I, Ip, DT, curve) {
 function dialForCurve(curve) {
   const { beta, alpha } = IEC_CURVES[curve] || IEC_CURVES.NI;
   return 0.2 * (Math.pow(20, alpha) - 1) / beta;
+}
+
+// ── Logo em base64 (pré-carregada; usada no relatório de impressão) ─────────
+// A <img> do relatório é inserida no DOM imediatamente antes do window.print():
+// com caminho relativo, a imagem podia não terminar de carregar a tempo e sair
+// em branco no PDF. Em data URL a renderização é imediata, sem rede.
+let logoDataUrl = null;
+
+async function loadLogoBase64() {
+  if (logoDataUrl) return logoDataUrl;
+  try {
+    const res = await fetch(new URL("../../assets/logo.png", location.href).href);
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    return await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => { logoDataUrl = String(reader.result); resolve(logoDataUrl); };
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
 }
 
 // ── Sessão ObraSync ─────────────────────────────────────────────────────────
@@ -299,26 +325,34 @@ const COLORS = {
   text: "#374151",
 };
 
-function drawChart(canvas, mode, options = {}) {
-  const ctx = canvas.getContext("2d");
-  const W = canvas.width;
-  const H = canvas.height;
-  const pad = { left: 78, right: 24, top: options.title ? 56 : 28, bottom: 56 };
+// Desenha o coordenograma em um contexto 2D já preparado, em coordenadas
+// lógicas W×H. Na tela o ctx vem transformado pelo devicePixelRatio (traço
+// vetorial nítido em high-DPI); no PDF é um canvas offscreen 1600×1100.
+// Tipografia e espessuras são proporcionais a H para legibilidade no PDF.
+function drawChart(ctx, W, H, mode, options = {}) {
+  const scale = H / 740; // base de proporção (altura típica da tela)
+  const fontSize = Math.max(10, Math.round(12 * scale));
+  const pad = {
+    left: Math.round(78 * scale),
+    right: Math.round(24 * scale),
+    top: Math.round((options.title ? 58 : 28) * scale),
+    bottom: Math.round(56 * scale),
+  };
   const plotW = W - pad.left - pad.right;
   const plotH = H - pad.top - pad.bottom;
 
-  const x = (I) => pad.left + ((Math.log10(I) - Math.log10(CHART.iMin)) / (Math.log10(CHART.iMax) - Math.log10(CHART.iMin))) * plotW;
-  const y = (t) => pad.top + (1 - (Math.log10(t) - Math.log10(CHART.tMin)) / (Math.log10(CHART.tMax) - Math.log10(CHART.tMin))) * plotH;
+  const xPos = (I) => pad.left + ((Math.log10(I) - Math.log10(CHART.iMin)) / (Math.log10(CHART.iMax) - Math.log10(CHART.iMin))) * plotW;
+  const yPos = (t) => pad.top + (1 - (Math.log10(t) - Math.log10(CHART.tMin)) / (Math.log10(CHART.tMax) - Math.log10(CHART.tMin))) * plotH;
 
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, W, H);
 
-  // Título (versões para PDF)
+  // Título (usado nas versões exportadas para o PDF)
   if (options.title) {
     ctx.fillStyle = "#134e4a";
-    ctx.font = "bold 22px Inter, Arial, sans-serif";
+    ctx.font = `bold ${Math.round(20 * scale)}px Inter, Arial, sans-serif`;
     ctx.textAlign = "center";
-    ctx.fillText(options.title, W / 2, 30);
+    ctx.fillText(options.title, W / 2, Math.round(34 * scale));
   }
 
   // ── Grade log-log ──
@@ -326,48 +360,49 @@ function drawChart(canvas, mode, options = {}) {
   ctx.lineWidth = 1;
   for (let e = 0; e <= 5; e++) {
     const base = Math.pow(10, e);
-    // menores (2..9)
     if (e < 5) {
       for (let m = 2; m <= 9; m++) {
-        const xi = x(base * m);
+        const xi = xPos(base * m);
         ctx.strokeStyle = COLORS.gridMinor;
         ctx.beginPath(); ctx.moveTo(xi, pad.top); ctx.lineTo(xi, pad.top + plotH); ctx.stroke();
       }
     }
-    const xi = x(base);
+    const xi = xPos(base);
     ctx.strokeStyle = COLORS.grid;
     ctx.beginPath(); ctx.moveTo(xi, pad.top); ctx.lineTo(xi, pad.top + plotH); ctx.stroke();
     ctx.fillStyle = COLORS.text;
-    ctx.font = "12px Inter, Arial, sans-serif";
+    ctx.font = `${fontSize}px Inter, Arial, sans-serif`;
     ctx.textAlign = "center";
-    ctx.fillText(decadeLabel(base), xi, pad.top + plotH + 18);
+    ctx.fillText(decadeLabel(base), xi, pad.top + plotH + fontSize + 6);
   }
   for (let e = -2; e <= 3; e++) {
     const base = Math.pow(10, e);
     if (e < 3) {
       for (let m = 2; m <= 9; m++) {
-        const yi = y(base * m);
+        const yi = yPos(base * m);
         ctx.strokeStyle = COLORS.gridMinor;
         ctx.beginPath(); ctx.moveTo(pad.left, yi); ctx.lineTo(pad.left + plotW, yi); ctx.stroke();
       }
     }
-    const yi = y(base);
+    const yi = yPos(base);
     ctx.strokeStyle = COLORS.grid;
     ctx.beginPath(); ctx.moveTo(pad.left, yi); ctx.lineTo(pad.left + plotW, yi); ctx.stroke();
     ctx.fillStyle = COLORS.text;
+    ctx.font = `${fontSize}px Inter, Arial, sans-serif`;
     ctx.textAlign = "right";
     ctx.fillText(base.toLocaleString("pt-BR"), pad.left - 8, yi + 4);
   }
 
   // Moldura + títulos dos eixos
   ctx.strokeStyle = "#9ca3af";
+  ctx.lineWidth = 1;
   ctx.strokeRect(pad.left, pad.top, plotW, plotH);
   ctx.fillStyle = COLORS.text;
-  ctx.font = "bold 13px Inter, Arial, sans-serif";
+  ctx.font = `bold ${Math.max(11, Math.round(13 * scale))}px Inter, Arial, sans-serif`;
   ctx.textAlign = "center";
-  ctx.fillText("Corrente (A) — primário", pad.left + plotW / 2, H - 14);
+  ctx.fillText("Corrente (A) — primário", pad.left + plotW / 2, H - Math.round(12 * scale));
   ctx.save();
-  ctx.translate(20, pad.top + plotH / 2);
+  ctx.translate(Math.round(20 * scale), pad.top + plotH / 2);
   ctx.rotate(-Math.PI / 2);
   ctx.fillText("Tempo (s)", 0, 0);
   ctx.restore();
@@ -381,8 +416,8 @@ function drawChart(canvas, mode, options = {}) {
     if (!(Ip > 0) || !(dial > 0)) return;
     clip();
     ctx.strokeStyle = color;
-    ctx.lineWidth = 2.2;
-    ctx.setLineDash(dashed ? [9, 6] : []);
+    ctx.lineWidth = Math.max(2, 2.2 * scale);
+    ctx.setLineDash(dashed ? [9 * scale, 6 * scale] : []);
     ctx.beginPath();
     let started = false;
     const steps = 400;
@@ -394,8 +429,8 @@ function drawChart(canvas, mode, options = {}) {
       if (instLevel > 0 && I >= instLevel) t = Math.min(t, 0.1);
       if (!Number.isFinite(t)) continue;
       const tc = Math.min(Math.max(t, CHART.tMin), CHART.tMax);
-      if (!started) { ctx.moveTo(x(I), y(tc)); started = true; }
-      else ctx.lineTo(x(I), y(tc));
+      if (!started) { ctx.moveTo(xPos(I), yPos(tc)); started = true; }
+      else ctx.lineTo(xPos(I), yPos(tc));
     }
     ctx.stroke();
     ctx.setLineDash([]);
@@ -407,16 +442,16 @@ function drawChart(canvas, mode, options = {}) {
     if (!(I > CHART.iMin) || I > CHART.iMax) return;
     clip();
     ctx.strokeStyle = color;
-    ctx.lineWidth = 1.6;
-    ctx.setLineDash(dash);
-    ctx.beginPath(); ctx.moveTo(x(I), pad.top); ctx.lineTo(x(I), pad.top + plotH); ctx.stroke();
+    ctx.lineWidth = Math.max(1.4, 1.6 * scale);
+    ctx.setLineDash(dash.map((d) => d * scale));
+    ctx.beginPath(); ctx.moveTo(xPos(I), pad.top); ctx.lineTo(xPos(I), pad.top + plotH); ctx.stroke();
     ctx.setLineDash([]);
     ctx.restore();
     if (label) {
       ctx.save();
       ctx.fillStyle = color;
-      ctx.font = "11px Inter, Arial, sans-serif";
-      ctx.translate(x(I) - 4, pad.top + 8);
+      ctx.font = `${Math.max(10, Math.round(11 * scale))}px Inter, Arial, sans-serif`;
+      ctx.translate(xPos(I) - 4, pad.top + Math.round(8 * scale));
       ctx.rotate(Math.PI / 2);
       ctx.textAlign = "left";
       ctx.fillText(label, 0, 0);
@@ -424,21 +459,22 @@ function drawChart(canvas, mode, options = {}) {
     }
   };
 
-  const point = (I, t, color, shape, label) => {
+  const pointMark = (I, t, color, shape, label) => {
     if (!(I > 0) || !(t > 0)) return;
-    const px = x(Math.min(Math.max(I, CHART.iMin), CHART.iMax));
-    const py = y(Math.min(Math.max(t, CHART.tMin), CHART.tMax));
+    const px = xPos(Math.min(Math.max(I, CHART.iMin), CHART.iMax));
+    const py = yPos(Math.min(Math.max(t, CHART.tMin), CHART.tMax));
+    const r = Math.max(5, 5.5 * scale);
     ctx.fillStyle = color;
     if (shape === "tri") {
       ctx.beginPath();
-      ctx.moveTo(px - 6, py - 6); ctx.lineTo(px + 7, py); ctx.lineTo(px - 6, py + 6);
+      ctx.moveTo(px - r, py - r); ctx.lineTo(px + r * 1.2, py); ctx.lineTo(px - r, py + r);
       ctx.closePath(); ctx.fill();
     } else {
-      ctx.beginPath(); ctx.arc(px, py, 5.5, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2); ctx.fill();
     }
-    ctx.font = "11px Inter, Arial, sans-serif";
+    ctx.font = `${Math.max(10, Math.round(11 * scale))}px Inter, Arial, sans-serif`;
     ctx.textAlign = "left";
-    ctx.fillText(label, px + 9, py - 6);
+    ctx.fillText(label, px + r + 4, py - r);
   };
 
   const showFase = mode === "fase" || mode === "ambos";
@@ -465,12 +501,12 @@ function drawChart(canvas, mode, options = {}) {
 
   // Pontos INRUSH (roxo) e ANSI (laranja)
   if (showFase) {
-    point(calc.inrushFase, 0.1, COLORS.inrush, "dot", "INRUSH F");
-    point(calc.ansi.fase.i, calc.ansi.fase.t, COLORS.ansi, "tri", "ANSI F");
+    pointMark(calc.inrushFase, 0.1, COLORS.inrush, "dot", "INRUSH F");
+    pointMark(calc.ansi.fase.i, calc.ansi.fase.t, COLORS.ansi, "tri", "ANSI F");
   }
   if (showNeutro) {
-    point(calc.inrushNeutro, 0.1, COLORS.inrush, "dot", "INRUSH N");
-    point(calc.ansi.neutro.i, calc.ansi.neutro.t, COLORS.ansi, "tri", "ANSI N");
+    pointMark(calc.inrushNeutro, 0.1, COLORS.inrush, "dot", "INRUSH N");
+    pointMark(calc.ansi.neutro.i, calc.ansi.neutro.t, COLORS.ansi, "tri", "ANSI N");
   }
 
   // ── Legenda (canto superior direito) ──
@@ -489,38 +525,46 @@ function drawChart(canvas, mode, options = {}) {
   legend.push({ color: COLORS.inrush, dot: true, label: "INRUSH @ 0,1 s" });
   legend.push({ color: COLORS.ansi, tri: true, label: "Ponto ANSI" });
 
-  const lw = 235;
-  const lh = legend.length * 19 + 14;
-  const lx = pad.left + plotW - lw - 10;
-  const ly = pad.top + 10;
+  const lineH = fontSize + Math.round(7 * scale);
+  const lw = Math.round(235 * scale);
+  const lh = legend.length * lineH + Math.round(14 * scale);
+  const lx = pad.left + plotW - lw - Math.round(10 * scale);
+  const ly = pad.top + Math.round(10 * scale);
   ctx.fillStyle = "rgba(255, 255, 255, 0.93)";
   ctx.strokeStyle = "#d1d5db";
+  ctx.lineWidth = 1;
   ctx.fillRect(lx, ly, lw, lh);
   ctx.strokeRect(lx, ly, lw, lh);
   legend.forEach((item, index) => {
-    const iy = ly + 16 + index * 19;
+    const iy = ly + fontSize + Math.round(4 * scale) + index * lineH;
+    const mid = iy - fontSize * 0.32;
     if (item.dot) {
       ctx.fillStyle = item.color;
-      ctx.beginPath(); ctx.arc(lx + 22, iy - 3, 5, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(lx + 22 * scale, mid, 5 * scale, 0, Math.PI * 2); ctx.fill();
     } else if (item.tri) {
       ctx.fillStyle = item.color;
       ctx.beginPath();
-      ctx.moveTo(lx + 16, iy - 8); ctx.lineTo(lx + 28, iy - 3); ctx.lineTo(lx + 16, iy + 2);
+      ctx.moveTo(lx + 16 * scale, mid - 5 * scale);
+      ctx.lineTo(lx + 28 * scale, mid);
+      ctx.lineTo(lx + 16 * scale, mid + 5 * scale);
       ctx.closePath(); ctx.fill();
     } else {
       ctx.strokeStyle = item.color;
-      ctx.lineWidth = 2.4;
-      ctx.setLineDash(item.dash);
-      ctx.beginPath(); ctx.moveTo(lx + 10, iy - 3); ctx.lineTo(lx + 34, iy - 3); ctx.stroke();
+      ctx.lineWidth = Math.max(2, 2.4 * scale);
+      ctx.setLineDash(item.dash.map((d) => d * scale));
+      ctx.beginPath(); ctx.moveTo(lx + 10 * scale, mid); ctx.lineTo(lx + 34 * scale, mid); ctx.stroke();
       ctx.setLineDash([]);
     }
     ctx.fillStyle = COLORS.text;
-    ctx.font = "12px Inter, Arial, sans-serif";
+    ctx.font = `${fontSize}px Inter, Arial, sans-serif`;
     ctx.textAlign = "left";
-    ctx.fillText(item.label, lx + 42, iy);
+    ctx.fillText(item.label, lx + 42 * scale, iy);
   });
 }
 
+// Tela: desenha direto no canvas visível com o contexto transformado pelo
+// devicePixelRatio — traço vetorial nítido em monitores high-DPI (desenhar em
+// um canvas intermediário de resolução CSS e copiar deixaria o gráfico borrado).
 function renderScreenChart() {
   const canvas = qs("coordenograma");
   const container = canvas.parentElement;
@@ -533,39 +577,39 @@ function renderScreenChart() {
   canvas.style.height = `${cssHeight}px`;
   const ctx = canvas.getContext("2d");
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  // drawChart usa canvas.width/height lógicos: desenha em coordenadas CSS.
-  const logical = { width: cssWidth, height: cssHeight, getContext: () => ctx };
-  drawChart(logical, chartMode);
+  drawChart(ctx, cssWidth, cssHeight, chartMode);
+}
+
+// PDF: canvas offscreen real em alta resolução, exportado como PNG.
+function chartImage(mode, title) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 1600;
+  canvas.height = 1100;
+  drawChart(canvas.getContext("2d"), canvas.width, canvas.height, mode, { title });
+  return canvas.toDataURL("image/png");
 }
 
 // ── PDF (window.print + @media print) ──────────────────────────────────────
-
-function chartImage(mode, title) {
-  const canvas = document.createElement("canvas");
-  canvas.width = 1500;
-  canvas.height = 1080;
-  drawChart(canvas, mode, { title });
-  return canvas.toDataURL("image/png");
-}
 
 function tableHtml(rows) {
   return `<table><tbody>${rows.map(([label, value]) =>
     `<tr><th>${label}</th><td>${value || "—"}</td></tr>`).join("")}</tbody></table>`;
 }
 
-function buildPrintReport(selectivity) {
+function buildPrintReport(selectivity, logoSrc) {
   const now = new Date().toLocaleString("pt-BR", { timeZone: "America/Campo_Grande" });
   const c = calc;
   const report = qs("printReport");
   report.innerHTML = `
     <div class="print-head">
-      <img src="../../assets/logo.png" alt="" />
+      <img src="${logoSrc || "../../assets/logo.png"}" alt="Schimanski Engenharia" />
       <div>
-        <h1>Estudo de Seletividade</h1>
+        <h1>Estudo de Seletividade — Coordenação de Proteção</h1>
         <p><strong>${txt("projNome") || "Empreendimento não informado"}</strong></p>
-        <p>Cliente: ${txt("projCliente") || "—"} ${txt("projCnpj") ? `· CNPJ: ${txt("projCnpj")}` : ""}</p>
+        <p>Cliente: ${txt("projCliente") || "—"}${txt("projCnpj") ? ` · CNPJ: ${txt("projCnpj")}` : ""}</p>
         <p>Endereço: ${txt("projEndereco") || "—"}</p>
-        <p>Engenheiro responsável: ${txt("projEngenheiro") || "—"} ${txt("projCrea") ? `· ${txt("projCrea")}` : ""} · Data: ${now}</p>
+        <p>Eng. responsável: <strong>${txt("projEngenheiro") || "—"}</strong>${txt("projCrea") ? ` · ${txt("projCrea")}` : ""} · Resp. execução: <strong>${txt("projExecutor") || "—"}</strong>${txt("projCreaExec") ? ` · ${txt("projCreaExec")}` : ""}</p>
+        <p>Data: ${now}</p>
       </div>
     </div>
 
@@ -641,19 +685,29 @@ function buildPrintReport(selectivity) {
     </div>
 
     <div class="print-signatures">
-      <div>${txt("projEngenheiro") || "Engenheiro responsável"}<br />${txt("projCrea") || "CREA"}</div>
-      <div>${txt("projExecutor") || "Responsável pela execução"}<br />${txt("projCreaExec") || "CREA"}</div>
+      <div>
+        <div class="sig-line"></div>
+        <strong>${txt("projEngenheiro") || "Engenheiro responsável"}</strong><br />
+        ${txt("projCrea") || "CREA"}
+      </div>
+      <div>
+        <div class="sig-line"></div>
+        <strong>${txt("projExecutor") || "Responsável pela execução"}</strong><br />
+        ${txt("projCreaExec") || "CREA"}
+      </div>
     </div>
   `;
   report.hidden = false;
 }
 
-function generatePdf() {
+async function generatePdf() {
   if (!calc) {
     if (!runCalculation()) return;
   }
   const selectivity = renderBadge();
-  buildPrintReport(selectivity);
+  // Logo em base64: garante a imagem renderizada no PDF sem corrida de rede.
+  const logoSrc = await loadLogoBase64();
+  buildPrintReport(selectivity, logoSrc);
   const previousTitle = document.title;
   document.title = `Seletividade - ${txt("projNome") || "ObraSync"}`;
   window.print();
@@ -687,6 +741,9 @@ async function init() {
   qs("userBadge").textContent = `${user.name} — ${ROLE_LABELS[user.role] || user.role}`;
   document.body.classList.remove("checking");
   qs("app").classList.remove("hidden");
+
+  // Pré-carrega a logo em paralelo: o primeiro PDF já sai com a imagem pronta.
+  loadLogoBase64();
 
   restoreDraft();
 
