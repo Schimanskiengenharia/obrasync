@@ -2618,21 +2618,29 @@ function create_milestone_billing_event(PDO $pdo, array $milestone, array $proje
 
 function create_event_day_notification(PDO $pdo, array $event): ?int
 {
-    if (!resolve_existing_table($pdo, ['obra_notificacoes'], false)) return null;
-    $projectId = value_from($event, ['obra_id', 'projectId', 'project_id']);
-    if (!$projectId) return null;
-    $eventId = (int) ($event['id'] ?? 0);
-    $existing = find_by_reference($pdo, 'obra_notificacoes', 'generatedLink', 'projectId', 'agenda-evento-' . $eventId, (int) $projectId);
-    if ($existing) return (int) $existing['id'];
-    return insert_dynamic($pdo, 'obra_notificacoes', [
-        'projectId' => $projectId,
-        'recipient' => 'Equipe interna',
-        'type' => 'WhatsApp manual',
-        'message' => 'Evento de agenda hoje: ' . (value_from($event, ['titulo']) ?? 'Evento'),
-        'generatedLink' => 'agenda-evento-' . $eventId,
-        'status' => 'Preparado',
-        'responsibleUserId' => value_from($event, ['usuario_id', 'userId', 'user_id']),
-    ]);
+    // Automação auxiliar executada APÓS o evento já estar salvo: uma falha aqui
+    // não pode derrubar a requisição (o usuário receberia erro com o compromisso
+    // gravado). Registra no error.log e segue.
+    try {
+        if (!resolve_existing_table($pdo, ['obra_notificacoes'], false)) return null;
+        $projectId = value_from($event, ['obra_id', 'projectId', 'project_id']);
+        if (!$projectId) return null;
+        $eventId = (int) ($event['id'] ?? 0);
+        $existing = find_by_reference($pdo, 'obra_notificacoes', 'generatedLink', 'projectId', 'agenda-evento-' . $eventId, (int) $projectId);
+        if ($existing) return (int) $existing['id'];
+        return insert_dynamic($pdo, 'obra_notificacoes', [
+            'projectId' => $projectId,
+            'recipient' => 'Equipe interna',
+            'type' => 'WhatsApp manual',
+            'message' => 'Evento de agenda hoje: ' . (value_from($event, ['titulo']) ?? 'Evento'),
+            'generatedLink' => 'agenda-evento-' . $eventId,
+            'status' => 'Preparado',
+            'responsibleUserId' => value_from($event, ['usuario_id', 'userId', 'user_id']),
+        ]);
+    } catch (Throwable $error) {
+        error_log('[ObraSync] Automação de notificação da agenda falhou: ' . $error->getMessage());
+        return null;
+    }
 }
 
 function kanban_card_is_done(PDO $pdo, array $card): bool
@@ -2646,7 +2654,10 @@ function kanban_card_is_done(PDO $pdo, array $card): bool
 function resolve_existing_table(PDO $pdo, array $candidates, bool $required = true): ?string
 {
     foreach ($candidates as $table) {
-        $stmt = $pdo->prepare('SHOW TABLES LIKE ?');
+        // SHOW TABLES LIKE ? não aceita placeholder em prepared statements nativos
+        // (EMULATE_PREPARES = false): o MariaDB responde 1064 "near '?' at line 1".
+        // information_schema é um SELECT comum e aceita o parâmetro normalmente.
+        $stmt = $pdo->prepare('SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? LIMIT 1');
         $stmt->execute([$table]);
         if ($stmt->fetchColumn()) return $table;
     }
