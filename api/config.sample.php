@@ -9,6 +9,9 @@ return [
         'password' => 'troque_esta_senha',
         'charset' => 'utf8mb4',
     ],
+    // Ambiente: 'production' (padrão) ou 'local'. Em 'local' a API pode criar
+    // dados de exemplo (ex.: plugin "Portal do Cliente"); em produção, NUNCA.
+    'app_env' => 'production',
     'data_dir' => '/var/lib/financeiro',
     'backup_dir' => '/var/lib/financeiro/backups',
     'upload_dir' => '/var/lib/financeiro/uploads',

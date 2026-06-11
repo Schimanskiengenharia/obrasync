@@ -18,10 +18,12 @@ ALTER TABLE system_users
 ALTER TABLE system_users
   MODIFY COLUMN role ENUM('admin', 'financeiro', 'comercial', 'engenharia', 'gestor_obra', 'equipe_campo', 'cliente_obra', 'fornecedor_terceiro', 'consulta', 'gerente', 'operador', 'visualizador') NOT NULL DEFAULT 'financeiro';
 
+-- Cria os usuários iniciais apenas se ainda não existirem: re-executar esta
+-- migração nunca reativa, desbloqueia ou altera usuários reais de produção.
 INSERT INTO system_users (username, fullName, password, role, status)
-VALUES
-  ('admin',            'Administrador', 'admin123',       'admin', 'Ativo'),
-  ('alefschimanski',   'Alef Schimanski', 'Schimanski!@#', 'admin', 'Ativo')
-ON DUPLICATE KEY UPDATE
-  status  = VALUES(status),
-  blocked = 0;
+SELECT 'admin', 'Administrador', 'admin123', 'admin', 'Ativo'
+WHERE NOT EXISTS (SELECT 1 FROM system_users WHERE username = 'admin');
+
+INSERT INTO system_users (username, fullName, password, role, status)
+SELECT 'alefschimanski', 'Alef Schimanski', 'Schimanski!@#', 'admin', 'Ativo'
+WHERE NOT EXISTS (SELECT 1 FROM system_users WHERE username = 'alefschimanski');

@@ -1195,11 +1195,22 @@ CREATE TABLE IF NOT EXISTS regras_visualizacao (
   UNIQUE KEY uk_regra_scope (`role`, module, workTypeId)
 ) ENGINE=InnoDB;
 
-INSERT INTO system_users (username, fullName, password, role, status, blocked)
-VALUES
-  ('admin', 'Administrador', 'admin123', 'admin', 'Ativo', 0),
-  ('alefschimanski', 'alefschimanski', 'Schimanski!@#', 'admin', 'Ativo', 0)
-ON DUPLICATE KEY UPDATE status = VALUES(status), blocked = 0;
+-- ─────────────────────────────────────────────────────────────────────────────
+-- DADOS INICIAIS DE INSTALAÇÃO (executados apenas manualmente, no setup do zero).
+-- O deploy automático e a API NUNCA executam este arquivo. Todos os INSERTs abaixo
+-- são idempotentes e não alteram registros já existentes em produção.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- Usuários iniciais: criados apenas se ainda não existirem (re-executar o schema
+-- nunca reativa, desbloqueia ou altera usuários reais). A senha padrão exige troca
+-- obrigatória no primeiro acesso (mustChangePassword = 1).
+INSERT INTO system_users (username, fullName, password, role, status, blocked, mustChangePassword)
+SELECT 'admin', 'Administrador', 'admin123', 'admin', 'Ativo', 0, 1
+WHERE NOT EXISTS (SELECT 1 FROM system_users WHERE username = 'admin');
+
+INSERT INTO system_users (username, fullName, password, role, status, blocked, mustChangePassword)
+SELECT 'alefschimanski', 'alefschimanski', 'Schimanski!@#', 'admin', 'Ativo', 0, 1
+WHERE NOT EXISTS (SELECT 1 FROM system_users WHERE username = 'alefschimanski');
 
 INSERT INTO sinapi_referencias (uf, referenceMonth, referenceYear, priceType, source, defaultUf, locationName, issueDate, availableTypes, importDate, status)
 VALUES
@@ -1222,13 +1233,18 @@ VALUES
   ('v1.8.0', '2026-06-10', 'Importador SINAPI 04/2026 MS.', 'Referência padrão MS 04/2026, importador XLSX/CSV, mão de obra, famílias/coeficientes, manutenções, configuração SINAPI e integração com orçamento/proposta.')
 ON DUPLICATE KEY UPDATE versao = VALUES(versao);
 
+-- Permissões padrão: criadas apenas se ainda não existirem (não reativa linhas
+-- desativadas pelo administrador em produção).
 INSERT INTO role_permissions (`role`, module, canView, canCreate, canEdit, canDelete, canExport, canApprove, canAttach, status)
-VALUES
-  ('admin', '*', 'Sim', 'Sim', 'Sim', 'Sim', 'Sim', 'Sim', 'Sim', 'Ativo'),
-  ('financeiro', 'financeiro', 'Sim', 'Sim', 'Sim', 'Não', 'Sim', 'Sim', 'Sim', 'Ativo'),
-  ('comercial', 'propostas', 'Sim', 'Sim', 'Sim', 'Não', 'Sim', 'Não', 'Não', 'Ativo'),
-  ('engenharia', 'obras', 'Sim', 'Não', 'Sim', 'Não', 'Sim', 'Não', 'Sim', 'Ativo')
-ON DUPLICATE KEY UPDATE status = VALUES(status);
+SELECT * FROM (
+  SELECT 'admin' AS r, '*' AS m, 'Sim' AS v, 'Sim' AS c, 'Sim' AS e, 'Sim' AS d, 'Sim' AS x, 'Sim' AS a, 'Sim' AS t, 'Ativo' AS s
+  UNION ALL SELECT 'financeiro', 'financeiro', 'Sim', 'Sim', 'Sim', 'Não', 'Sim', 'Sim', 'Sim', 'Ativo'
+  UNION ALL SELECT 'comercial', 'propostas', 'Sim', 'Sim', 'Sim', 'Não', 'Sim', 'Não', 'Não', 'Ativo'
+  UNION ALL SELECT 'engenharia', 'obras', 'Sim', 'Não', 'Sim', 'Não', 'Sim', 'Não', 'Sim', 'Ativo'
+) defaults
+WHERE NOT EXISTS (
+  SELECT 1 FROM role_permissions rp WHERE rp.`role` = defaults.r AND rp.module = defaults.m
+);
 
 INSERT INTO proposal_areas (name, description, status)
 VALUES
@@ -1382,6 +1398,7 @@ CREATE TABLE IF NOT EXISTS system_plugins (
   UNIQUE KEY uk_plugins_name (name)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Exemplo opcional de plugin (apenas em instalação nova, com a tabela vazia).
 INSERT INTO system_plugins (name, url, icon, description, roles, sortOrder, status)
 SELECT 'Portal do Cliente', 'https://schimanskiengenharia.com.br/portal', '🌐',
        'Acesso ao portal externo do cliente (URL configurável).', '', 1, 'Ativo'

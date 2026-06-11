@@ -582,6 +582,18 @@ function load_config(): array
     return require __DIR__ . '/config.sample.php';
 }
 
+// Ambiente da instalação: 'production' por padrão. Defina 'app_env' => 'local' em
+// /etc/financeiro/config.php para habilitar dados de exemplo automáticos em desenvolvimento.
+function app_env(): string
+{
+    static $env = null;
+    if ($env === null) {
+        $config = load_config();
+        $env = strtolower(trim((string) ($config['app_env'] ?? 'production')));
+    }
+    return $env;
+}
+
 function db(array $config): PDO
 {
     $db = $config['db'];
@@ -1103,11 +1115,14 @@ function ensure_plugins_table(PDO $pdo): void
             UNIQUE KEY uk_plugins_name (name)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
     );
-    // Exemplo pré-cadastrado na primeira execução (URL configurável na tela de plugins).
-    $count = (int) $pdo->query('SELECT COUNT(*) FROM system_plugins')->fetchColumn();
-    if ($count === 0) {
-        $pdo->prepare('INSERT INTO system_plugins (name, url, icon, description, roles, sortOrder, status) VALUES (?,?,?,?,?,?,?)')
-            ->execute(['Portal do Cliente', 'https://schimanskiengenharia.com.br/portal', '🌐', 'Acesso ao portal externo do cliente (URL configurável).', '', 1, 'Ativo']);
+    // Exemplo "Portal do Cliente" SOMENTE em ambiente local (app_env = 'local' no config).
+    // Em produção a tabela nasce vazia: nenhum dado fictício é inserido automaticamente.
+    if (app_env() === 'local') {
+        $count = (int) $pdo->query('SELECT COUNT(*) FROM system_plugins')->fetchColumn();
+        if ($count === 0) {
+            $pdo->prepare('INSERT INTO system_plugins (name, url, icon, description, roles, sortOrder, status) VALUES (?,?,?,?,?,?,?)')
+                ->execute(['Portal do Cliente', 'https://schimanskiengenharia.com.br/portal', '🌐', 'Acesso ao portal externo do cliente (URL configurável).', '', 1, 'Ativo']);
+        }
     }
     $done = true;
 }
