@@ -23,6 +23,7 @@ try {
     expire_proposals($pdo);
     create_due_alerts($pdo);
     consolidate_monthly_dre($pdo);
+    purge_old_audit_data($pdo);
     echo '[' . date('c') . "] jobs concluídos\n";
 } catch (Throwable $error) {
     error_log('[ObraSync cron] ' . $error->getMessage());
@@ -128,6 +129,19 @@ function dre_month_already_consolidated(PDO $pdo, string $dreTable, string $mont
         return (bool) $stmt->fetchColumn();
     }
     return false;
+}
+
+// Expurgo de tabelas que crescem sem limite: audit_log ganha uma linha por
+// mutação na API (retenção de 12 meses) e login_attempts uma por tentativa
+// (o login já limpa a janela ativa; aqui remove sobras de períodos sem acesso).
+function purge_old_audit_data(PDO $pdo): void
+{
+    if (resolve_existing_table($pdo, ['audit_log'], false)) {
+        $pdo->exec('DELETE FROM audit_log WHERE createdAt < DATE_SUB(NOW(), INTERVAL 12 MONTH)');
+    }
+    if (resolve_existing_table($pdo, ['login_attempts'], false)) {
+        $pdo->exec('DELETE FROM login_attempts WHERE createdAt < DATE_SUB(NOW(), INTERVAL 7 DAY)');
+    }
 }
 
 function notification_exists_today(PDO $pdo, string $table, string $kind, int $id): bool
