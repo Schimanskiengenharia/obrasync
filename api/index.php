@@ -1137,6 +1137,9 @@ function delete_record(PDO $pdo, array $meta, int $id): void
 {
     $stmt = $pdo->prepare('DELETE FROM `' . $meta['table'] . '` WHERE id = ?');
     $stmt->execute([$id]);
+    if ($stmt->rowCount() === 0) {
+        fail('Registro não encontrado.', 404);
+    }
 }
 
 function get_record(PDO $pdo, array $meta, int $id): array
