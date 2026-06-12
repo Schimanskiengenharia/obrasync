@@ -633,7 +633,46 @@ function buildPrintReport(selectivity, logoSrc) {
         <p><strong>${txt("projNome") || "Empreendimento não informado"}</strong></p>
         <p>Cliente: ${txt("projCliente") || "—"}${txt("projCnpj") ? ` · CNPJ: ${txt("projCnpj")}` : ""}</p>
         <p>Endereço: ${txt("projEndereco") || "—"}</p>
-        <p>Eng. responsável: <strong>${txt("projEngenheiro") || "—"}</strong>${txt("projCrea") ? ` · ${txt("projCrea")}` : ""} · Resp. execução: <strong>${txt("projExecutor") || "—"}</strong>${txt("projCreaExec") ? ` · ${txt("projCreaExec")}` : ""}</p>
+        ${(() => {
+          const engNome  = txt("projEngenheiro") || "—";
+          const engCrea  = txt("projCrea")       || "—";
+          const execNome = txt("projExecutor")   || "—";
+          const execCrea = txt("projCreaExec")   || "—";
+
+          // Campos vazios contam como pessoas distintas (duas linhas com "—")
+          const mesmaPessoa =
+            txt("projEngenheiro") !== "" &&
+            txt("projExecutor") !== "" &&
+            engNome.toLowerCase() === execNome.toLowerCase();
+
+          if (mesmaPessoa) {
+            return `
+              <p style="margin:1px 0;font-size:11px;color:#444;">
+                <span style="font-weight:700;color:#134e4a;">Engenheiro Responsável</span>
+              </p>
+              <p style="margin:1px 0;font-size:11px;color:#444;">
+                Projeto &amp; Execução:
+                <strong>${engNome}</strong>
+                &nbsp;&nbsp;·&nbsp;&nbsp;
+                ${engCrea}
+              </p>`;
+          }
+          return `
+            <p style="margin:1px 0;font-size:11px;color:#444;">
+              <span style="font-weight:700;color:#134e4a;">Engenheiros Responsáveis</span>
+            </p>
+            <p style="margin:1px 0;font-size:11px;color:#444;">
+              Projetista:
+              <strong>${engNome}</strong>
+              &nbsp;&nbsp;·&nbsp;&nbsp;
+              ${engCrea}
+              &nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;
+              Executor:
+              <strong>${execNome}</strong>
+              &nbsp;&nbsp;·&nbsp;&nbsp;
+              ${execCrea}
+            </p>`;
+        })()}
         <p>Data: ${now}</p>
       </div>
     </div>
@@ -728,18 +767,42 @@ function buildPrintReport(selectivity, logoSrc) {
       <img src="${chartImage("ambos", "Coordenograma — Fase + Neutro")}" alt="Coordenograma fase e neutro" />
     </div>
 
-    <div class="print-signatures">
-      <div>
-        <div class="sig-line"></div>
-        <strong>${txt("projEngenheiro") || "Engenheiro responsável"}</strong><br />
-        ${txt("projCrea") || "CREA"}
-      </div>
-      <div>
-        <div class="sig-line"></div>
-        <strong>${txt("projExecutor") || "Responsável pela execução"}</strong><br />
-        ${txt("projCreaExec") || "CREA"}
-      </div>
-    </div>
+    ${(() => {
+      const engNome  = txt("projEngenheiro") || "Engenheiro responsável";
+      const engCrea  = txt("projCrea")       || "CREA";
+      const execNome = txt("projExecutor")   || "Responsável pela execução";
+      const execCrea = txt("projCreaExec")   || "CREA";
+
+      // Campos vazios contam como pessoas distintas (duas assinaturas)
+      const mesmaPessoa =
+        txt("projEngenheiro") !== "" &&
+        txt("projExecutor") !== "" &&
+        engNome.toLowerCase() === execNome.toLowerCase();
+
+      if (mesmaPessoa) {
+        return `
+          <div class="print-signatures single">
+            <div>
+              <div class="sig-line"></div>
+              <strong>${engNome}</strong><br />
+              Projeto &amp; Execução &nbsp;·&nbsp; ${engCrea}
+            </div>
+          </div>`;
+      }
+      return `
+        <div class="print-signatures">
+          <div>
+            <div class="sig-line"></div>
+            <strong>${engNome}</strong><br />
+            Projetista &nbsp;·&nbsp; ${engCrea}
+          </div>
+          <div>
+            <div class="sig-line"></div>
+            <strong>${execNome}</strong><br />
+            Executor &nbsp;·&nbsp; ${execCrea}
+          </div>
+        </div>`;
+    })()}
     </td></tr></tbody>
     <tfoot><tr><td>
       <div class="print-footer-empresa">

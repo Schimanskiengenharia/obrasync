@@ -556,6 +556,15 @@ input:focus, select:focus {
     margin: 0 18px 6px;
   }
 
+  .print-signatures.single {
+    justify-content: center;
+  }
+
+  .print-signatures.single > div {
+    flex: 0 0 280px;
+    max-width: 280px;
+  }
+
   /* Tabela de layout que envolve o relatório inteiro: o <tfoot> é repetido
      pelo navegador no rodapé de TODAS as páginas impressas, reservando espaço
      (diferente de position:fixed, que sobrepõe o conteúdo). Os seletores com
