@@ -8451,7 +8451,7 @@ function setupFavoritesHover() {
       if (!bar.matches(":hover") && !strip.matches(":hover")) {
         bar.classList.remove("fav-visible");
       }
-    }, 280);
+    }, 120); // era 280ms — reduzido para acompanhar a transição mais curta
   }
 
   strip.addEventListener("mouseenter", showBar);
