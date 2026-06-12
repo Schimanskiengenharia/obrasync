@@ -1059,12 +1059,16 @@ async function abrirModalEstudos() {
         </div>
         <div class="sel-item-acoes">
           <button class="sel-btn-carregar secondary" data-id="${Number(estudo.id)}" type="button">📂 Abrir</button>
+          <button class="sel-btn-clonar secondary" data-id="${Number(estudo.id)}" data-nome="${escapeHtml(estudo.nome)}" type="button" title="Duplicar como novo estudo" aria-label="Duplicar">📋</button>
           <button class="sel-btn-excluir sel-btn-danger" data-id="${Number(estudo.id)}" data-nome="${escapeHtml(estudo.nome)}" type="button" aria-label="Excluir">🗑️</button>
         </div>
       </div>
     `).join("");
     lista.querySelectorAll(".sel-btn-carregar").forEach((btn) => {
       btn.addEventListener("click", () => carregarEstudoUI(Number(btn.dataset.id)));
+    });
+    lista.querySelectorAll(".sel-btn-clonar").forEach((btn) => {
+      btn.addEventListener("click", () => clonarEstudoUI(Number(btn.dataset.id), btn.dataset.nome));
     });
     lista.querySelectorAll(".sel-btn-excluir").forEach((btn) => {
       btn.addEventListener("click", () => excluirEstudoUI(Number(btn.dataset.id), btn.dataset.nome));
@@ -1106,6 +1110,33 @@ async function carregarEstudoUI(id) {
     showToastSeletividade(`📂 "${estudo.nome}" carregado.`);
   } catch (error) {
     alert("Erro ao carregar: " + error.message);
+  }
+}
+
+// Clonar: cria uma CÓPIA independente no servidor (mesmos dados, novo id) e
+// recarrega a lista — daí é só Abrir a cópia e editar como um estudo novo,
+// sem risco de sobrescrever o original.
+async function clonarEstudoUI(id, nome) {
+  try {
+    const original = await carregarEstudo(id);
+    if (!original || !(original.ok || original.success) || !original.data) {
+      alert("Erro ao duplicar: " + (original?.error || original?.message || "estudo não encontrado."));
+      return;
+    }
+    const copia = await apiSeletividade("seletividade-estudos", "POST", {
+      id: null,
+      nome: `${original.data.nome} (cópia)`.slice(0, 200),
+      dadosJson: original.data.dadosJson,
+      calcJson: original.data.calcJson || "",
+    });
+    if (copia?.ok || copia?.success) {
+      showToastSeletividade(`📋 Cópia de "${nome}" criada.`);
+      abrirModalEstudos(); // recarrega a lista com a cópia no topo
+    } else if (copia) {
+      alert("Erro ao duplicar: " + (copia.error || copia.message || "tente novamente."));
+    }
+  } catch (error) {
+    alert("Erro ao duplicar: " + error.message);
   }
 }
 
