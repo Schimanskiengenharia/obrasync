@@ -1268,16 +1268,26 @@ function sanitize_user_profile_fields(PDO $pdo, array $payload, ?int $id, bool $
 function bootstrap_data(PDO $pdo, array $resources, ?array $authUser = null, bool $full = false): array
 {
     $role = (string) ($authUser['role'] ?? 'admin');
-    // Garante a tabela de plugins já no bootstrap: o menu lateral depende dela.
+    // Tabelas sob demanda (plugins e qualidade) verificadas antes no
+    // information_schema: na esmagadora maioria dos bootstraps elas já existem
+    // e um SELECT leve evita re-executar 9 DDLs (CREATE IF NOT EXISTS + ALTER)
+    // a cada login. Em caso de dúvida, o ensure_* roda como antes.
     try {
-        ensure_plugins_table($pdo);
+        if (!resolve_existing_table($pdo, ['system_plugins'], false)) {
+            // Garante a tabela de plugins já no bootstrap: o menu lateral depende dela.
+            ensure_plugins_table($pdo);
+        }
     } catch (PDOException $error) {
         // Sem permissão de DDL: o bootstrap segue e devolve a lista vazia.
     }
-    // Tabelas de qualidade no bootstrap: os módulos PBQP-H aparecem populados
-    // já no primeiro acesso (CREATE IF NOT EXISTS é barato quando já existem).
     try {
-        ensure_qualidade_tables($pdo);
+        $qualidadeOk = resolve_existing_table($pdo, ['qualidade_auditorias'], false)
+            && resolve_existing_table($pdo, ['obra_cronograma_etapas'], false)
+            && in_array('servicoSiacId', table_columns($pdo, 'obra_cronograma_etapas'), true);
+        if (!$qualidadeOk) {
+            // Módulos PBQP-H populados já no primeiro acesso.
+            ensure_qualidade_tables($pdo);
+        }
     } catch (PDOException $error) {
         // Sem permissão de DDL: listas voltam vazias até as tabelas existirem.
     }
