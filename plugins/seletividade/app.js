@@ -600,14 +600,14 @@ function renderScreenChart() {
   drawChart(ctx, cssWidth, cssHeight, chartMode);
 }
 
-// PDF: canvas offscreen real em alta resolução, exportado como PNG.
-// Proporção 10:7 (1600×1120) pensada para A4 RETRATO: com largura útil de
-// ~186mm a imagem fica com ~130mm de altura — cabe na página com título e
-// margens, sem esticamento vertical.
+// PDF: canvas offscreen real em alta resolução, exportado como PNG (formato
+// lossless — parâmetro de qualidade não se aplica). 3200×2100 dimensionado
+// para A4 PAISAGEM (~257×170mm úteis); drawChart escala fontes e traços por
+// H/740, então a resolução maior preserva a legibilidade dos rótulos.
 function chartImage(mode, title) {
   const canvas = document.createElement("canvas");
-  canvas.width = 1600;
-  canvas.height = 1120;
+  canvas.width = 3200;
+  canvas.height = 2100;
   drawChart(canvas.getContext("2d"), canvas.width, canvas.height, mode, { title });
   return canvas.toDataURL("image/png");
 }
@@ -623,6 +623,31 @@ function buildPrintReport(selectivity, logoSrc) {
   const now = new Date().toLocaleString("pt-BR", { timeZone: "America/Campo_Grande" });
   const c = calc;
   const report = qs("printReport");
+
+  const footerEmpresa = `
+    <div class="print-footer-empresa">
+      <p>Schimanski Engenharia e Soluções LTDA</p>
+      <p>CNPJ: 44.930.777/0001-20</p>
+      <p>schimanskiengenharia@outlook.com.br</p>
+    </div>`;
+
+  // Página de coordenograma em A4 paisagem (@page chart-page). Fica FORA da
+  // .print-layout: a largura de uma tabela é fixada pela primeira página
+  // (retrato) e limitaria o gráfico; por isso cada página leva a própria
+  // cópia do rodapé. O título sai no HTML (não no canvas) para seguir o
+  // padrão visual das demais seções.
+  const chartPage = (num, titulo, mode, alt) => `
+    <div class="print-chart-page">
+      <div class="print-chart-header">
+        <span class="print-chart-num">${num}.</span>
+        <span class="print-chart-titulo">${titulo}</span>
+      </div>
+      <div class="print-chart-body">
+        <img src="${chartImage(mode, "")}" alt="${alt}" />
+      </div>
+      ${footerEmpresa}
+    </div>`;
+
   report.innerHTML = `
     <table class="print-layout">
     <tbody><tr><td>
@@ -750,19 +775,6 @@ function buildPrintReport(selectivity, logoSrc) {
       ["Nobreak", txt("nbMarca") ? `${txt("nbMarca")} ${txt("nbModelo")} · ${fmt(num("nbPotencia"), 0)} VA` : "—"],
     ])}
 
-    <div class="page-break print-chart">
-      <h2>6. Coordenograma — Fase</h2>
-      <img src="${chartImage("fase", "Coordenograma — Fase")}" alt="Coordenograma fase" />
-    </div>
-    <div class="page-break print-chart">
-      <h2>7. Coordenograma — Neutro</h2>
-      <img src="${chartImage("neutro", "Coordenograma — Neutro")}" alt="Coordenograma neutro" />
-    </div>
-    <div class="page-break print-chart">
-      <h2>8. Coordenograma — Fase + Neutro</h2>
-      <img src="${chartImage("ambos", "Coordenograma — Fase + Neutro")}" alt="Coordenograma fase e neutro" />
-    </div>
-
     ${(() => {
       const engNome  = txt("projEngenheiro");
       const engCrea  = txt("projCrea");
@@ -802,13 +814,13 @@ function buildPrintReport(selectivity, logoSrc) {
     })()}
     </td></tr></tbody>
     <tfoot><tr><td>
-      <div class="print-footer-empresa">
-        <p>Schimanski Engenharia e Soluções LTDA</p>
-        <p>CNPJ: 44.930.777/0001-20</p>
-        <p>schimanskiengenharia@outlook.com.br</p>
-      </div>
+      ${footerEmpresa}
     </td></tr></tfoot>
     </table>
+
+    ${chartPage(6, "Coordenograma — Fase", "fase", "Coordenograma fase")}
+    ${chartPage(7, "Coordenograma — Neutro", "neutro", "Coordenograma neutro")}
+    ${chartPage(8, "Coordenograma — Fase + Neutro", "ambos", "Coordenograma fase e neutro")}
   `;
   report.hidden = false;
 }

@@ -575,36 +575,64 @@ input:focus, select:focus {
     color: #0d0d0d;
   }
 
-  /* ── Coordenogramas ──────────────────────────────────────────────────── */
-  /* Altura dimensionada para a área útil ABNT (297 − 30 − 20 = 247mm) menos
-     o rodapé repetido do tfoot (~15mm); 240mm estourava e gerava páginas
-     em branco após cada coordenograma. */
-  .print-chart {
+  /* ── Páginas dos coordenogramas — paisagem A4 ───────────────────────── */
+  /* @page nomeado com orientação mista: suportado pelo Chromium (validado
+     em headless Edge: retrato 595×842pt + paisagem 842×595pt no mesmo PDF).
+     Os blocos ficam fora da .print-layout e levam rodapé próprio. */
+  @page chart-page {
+    size: A4 landscape;
+    margin: 15mm 15mm 15mm 20mm;
+  }
+
+  .print-chart-page {
+    page: chart-page;
     page-break-before: always;
     page-break-inside: avoid;
     display: flex;
     flex-direction: column;
+    width: 100%;
+    height: 176mm; /* área útil em paisagem: 210 − 15 − 15 = 180mm, com folga */
+  }
+
+  /* Título no TOPO da página — mesmo padrão visual das seções anteriores */
+  .print-chart-header {
+    display: flex;
+    align-items: baseline;
+    gap: 6pt;
+    padding-bottom: 4pt;
+    border-bottom: 1.5pt solid #1e3a5f;
+    margin-bottom: 8pt;
+  }
+
+  .print-chart-num,
+  .print-chart-titulo {
+    font-size: 12pt;
+    font-weight: 700;
+    color: #1e3a5f;
+  }
+
+  .print-chart-titulo {
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  /* Imagem ocupa a área restante entre título e rodapé, sem distorção */
+  .print-chart-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
     align-items: center;
     justify-content: center;
-    height: 225mm;
   }
 
-  .print-chart h2 {
-    width: 100%;
-    margin-top: 0;
-    margin-bottom: 6mm;
-  }
-
-  .print-chart img {
+  .print-chart-body img {
     display: block;
-    width: 100%;
+    max-width: 100%;
+    max-height: 145mm;
+    width: auto;
     height: auto;
-    max-height: 200mm;
-    object-fit: contain;
     border: 0.5pt solid #9ca3af;
   }
-
-  .page-break { page-break-before: always; }
 
   /* ── Badge de seletividade ───────────────────────────────────────────── */
   .print-badge { font-weight: 700; }
