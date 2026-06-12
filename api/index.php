@@ -384,7 +384,8 @@ try {
                      VALUES (?, ?, ?, ?, ?)'
                 )->execute(['PROPOSTA_APROVADA', 'commercial_proposals', (int) $id, 'ERRO', $e->getMessage()]);
             } catch (Throwable $_) {}
-            fail('Erro ao aprovar proposta: ' . $e->getMessage(), 500);
+            error_log('[ObraSync API] Aprovação de proposta falhou: ' . $e->getMessage() . ' em ' . $e->getFile() . ':' . $e->getLine());
+            fail('Erro ao aprovar a proposta. As alterações foram desfeitas — tente novamente ou contate o administrador.', 500);
         }
     }
 
@@ -425,7 +426,10 @@ try {
 
     fail('Método não permitido.', 405);
 } catch (Throwable $error) {
-    fail($error->getMessage(), 500);
+    // Erros inesperados (PDO etc.) carregam SQL, nomes de tabela e caminhos:
+    // o detalhe vai para o error_log; o cliente recebe mensagem genérica.
+    error_log('[ObraSync API] ' . $error->getMessage() . ' em ' . $error->getFile() . ':' . $error->getLine());
+    fail('Erro interno no servidor. Tente novamente ou contate o administrador.', 500);
 }
 } // fim do if (PHP_SAPI !== 'cli') — roteamento web
 
@@ -491,7 +495,8 @@ function handle_agenda_module(PDO $pdo, string $method, array $query): never
 
         agenda_respond(false, [], 'Ação da agenda inválida.', 400);
     } catch (Throwable $e) {
-        agenda_respond(false, [], $e->getMessage(), 500);
+        error_log('[ObraSync agenda] ' . $e->getMessage() . ' em ' . $e->getFile() . ':' . $e->getLine());
+        agenda_respond(false, [], 'Erro interno ao processar a agenda. Tente novamente ou contate o administrador.', 500);
     }
 }
 
