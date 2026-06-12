@@ -1687,22 +1687,11 @@ function authHeaders() {
   return authToken ? { Authorization: `Bearer ${authToken}`, "X-Auth-Token": authToken } : {};
 }
 
-async function apiRequest(path, options = {}) {
-  let url = `${API_BASE}/${path}`;
-  // Apache/PHP-CGI pode remover o header Authorization em DELETE/PUT/PATCH; o
-  // X-Auth-Token (authHeaders) cobre esses casos. O antigo fallback ?token= na
-  // query string foi removido: deixava o token de sessão nos access logs.
-  let response;
-  try {
-    response = await fetch(url, {
-      headers: { "Content-Type": "application/json", ...authHeaders(), ...(options.headers || {}) },
-      ...options,
-    });
-  } catch (networkError) {
-    const error = new Error("Falha de conexão com o servidor. Verifique a rede e tente novamente.");
-    error.cause = networkError;
-    throw error;
-  }
+// Tratamento comum das respostas da API (apiRequest e fetchForm): parse do
+// JSON, renovação única do token em 401 (outra aba pode ter refeito o login;
+// retry = null quando a tentativa única já foi gasta) e conversão de erros
+// HTTP em Error com status.
+async function handleApiResponse(response, path, retry) {
   const text = await response.text();
   let payload = {};
   if (text) {
@@ -1716,14 +1705,11 @@ async function apiRequest(path, options = {}) {
     }
   }
   if (response.status === 401) {
-    // Renovação automática: o token em memória pode estar defasado (ex.: outra
-    // aba refez o login). Relê o armazenamento e tenta UMA vez com o token atual,
-    // sem exigir novo login.
-    if (!options._retried) {
+    if (retry) {
       const staleToken = authToken;
       readAuthSession();
       if (authToken && authToken !== staleToken) {
-        return apiRequest(path, { ...options, _retried: true });
+        return retry();
       }
     }
     authToken = null;
@@ -1741,6 +1727,25 @@ async function apiRequest(path, options = {}) {
   return payload;
 }
 
+async function apiRequest(path, options = {}) {
+  // Apache/PHP-CGI pode remover o header Authorization em DELETE/PUT/PATCH; o
+  // X-Auth-Token (authHeaders) cobre esses casos. O antigo fallback ?token= na
+  // query string foi removido: deixava o token de sessão nos access logs.
+  let response;
+  try {
+    response = await fetch(`${API_BASE}/${path}`, {
+      headers: { "Content-Type": "application/json", ...authHeaders(), ...(options.headers || {}) },
+      ...options,
+    });
+  } catch (networkError) {
+    const error = new Error("Falha de conexão com o servidor. Verifique a rede e tente novamente.");
+    error.cause = networkError;
+    throw error;
+  }
+  const retry = options._retried ? null : () => apiRequest(path, { ...options, _retried: true });
+  return handleApiResponse(response, path, retry);
+}
+
 // Wrapper para uploads multipart (FormData) — não pode usar apiRequest pois ele força JSON.
 async function fetchForm(path, formData, _retried = false) {
   let response;
@@ -1751,40 +1756,8 @@ async function fetchForm(path, formData, _retried = false) {
     error.cause = networkError;
     throw error;
   }
-  const text = await response.text();
-  let payload = {};
-  if (text) {
-    try { payload = JSON.parse(text); }
-    catch {
-      console.error("Resposta não-JSON (upload):", path, response.status, text.slice(0, 500));
-      const error = new Error(`O servidor respondeu em formato inesperado (HTTP ${response.status}). Tente novamente ou contate o administrador.`);
-      error.status = response.status;
-      throw error;
-    }
-  }
-  if (response.status === 401) {
-    // Mesma renovação do apiRequest: o token em memória pode estar defasado
-    // (outra aba refez o login) — relê o armazenamento e tenta UMA vez.
-    if (!_retried) {
-      const staleToken = authToken;
-      readAuthSession();
-      if (authToken && authToken !== staleToken) {
-        return fetchForm(path, formData, true);
-      }
-    }
-    authToken = null;
-    clearAuthSession();
-    if (currentUser) showLogin(payload.error || "Sessão expirada. Faça login novamente.");
-    const error = new Error(payload.error || "Não autenticado.");
-    error.status = 401;
-    throw error;
-  }
-  if (!response.ok || payload.ok === false) {
-    const error = new Error(payload.error || `Erro HTTP ${response.status}`);
-    error.status = response.status;
-    throw error;
-  }
-  return payload;
+  const retry = _retried ? null : () => fetchForm(path, formData, true);
+  return handleApiResponse(response, path, retry);
 }
 
 async function loadServerData() {
