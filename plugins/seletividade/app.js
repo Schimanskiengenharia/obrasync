@@ -94,9 +94,10 @@ async function checkObraSyncSession() {
     return null;
   }
   try {
-    // Token nos headers e na query (?token=): cobre servidores Apache/PHP-CGI
-    // que removem o header Authorization.
-    const res = await fetch(`${API_BASE}/check-session?token=${encodeURIComponent(session.token)}`, {
+    // Token só nos headers (Authorization + X-Auth-Token, que o PHP-CGI não
+    // remove). O antigo ?token= na query deixava o token de sessão gravado
+    // nos access logs do Apache e foi removido — a API também não o aceita mais.
+    const res = await fetch(`${API_BASE}/check-session`, {
       headers: { Authorization: `Bearer ${session.token}`, "X-Auth-Token": session.token },
     });
     const data = await res.json();

@@ -1930,9 +1930,19 @@ function bearer_token(): string
     if ($token !== '') {
         return $token;
     }
-    // Fallback para downloads abertos por navegação direta (links de PDF/XML),
-    // onde o navegador não envia headers personalizados.
-    return trim((string) ($_GET['token'] ?? ''));
+    // Fallback ?token= RESTRITO ao download de notas fiscais aberto por
+    // navegação direta (GET /fiscalDocuments/{id}/pdf|xml) — único caso em que
+    // o navegador não envia headers. Nas demais rotas, aceitar o token na
+    // query string o deixaria gravado nos access logs do Apache.
+    if (($_SERVER['REQUEST_METHOD'] ?? '') === 'GET') {
+        $segments = route_segments();
+        $isFiscalDownload = in_array($segments[0] ?? '', ['fiscalDocuments', 'notas-fiscais', 'documentos-fiscais-obra'], true)
+            && isset($segments[1], $segments[2]);
+        if ($isFiscalDownload) {
+            return trim((string) ($_GET['token'] ?? ''));
+        }
+    }
+    return '';
 }
 
 function authenticate_request(PDO $pdo, array $config): array
