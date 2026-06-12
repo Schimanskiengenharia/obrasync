@@ -674,6 +674,30 @@ input:focus, select:focus {
     font-weight: 400;
   }
 
+  /* ── Assinaturas fixas no fundo da última página ────────────────────── */
+  /* min-height 220mm + 8mm de padding cabem na área útil ABNT (247mm)
+     menos o rodapé repetido do tfoot (~15mm). Esta regra precisa vir
+     DEPOIS de .print-report h2 (mesma especificidade) para o margin-bottom
+     do título prevalecer. */
+  .print-assinaturas-pagina {
+    page-break-before: always;
+    page-break-inside: avoid;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    min-height: 220mm;
+    padding-bottom: 8mm;
+  }
+
+  .print-assinaturas-pagina h2 {
+    /* herda .print-report h2 — azul marinho, uppercase, borda */
+    margin-bottom: 0;
+  }
+
+  .print-assinaturas-pagina .print-signatures {
+    margin-top: auto; /* empurra as assinaturas para o fundo */
+  }
+
   /* ── Layout com rodapé fixo repetido em todas as páginas ────────────── */
   .print-layout {
     width: 100%;

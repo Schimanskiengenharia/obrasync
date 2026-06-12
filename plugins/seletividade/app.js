@@ -764,6 +764,7 @@ function buildPrintReport(selectivity, logoSrc) {
       <img src="${chartImage("ambos", "Coordenograma — Fase + Neutro")}" alt="Coordenograma fase e neutro" />
     </div>
 
+    <div class="print-assinaturas-pagina">
     <h2>9. Assinaturas</h2>
     ${(() => {
       const engNome  = txt("projEngenheiro");
@@ -802,6 +803,7 @@ function buildPrintReport(selectivity, logoSrc) {
           ${sigBlock("Cliente", clienteNome, clienteCnpj ? `CNPJ: ${clienteCnpj}` : "")}
         </div>`;
     })()}
+    </div>
     </td></tr></tbody>
     <tfoot><tr><td>
       <div class="print-footer-empresa">
