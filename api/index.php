@@ -179,6 +179,11 @@ try {
         authorize_request($pdo, $authUser, 'reconciliation', 'edit');
         handle_ofx_import($pdo, $authUser, read_json());
     }
+    if ($resource === 'ofx-conciliar') {
+        require_method($method, ['POST']);
+        authorize_request($pdo, $authUser, 'reconciliation', 'edit');
+        handle_ofx_conciliar($pdo, $authUser, read_json());
+    }
     if ($resource === 'ofx-history') {
         require_method($method, ['GET']);
         authorize_request($pdo, $authUser, 'reconciliation', 'view');
@@ -2100,7 +2105,183 @@ function ensure_ofx_tables(PDO $pdo): void
             KEY idx_ofx_import_account (bankAccountId)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
     );
+    // Vínculo OFX nas contas a pagar/receber: ofxFitid evita dupla contagem
+    // (a mesma transação do extrato baixando duas contas) e permite rastrear
+    // qual linha do extrato quitou cada título. Sob demanda, sem migration
+    // manual; sem permissão de DDL o match continua funcionando via try/catch.
+    try {
+        $pdo->exec('ALTER TABLE accounts_payable
+            ADD COLUMN IF NOT EXISTS ofxFitid VARCHAR(100) NULL,
+            ADD COLUMN IF NOT EXISTS ofxImportId BIGINT UNSIGNED NULL,
+            ADD INDEX IF NOT EXISTS idx_pay_fitid (ofxFitid)');
+        $pdo->exec('ALTER TABLE accounts_receivable
+            ADD COLUMN IF NOT EXISTS ofxFitid VARCHAR(100) NULL,
+            ADD COLUMN IF NOT EXISTS ofxImportId BIGINT UNSIGNED NULL,
+            ADD INDEX IF NOT EXISTS idx_rec_fitid (ofxFitid)');
+    } catch (Throwable $error) {
+        error_log('[ObraSync OFX] ensure colunas de vínculo: ' . $error->getMessage());
+    }
     $done = true;
+}
+
+// Para uma transação do extrato, busca contas a pagar (Saída) ou a receber
+// (Entrada) compatíveis: mesmo valor, vencimento a até ±5 dias e sem OFX já
+// vinculado. Confiança decresce com a distância da data, título já baixado
+// manualmente e conta bancária divergente.
+function ofx_find_matches(PDO $pdo, array $transaction, string $bankName): array
+{
+    $amount = number_format(abs((float) ($transaction['amount'] ?? 0)), 2, '.', '');
+    $date = (string) ($transaction['date'] ?? '');
+    $isEntrada = ($transaction['type'] ?? '') === 'Entrada';
+    $table = $isEntrada ? 'accounts_receivable' : 'accounts_payable';
+    $dateField = $isEntrada ? 'receivedDate' : 'paidDate';
+    $settledStatus = $isEntrada ? 'Recebido' : 'Pago';
+
+    try {
+        $stmt = $pdo->prepare(
+            "SELECT id, document, dueDate, {$dateField} AS settledDate, amount, status, bankAccount, ofxFitid
+               FROM {$table}
+              WHERE amount = ?
+                AND status <> 'Cancelado'
+                AND ofxFitid IS NULL
+                AND ABS(DATEDIFF(dueDate, ?)) <= 5
+              ORDER BY ABS(DATEDIFF(dueDate, ?)) ASC
+              LIMIT 5"
+        );
+        $stmt->execute([$amount, $date, $date]);
+        $rows = $stmt->fetchAll();
+    } catch (PDOException $error) {
+        // Colunas de vínculo ausentes (sem DDL): match indisponível, importação segue.
+        return [];
+    }
+
+    $matches = [];
+    foreach ($rows as $row) {
+        $daysDiff = (int) abs((strtotime($date) - strtotime((string) $row['dueDate'])) / 86400);
+        $alreadyPaid = $row['status'] === $settledStatus;
+        $confidence = 100;
+        if ($daysDiff > 1) $confidence -= $daysDiff * 5;
+        if ($alreadyPaid) $confidence -= 20;
+        if ($bankName !== '' && !empty($row['bankAccount']) && $row['bankAccount'] !== $bankName) $confidence -= 15;
+        $matches[] = [
+            'table' => $table,
+            'id' => (int) $row['id'],
+            'document' => (string) $row['document'],
+            'dueDate' => (string) $row['dueDate'],
+            'amount' => (float) $row['amount'],
+            'status' => (string) $row['status'],
+            'alreadyPaid' => $alreadyPaid,
+            'bankAccount' => (string) ($row['bankAccount'] ?? ''),
+            'confidence' => max(0, $confidence),
+            'daysDiff' => $daysDiff,
+        ];
+    }
+    usort($matches, static fn ($a, $b) => $b['confidence'] <=> $a['confidence']);
+    return $matches;
+}
+
+// Concilia UMA transação do extrato com um título: baixa a conta (status +
+// data de pagamento/recebimento), grava o vínculo ofxFitid, cria o movimento
+// de caixa e registra o FITID. Título já baixado manualmente é apenas
+// VINCULADO (status e data preservados) — o movimento de caixa entra do mesmo
+// jeito, pois a linha do extrato é real.
+function handle_ofx_conciliar(PDO $pdo, array $authUser, array $payload): never
+{
+    ensure_ofx_tables($pdo);
+    $fitid = mb_substr(trim((string) ($payload['fitid'] ?? '')), 0, 100);
+    $table = (string) ($payload['table'] ?? '');
+    $recordId = (int) ($payload['recordId'] ?? 0);
+    $bankAccountId = (int) ($payload['bankAccountId'] ?? 0);
+    $date = trim((string) ($payload['date'] ?? ''));
+    $amount = round(abs((float) ($payload['amount'] ?? 0)), 2);
+    $type = ($payload['type'] ?? '') === 'Entrada' ? 'Entrada' : 'Saída';
+    $memo = trim((string) ($payload['memo'] ?? ''));
+
+    if ($fitid === '' || !$recordId || !$bankAccountId) {
+        fail('Dados incompletos para conciliação.', 400);
+    }
+    if (!in_array($table, ['accounts_payable', 'accounts_receivable'], true)) {
+        fail('Tabela inválida.', 400);
+    }
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date) || $amount <= 0) {
+        fail('Data ou valor da transação inválidos.', 400);
+    }
+
+    $stmt = $pdo->prepare('SELECT id, name FROM bank_accounts WHERE id = ? LIMIT 1');
+    $stmt->execute([$bankAccountId]);
+    $account = $stmt->fetch();
+    if (!$account) {
+        fail('Conta bancária não encontrada.', 404);
+    }
+    $bankName = (string) $account['name'];
+
+    // FITID já registrado nesta conta = transação já entrou (importada ou conciliada).
+    $stmt = $pdo->prepare('SELECT id FROM ofx_fitids WHERE fitid = ? AND bankAccountId = ? LIMIT 1');
+    $stmt->execute([$fitid, $bankAccountId]);
+    if ($stmt->fetchColumn()) {
+        fail('Esta transação do extrato já foi importada ou conciliada.', 409);
+    }
+
+    $stmt = $pdo->prepare("SELECT * FROM {$table} WHERE id = ? LIMIT 1");
+    $stmt->execute([$recordId]);
+    $record = $stmt->fetch();
+    if (!$record) {
+        fail('Título não encontrado.', 404);
+    }
+    if (($record['status'] ?? '') === 'Cancelado') {
+        fail('Título cancelado não pode ser conciliado.', 422);
+    }
+    if (!empty($record['ofxFitid'])) {
+        fail('Este título já está vinculado a outra transação do extrato.', 409);
+    }
+
+    $isPayable = $table === 'accounts_payable';
+    $settledStatus = $isPayable ? 'Pago' : 'Recebido';
+    $dateField = $isPayable ? 'paidDate' : 'receivedDate';
+    $alreadySettled = ($record['status'] ?? '') === $settledStatus;
+
+    $pdo->beginTransaction();
+    try {
+        if ($alreadySettled) {
+            // Baixado manualmente antes: só vincula o extrato, sem mexer em status/data.
+            $pdo->prepare("UPDATE {$table} SET ofxFitid = ?, bankAccount = COALESCE(NULLIF(bankAccount, ''), ?) WHERE id = ?")
+                ->execute([$fitid, $bankName, $recordId]);
+        } else {
+            $pdo->prepare("UPDATE {$table} SET status = ?, {$dateField} = ?, ofxFitid = ?, bankAccount = COALESCE(NULLIF(bankAccount, ''), ?) WHERE id = ?")
+                ->execute([$settledStatus, $date, $fitid, $bankName, $recordId]);
+        }
+
+        $pdo->prepare(
+            "INSERT INTO cash_bank_movements (`date`, bankAccount, `type`, history, amount, originDocument, status)
+             VALUES (?, ?, ?, ?, ?, ?, 'Confirmado')"
+        )->execute([
+            $date, $bankName, $type,
+            $memo !== '' ? $memo : ('Conciliação OFX — ' . $record['document']),
+            $amount,
+            mb_substr('OFX:' . $fitid, 0, 100),
+        ]);
+        $cashMoveId = (int) $pdo->lastInsertId();
+
+        $pdo->prepare('INSERT IGNORE INTO ofx_fitids (fitid, bankAccountId, cashMoveId) VALUES (?, ?, ?)')
+            ->execute([$fitid, $bankAccountId, $cashMoveId]);
+        $pdo->commit();
+    } catch (Throwable $error) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        error_log('[ObraSync OFX] Conciliação falhou: ' . $error->getMessage());
+        fail('Erro ao conciliar. Nada foi gravado — tente novamente.', 500);
+    }
+
+    server_audit($pdo, $authUser, 'update', 'reconciliation', $recordId,
+        ($alreadySettled ? 'Vínculo OFX (já baixado): ' : 'Baixa por OFX: ') . $record['document'] . ' — FITID ' . $fitid);
+    respond(['ok' => true, 'data' => [
+        'recordId' => $recordId,
+        'table' => $table,
+        'status' => $alreadySettled ? (string) $record['status'] : $settledStatus,
+        'linkedOnly' => $alreadySettled,
+        'cashMoveId' => $cashMoveId,
+    ], 'message' => $alreadySettled ? 'Extrato vinculado ao título já baixado.' : "Conciliado com sucesso — {$settledStatus}."]);
 }
 
 // OFX é um híbrido SGML/XML sem biblioteca nativa no PHP: detecta o dialeto e
@@ -2292,8 +2473,15 @@ function handle_ofx_preview(PDO $pdo): never
             $already[$fitid] = true;
         }
     }
-    $transactions = array_map(static function (array $txn) use ($already): array {
+    $bankName = (string) $account['name'];
+    $transactions = array_map(static function (array $txn) use ($already, $pdo, $bankName): array {
         $txn['duplicate'] = isset($already[$txn['fitid']]);
+        // Sugestão de conciliação só para transações novas: contas a
+        // pagar/receber com mesmo valor e vencimento próximo (±5 dias).
+        $txn['matches'] = $txn['duplicate'] ? [] : ofx_find_matches($pdo, $txn, $bankName);
+        $txn['autoMatch'] = (!$txn['duplicate'] && $txn['matches'] && $txn['matches'][0]['confidence'] >= 85)
+            ? $txn['matches'][0]
+            : null;
         return $txn;
     }, $parsed['transactions']);
     $newCount = count(array_filter($transactions, static fn ($t) => !$t['duplicate']));

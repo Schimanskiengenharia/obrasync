@@ -8040,6 +8040,15 @@ function renderReconciliation() {
     const index = Number(checkbox.dataset.idx);
     if (ofxTransacoes[index]) ofxTransacoes[index].import = checkbox.checked;
   });
+  qs("ofxTableWrap")?.addEventListener("click", (event) => {
+    const conciliar = event.target.closest(".ofx-btn-conciliar");
+    if (conciliar) {
+      conciliarTransacao(Number(conciliar.dataset.idx), conciliar.dataset.table, Number(conciliar.dataset.recordId));
+      return;
+    }
+    const avulso = event.target.closest(".ofx-btn-avulso");
+    if (avulso) importarAvulso(Number(avulso.dataset.idx));
+  });
 
   if (canImportOfx) carregarHistoricoOFX();
 }
@@ -8074,35 +8083,141 @@ async function carregarPreviewOFX() {
 
 function renderizarPreviewOFX(data) {
   qs("ofxPreview").classList.remove("hidden");
+  const autoMatches = ofxTransacoes.filter((txn) => !txn.duplicate && txn.autoMatch).length;
+  const semMatch = ofxTransacoes.filter((txn) => !txn.duplicate && !txn.autoMatch).length;
   qs("ofxPreviewInfo").innerHTML = `
     <span class="ofx-badge">🏦 ${svgText(data.account.name)}</span>
     <span class="ofx-badge ofx-badge-green">✅ ${data.newCount} novas</span>
+    <span class="ofx-badge ofx-badge-blue">🔗 ${autoMatches} com match</span>
+    <span class="ofx-badge ofx-badge-yellow">❓ ${semMatch} sem match</span>
     <span class="ofx-badge ofx-badge-gray">⏭️ ${data.skipCount} já importadas</span>
-    <span class="ofx-badge">📊 ${data.total} no arquivo</span>
   `;
   qs("ofxTableWrap").innerHTML = `
     <table class="ofx-table">
       <thead>
         <tr>
           <th><input type="checkbox" id="ofxCheckAll" checked /></th>
-          <th>Data</th><th>Descrição</th><th>Tipo</th><th>Valor</th><th>Status</th>
+          <th>Data</th><th>Descrição (OFX)</th><th>Tipo</th><th>Valor</th><th>Match encontrado</th><th>Ação</th>
         </tr>
       </thead>
       <tbody>
-        ${ofxTransacoes.map((txn, index) => `
-          <tr class="${txn.duplicate ? "ofx-dup" : ""}">
-            <td><input type="checkbox" class="ofx-check" data-idx="${index}" ${txn.duplicate ? "disabled" : "checked"} /></td>
-            <td>${asDate(txn.date)}</td>
-            <td class="ofx-memo" title="${svgText(txn.memo)}">${svgText(txn.memo)}</td>
-            <td><span class="ofx-type ${txn.type === "Entrada" ? "ofx-entrada" : "ofx-saida"}">${txn.type === "Entrada" ? "▲" : "▼"} ${txn.type}</span></td>
-            <td class="ofx-amount ${txn.type === "Entrada" ? "ofx-entrada" : "ofx-saida"}">${txn.type === "Entrada" ? "+" : "-"} ${asMoney(txn.amount)}</td>
-            <td>${txn.duplicate ? '<span class="ofx-badge ofx-badge-gray">Já importado</span>' : '<span class="ofx-badge ofx-badge-green">Novo</span>'}</td>
-          </tr>
-        `).join("")}
+        ${ofxTransacoes.map((txn, index) => {
+          const tipoHtml = `<span class="ofx-type ${txn.type === "Entrada" ? "ofx-entrada" : "ofx-saida"}">${txn.type === "Entrada" ? "▲" : "▼"} ${txn.type}</span>`;
+          const valorHtml = `<span class="ofx-amount ${txn.type === "Entrada" ? "ofx-entrada" : "ofx-saida"}">${txn.type === "Entrada" ? "+" : "-"} ${asMoney(txn.amount)}</span>`;
+          if (txn.duplicate) {
+            return `
+              <tr class="ofx-dup" data-idx="${index}">
+                <td><input type="checkbox" disabled /></td>
+                <td>${asDate(txn.date)}</td>
+                <td class="ofx-memo" title="${svgText(txn.memo)}">${svgText(txn.memo)}</td>
+                <td>${tipoHtml}</td><td>${valorHtml}</td>
+                <td colspan="2"><span class="ofx-badge ofx-badge-gray">⏭️ Já importado</span></td>
+              </tr>`;
+          }
+          const match = txn.autoMatch || txn.matches?.[0] || null;
+          const matchHtml = match ? `
+            <div class="ofx-match">
+              <span class="ofx-match-conf ${match.confidence >= 85 ? "ofx-match-conf-high" : "ofx-match-conf-med"}">${match.confidence}% confiança</span>
+              <span class="ofx-match-doc" title="${svgText(match.document)}">${svgText(match.document)}</span>
+              <span class="ofx-match-date">venc. ${asDate(match.dueDate)}</span>
+              ${match.alreadyPaid
+                ? '<span class="ofx-badge ofx-badge-yellow">⚠️ Já baixado manualmente</span>'
+                : `<span class="ofx-badge ofx-badge-green">${match.table === "accounts_payable" ? "A Pagar" : "A Receber"}</span>`}
+            </div>`
+            : '<span class="ofx-badge ofx-badge-gray">Sem match — entrada avulsa</span>';
+          const acaoHtml = `
+            <div class="ofx-acoes">
+              ${match ? `<button class="primary ofx-btn-conciliar" data-idx="${index}" data-table="${match.table}" data-record-id="${match.id}" type="button">🔗 Conciliar</button>` : ""}
+              <button class="secondary ofx-btn-avulso" data-idx="${index}" type="button" title="Importar sem vincular a título">➕ Avulso</button>
+            </div>`;
+          return `
+            <tr data-idx="${index}">
+              <td><input type="checkbox" class="ofx-check" data-idx="${index}" checked /></td>
+              <td>${asDate(txn.date)}</td>
+              <td class="ofx-memo" title="${svgText(txn.memo)}">${svgText(txn.memo)}</td>
+              <td>${tipoHtml}</td><td>${valorHtml}</td>
+              <td>${matchHtml}</td>
+              <td>${acaoHtml}</td>
+            </tr>`;
+        }).join("")}
       </tbody>
     </table>
   `;
   ofxTransacoes.forEach((txn) => { txn.import = !txn.duplicate; });
+}
+
+// Marca a linha como resolvida (conciliada/avulsa) sem re-renderizar a tabela:
+// preserva o estado dos demais checkboxes e o scroll do usuário.
+function marcarLinhaOfxResolvida(index, badgeHtml) {
+  const row = qs("ofxTableWrap")?.querySelector(`tr[data-idx="${index}"]`);
+  if (!row) return;
+  row.classList.add("ofx-dup");
+  const checkbox = row.querySelector(".ofx-check");
+  if (checkbox) { checkbox.checked = false; checkbox.disabled = true; }
+  const cells = row.querySelectorAll("td");
+  if (cells.length >= 7) {
+    cells[5].innerHTML = badgeHtml;
+    cells[6].innerHTML = "";
+  }
+  const txn = ofxTransacoes[index];
+  if (txn) { txn.import = false; txn.duplicate = true; }
+}
+
+// Conciliar: baixa a conta a pagar/receber vinculando a transação do extrato
+// (título já baixado manualmente é só vinculado, sem mudar status).
+async function conciliarTransacao(index, table, recordId) {
+  const txn = ofxTransacoes[index];
+  if (!txn) return;
+  const bankAccountId = Number(qs("ofxBankAccount")?.value || 0);
+  const match = txn.autoMatch || txn.matches?.[0];
+  if (match?.alreadyPaid && !confirm(`Este título já foi baixado manualmente como "${match.status}".\n\nVincular o extrato ao registro existente sem alterar o status?`)) {
+    return;
+  }
+  const btn = qs("ofxTableWrap")?.querySelector(`.ofx-btn-conciliar[data-idx="${index}"]`);
+  if (btn) { btn.disabled = true; btn.textContent = "Conciliando…"; }
+  try {
+    const payload = await apiRequest("ofx-conciliar", {
+      method: "POST",
+      body: JSON.stringify({
+        fitid: txn.fitid, table, recordId, bankAccountId,
+        date: txn.date, amount: txn.amount, type: txn.type, memo: txn.memo,
+      }),
+    });
+    marcarLinhaOfxResolvida(index, `<span class="ofx-badge ofx-badge-green">✅ ${payload.data.linkedOnly ? "Vinculado" : `Conciliado — ${payload.data.status}`}</span>`);
+    showToast(payload.message || "Conciliado com sucesso.");
+    refreshData().catch(() => {}); // atualiza db em segundo plano, sem fechar o painel
+  } catch (error) {
+    alert(`Erro ao conciliar: ${error.message}`);
+    if (btn) { btn.disabled = false; btn.textContent = "🔗 Conciliar"; }
+  }
+}
+
+// Importar avulso: a transação entra como movimento de caixa sem baixar título.
+async function importarAvulso(index) {
+  const txn = ofxTransacoes[index];
+  if (!txn) return;
+  const bankAccountId = Number(qs("ofxBankAccount")?.value || 0);
+  const btn = qs("ofxTableWrap")?.querySelector(`.ofx-btn-avulso[data-idx="${index}"]`);
+  if (btn) { btn.disabled = true; btn.textContent = "Importando…"; }
+  try {
+    const payload = await apiRequest("ofx-import", {
+      method: "POST",
+      body: JSON.stringify({
+        bankAccountId,
+        fileName: qs("ofxFile")?.files?.[0]?.name || "extrato.ofx",
+        transactions: [{ fitid: txn.fitid, date: txn.date, amount: txn.amount, type: txn.type, memo: txn.memo, import: true }],
+      }),
+    });
+    if (!payload.data.imported) {
+      alert("A transação não foi importada (já existia para esta conta).");
+    }
+    marcarLinhaOfxResolvida(index, '<span class="ofx-badge ofx-badge-blue">➕ Importado avulso</span>');
+    showToast("➕ Movimento avulso importado.");
+    refreshData().catch(() => {});
+  } catch (error) {
+    alert(`Erro ao importar: ${error.message}`);
+    if (btn) { btn.disabled = false; btn.textContent = "➕ Avulso"; }
+  }
 }
 
 function selecionarTodosOFX(checked) {

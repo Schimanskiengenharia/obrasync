@@ -3476,3 +3476,60 @@ menu {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* ── Conciliação OFX — match e ações ───────────────────────────────────── */
+
+.ofx-match {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+}
+
+.ofx-match-conf {
+  font-weight: 700;
+  font-size: 11px;
+}
+
+.ofx-match-conf-high { color: var(--green); }
+.ofx-match-conf-med { color: var(--gold); }
+
+.ofx-match-doc {
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 180px;
+}
+
+.ofx-match-date {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.ofx-acoes {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.ofx-acoes .ofx-btn-conciliar,
+.ofx-acoes .ofx-btn-avulso {
+  padding: 5px 10px;
+  font-size: 12px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+
+.ofx-badge-blue {
+  background: rgba(37, 99, 235, 0.12);
+  border-color: rgba(37, 99, 235, 0.3);
+  color: #2563eb;
+}
+
+.ofx-badge-yellow {
+  background: rgba(184, 135, 45, 0.12);
+  border-color: rgba(184, 135, 45, 0.3);
+  color: var(--gold);
+}
