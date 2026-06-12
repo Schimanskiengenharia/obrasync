@@ -994,7 +994,9 @@ function abrirModalSalvar() {
   // nome do empreendimento já digitado no formulário.
   input.value = estudoAtualNome || input.value || txt("projNome");
   qs("modalSalvar").classList.remove("hidden");
-  setTimeout(() => input.focus(), 50);
+  // select() em vez de focus(): com o nome pré-preenchido, digitar já substitui
+  // tudo — renomear ou confirmar fica a um toque de distância.
+  setTimeout(() => input.select(), 60);
 }
 
 function fecharModalSalvar() {
@@ -1040,7 +1042,7 @@ async function abrirModalEstudos() {
       return;
     }
     if (!res.data?.length) {
-      lista.innerHTML = '<p class="sel-lista-vazia">Nenhum estudo salvo ainda.</p>';
+      lista.innerHTML = '<p class="sel-lista-vazia">Nenhum estudo salvo ainda.<br>Clique em 💾 Salvar para guardar o estudo atual.</p>';
       return;
     }
     const dataLabel = (estudo) => {
