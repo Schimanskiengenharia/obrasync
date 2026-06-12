@@ -467,13 +467,13 @@ const configs = {
   },
   bankAccounts: {
     title: "Contas bancárias",
-    description: "Cadastro de contas usadas no controle de saldo, caixa, bancos e conciliação.",
+    description: "Cadastro de contas usadas no controle de saldo, caixa, bancos e conciliação OFX. Só nome e banco são obrigatórios — o saldo é calculado pelos extratos importados.",
     fields: [
-      ["name", "Conta", "text", true],
-      ["bank", "Banco", "text"],
-      ["agency", "Agência", "text"],
-      ["accountNumber", "Número da conta", "text"],
-      ["openingBalance", "Saldo inicial", "number"],
+      ["name", "Nome da conta", "text", true],
+      ["bank", "Banco", "text", true],
+      ["agency", "Agência (opcional)", "text"],
+      ["accountNumber", "Número da conta (opcional)", "text"],
+      ["openingBalance", "Saldo inicial (R$, opcional)", "number"],
       ["status", "Status", "select", ["Ativo", "Inativo"]],
     ],
   },
@@ -1972,6 +1972,11 @@ function placeholderFor(field, label = "", key = "") {
   if (field === "document" && ["clients", "suppliers", "companySettings"].includes(key)) return "123.456.789-12 ou 12.345.678/0001-99";
   if (field === "document") return "NF-1001, BOL-450 ou recibo";
   if (["zipCode", "postalCode", "cep"].includes(field)) return "79000-000";
+  if (field === "name" && key === "bankAccounts") return "Banco do Brasil — Conta Principal";
+  if (field === "bank") return "Banco do Brasil, Sicoob, Itaú";
+  if (field === "agency") return "1234-5 (opcional)";
+  if (field === "accountNumber") return "12345-6 (opcional)";
+  if (field === "openingBalance") return "0,00 — opcional; o saldo vem do extrato OFX";
   if (isMoneyField(field)) return "R$ 1.000,00";
   if (isPercentField(field)) return "10,00%";
   if (field === "description") return "Projeto elétrico comercial com entrada de energia, quadros, tomadas, iluminação e memorial descritivo.";
@@ -7921,13 +7926,15 @@ function renderReconciliation() {
     const moves = applyFilters(db.cashMoves).filter((row) => row.bankAccount === account.name);
     const entries = moves.filter((row) => signedCashAmount(row) > 0).reduce((total, row) => total + Number(row.amount || 0), 0);
     const exits = moves.filter((row) => signedCashAmount(row) < 0).reduce((total, row) => total + Math.abs(signedCashAmount(row)), 0);
+    // Saldo calculado SÓ pelas movimentações (OFX + lançamentos manuais):
+    // o openingBalance é ignorado de propósito — o ponto de partida do saldo
+    // é o primeiro extrato OFX importado, não um valor digitado à mão.
     return {
       name: account.name,
       bank: account.bank,
-      openingBalance: Number(account.openingBalance || 0),
       entradasRealizadas: entries,
       saidasRealizadas: exits,
-      saldoFinal: Number(account.openingBalance || 0) + entries - exits,
+      saldoFinal: entries - exits,
       status: account.status,
     };
   });
@@ -7936,7 +7943,7 @@ function renderReconciliation() {
     <section class="module-head">
       <div>
         <h2>Conciliação bancária</h2>
-        <p>Comparação gerencial entre contas bancárias cadastradas e movimentações de caixa vinculadas pelo nome da conta. Importe extratos OFX para conciliar com o extrato real do banco.</p>
+        <p>Saldo calculado pelas movimentações importadas via OFX e pelos lançamentos manuais de caixa vinculados ao nome da conta. Importe o extrato do banco para manter os saldos atualizados.</p>
       </div>
       ${canImportOfx ? '<button class="primary" id="btnOfxOpen" type="button">📥 Importar Extrato OFX</button>' : ""}
     </section>
@@ -7960,7 +7967,9 @@ function renderReconciliation() {
         <label class="ofx-label">
           Arquivo OFX / QFX
           <div class="ofx-file-wrap">
-            <input id="ofxFile" type="file" accept=".ofx,.qfx" />
+            <span class="ofx-file-btn">📂 Escolher arquivo</span>
+            <input id="ofxFile" type="file" accept=".ofx,.qfx" class="ofx-file-input" />
+            <span id="ofxFileName" class="ofx-file-name">Nenhum arquivo selecionado</span>
           </div>
         </label>
         <button id="btnOfxPreview" class="primary" type="button">🔍 Carregar e verificar</button>
@@ -7984,7 +7993,23 @@ function renderReconciliation() {
       </div>
     </div>
 
-    ${rows.length ? table("Conciliação bancária", rows, ["name", "bank", "openingBalance", "entradasRealizadas", "saidasRealizadas", "saldoFinal", "status"]) : '<div class="empty">Sem dados para exibir</div>'}
+    ${rows.length ? `
+    <div class="ofx-kpi-grid">
+      ${rows.map((row) => `
+        <div class="ofx-kpi-card">
+          <div class="ofx-kpi-bank">${svgText(row.bank || row.name)}</div>
+          <div class="ofx-kpi-name">${svgText(row.name)}</div>
+          <div class="ofx-kpi-saldo ${row.saldoFinal >= 0 ? "ofx-entrada" : "ofx-saida"}">${asMoney(row.saldoFinal)}</div>
+          <div class="ofx-kpi-detail">
+            <span class="ofx-entrada">▲ ${asMoney(row.entradasRealizadas)}</span>
+            <span class="ofx-saida">▼ ${asMoney(row.saidasRealizadas)}</span>
+          </div>
+          <div class="ofx-kpi-status">${svgText(row.status || "")}</div>
+        </div>
+      `).join("")}
+    </div>` : ""}
+
+    ${rows.length ? table("Resumo por conta", rows, ["name", "bank", "entradasRealizadas", "saidasRealizadas", "saldoFinal", "status"]) : '<div class="empty">Nenhuma conta bancária cadastrada.<br>Acesse Cadastros → Contas bancárias para adicionar — só nome e banco são obrigatórios.</div>'}
   `;
 
   // CSP sem script inline: todos os eventos via addEventListener.
@@ -7994,7 +8019,11 @@ function renderReconciliation() {
   });
   qs("btnOfxClose")?.addEventListener("click", () => {
     qs("ofxPanel").classList.add("hidden");
+    qs("ofxPreview")?.classList.add("hidden");
     ofxTransacoes = [];
+  });
+  qs("ofxFile")?.addEventListener("change", (event) => {
+    qs("ofxFileName").textContent = event.target.files?.[0]?.name || "Nenhum arquivo selecionado";
   });
   qs("btnOfxPreview")?.addEventListener("click", carregarPreviewOFX);
   qs("btnOfxMarkAll")?.addEventListener("click", () => selecionarTodosOFX(true));
