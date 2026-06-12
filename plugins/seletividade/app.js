@@ -769,6 +769,7 @@ function buildPrintReport(selectivity, logoSrc) {
       const execNome = txt("projExecutor");
       const execCrea = txt("projCreaExec");
       const clienteNome = txt("projClienteAssinatura") || txt("projCliente") || "";
+      const clienteCnpj = txt("projCnpj") || "";
 
       // Campos vazios contam como pessoas distintas (txt() já aplica trim)
       const mesmaPessoa =
@@ -788,7 +789,7 @@ function buildPrintReport(selectivity, logoSrc) {
         return `
           <div class="print-signatures cols-2">
             ${sigBlock("Responsável Técnico", engNome, engCrea ? `CREA: ${engCrea}` : "")}
-            ${sigBlock("Cliente", clienteNome, "")}
+            ${sigBlock("Cliente", clienteNome, clienteCnpj ? `CNPJ: ${clienteCnpj}` : "")}
           </div>`;
       }
       // Profissionais diferentes: Projeto + Execução + Cliente
@@ -796,7 +797,7 @@ function buildPrintReport(selectivity, logoSrc) {
         <div class="print-signatures cols-3">
           ${sigBlock("Responsável pelo Projeto", engNome, engCrea ? `CREA: ${engCrea}` : "")}
           ${sigBlock("Responsável pela Execução", execNome, execCrea ? `CREA: ${execCrea}` : "")}
-          ${sigBlock("Cliente", clienteNome, "")}
+          ${sigBlock("Cliente", clienteNome, clienteCnpj ? `CNPJ: ${clienteCnpj}` : "")}
         </div>`;
     })()}
     </td></tr></tbody>
