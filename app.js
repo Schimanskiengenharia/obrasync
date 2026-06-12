@@ -7931,15 +7931,218 @@ function renderReconciliation() {
       status: account.status,
     };
   });
+  const canImportOfx = canEditModule("reconciliation");
   qs("content").innerHTML = `
     <section class="module-head">
       <div>
         <h2>Conciliação bancária</h2>
-        <p>Comparação gerencial entre contas bancárias cadastradas e movimentações de caixa vinculadas pelo nome da conta.</p>
+        <p>Comparação gerencial entre contas bancárias cadastradas e movimentações de caixa vinculadas pelo nome da conta. Importe extratos OFX para conciliar com o extrato real do banco.</p>
       </div>
+      ${canImportOfx ? '<button class="primary" id="btnOfxOpen" type="button">📥 Importar Extrato OFX</button>' : ""}
     </section>
+
+    <div id="ofxPanel" class="ofx-panel hidden">
+      <div class="ofx-panel-head">
+        <h3>📥 Importar Extrato OFX</h3>
+        <button class="secondary" id="btnOfxClose" type="button">✕ Fechar</button>
+      </div>
+      <div class="ofx-form">
+        <label class="ofx-label">
+          Conta bancária
+          <select id="ofxBankAccount">
+            <option value="">Selecione a conta…</option>
+            ${(db.bankAccounts || [])
+              .filter((account) => account.status === "Ativo")
+              .map((account) => `<option value="${Number(account.id) || svgText(account.id)}">${svgText(account.name)}${account.bank ? ` — ${svgText(account.bank)}` : ""}</option>`)
+              .join("")}
+          </select>
+        </label>
+        <label class="ofx-label">
+          Arquivo OFX / QFX
+          <div class="ofx-file-wrap">
+            <input id="ofxFile" type="file" accept=".ofx,.qfx" />
+          </div>
+        </label>
+        <button id="btnOfxPreview" class="primary" type="button">🔍 Carregar e verificar</button>
+      </div>
+
+      <div id="ofxPreview" class="ofx-preview hidden">
+        <div class="ofx-preview-head">
+          <div id="ofxPreviewInfo" class="ofx-info"></div>
+          <div class="ofx-preview-actions">
+            <button class="secondary" id="btnOfxMarkAll" type="button">✅ Marcar todos</button>
+            <button class="secondary" id="btnOfxUnmarkAll" type="button">☐ Desmarcar todos</button>
+            <button id="btnOfxImport" class="primary" type="button">📥 Importar selecionados</button>
+          </div>
+        </div>
+        <div id="ofxTableWrap" class="ofx-table-wrap"></div>
+      </div>
+
+      <div id="ofxHistory" class="ofx-history hidden">
+        <h4>📋 Histórico de importações</h4>
+        <div id="ofxHistoryList"></div>
+      </div>
+    </div>
+
     ${rows.length ? table("Conciliação bancária", rows, ["name", "bank", "openingBalance", "entradasRealizadas", "saidasRealizadas", "saldoFinal", "status"]) : '<div class="empty">Sem dados para exibir</div>'}
   `;
+
+  // CSP sem script inline: todos os eventos via addEventListener.
+  qs("btnOfxOpen")?.addEventListener("click", () => {
+    qs("ofxPanel").classList.remove("hidden");
+    qs("ofxPanel").scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+  qs("btnOfxClose")?.addEventListener("click", () => {
+    qs("ofxPanel").classList.add("hidden");
+    ofxTransacoes = [];
+  });
+  qs("btnOfxPreview")?.addEventListener("click", carregarPreviewOFX);
+  qs("btnOfxMarkAll")?.addEventListener("click", () => selecionarTodosOFX(true));
+  qs("btnOfxUnmarkAll")?.addEventListener("click", () => selecionarTodosOFX(false));
+  qs("btnOfxImport")?.addEventListener("click", confirmarImportacaoOFX);
+  // Delegação: a tabela da prévia é re-renderizada, o listener no wrap persiste.
+  qs("ofxTableWrap")?.addEventListener("change", (event) => {
+    if (event.target.id === "ofxCheckAll") {
+      selecionarTodosOFX(event.target.checked);
+      return;
+    }
+    const checkbox = event.target.closest(".ofx-check");
+    if (!checkbox) return;
+    const index = Number(checkbox.dataset.idx);
+    if (ofxTransacoes[index]) ofxTransacoes[index].import = checkbox.checked;
+  });
+
+  if (canImportOfx) carregarHistoricoOFX();
+}
+
+// ── Importação OFX ───────────────────────────────────────────────────────────
+
+let ofxTransacoes = []; // estado da prévia atual
+
+async function carregarPreviewOFX() {
+  const accountId = qs("ofxBankAccount")?.value;
+  const file = qs("ofxFile")?.files?.[0];
+  if (!accountId) return alert("Selecione a conta bancária.");
+  if (!file) return alert("Selecione um arquivo OFX.");
+
+  const btn = qs("btnOfxPreview");
+  btn.disabled = true;
+  btn.textContent = "Carregando…";
+  try {
+    const form = new FormData();
+    form.append("ofx", file);
+    form.append("bankAccountId", accountId);
+    const payload = await fetchForm("ofx-preview", form);
+    ofxTransacoes = payload.data.transactions;
+    renderizarPreviewOFX(payload.data);
+  } catch (error) {
+    alert(`Erro ao processar o arquivo: ${error.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "🔍 Carregar e verificar";
+  }
+}
+
+function renderizarPreviewOFX(data) {
+  qs("ofxPreview").classList.remove("hidden");
+  qs("ofxPreviewInfo").innerHTML = `
+    <span class="ofx-badge">🏦 ${svgText(data.account.name)}</span>
+    <span class="ofx-badge ofx-badge-green">✅ ${data.newCount} novas</span>
+    <span class="ofx-badge ofx-badge-gray">⏭️ ${data.skipCount} já importadas</span>
+    <span class="ofx-badge">📊 ${data.total} no arquivo</span>
+  `;
+  qs("ofxTableWrap").innerHTML = `
+    <table class="ofx-table">
+      <thead>
+        <tr>
+          <th><input type="checkbox" id="ofxCheckAll" checked /></th>
+          <th>Data</th><th>Descrição</th><th>Tipo</th><th>Valor</th><th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${ofxTransacoes.map((txn, index) => `
+          <tr class="${txn.duplicate ? "ofx-dup" : ""}">
+            <td><input type="checkbox" class="ofx-check" data-idx="${index}" ${txn.duplicate ? "disabled" : "checked"} /></td>
+            <td>${asDate(txn.date)}</td>
+            <td class="ofx-memo" title="${svgText(txn.memo)}">${svgText(txn.memo)}</td>
+            <td><span class="ofx-type ${txn.type === "Entrada" ? "ofx-entrada" : "ofx-saida"}">${txn.type === "Entrada" ? "▲" : "▼"} ${txn.type}</span></td>
+            <td class="ofx-amount ${txn.type === "Entrada" ? "ofx-entrada" : "ofx-saida"}">${txn.type === "Entrada" ? "+" : "-"} ${asMoney(txn.amount)}</td>
+            <td>${txn.duplicate ? '<span class="ofx-badge ofx-badge-gray">Já importado</span>' : '<span class="ofx-badge ofx-badge-green">Novo</span>'}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+  ofxTransacoes.forEach((txn) => { txn.import = !txn.duplicate; });
+}
+
+function selecionarTodosOFX(checked) {
+  document.querySelectorAll(".ofx-check:not(:disabled)").forEach((checkbox) => {
+    checkbox.checked = checked;
+    const index = Number(checkbox.dataset.idx);
+    if (ofxTransacoes[index]) ofxTransacoes[index].import = checked;
+  });
+}
+
+async function confirmarImportacaoOFX() {
+  const select = qs("ofxBankAccount");
+  const accountId = Number(select?.value || 0);
+  const accountName = select?.selectedOptions?.[0]?.textContent.trim() || "";
+  const fileName = qs("ofxFile")?.files?.[0]?.name || "extrato.ofx";
+  const selecionadas = ofxTransacoes.filter((txn) => txn.import && !txn.duplicate);
+  if (!selecionadas.length) return alert("Nenhuma transação selecionada para importar.");
+  if (!confirm(`Importar ${selecionadas.length} transações para "${accountName}"?`)) return;
+
+  const btn = qs("btnOfxImport");
+  btn.disabled = true;
+  btn.textContent = "Importando…";
+  try {
+    const payload = await apiRequest("ofx-import", {
+      method: "POST",
+      body: JSON.stringify({ bankAccountId: accountId, fileName, transactions: ofxTransacoes }),
+    });
+    showToast(`✅ ${payload.data.imported} transações importadas, ${payload.data.skipped} ignoradas.`);
+    ofxTransacoes = [];
+    // Os movimentos novos vieram do servidor: refaz o bootstrap e re-renderiza
+    // (o painel fecha junto; o histórico recarrega no render).
+    await refreshAndRender();
+  } catch (error) {
+    alert(`Erro ao importar: ${error.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "📥 Importar selecionados";
+  }
+}
+
+async function carregarHistoricoOFX() {
+  const panel = qs("ofxHistory");
+  const list = qs("ofxHistoryList");
+  if (!panel || !list) return;
+  try {
+    const payload = await apiRequest("ofx-history");
+    const rows = payload.data || [];
+    if (!rows.length) return;
+    panel.classList.remove("hidden");
+    list.innerHTML = `
+      <table class="ofx-table">
+        <thead>
+          <tr><th>Data importação</th><th>Conta</th><th>Arquivo</th><th>Período</th><th>Importadas</th><th>Ignoradas</th></tr>
+        </thead>
+        <tbody>
+          ${rows.map((item) => `
+            <tr>
+              <td>${item.importedAt ? new Date(String(item.importedAt).replace(" ", "T")).toLocaleString("pt-BR") : ""}</td>
+              <td>${svgText(item.bankAccountName)}</td>
+              <td class="ofx-memo" title="${svgText(item.fileName)}">${svgText(item.fileName)}</td>
+              <td>${item.dateStart ? asDate(item.dateStart) : "—"} a ${item.dateEnd ? asDate(item.dateEnd) : "—"}</td>
+              <td><span class="ofx-badge ofx-badge-green">${Number(item.imported) || 0}</span></td>
+              <td><span class="ofx-badge ofx-badge-gray">${Number(item.skipped) || 0}</span></td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    `;
+  } catch { /* histórico é informativo: falha silenciosa */ }
 }
 
 function renderDre() {

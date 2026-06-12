@@ -3206,3 +3206,175 @@ menu {
     box-shadow: none;
   }
 }
+
+/* ── Importação OFX (conciliação bancária) ─────────────────────────────── */
+
+.ofx-panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  padding: 20px;
+  margin-bottom: 20px;
+  animation: moduleIn 0.22s ease;
+}
+
+.ofx-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.ofx-panel-head h3 { margin: 0; font-size: 16px; }
+
+.ofx-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 12px;
+  align-items: end;
+  margin-bottom: 8px;
+}
+
+@media (max-width: 900px) {
+  .ofx-form { grid-template-columns: 1fr; }
+}
+
+.ofx-label {
+  display: grid;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.ofx-label select {
+  min-height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 9px;
+  background: var(--field);
+  color: var(--ink);
+  font: inherit;
+  width: 100%;
+}
+
+.ofx-file-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 5px 9px;
+  background: var(--field);
+}
+
+.ofx-file-wrap input[type="file"] {
+  border: none;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  width: 100%;
+}
+
+/* Prévia */
+.ofx-preview { margin-top: 16px; }
+
+.ofx-preview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.ofx-preview-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.ofx-info { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+.ofx-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  color: var(--ink);
+}
+
+.ofx-badge-green {
+  background: rgba(20, 122, 71, 0.12);
+  border-color: rgba(20, 122, 71, 0.3);
+  color: var(--green);
+}
+
+.ofx-badge-gray {
+  background: var(--panel-2);
+  color: var(--muted);
+}
+
+/* Tabela OFX */
+.ofx-table-wrap {
+  overflow-x: auto;
+  max-height: 420px;
+  overflow-y: auto;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+}
+
+.ofx-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.ofx-table th {
+  background: var(--panel-2);
+  padding: 8px 10px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+  position: sticky;
+  top: 0;
+}
+
+.ofx-table td {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+
+.ofx-table tr:last-child td { border-bottom: none; }
+.ofx-table tbody tr:hover td { background: var(--panel-2); }
+
+.ofx-dup { opacity: 0.55; }
+.ofx-dup td { text-decoration: line-through; }
+.ofx-dup td:last-child { text-decoration: none; }
+
+.ofx-memo {
+  max-width: 240px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ofx-amount { font-weight: 700; white-space: nowrap; }
+.ofx-type { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 700; white-space: nowrap; }
+
+.ofx-entrada { color: var(--green); }
+.ofx-saida { color: var(--red); }
+
+/* Histórico */
+.ofx-history {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.ofx-history h4 { margin: 0 0 10px; font-size: 14px; }

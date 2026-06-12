@@ -165,6 +165,26 @@ try {
         handle_seletividade_estudos($pdo, $authUser, $method, $id !== null ? (int) $id : null);
     }
 
+    // Importação de extrato OFX (conciliação bancária, multi-banco):
+    // preview faz o parse e marca duplicatas por FITID sem gravar nada;
+    // import grava as transações selecionadas em cash_bank_movements e
+    // registra os FITIDs; history lista as últimas importações.
+    if ($resource === 'ofx-preview') {
+        require_method($method, ['POST']);
+        authorize_request($pdo, $authUser, 'reconciliation', 'edit');
+        handle_ofx_preview($pdo);
+    }
+    if ($resource === 'ofx-import') {
+        require_method($method, ['POST']);
+        authorize_request($pdo, $authUser, 'reconciliation', 'edit');
+        handle_ofx_import($pdo, $authUser, read_json());
+    }
+    if ($resource === 'ofx-history') {
+        require_method($method, ['GET']);
+        authorize_request($pdo, $authUser, 'reconciliation', 'view');
+        handle_ofx_history($pdo);
+    }
+
     $key = normalize_resource($resource, $resources);
     if (!$key) {
         fail('Recurso não encontrado.', 404);
@@ -2041,6 +2061,350 @@ function handle_seletividade_estudos(PDO $pdo, array $authUser, string $method, 
     }
 
     fail('Método não permitido.', 405);
+}
+
+// ── Importação de extrato OFX ────────────────────────────────────────────────
+// Tabelas de controle criadas sob demanda: ofx_fitids garante que cada FITID
+// (id único da transação no banco emissor) entre uma única vez POR CONTA, e
+// ofx_imports guarda o histórico de arquivos importados.
+function ensure_ofx_tables(PDO $pdo): void
+{
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    $pdo->exec(
+        "CREATE TABLE IF NOT EXISTS ofx_fitids (
+            id            BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            fitid         VARCHAR(100)    NOT NULL,
+            bankAccountId BIGINT UNSIGNED NOT NULL,
+            cashMoveId    BIGINT UNSIGNED NULL COMMENT 'ID em cash_bank_movements',
+            importedAt    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uk_fitid_account (fitid, bankAccountId),
+            KEY idx_ofx_account (bankAccountId)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+    );
+    $pdo->exec(
+        "CREATE TABLE IF NOT EXISTS ofx_imports (
+            id              BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            bankAccountId   BIGINT UNSIGNED NOT NULL,
+            bankAccountName VARCHAR(140)    NOT NULL,
+            fileName        VARCHAR(300)    NOT NULL,
+            dateStart       DATE            NULL,
+            dateEnd         DATE            NULL,
+            totalRecords    INT             NOT NULL DEFAULT 0,
+            imported        INT             NOT NULL DEFAULT 0,
+            skipped         INT             NOT NULL DEFAULT 0,
+            importedBy      BIGINT UNSIGNED NULL,
+            importedAt      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            KEY idx_ofx_import_account (bankAccountId)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+    );
+    $done = true;
+}
+
+// OFX é um híbrido SGML/XML sem biblioteca nativa no PHP: detecta o dialeto e
+// delega. Bancos brasileiros costumam exportar SGML 1.x em Windows-1252 — o
+// conteúdo é convertido para UTF-8 antes do parse para não corromper acentos.
+function parse_ofx(string $content): array
+{
+    $content = ltrim(str_replace(["\r\n", "\r"], "\n", $content), "\xEF\xBB\xBF");
+    if (!mb_check_encoding($content, 'UTF-8')) {
+        $content = mb_convert_encoding($content, 'UTF-8', 'Windows-1252');
+    }
+    $isXml = stripos($content, '<?xml') !== false;
+    return $isXml ? parse_ofx_xml($content) : parse_ofx_sgml($content);
+}
+
+// Data OFX: YYYYMMDD[HHMMSS[.XXX][gmt]] → YYYY-MM-DD.
+function ofx_date(string $raw): string
+{
+    $raw = trim($raw);
+    if (preg_match('/^(\d{4})(\d{2})(\d{2})/', $raw, $m)) {
+        return "{$m[1]}-{$m[2]}-{$m[3]}";
+    }
+    return date('Y-m-d');
+}
+
+// Valor OFX: o padrão usa ponto decimal, mas bancos BR exportam com vírgula.
+// Se há vírgula, ela é o separador decimal e os pontos são de milhar.
+function ofx_amount(string $raw): float
+{
+    $raw = trim($raw);
+    if (str_contains($raw, ',')) {
+        $raw = str_replace('.', '', $raw);
+        $raw = str_replace(',', '.', $raw);
+    }
+    return is_numeric($raw) ? (float) $raw : 0.0;
+}
+
+// Normaliza uma transação crua (tags OFX) para o formato do ObraSync.
+// O sinal do AMT é a fonte da verdade: negativo = Saída, positivo = Entrada
+// (o TRNTYPE varia entre bancos e nem sempre é confiável).
+function ofx_normalize_transaction(array $tags): ?array
+{
+    $fitid = trim((string) ($tags['FITID'] ?? ''));
+    if ($fitid === '') {
+        return null;
+    }
+    $amount = ofx_amount((string) ($tags['TRNAMT'] ?? $tags['AMT'] ?? '0'));
+    return [
+        'fitid' => mb_substr($fitid, 0, 100),
+        'date' => ofx_date((string) ($tags['DTPOSTED'] ?? '')),
+        'amount' => abs($amount),
+        'type' => $amount < 0 ? 'Saída' : 'Entrada',
+        'memo' => trim((string) ($tags['MEMO'] ?? $tags['NAME'] ?? '')),
+        'checkNum' => trim((string) ($tags['CHECKNUM'] ?? '')),
+    ];
+}
+
+function parse_ofx_sgml(string $content): array
+{
+    $transactions = [];
+    $accountId = '';
+    $bankId = '';
+
+    preg_match_all('/<STMTTRN>(.*?)<\/STMTTRN>/si', $content, $blocks);
+    if (!empty($blocks[1])) {
+        foreach ($blocks[1] as $block) {
+            $tags = [];
+            preg_match_all('/<([A-Z0-9.]+)>\s*([^<\n]+)/i', $block, $matches, PREG_SET_ORDER);
+            foreach ($matches as $match) {
+                $tags[strtoupper($match[1])] = trim($match[2]);
+            }
+            $txn = ofx_normalize_transaction($tags);
+            if ($txn) {
+                $transactions[] = $txn;
+            }
+        }
+    } else {
+        // SGML 1.x sem fechamento de tags: cada tag em sua linha.
+        $inTrn = false;
+        $current = [];
+        foreach (explode("\n", $content) as $line) {
+            $line = trim($line);
+            if (stripos($line, '<STMTTRN>') === 0) {
+                $inTrn = true;
+                $current = [];
+                continue;
+            }
+            if (stripos($line, '</STMTTRN>') === 0) {
+                $inTrn = false;
+                $txn = ofx_normalize_transaction($current);
+                if ($txn) {
+                    $transactions[] = $txn;
+                }
+                continue;
+            }
+            if ($inTrn && preg_match('/^<([A-Z0-9.]+)>(.*)$/i', $line, $m)) {
+                $current[strtoupper($m[1])] = trim($m[2]);
+            }
+        }
+    }
+
+    if (preg_match('/<ACCTID>\s*([^\s<]+)/i', $content, $m)) $accountId = $m[1];
+    if (preg_match('/<BANKID>\s*([^\s<]+)/i', $content, $m)) $bankId = $m[1];
+
+    return ['bankId' => $bankId, 'accountId' => $accountId, 'transactions' => $transactions];
+}
+
+function parse_ofx_xml(string $content): array
+{
+    $previous = libxml_use_internal_errors(true);
+    $xml = simplexml_load_string($content);
+    libxml_use_internal_errors($previous);
+    if (!$xml) {
+        return ['bankId' => '', 'accountId' => '', 'transactions' => []];
+    }
+    // Conta corrente; cartão de crédito (CCSTMTRS) como fallback.
+    $stmt = $xml->BANKMSGSRSV1->STMTTRNRS->STMTRS
+        ?? $xml->CREDITCARDMSGSRSV1->CCSTMTTRNRS->CCSTMTRS
+        ?? null;
+    if (!$stmt) {
+        return ['bankId' => '', 'accountId' => '', 'transactions' => []];
+    }
+    $from = $stmt->BANKACCTFROM ?? $stmt->CCACCTFROM ?? null;
+    $transactions = [];
+    foreach ($stmt->BANKTRANLIST->STMTTRN ?? [] as $node) {
+        $txn = ofx_normalize_transaction([
+            'FITID' => (string) $node->FITID,
+            'TRNAMT' => (string) $node->TRNAMT,
+            'DTPOSTED' => (string) $node->DTPOSTED,
+            'MEMO' => (string) ($node->MEMO ?? ''),
+            'NAME' => (string) ($node->NAME ?? ''),
+            'CHECKNUM' => (string) ($node->CHECKNUM ?? ''),
+        ]);
+        if ($txn) {
+            $transactions[] = $txn;
+        }
+    }
+    return [
+        'bankId' => (string) ($from->BANKID ?? ''),
+        'accountId' => (string) ($from->ACCTID ?? ''),
+        'transactions' => $transactions,
+    ];
+}
+
+// Prévia: parse + marcação de duplicatas por FITID. NÃO grava nada — a
+// confirmação acontece em ofx-import com as transações que o usuário marcou.
+function handle_ofx_preview(PDO $pdo): never
+{
+    ensure_ofx_tables($pdo);
+    if (empty($_FILES['ofx']['tmp_name'])) {
+        fail('Envie um arquivo OFX.', 400);
+    }
+    $file = $_FILES['ofx'];
+    $extension = strtolower(pathinfo((string) ($file['name'] ?? ''), PATHINFO_EXTENSION));
+    if (!in_array($extension, ['ofx', 'qfx'], true)) {
+        fail('Envie um arquivo .ofx ou .qfx exportado do internet banking.', 400);
+    }
+    if ((int) ($file['size'] ?? 0) > 10 * 1024 * 1024) {
+        fail('Arquivo acima de 10 MB — não parece um extrato OFX.', 413);
+    }
+    $bankAccountId = (int) ($_POST['bankAccountId'] ?? 0);
+    if (!$bankAccountId) {
+        fail('Selecione a conta bancária.', 400);
+    }
+    $stmt = $pdo->prepare('SELECT id, name FROM bank_accounts WHERE id = ? LIMIT 1');
+    $stmt->execute([$bankAccountId]);
+    $account = $stmt->fetch();
+    if (!$account) {
+        fail('Conta bancária não encontrada.', 404);
+    }
+
+    $content = (string) file_get_contents($file['tmp_name']);
+    if ($content === '' || (stripos($content, '<OFX') === false && stripos($content, 'OFXHEADER') === false)) {
+        fail('O arquivo não parece ser um extrato OFX válido.', 400);
+    }
+    $parsed = parse_ofx($content);
+    if (!$parsed['transactions']) {
+        fail('Nenhuma transação encontrada no arquivo OFX.', 400);
+    }
+
+    // FITIDs já importados NESTA conta (em lotes — extratos grandes).
+    $already = [];
+    $fitids = array_column($parsed['transactions'], 'fitid');
+    foreach (array_chunk($fitids, 500) as $chunk) {
+        $placeholders = implode(',', array_fill(0, count($chunk), '?'));
+        $stmt = $pdo->prepare("SELECT fitid FROM ofx_fitids WHERE bankAccountId = ? AND fitid IN ({$placeholders})");
+        $stmt->execute([$bankAccountId, ...$chunk]);
+        foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) as $fitid) {
+            $already[$fitid] = true;
+        }
+    }
+    $transactions = array_map(static function (array $txn) use ($already): array {
+        $txn['duplicate'] = isset($already[$txn['fitid']]);
+        return $txn;
+    }, $parsed['transactions']);
+    $newCount = count(array_filter($transactions, static fn ($t) => !$t['duplicate']));
+
+    respond(['ok' => true, 'data' => [
+        'account' => ['id' => (int) $account['id'], 'name' => (string) $account['name']],
+        'bankId' => $parsed['bankId'],
+        'accountId' => $parsed['accountId'],
+        'transactions' => $transactions,
+        'total' => count($transactions),
+        'newCount' => $newCount,
+        'skipCount' => count($transactions) - $newCount,
+    ]]);
+}
+
+// Confirmação: grava as transações marcadas em cash_bank_movements (o campo
+// bankAccount guarda o NOME da conta — convenção do módulo de caixa), registra
+// cada FITID e loga a importação. O nome da conta vem do banco, não do payload.
+function handle_ofx_import(PDO $pdo, array $authUser, array $payload): never
+{
+    ensure_ofx_tables($pdo);
+    $bankAccountId = (int) ($payload['bankAccountId'] ?? 0);
+    $fileName = mb_substr(trim((string) ($payload['fileName'] ?? 'extrato.ofx')), 0, 300);
+    $transactions = is_array($payload['transactions'] ?? null) ? $payload['transactions'] : [];
+    if (!$bankAccountId || !$transactions) {
+        fail('Dados incompletos: conta bancária e transações são obrigatórios.', 400);
+    }
+    $stmt = $pdo->prepare('SELECT id, name FROM bank_accounts WHERE id = ? LIMIT 1');
+    $stmt->execute([$bankAccountId]);
+    $account = $stmt->fetch();
+    if (!$account) {
+        fail('Conta bancária não encontrada.', 404);
+    }
+    $accountName = (string) $account['name'];
+
+    $imported = 0;
+    $skipped = 0;
+    $dateMin = null;
+    $dateMax = null;
+
+    $pdo->beginTransaction();
+    try {
+        $dupCheck = $pdo->prepare('SELECT id FROM ofx_fitids WHERE fitid = ? AND bankAccountId = ? LIMIT 1');
+        $insertMove = $pdo->prepare(
+            "INSERT INTO cash_bank_movements (`date`, bankAccount, `type`, history, amount, originDocument, status)
+             VALUES (?, ?, ?, ?, ?, 'OFX', 'Confirmado')"
+        );
+        $insertFitid = $pdo->prepare('INSERT IGNORE INTO ofx_fitids (fitid, bankAccountId, cashMoveId) VALUES (?, ?, ?)');
+
+        foreach ($transactions as $txn) {
+            if (!is_array($txn)) {
+                $skipped++;
+                continue;
+            }
+            $fitid = mb_substr(trim((string) ($txn['fitid'] ?? '')), 0, 100);
+            $date = trim((string) ($txn['date'] ?? ''));
+            $amount = round(abs((float) ($txn['amount'] ?? 0)), 2);
+            $type = ($txn['type'] ?? '') === 'Entrada' ? 'Entrada' : 'Saída';
+            $memo = trim((string) ($txn['memo'] ?? ''));
+            $import = (bool) ($txn['import'] ?? true);
+
+            if ($fitid === '' || !$import || $amount <= 0 || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
+                $skipped++;
+                continue;
+            }
+            $dupCheck->execute([$fitid, $bankAccountId]);
+            if ($dupCheck->fetchColumn()) {
+                $skipped++;
+                continue;
+            }
+            $insertMove->execute([$date, $accountName, $type, $memo !== '' ? $memo : 'Movimento importado do extrato OFX', $amount]);
+            $insertFitid->execute([$fitid, $bankAccountId, (int) $pdo->lastInsertId()]);
+            $imported++;
+            if (!$dateMin || $date < $dateMin) $dateMin = $date;
+            if (!$dateMax || $date > $dateMax) $dateMax = $date;
+        }
+
+        $pdo->prepare(
+            'INSERT INTO ofx_imports
+                (bankAccountId, bankAccountName, fileName, dateStart, dateEnd, totalRecords, imported, skipped, importedBy)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        )->execute([
+            $bankAccountId, $accountName, $fileName, $dateMin, $dateMax,
+            count($transactions), $imported, $skipped,
+            (int) ($authUser['id'] ?? 0) ?: null,
+        ]);
+        $pdo->commit();
+    } catch (Throwable $error) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        error_log('[ObraSync OFX] Importação falhou: ' . $error->getMessage());
+        fail('Erro ao importar o extrato. Nada foi gravado — tente novamente.', 500);
+    }
+
+    server_audit($pdo, $authUser, 'import', 'reconciliation', $bankAccountId, "OFX {$fileName}: {$imported} importadas, {$skipped} ignoradas");
+    respond(['ok' => true, 'data' => ['imported' => $imported, 'skipped' => $skipped],
+        'message' => "{$imported} transações importadas, {$skipped} ignoradas."]);
+}
+
+function handle_ofx_history(PDO $pdo): never
+{
+    ensure_ofx_tables($pdo);
+    $bankAccountId = (int) ($_GET['bankAccountId'] ?? 0);
+    if ($bankAccountId) {
+        $stmt = $pdo->prepare('SELECT * FROM ofx_imports WHERE bankAccountId = ? ORDER BY importedAt DESC LIMIT 50');
+        $stmt->execute([$bankAccountId]);
+    } else {
+        $stmt = $pdo->query('SELECT * FROM ofx_imports ORDER BY importedAt DESC LIMIT 50');
+    }
+    respond(['ok' => true, 'data' => $stmt->fetchAll()]);
 }
 
 function bearer_token(): string
