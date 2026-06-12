@@ -624,6 +624,8 @@ function buildPrintReport(selectivity, logoSrc) {
   const c = calc;
   const report = qs("printReport");
   report.innerHTML = `
+    <table class="print-layout">
+    <tbody><tr><td>
     <div class="print-head">
       <img src="${logoSrc || "../../assets/logo.png"}" alt="Schimanski Engenharia" />
       <div>
@@ -738,12 +740,15 @@ function buildPrintReport(selectivity, logoSrc) {
         ${txt("projCreaExec") || "CREA"}
       </div>
     </div>
-
-    <div class="print-footer-empresa">
-      <p>Schimanski Engenharia e Soluções LTDA</p>
-      <p>CNPJ: 44.930.777/0001-20</p>
-      <p>schimanskiengenharia@outlook.com.br</p>
-    </div>
+    </td></tr></tbody>
+    <tfoot><tr><td>
+      <div class="print-footer-empresa">
+        <p>Schimanski Engenharia e Soluções LTDA</p>
+        <p>CNPJ: 44.930.777/0001-20</p>
+        <p>schimanskiengenharia@outlook.com.br</p>
+      </div>
+    </td></tr></tfoot>
+    </table>
   `;
   report.hidden = false;
 }

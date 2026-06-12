@@ -556,8 +556,26 @@ input:focus, select:focus {
     margin: 0 18px 6px;
   }
 
+  /* Tabela de layout que envolve o relatório inteiro: o <tfoot> é repetido
+     pelo navegador no rodapé de TODAS as páginas impressas, reservando espaço
+     (diferente de position:fixed, que sobrepõe o conteúdo). Os seletores com
+     `>` anulam as bordas/paddings genéricos de `.print-report td` acima. */
+  .print-layout {
+    width: 100%;
+    margin: 0;
+    border-collapse: collapse;
+  }
+
+  .print-layout > tbody > tr > td,
+  .print-layout > tfoot > tr > td {
+    border: none;
+    padding: 0;
+  }
+
+  .print-layout > tfoot { display: table-footer-group; }
+  .print-layout > tfoot > tr > td { padding-top: 16px; }
+
   .print-footer-empresa {
-    margin-top: 32px;
     padding-top: 12px;
     border-top: 1px solid #b9c6c2;
     text-align: center;
