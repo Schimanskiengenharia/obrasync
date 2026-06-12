@@ -454,58 +454,131 @@ input:focus, select:focus {
 .print-report { display: none; }
 
 @media print {
-  /* Documento inteiro em A4 RETRATO; os coordenogramas usam canvas em
-     proporção 10:7 e altura automática para caber sem distorção. */
-  @page { size: A4 portrait; margin: 14mm 12mm; }
 
-  body { background: #fff; color: #14211f; }
+  /* ── Página A4 retrato com margens ABNT NBR 14724 ───────────────────── */
+  @page {
+    size: A4 portrait;
+    margin: 30mm 20mm 20mm 30mm; /* superior, direita, inferior, esquerda */
+  }
+
+  body {
+    background: #fff;
+    color: #0d0d0d;
+    font-family: Arial, "Helvetica Neue", sans-serif;
+    font-size: 12pt;
+    line-height: 1.5;
+  }
+
   .app, .session-gate { display: none !important; }
-  .no-print { display: none !important; }
+  .no-print          { display: none !important; }
 
+  /* ── Relatório principal ─────────────────────────────────────────────── */
   .print-report {
     display: block !important;
-    font-size: 12px;
-    color: #14211f;
+    font-size: 12pt;
+    color: #0d0d0d;
+    font-family: Arial, "Helvetica Neue", sans-serif;
   }
 
-  .print-report h1 { font-size: 19px; margin: 0 0 2px; color: #134e4a; }
-  .print-report h2 {
-    font-size: 13px;
-    margin: 16px 0 6px;
-    padding-bottom: 3px;
-    border-bottom: 2px solid #0f766e;
-    color: #134e4a;
-    text-transform: uppercase;
-  }
-
+  /* ── Cabeçalho (primeira página) ────────────────────────────────────── */
   .print-head {
     display: flex;
     align-items: center;
     gap: 14px;
-    border-bottom: 3px solid #0f766e;
+    border-bottom: 2px solid #1e3a5f;
     padding-bottom: 10px;
+    margin-bottom: 12px;
   }
 
-  .print-head img { width: 70px; height: 70px; }
-  .print-head p { margin: 1px 0; font-size: 11px; color: #444; }
+  .print-head img { width: 64px; height: 64px; }
 
+  .print-head h1 {
+    font-size: 14pt;
+    font-weight: 700;
+    margin: 0 0 3px;
+    color: #1e3a5f;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+
+  .print-head p {
+    margin: 1px 0;
+    font-size: 10pt;
+    color: #333;
+    line-height: 1.4;
+  }
+
+  /* Rótulo "Engenheiro(s) Responsável(is)" gerado pelo app.js */
+  .print-head .print-head-role {
+    font-weight: 700;
+    color: #1e3a5f;
+  }
+
+  /* ── Títulos de seção (H2) — ABNT seção primária ────────────────────── */
+  .print-report h2 {
+    font-size: 12pt;
+    font-weight: 700;
+    margin: 18pt 0 6pt;
+    padding-bottom: 3pt;
+    border-bottom: 1.5pt solid #1e3a5f;
+    color: #1e3a5f;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    page-break-after: avoid;
+  }
+
+  /* ── Tabelas ─────────────────────────────────────────────────────────── */
   .print-report table {
     width: 100%;
     border-collapse: collapse;
-    margin: 4px 0;
+    margin: 4pt 0 10pt;
+    font-size: 10pt;
   }
 
-  .print-report th, .print-report td {
-    border: 1px solid #b9c6c2;
-    padding: 4px 7px;
+  .print-report th,
+  .print-report td {
+    border: 0.5pt solid #9ca3af;
+    padding: 4pt 6pt;
     text-align: left;
-    font-size: 11px;
+    font-size: 10pt;
+    vertical-align: top;
+    line-height: 1.4;
   }
 
-  .print-report th { background: #eef4f2; font-weight: 700; }
+  .print-report th {
+    background: #e8edf5;   /* azul acinzentado neutro — imprime bem em P&B */
+    font-weight: 700;
+    color: #1e3a5f;
+  }
 
-  /* Cada coordenograma em página própria (A4 retrato), centralizado e com
-     altura proporcional à largura — nunca estica nem vaza para a próxima página. */
+  .print-report tr:nth-child(even) td {
+    background: #f7f8fa;   /* zebra suave — legibilidade em tabelas longas */
+  }
+
+  /* ── Memorial descritivo ─────────────────────────────────────────────── */
+  .memorial h2 {
+    font-size: 11pt;
+    font-weight: 700;
+    margin: 14pt 0 3pt;
+    padding-bottom: 2pt;
+    border-bottom: 0.75pt solid #1e3a5f;
+    color: #1e3a5f;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .memorial p {
+    text-align: justify;
+    font-size: 10pt;
+    line-height: 1.5;
+    margin: 2pt 0 8pt;
+    color: #0d0d0d;
+  }
+
+  /* ── Coordenogramas ──────────────────────────────────────────────────── */
+  /* Altura dimensionada para a área útil ABNT (297 − 30 − 20 = 247mm) menos
+     o rodapé repetido do tfoot (~15mm); 240mm estourava e gerava páginas
+     em branco após cada coordenograma. */
   .print-chart {
     page-break-before: always;
     page-break-inside: avoid;
@@ -513,7 +586,7 @@ input:focus, select:focus {
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    height: 240mm;
+    height: 225mm;
   }
 
   .print-chart h2 {
@@ -526,34 +599,37 @@ input:focus, select:focus {
     display: block;
     width: 100%;
     height: auto;
-    max-height: 220mm;
+    max-height: 200mm;
     object-fit: contain;
-    border: 1px solid #b9c6c2;
+    border: 0.5pt solid #9ca3af;
   }
 
   .page-break { page-break-before: always; }
 
-  .print-badge { font-weight: 800; }
-  .print-badge.ok { color: #147a47; }
-  .print-badge.nok { color: #b42318; }
+  /* ── Badge de seletividade ───────────────────────────────────────────── */
+  .print-badge { font-weight: 700; }
+  .print-badge.ok  { color: #14532d; }   /* verde escuro — imprime bem */
+  .print-badge.nok { color: #7f1d1d; }   /* vermelho escuro — imprime bem */
 
+  /* ── Assinaturas ─────────────────────────────────────────────────────── */
   .print-signatures {
     display: flex;
     justify-content: space-around;
-    gap: 30px;
-    margin-top: 56px;
+    gap: 30pt;
+    margin-top: 48pt;
     page-break-inside: avoid;
   }
 
   .print-signatures > div {
     flex: 1;
     text-align: center;
-    font-size: 11px;
+    font-size: 10pt;
+    line-height: 1.4;
   }
 
   .print-signatures .sig-line {
-    border-top: 1px solid #14211f;
-    margin: 0 18px 6px;
+    border-top: 0.75pt solid #0d0d0d;
+    margin: 0 18pt 6pt;
   }
 
   .print-signatures.single {
@@ -561,14 +637,11 @@ input:focus, select:focus {
   }
 
   .print-signatures.single > div {
-    flex: 0 0 280px;
-    max-width: 280px;
+    flex: 0 0 240pt;
+    max-width: 240pt;
   }
 
-  /* Tabela de layout que envolve o relatório inteiro: o <tfoot> é repetido
-     pelo navegador no rodapé de TODAS as páginas impressas, reservando espaço
-     (diferente de position:fixed, que sobrepõe o conteúdo). Os seletores com
-     `>` anulam as bordas/paddings genéricos de `.print-report td` acima. */
+  /* ── Layout com rodapé fixo repetido em todas as páginas ────────────── */
   .print-layout {
     width: 100%;
     margin: 0;
@@ -582,44 +655,27 @@ input:focus, select:focus {
   }
 
   .print-layout > tfoot { display: table-footer-group; }
-  .print-layout > tfoot > tr > td { padding-top: 16px; }
+  .print-layout > tfoot > tr > td { padding-top: 12pt; }
 
+  /* ── Rodapé da empresa ───────────────────────────────────────────────── */
   .print-footer-empresa {
-    padding-top: 12px;
-    border-top: 1px solid #b9c6c2;
+    padding-top: 8pt;
+    border-top: 0.75pt solid #9ca3af;
     text-align: center;
     page-break-inside: avoid;
   }
 
   .print-footer-empresa p {
-    margin: 2px 0;
-    font-size: 10px;
-    color: #6b7280;
+    margin: 1pt 0;
+    font-size: 9pt;
+    color: #555;
     font-weight: 400;
+    line-height: 1.4;
   }
 
   .print-footer-empresa p:first-child {
     font-weight: 700;
-    color: #134e4a;
-    font-size: 11px;
-  }
-
-  /* Memorial descritivo dinâmico (antes da seção 1) */
-  .memorial p {
-    text-align: justify;
-    font-size: 11px;
-    line-height: 1.65;
-    margin: 3px 0 10px;
-    color: #14211f;
-  }
-
-  .memorial h2 {
-    font-size: 11px;
-    margin: 12px 0 3px;
-    padding-bottom: 2px;
-    border-bottom: 1px solid #0f766e;
-    color: #134e4a;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
+    color: #1e3a5f;
+    font-size: 10pt;
   }
 }

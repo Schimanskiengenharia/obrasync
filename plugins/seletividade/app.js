@@ -647,10 +647,8 @@ function buildPrintReport(selectivity, logoSrc) {
 
           if (mesmaPessoa) {
             return `
-              <p style="margin:1px 0;font-size:11px;color:#444;">
-                <span style="font-weight:700;color:#134e4a;">Engenheiro Responsável</span>
-              </p>
-              <p style="margin:1px 0;font-size:11px;color:#444;">
+              <p><span class="print-head-role">Engenheiro Responsável</span></p>
+              <p>
                 Projeto &amp; Execução:
                 <strong>${engNome}</strong>
                 &nbsp;&nbsp;·&nbsp;&nbsp;
@@ -658,10 +656,8 @@ function buildPrintReport(selectivity, logoSrc) {
               </p>`;
           }
           return `
-            <p style="margin:1px 0;font-size:11px;color:#444;">
-              <span style="font-weight:700;color:#134e4a;">Engenheiros Responsáveis</span>
-            </p>
-            <p style="margin:1px 0;font-size:11px;color:#444;">
+            <p><span class="print-head-role">Engenheiros Responsáveis</span></p>
+            <p>
               Projetista:
               <strong>${engNome}</strong>
               &nbsp;&nbsp;·&nbsp;&nbsp;
