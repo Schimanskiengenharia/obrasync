@@ -156,6 +156,15 @@ try {
         handle_safe_file_upload($config, 'project', ['xml'], ['text/xml','application/xml','application/octet-stream']);
     }
 
+    // Estudos salvos do plugin de Seletividade: dados privados POR USUÁRIO
+    // (todas as queries filtram por userId). A autorização exige apenas VER o
+    // módulo de plugins — exigir 'edit' em plugins bloquearia os perfis comuns,
+    // e aqui ninguém toca em dados de outros usuários.
+    if ($resource === 'seletividade-estudos' || $resource === 'seletividadeEstudos') {
+        authorize_request($pdo, $authUser, 'plugins', 'view');
+        handle_seletividade_estudos($pdo, $authUser, $method, $id !== null ? (int) $id : null);
+    }
+
     $key = normalize_resource($resource, $resources);
     if (!$key) {
         fail('Recurso não encontrado.', 404);
@@ -1927,6 +1936,111 @@ function ensure_plugins_table(PDO $pdo): void
             ->execute(['Portal do Cliente', 'https://schimanskiengenharia.com.br/portal', '🌐', 'Acesso ao portal externo do cliente (URL configurável).', '', 1, 'Ativo']);
     }
     $done = true;
+}
+
+// ── Estudos do plugin de Seletividade ────────────────────────────────────────
+// Tabela criada sob demanda (padrão de viabilityAnalyses/plugins). O formulário
+// inteiro viaja como JSON em dadosJson; calcJson guarda o último resultado só
+// para histórico — ao carregar, o plugin recalcula do zero a partir dos campos.
+function ensure_seletividade_table(PDO $pdo): void
+{
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    $pdo->exec(
+        "CREATE TABLE IF NOT EXISTS seletividade_estudos (
+            id        BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            userId    BIGINT UNSIGNED NOT NULL,
+            nome      VARCHAR(200) NOT NULL COMMENT 'Nome do projeto/estudo',
+            dadosJson LONGTEXT NOT NULL COMMENT 'Todos os campos do formulário em JSON',
+            calcJson  LONGTEXT NULL COMMENT 'Resultado do último cálculo em JSON',
+            updatedAt TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+            createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            KEY idx_sel_user (userId),
+            KEY idx_sel_nome (nome)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+    );
+    $done = true;
+}
+
+// CRUD dos estudos, sempre no escopo do usuário autenticado (userId em todo
+// WHERE): um usuário não lista, lê, sobrescreve nem exclui estudo de outro.
+function handle_seletividade_estudos(PDO $pdo, array $authUser, string $method, ?int $id): never
+{
+    ensure_seletividade_table($pdo);
+    $userId = (int) $authUser['id'];
+
+    if ($method === 'GET' && $id === null) {
+        $stmt = $pdo->prepare(
+            'SELECT id, nome, createdAt, updatedAt FROM seletividade_estudos
+              WHERE userId = ? ORDER BY updatedAt DESC, createdAt DESC'
+        );
+        $stmt->execute([$userId]);
+        respond(['ok' => true, 'success' => true, 'data' => $stmt->fetchAll()]);
+    }
+
+    if ($method === 'GET') {
+        $stmt = $pdo->prepare('SELECT * FROM seletividade_estudos WHERE id = ? AND userId = ? LIMIT 1');
+        $stmt->execute([$id, $userId]);
+        $row = $stmt->fetch();
+        if (!$row) {
+            fail('Estudo não encontrado.', 404);
+        }
+        respond(['ok' => true, 'success' => true, 'data' => $row]);
+    }
+
+    if (in_array($method, ['POST', 'PUT', 'PATCH'], true)) {
+        $payload = read_json();
+        $editId = $id ?? (int) ($payload['id'] ?? 0);
+        $nome = mb_substr(trim((string) ($payload['nome'] ?? '')), 0, 200);
+        $dadosJson = trim((string) ($payload['dadosJson'] ?? ''));
+        $calcJson = trim((string) ($payload['calcJson'] ?? ''));
+        if ($nome === '') {
+            fail('Informe o nome do estudo.', 400);
+        }
+        if ($dadosJson === '' || json_decode($dadosJson) === null) {
+            fail('Dados do formulário ausentes ou inválidos.', 400);
+        }
+        if ($calcJson !== '' && json_decode($calcJson) === null) {
+            fail('Resultado do cálculo inválido.', 400);
+        }
+
+        if ($editId) {
+            $check = $pdo->prepare('SELECT id FROM seletividade_estudos WHERE id = ? AND userId = ? LIMIT 1');
+            $check->execute([$editId, $userId]);
+            if (!$check->fetchColumn()) {
+                fail('Estudo não encontrado.', 404);
+            }
+            $pdo->prepare(
+                'UPDATE seletividade_estudos SET nome = ?, dadosJson = ?, calcJson = ?, updatedAt = NOW()
+                  WHERE id = ? AND userId = ?'
+            )->execute([$nome, $dadosJson, $calcJson !== '' ? $calcJson : null, $editId, $userId]);
+            server_audit($pdo, $authUser, 'update', 'seletividadeEstudos', $editId, $nome);
+            respond(['ok' => true, 'success' => true, 'data' => ['id' => $editId, 'nome' => $nome], 'message' => 'Estudo atualizado.']);
+        }
+
+        $pdo->prepare('INSERT INTO seletividade_estudos (userId, nome, dadosJson, calcJson) VALUES (?, ?, ?, ?)')
+            ->execute([$userId, $nome, $dadosJson, $calcJson !== '' ? $calcJson : null]);
+        $newId = (int) $pdo->lastInsertId();
+        server_audit($pdo, $authUser, 'create', 'seletividadeEstudos', $newId, $nome);
+        respond(['ok' => true, 'success' => true, 'data' => ['id' => $newId, 'nome' => $nome], 'message' => 'Estudo salvo.'], 201);
+    }
+
+    if ($method === 'DELETE') {
+        if (!$id) {
+            fail('Informe o id do estudo.', 400);
+        }
+        $stmt = $pdo->prepare('DELETE FROM seletividade_estudos WHERE id = ? AND userId = ?');
+        $stmt->execute([$id, $userId]);
+        if ($stmt->rowCount() === 0) {
+            fail('Estudo não encontrado.', 404);
+        }
+        server_audit($pdo, $authUser, 'delete', 'seletividadeEstudos', $id);
+        respond(['ok' => true, 'success' => true, 'message' => 'Estudo excluído.']);
+    }
+
+    fail('Método não permitido.', 405);
 }
 
 function bearer_token(): string

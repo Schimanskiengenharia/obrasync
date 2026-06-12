@@ -14,6 +14,10 @@ const LOGIN_URL = new URL("../../", location.href).href;
 const AUTH_KEY = "finconta.auth";
 const DRAFT_KEY = "finconta.seletividade.draft";
 
+// Estudo salvo no banco atualmente carregado (null = estudo novo, só rascunho).
+let estudoAtualId = null;
+let estudoAtualNome = null;
+
 const ROLE_LABELS = {
   admin: "Administrador", financeiro: "Financeiro", comercial: "Comercial",
   engenharia: "Engenharia", gestor_obra: "Gestor de obra", equipe_campo: "Equipe de campo",
@@ -174,6 +178,68 @@ function restoreDraft() {
     const data = JSON.parse(raw);
     Object.entries(data).forEach(([id, value]) => { if (qs(id)) qs(id).value = value; });
   } catch { /* draft corrompido: ignora */ }
+}
+
+// Escape de HTML para dados interpolados em innerHTML (página standalone:
+// não compartilha o escapeHtml do app.js principal do ObraSync).
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
+}
+
+// ── Estudos salvos — API do plugin ──────────────────────────────────────────
+// CRUD em /api/seletividade-estudos (escopo por usuário no servidor). Token só
+// nos headers — nunca na query string (não vaza nos access logs do Apache).
+
+async function apiSeletividade(path, method = "GET", body = null) {
+  const session = readObraSyncAuth();
+  if (!session) {
+    window.location.href = LOGIN_URL;
+    return null;
+  }
+  const options = {
+    method,
+    headers: {
+      Authorization: `Bearer ${session.token}`,
+      "X-Auth-Token": session.token,
+      "Content-Type": "application/json",
+    },
+  };
+  if (body) options.body = JSON.stringify(body);
+  const res = await fetch(`${API_BASE}/${path}`, options);
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401) {
+    window.location.href = LOGIN_URL;
+    return null;
+  }
+  return data;
+}
+
+function listarEstudos() {
+  return apiSeletividade("seletividade-estudos");
+}
+
+function carregarEstudo(id) {
+  return apiSeletividade(`seletividade-estudos/${id}`);
+}
+
+function salvarEstudo(nome, id = null) {
+  // Todos os campos do formulário em JSON; o cálculo vai junto só como
+  // histórico — ao carregar, runCalculation() refaz tudo a partir dos campos.
+  const dados = {};
+  allFieldIds().forEach((fieldId) => {
+    const el = qs(fieldId);
+    if (el) dados[fieldId] = el.value;
+  });
+  return apiSeletividade("seletividade-estudos", "POST", {
+    id: id || null,
+    nome,
+    dadosJson: JSON.stringify(dados),
+    calcJson: calc ? JSON.stringify(calc) : "",
+  });
+}
+
+function excluirEstudo(id) {
+  return apiSeletividade(`seletividade-estudos/${id}`, "DELETE");
 }
 
 // ── Motor de cálculo ────────────────────────────────────────────────────────
@@ -908,6 +974,182 @@ function clearAll() {
   location.reload();
 }
 
+// ── Estudos salvos — UI ─────────────────────────────────────────────────────
+
+function atualizarBadgeEstudo() {
+  const badge = qs("estudoAtualBadge");
+  const nome = qs("estudoAtualNome");
+  if (!badge || !nome) return;
+  if (estudoAtualNome) {
+    nome.textContent = estudoAtualNome;
+    badge.classList.remove("hidden");
+  } else {
+    badge.classList.add("hidden");
+  }
+}
+
+function abrirModalSalvar() {
+  const input = qs("inputNomeEstudo");
+  // Pré-preenche com o nome do estudo carregado ou, na primeira vez, com o
+  // nome do empreendimento já digitado no formulário.
+  input.value = estudoAtualNome || input.value || txt("projNome");
+  qs("modalSalvar").classList.remove("hidden");
+  setTimeout(() => input.focus(), 50);
+}
+
+function fecharModalSalvar() {
+  qs("modalSalvar").classList.add("hidden");
+}
+
+async function confirmarSalvar() {
+  const nome = qs("inputNomeEstudo").value.trim();
+  if (!nome) {
+    qs("inputNomeEstudo").focus();
+    return;
+  }
+  const btn = qs("btnSalvarConfirmar");
+  btn.disabled = true;
+  btn.textContent = "Salvando…";
+  try {
+    const res = await salvarEstudo(nome, estudoAtualId);
+    if (res?.ok || res?.success) {
+      estudoAtualId = res.data?.id || estudoAtualId;
+      estudoAtualNome = nome;
+      atualizarBadgeEstudo();
+      fecharModalSalvar();
+      showToastSeletividade(`✅ "${nome}" salvo com sucesso.`);
+    } else if (res) {
+      alert("Erro ao salvar: " + (res.error || res.message || "tente novamente."));
+    }
+  } catch (error) {
+    alert("Erro de conexão: " + error.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Salvar";
+  }
+}
+
+async function abrirModalEstudos() {
+  qs("modalEstudos").classList.remove("hidden");
+  const lista = qs("listaEstudos");
+  lista.innerHTML = '<p class="sel-lista-vazia">Carregando…</p>';
+  try {
+    const res = await listarEstudos();
+    if (!res || !(res.ok || res.success)) {
+      lista.innerHTML = `<p class="sel-lista-vazia">Erro ao listar: ${escapeHtml(res?.error || res?.message || "tente novamente.")}</p>`;
+      return;
+    }
+    if (!res.data?.length) {
+      lista.innerHTML = '<p class="sel-lista-vazia">Nenhum estudo salvo ainda.</p>';
+      return;
+    }
+    const dataLabel = (estudo) => {
+      const stamp = estudo.updatedAt || estudo.createdAt;
+      const prefix = estudo.updatedAt ? "Editado" : "Criado";
+      const date = stamp ? new Date(String(stamp).replace(" ", "T")) : null;
+      return date && !Number.isNaN(date.getTime()) ? `${prefix}: ${date.toLocaleString("pt-BR")}` : "";
+    };
+    lista.innerHTML = res.data.map((estudo) => `
+      <div class="sel-item ${Number(estudo.id) === Number(estudoAtualId) ? "sel-item-ativo" : ""}">
+        <div class="sel-item-info">
+          <strong class="sel-item-nome">${escapeHtml(estudo.nome)}</strong>
+          <span class="sel-item-data">${dataLabel(estudo)}</span>
+        </div>
+        <div class="sel-item-acoes">
+          <button class="sel-btn-carregar secondary" data-id="${Number(estudo.id)}" type="button">📂 Abrir</button>
+          <button class="sel-btn-excluir sel-btn-danger" data-id="${Number(estudo.id)}" data-nome="${escapeHtml(estudo.nome)}" type="button" aria-label="Excluir">🗑️</button>
+        </div>
+      </div>
+    `).join("");
+    lista.querySelectorAll(".sel-btn-carregar").forEach((btn) => {
+      btn.addEventListener("click", () => carregarEstudoUI(Number(btn.dataset.id)));
+    });
+    lista.querySelectorAll(".sel-btn-excluir").forEach((btn) => {
+      btn.addEventListener("click", () => excluirEstudoUI(Number(btn.dataset.id), btn.dataset.nome));
+    });
+  } catch (error) {
+    lista.innerHTML = `<p class="sel-lista-vazia">Erro ao carregar: ${escapeHtml(error.message)}</p>`;
+  }
+}
+
+function fecharModalEstudos() {
+  qs("modalEstudos").classList.add("hidden");
+}
+
+async function carregarEstudoUI(id) {
+  try {
+    const res = await carregarEstudo(id);
+    if (!res || !(res.ok || res.success) || !res.data) {
+      alert("Erro ao carregar estudo: " + (res?.error || res?.message || "tente novamente."));
+      return;
+    }
+    const estudo = res.data;
+    const dados = JSON.parse(estudo.dadosJson || "{}");
+    Object.entries(dados).forEach(([fieldId, value]) => {
+      const el = qs(fieldId);
+      if (!el) return;
+      el.value = value;
+      // Estado visual BLOQ: setar .value por código não dispara o listener de input.
+      if (fieldId === "retFaseInst" || fieldId === "retNeutroInst") {
+        el.classList.toggle("is-bloq", String(value).trim().toUpperCase() === "BLOQ");
+      }
+    });
+    estudoAtualId = Number(estudo.id);
+    estudoAtualNome = estudo.nome;
+    atualizarBadgeEstudo();
+    fecharModalEstudos();
+    // Recalcula do zero a partir dos campos restaurados (mais seguro do que
+    // confiar no calcJson salvo); runCalculation também regrava o rascunho.
+    runCalculation();
+    showToastSeletividade(`📂 "${estudo.nome}" carregado.`);
+  } catch (error) {
+    alert("Erro ao carregar: " + error.message);
+  }
+}
+
+async function excluirEstudoUI(id, nome) {
+  if (!confirm(`Excluir o estudo "${nome}"? Esta ação não pode ser desfeita.`)) return;
+  try {
+    const res = await excluirEstudo(id);
+    if (res?.ok || res?.success) {
+      if (Number(estudoAtualId) === Number(id)) {
+        estudoAtualId = null;
+        estudoAtualNome = null;
+        atualizarBadgeEstudo();
+      }
+      showToastSeletividade(`🗑️ "${nome}" excluído.`);
+      abrirModalEstudos(); // recarrega a lista
+    } else if (res) {
+      alert("Erro ao excluir: " + (res.error || res.message || "tente novamente."));
+    }
+  } catch (error) {
+    alert("Erro de conexão: " + error.message);
+  }
+}
+
+function novoEstudo() {
+  if (estudoAtualNome && !confirm("Descartar o estudo atual e começar um novo?")) return;
+  estudoAtualId = null;
+  estudoAtualNome = null;
+  atualizarBadgeEstudo();
+  try { localStorage.removeItem(DRAFT_KEY); } catch { /* sem armazenamento */ }
+  location.reload();
+}
+
+// Toast simples do plugin (sem dependências do app principal).
+function showToastSeletividade(msg) {
+  document.querySelector(".sel-toast")?.remove();
+  const toast = document.createElement("div");
+  toast.className = "sel-toast";
+  toast.textContent = msg;
+  document.body.appendChild(toast);
+  requestAnimationFrame(() => toast.classList.add("sel-toast-show"));
+  setTimeout(() => {
+    toast.classList.remove("sel-toast-show");
+    setTimeout(() => toast.remove(), 400);
+  }, 3000);
+}
+
 async function init() {
   const user = await checkObraSyncSession();
   if (!user) return; // redirecionado para o login
@@ -948,6 +1190,25 @@ async function init() {
   qs("btnLimpar").addEventListener("click", clearAll);
   qs("btnPdf").addEventListener("click", generatePdf);
   window.addEventListener("afterprint", () => { qs("printReport").hidden = true; });
+
+  // Estudos salvos no banco
+  qs("btnSalvar")?.addEventListener("click", abrirModalSalvar);
+  qs("btnSalvarCancelar")?.addEventListener("click", fecharModalSalvar);
+  qs("btnSalvarConfirmar")?.addEventListener("click", confirmarSalvar);
+  qs("btnMeusEstudos")?.addEventListener("click", abrirModalEstudos);
+  qs("btnNovoEstudo")?.addEventListener("click", novoEstudo);
+  qs("btnFecharEstudos")?.addEventListener("click", fecharModalEstudos);
+  qs("inputNomeEstudo")?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") confirmarSalvar();
+    if (event.key === "Escape") fecharModalSalvar();
+  });
+  // Clique no fundo escurecido fecha o modal
+  qs("modalSalvar")?.addEventListener("click", (event) => {
+    if (event.target === qs("modalSalvar")) fecharModalSalvar();
+  });
+  qs("modalEstudos")?.addEventListener("click", (event) => {
+    if (event.target === qs("modalEstudos")) fecharModalEstudos();
+  });
 
   document.querySelectorAll(".mode-btn").forEach((button) => {
     button.addEventListener("click", () => {

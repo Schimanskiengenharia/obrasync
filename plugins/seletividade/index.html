@@ -8,7 +8,7 @@
     <link rel="icon" type="image/png" href="../../assets/favicon.png" />
     <!-- Tema do ObraSync antes do primeiro paint; arquivo compartilhado por causa do CSP. -->
     <script src="../../theme-init.js?v=1722"></script>
-    <link rel="stylesheet" href="style.css?v=15" />
+    <link rel="stylesheet" href="style.css?v=16" />
   </head>
   <body class="checking">
     <div id="sessionGate" class="session-gate">Verificando sessão do ObraSync…</div>
@@ -20,10 +20,14 @@
           <div>
             <h1>Estudo de Seletividade</h1>
             <p>Coordenograma e ajustes de proteção 50/51 — curvas IEC 60255</p>
+            <p id="estudoAtualBadge" class="estudo-atual-badge hidden">📄 <span id="estudoAtualNome"></span></p>
           </div>
         </div>
         <div class="topbar-actions">
           <span id="userBadge" class="user-badge"></span>
+          <button id="btnSalvar" class="secondary" type="button">💾 Salvar</button>
+          <button id="btnMeusEstudos" class="secondary" type="button">📂 Meus estudos</button>
+          <button id="btnNovoEstudo" class="secondary" type="button">➕ Novo</button>
           <button id="btnPdf" class="primary" type="button">Gerar PDF</button>
           <a class="secondary btn-link" href="../../">Voltar ao ObraSync</a>
         </div>
@@ -190,11 +194,44 @@
         <span>Estudo de Seletividade v1.0 — Schimanski Engenharia e Soluções</span>
         <a href="../../">Voltar ao ObraSync</a>
       </footer>
+
+      <!-- Modal: salvar estudo -->
+      <div id="modalSalvar" class="sel-modal-overlay hidden no-print">
+        <div class="sel-modal-box">
+          <h3>💾 Salvar estudo</h3>
+          <p class="sel-modal-sub">
+            Os dados do formulário e o resultado do cálculo serão salvos no banco, vinculados ao seu usuário.
+          </p>
+          <label class="sel-modal-label">
+            Nome do projeto / estudo
+            <input id="inputNomeEstudo" type="text"
+                   placeholder="Ex.: SE Hiper Center Bela Vista — 500 kVA"
+                   maxlength="200" />
+          </label>
+          <div class="sel-modal-actions">
+            <button id="btnSalvarCancelar" class="secondary" type="button">Cancelar</button>
+            <button id="btnSalvarConfirmar" class="primary" type="button">Salvar</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Modal: meus estudos -->
+      <div id="modalEstudos" class="sel-modal-overlay hidden no-print">
+        <div class="sel-modal-box sel-modal-wide">
+          <div class="sel-modal-head">
+            <h3>📂 Meus estudos salvos</h3>
+            <button id="btnFecharEstudos" class="sel-close" type="button" aria-label="Fechar">✕</button>
+          </div>
+          <div id="listaEstudos" class="sel-lista">
+            <p class="sel-lista-vazia">Carregando…</p>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Relatório de impressão (A4) montado pelo JS ao clicar em "Gerar PDF" -->
     <div id="printReport" class="print-report" hidden></div>
 
-    <script src="app.js?v=22"></script>
+    <script src="app.js?v=23"></script>
   </body>
 </html>
