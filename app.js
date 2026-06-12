@@ -3675,6 +3675,7 @@ function renderCrud(key) {
     const [sourceKey, id] = button.dataset.addBudgetItem.split(":");
     addBudgetItemFromSource(sourceKey, id);
   }));
+  if (key === "fiscalDocuments") setupNfseImport();
 }
 
 // Campos cujo formatCell devolve HTML intencional (links e badges); todo o resto é escapado.
@@ -8287,6 +8288,222 @@ async function carregarHistoricoOFX() {
       </table>
     `;
   } catch { /* histórico é informativo: falha silenciosa */ }
+}
+
+// ── Importação de XML NFS-e (padrão ABRASF) ─────────────────────────────────
+
+let nfseData = []; // NFs da prévia atual
+let nfseXmlFile = ""; // nome do XML salvo no servidor (vira xmlPath das NFs)
+
+// Injetado pelo renderCrud quando o módulo é fiscalDocuments: botão no
+// cabeçalho + modal em dois passos (upload/configuração → prévia em lote).
+function setupNfseImport() {
+  if (!canEditModule("fiscalDocuments")) return;
+  const head = qs("content").querySelector(".module-head");
+  if (head && !qs("btnImportarNfse")) {
+    const btn = document.createElement("button");
+    btn.id = "btnImportarNfse";
+    btn.className = "secondary";
+    btn.type = "button";
+    btn.textContent = "📄 Importar XML NFS-e";
+    const novo = head.querySelector("#newRecord");
+    if (novo) head.insertBefore(btn, novo);
+    else head.appendChild(btn);
+  }
+  qs("content").insertAdjacentHTML("beforeend", `
+    <div id="modalNfse" class="nfse-overlay hidden">
+      <div class="nfse-box">
+        <div class="nfse-head">
+          <h3>📄 Importar XML NFS-e</h3>
+          <button id="btnFecharNfse" class="nfse-close" type="button" aria-label="Fechar">✕</button>
+        </div>
+        <div id="nfseStep1">
+          <p class="nfse-hint">Selecione o XML exportado da prefeitura (padrão ABRASF) — aceita arquivo com várias NFS-e. NFs emitidas pela empresa viram <strong>Contas a Receber</strong>; NFs de fornecedores viram <strong>Contas a Pagar</strong>.</p>
+          <div class="nfse-form">
+            <label class="ofx-label">
+              Arquivo XML NFS-e
+              <div class="ofx-file-wrap">
+                <span class="ofx-file-btn">📂 Escolher arquivo</span>
+                <input id="nfseFile" type="file" accept=".xml" class="ofx-file-input" />
+                <span id="nfseFileName" class="ofx-file-name">Nenhum arquivo selecionado</span>
+              </div>
+            </label>
+            <label class="ofx-label">
+              Obra/Projeto (obrigatório)
+              <select id="nfseProjeto">
+                <option value="">Selecione a obra…</option>
+                ${(db.projects || []).map((project) => `<option value="${Number(project.id) || svgText(project.id)}">${svgText(project.name)}</option>`).join("")}
+              </select>
+            </label>
+            <label class="ofx-label">
+              Vencimento (dias após emissão)
+              <input id="nfseVencimentoDias" type="number" value="30" min="1" max="365" />
+            </label>
+          </div>
+          <div class="nfse-actions">
+            <button id="btnNfsePreview" class="primary" type="button">🔍 Analisar XML</button>
+          </div>
+        </div>
+        <div id="nfseStep2" class="hidden">
+          <div id="nfseResumo" class="ofx-info"></div>
+          <div id="nfseTableWrap" class="ofx-table-wrap nfse-table-wrap"></div>
+          <div class="nfse-actions">
+            <button class="secondary" id="btnNfseVoltar" type="button">← Voltar</button>
+            <button class="primary" id="btnNfseImportar" type="button">📥 Importar selecionadas</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `);
+
+  qs("btnImportarNfse")?.addEventListener("click", () => {
+    qs("modalNfse").classList.remove("hidden");
+    qs("nfseStep1").classList.remove("hidden");
+    qs("nfseStep2").classList.add("hidden");
+    nfseData = [];
+    nfseXmlFile = "";
+  });
+  qs("btnFecharNfse")?.addEventListener("click", fecharModalNfse);
+  qs("modalNfse")?.addEventListener("click", (event) => {
+    if (event.target === qs("modalNfse")) fecharModalNfse();
+  });
+  qs("nfseFile")?.addEventListener("change", (event) => {
+    qs("nfseFileName").textContent = event.target.files?.[0]?.name || "Nenhum arquivo selecionado";
+  });
+  qs("btnNfsePreview")?.addEventListener("click", analisarNfseXml);
+  qs("btnNfseVoltar")?.addEventListener("click", () => {
+    qs("nfseStep1").classList.remove("hidden");
+    qs("nfseStep2").classList.add("hidden");
+  });
+  qs("btnNfseImportar")?.addEventListener("click", importarNfsesSelecionadas);
+  // Delegação dos checkboxes (a tabela da prévia é re-renderizada).
+  qs("nfseTableWrap")?.addEventListener("change", (event) => {
+    if (event.target.id === "nfseCheckAll") {
+      qs("nfseTableWrap").querySelectorAll(".nfse-cb:not(:disabled)").forEach((checkbox) => {
+        checkbox.checked = event.target.checked;
+        const index = Number(checkbox.dataset.idx);
+        if (nfseData[index]) nfseData[index].importar = event.target.checked;
+      });
+      return;
+    }
+    const checkbox = event.target.closest(".nfse-cb");
+    if (!checkbox) return;
+    const index = Number(checkbox.dataset.idx);
+    if (nfseData[index]) nfseData[index].importar = checkbox.checked;
+  });
+}
+
+function fecharModalNfse() {
+  qs("modalNfse")?.classList.add("hidden");
+  nfseData = [];
+  nfseXmlFile = "";
+}
+
+async function analisarNfseXml() {
+  const file = qs("nfseFile")?.files?.[0];
+  if (!file) return alert("Selecione um arquivo XML.");
+  const btn = qs("btnNfsePreview");
+  btn.disabled = true;
+  btn.textContent = "Analisando…";
+  try {
+    const form = new FormData();
+    form.append("xml", file);
+    const payload = await fetchForm("nfse-preview", form);
+    nfseData = payload.data.nfses;
+    nfseXmlFile = payload.data.xmlFile || "";
+    renderizarPreviewNfse(payload.data);
+    qs("nfseStep1").classList.add("hidden");
+    qs("nfseStep2").classList.remove("hidden");
+  } catch (error) {
+    alert(`Erro ao analisar o XML: ${error.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "🔍 Analisar XML";
+  }
+}
+
+function renderizarPreviewNfse(data) {
+  qs("nfseResumo").innerHTML = `
+    <span class="ofx-badge">📄 ${data.total} NFS-e no arquivo</span>
+    <span class="ofx-badge ofx-badge-green">▲ ${data.emitidas} emitidas → A Receber</span>
+    <span class="ofx-badge ofx-badge-yellow">▼ ${data.recebidas} recebidas → A Pagar</span>
+    <span class="ofx-badge">💰 Total: ${asMoney(data.valorTotal)}</span>
+  `;
+  qs("nfseTableWrap").innerHTML = `
+    <table class="ofx-table">
+      <thead>
+        <tr>
+          <th><input type="checkbox" id="nfseCheckAll" checked /></th>
+          <th>NF</th><th>Emissão</th><th>Cliente/Fornecedor</th><th>Discriminação</th><th>Valor líquido</th><th>Destino</th><th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${nfseData.map((nf, index) => {
+          const party = nf.tipo === "emitida" ? nf.tomador : nf.prestador;
+          const doc = party.cnpj || party.cpf || "";
+          const entidadeHtml = `
+            <div class="nfse-entity">${svgText(nf.entityNome || party.nome || "—")}</div>
+            ${nf.entityId
+              ? '<div class="nfse-entity-ok">✅ Cadastrado no sistema</div>'
+              : `<div class="nfse-entity-warn">⚠️ ${svgText(maskDocument(doc))} — não cadastrado</div>`}`;
+          const resumoDisc = nf.discriminacao.length > 60 ? `${nf.discriminacao.slice(0, 60)}…` : nf.discriminacao;
+          return `
+            <tr class="${nf.jaImportada ? "ofx-dup" : ""}">
+              <td><input type="checkbox" class="nfse-cb" data-idx="${index}" ${nf.jaImportada ? "disabled" : "checked"} /></td>
+              <td><strong>${svgText(nf.numero)}</strong></td>
+              <td>${asDate(nf.dataEmissao)}</td>
+              <td>${entidadeHtml}</td>
+              <td class="ofx-memo" title="${svgText(nf.discriminacao)}">${svgText(resumoDisc)}</td>
+              <td class="ofx-amount ${nf.tipo === "emitida" ? "ofx-entrada" : "ofx-saida"}">${nf.tipo === "emitida" ? "+" : "-"} ${asMoney(nf.valorLiquido)}</td>
+              <td><span class="ofx-badge ${nf.tipo === "emitida" ? "ofx-badge-green" : "ofx-badge-yellow"}">${nf.tipo === "emitida" ? "▲ A Receber" : "▼ A Pagar"}</span></td>
+              <td>${nf.jaImportada ? '<span class="ofx-badge ofx-badge-gray">⏭️ Já importada</span>' : '<span class="ofx-badge ofx-badge-green">✅ Nova</span>'}</td>
+            </tr>`;
+        }).join("")}
+      </tbody>
+    </table>
+  `;
+  nfseData.forEach((nf) => { nf.importar = !nf.jaImportada; });
+}
+
+async function importarNfsesSelecionadas() {
+  const projectId = Number(qs("nfseProjeto")?.value || 0);
+  if (!projectId) return alert("Selecione a obra/projeto — toda nota fiscal é vinculada a uma obra.");
+  const selecionadas = nfseData.filter((nf) => nf.importar && !nf.jaImportada);
+  if (!selecionadas.length) return alert("Nenhuma NFS-e selecionada para importar.");
+  const vencimentoDias = Math.max(1, Math.min(365, Number(qs("nfseVencimentoDias")?.value || 30)));
+  if (!confirm(`Importar ${selecionadas.length} NFS-e?\n\n• Emitidas → Contas a Receber (venc. em ${vencimentoDias} dias)\n• Recebidas → Contas a Pagar (venc. em ${vencimentoDias} dias)\n\nVocê poderá editar os registros depois.`)) return;
+
+  const btn = qs("btnNfseImportar");
+  btn.disabled = true;
+  btn.textContent = "Importando…";
+  try {
+    const payload = await apiRequest("nfse-import", {
+      method: "POST",
+      body: JSON.stringify({
+        projectId,
+        vencimentoDias,
+        xmlFile: nfseXmlFile,
+        nfses: selecionadas.map((nf) => ({
+          numero: nf.numero,
+          dataEmissao: nf.dataEmissao,
+          valorLiquido: nf.valorLiquido,
+          tipo: nf.tipo,
+          discriminacao: nf.discriminacao,
+          codigoVerificacao: nf.codigoVerificacao,
+          entityId: nf.entityId,
+          importar: true,
+        })),
+      }),
+    });
+    showToast(`✅ ${payload.data.importadas} NFS-e importadas, ${payload.data.duplicatas} já existiam.`);
+    fecharModalNfse();
+    await refreshAndRender(); // NFs + contas a receber/pagar vieram do servidor
+  } catch (error) {
+    alert(`Erro ao importar: ${error.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "📥 Importar selecionadas";
+  }
 }
 
 function renderDre() {

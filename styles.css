@@ -3533,3 +3533,93 @@ menu {
   border-color: rgba(184, 135, 45, 0.3);
   color: var(--gold);
 }
+
+/* ── Importação de XML NFS-e ───────────────────────────────────────────── */
+
+.nfse-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.nfse-overlay.hidden { display: none !important; }
+
+.nfse-box {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.18);
+  padding: 22px;
+  width: 100%;
+  max-width: 920px;
+  max-height: 90vh;
+  overflow-y: auto;
+  animation: moduleIn 0.22s ease;
+}
+
+.nfse-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.nfse-head h3 { margin: 0; font-size: 16px; }
+
+.nfse-close {
+  background: none;
+  border: none;
+  font-size: 18px;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+
+.nfse-close:hover { background: var(--panel-2); color: var(--ink); }
+
+.nfse-hint {
+  margin: 0 0 14px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.nfse-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr 180px;
+  gap: 12px;
+  align-items: end;
+}
+
+@media (max-width: 800px) {
+  .nfse-form { grid-template-columns: 1fr; }
+}
+
+.nfse-form input[type="number"] {
+  min-height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 9px;
+  background: var(--field);
+  color: var(--ink);
+  font: inherit;
+  width: 100%;
+}
+
+.nfse-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.nfse-table-wrap { margin-top: 12px; }
+
+.nfse-entity { font-size: 13px; font-weight: 600; }
+.nfse-entity-ok { font-size: 11px; color: var(--green); }
+.nfse-entity-warn { font-size: 11px; color: var(--gold); }

@@ -190,6 +190,21 @@ try {
         handle_ofx_history($pdo);
     }
 
+    // Importação de XML NFS-e padrão ABRASF (módulo de notas fiscais):
+    // preview lê o XML (NF única ou lote da prefeitura), roteia emitida ×
+    // recebida pelo CNPJ do prestador e marca duplicatas; import grava
+    // fiscal_documents e cria as contas a receber/pagar correspondentes.
+    if ($resource === 'nfse-preview') {
+        require_method($method, ['POST']);
+        authorize_request($pdo, $authUser, 'fiscalDocuments', 'edit');
+        handle_nfse_preview($pdo, $config);
+    }
+    if ($resource === 'nfse-import') {
+        require_method($method, ['POST']);
+        authorize_request($pdo, $authUser, 'fiscalDocuments', 'edit');
+        handle_nfse_import($pdo, $config, $authUser, read_json());
+    }
+
     $key = normalize_resource($resource, $resources);
     if (!$key) {
         fail('Recurso não encontrado.', 404);
@@ -2593,6 +2608,273 @@ function handle_ofx_history(PDO $pdo): never
         $stmt = $pdo->query('SELECT * FROM ofx_imports ORDER BY importedAt DESC LIMIT 50');
     }
     respond(['ok' => true, 'data' => $stmt->fetchAll()]);
+}
+
+// ── Importação de NFS-e (padrão ABRASF) ──────────────────────────────────────
+
+// CNPJ da empresa para rotear NF emitida × recebida. Fonte primária: Dados da
+// Empresa (company_settings.document); ignora o placeholder do seed. Fallback:
+// 'company_cnpj' no config e, por fim, o CNPJ conhecido da Schimanski.
+function company_cnpj(PDO $pdo, array $config): string
+{
+    try {
+        $document = (string) $pdo->query('SELECT document FROM company_settings ORDER BY id DESC LIMIT 1')->fetchColumn();
+        $digits = preg_replace('/\D/', '', $document);
+        if (strlen($digits) === 14 && $digits !== '00000000000100') {
+            return $digits;
+        }
+    } catch (Throwable $error) {
+        // tabela ausente: segue para os fallbacks
+    }
+    $fromConfig = preg_replace('/\D/', '', (string) ($config['company_cnpj'] ?? ''));
+    return strlen($fromConfig) === 14 ? $fromConfig : '44930777000120';
+}
+
+// Parser NFS-e ABRASF (Campo Grande/MS e maioria das prefeituras). Aceita
+// <ListaNotaFiscal>/<CompNfse> com várias NFs ou <Nfse> única; remove
+// namespaces (variam por prefeitura e quebram o SimpleXML) antes do parse.
+function parse_nfse_abrasf(string $xmlContent, string $cnpjEmpresa): array
+{
+    $xmlContent = ltrim($xmlContent, "\xEF\xBB\xBF");
+    $xmlContent = preg_replace('/\sxmlns[^=]*="[^"]*"/i', '', $xmlContent);
+    $xmlContent = preg_replace('/<(\/?)[A-Za-z0-9_]+:/', '<$1', $xmlContent);
+
+    $previous = libxml_use_internal_errors(true);
+    $xml = simplexml_load_string($xmlContent);
+    libxml_use_internal_errors($previous);
+    if (!$xml) {
+        throw new RuntimeException('XML inválido ou mal-formado.');
+    }
+
+    $nfses = $xml->getName() === 'Nfse' ? [$xml] : ($xml->xpath('//Nfse') ?: []);
+    if (!$nfses) {
+        throw new RuntimeException('Nenhuma NFS-e encontrada no arquivo (estrutura ABRASF esperada: Nfse/InfNfse).');
+    }
+
+    $cnpjEmpresa = preg_replace('/\D/', '', $cnpjEmpresa);
+    $result = [];
+    foreach ($nfses as $nfse) {
+        $inf = $nfse->InfNfse ?? null;
+        if (!$inf) {
+            continue;
+        }
+        $numero = trim((string) ($inf->Numero ?? ''));
+        if ($numero === '') {
+            continue;
+        }
+        $valores = $inf->Servico->Valores ?? null;
+        $valorServicos = (float) ($valores->ValorServicos ?? 0);
+        $cnpjPrestador = preg_replace('/\D/', '', (string) ($inf->PrestadorServico->IdentificacaoPrestador->Cnpj ?? ''));
+        $tomadorId = $inf->TomadorServico->IdentificacaoTomador->CpfCnpj ?? null;
+        $codigoVerificacao = trim((string) ($inf->CodigoVerificacao ?? ''));
+
+        $result[] = [
+            'numero' => $numero,
+            'codigoVerificacao' => $codigoVerificacao,
+            'dataEmissao' => substr((string) ($inf->DataEmissao ?? ''), 0, 10),
+            'competencia' => substr((string) ($inf->Competencia ?? ''), 0, 10),
+            'valorServicos' => $valorServicos,
+            'valorLiquido' => (float) ($valores->ValorLiquidoNfse ?? 0) ?: $valorServicos,
+            'valorIss' => (float) ($valores->ValorIss ?? 0),
+            'issRetido' => (string) ($valores->IssRetido ?? '2') === '1',
+            'discriminacao' => trim((string) ($inf->Servico->Discriminacao ?? '')),
+            // CNPJ do prestador = empresa → NF emitida (a receber); senão, recebida (a pagar).
+            'tipo' => $cnpjPrestador === $cnpjEmpresa ? 'emitida' : 'recebida',
+            'documento' => 'NFS-e ' . $numero,
+            'prestador' => [
+                'cnpj' => $cnpjPrestador,
+                'nome' => trim((string) ($inf->PrestadorServico->RazaoSocial ?? '')),
+            ],
+            'tomador' => [
+                'cnpj' => $tomadorId ? preg_replace('/\D/', '', (string) ($tomadorId->Cnpj ?? '')) : '',
+                'cpf' => $tomadorId ? preg_replace('/\D/', '', (string) ($tomadorId->Cpf ?? '')) : '',
+                'nome' => trim((string) ($inf->TomadorServico->RazaoSocial ?? '')),
+            ],
+        ];
+    }
+    usort($result, static fn ($a, $b) => (int) $b['numero'] <=> (int) $a['numero']);
+    return $result;
+}
+
+// Vincula a NF a um cliente (emitida → tomador) ou fornecedor (recebida →
+// prestador) comparando só os dígitos do CPF/CNPJ com clients/suppliers.document.
+function nfse_find_entity(PDO $pdo, string $documentDigits, string $table): array
+{
+    $digits = preg_replace('/\D/', '', $documentDigits);
+    if ($digits === '' || !in_array($table, ['clients', 'suppliers'], true)) {
+        return ['id' => null, 'nome' => null];
+    }
+    $clean = "REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(document, ''), '.', ''), '-', ''), '/', ''), ' ', '')";
+    $stmt = $pdo->prepare("SELECT id, name FROM {$table} WHERE {$clean} = ? LIMIT 1");
+    $stmt->execute([$digits]);
+    $row = $stmt->fetch();
+    return $row ? ['id' => (int) $row['id'], 'nome' => (string) $row['name']] : ['id' => null, 'nome' => null];
+}
+
+function handle_nfse_preview(PDO $pdo, array $config): never
+{
+    if (empty($_FILES['xml']['tmp_name'])) {
+        fail('Envie um arquivo XML NFS-e.', 400);
+    }
+    $file = $_FILES['xml'];
+    if (strtolower(pathinfo((string) ($file['name'] ?? ''), PATHINFO_EXTENSION)) !== 'xml') {
+        fail('Envie o arquivo .xml exportado da prefeitura.', 400);
+    }
+    if ((int) ($file['size'] ?? 0) > 5 * 1024 * 1024) {
+        fail('Arquivo acima de 5 MB — não parece um XML de NFS-e.', 413);
+    }
+    $content = (string) file_get_contents($file['tmp_name']);
+    if ($content === '' || stripos($content, 'Nfse') === false) {
+        fail('O arquivo não parece ser um XML de NFS-e (padrão ABRASF).', 400);
+    }
+
+    try {
+        $nfses = parse_nfse_abrasf($content, company_cnpj($pdo, $config));
+    } catch (RuntimeException $error) {
+        fail($error->getMessage(), 400);
+    }
+
+    // Guarda o XML em uploads/notas-fiscais (DEPOIS de ler o conteúdo: o
+    // store_upload move o arquivo temporário) para vincular como xmlPath.
+    $uploadDir = rtrim($config['upload_dir'] ?? '/var/lib/financeiro/uploads', '/') . '/notas-fiscais';
+    if (!is_dir($uploadDir)) {
+        mkdir($uploadDir, 0750, true);
+    }
+    $storedPath = store_upload($file, $uploadDir, ['xml'], ['text/xml', 'application/xml', 'application/octet-stream']);
+
+    $dupCheck = $pdo->prepare('SELECT id FROM fiscal_documents WHERE documentNumber = ? LIMIT 1');
+    $nfses = array_map(static function (array $nf) use ($pdo, $dupCheck): array {
+        $party = $nf['tipo'] === 'emitida' ? $nf['tomador'] : $nf['prestador'];
+        $doc = ($party['cnpj'] ?? '') ?: ($party['cpf'] ?? '');
+        $entity = nfse_find_entity($pdo, $doc, $nf['tipo'] === 'emitida' ? 'clients' : 'suppliers');
+        $nf['entityId'] = $entity['id'];
+        $nf['entityNome'] = $entity['nome'] ?? ($party['nome'] ?: null);
+        $dupCheck->execute([$nf['documento']]);
+        $nf['jaImportada'] = (bool) $dupCheck->fetchColumn();
+        return $nf;
+    }, $nfses);
+
+    respond(['ok' => true, 'data' => [
+        'nfses' => $nfses,
+        'total' => count($nfses),
+        'emitidas' => count(array_filter($nfses, static fn ($n) => $n['tipo'] === 'emitida')),
+        'recebidas' => count(array_filter($nfses, static fn ($n) => $n['tipo'] === 'recebida')),
+        'valorTotal' => array_sum(array_column($nfses, 'valorLiquido')),
+        'xmlFile' => basename($storedPath),
+    ]]);
+}
+
+// Grava as NFs selecionadas: fiscal_documents (obra obrigatória — projectId é
+// NOT NULL com FK) + conta a receber (emitida) ou a pagar (recebida), com
+// referência cruzada nos dois sentidos. Tudo transacional.
+function handle_nfse_import(PDO $pdo, array $config, array $authUser, array $payload): never
+{
+    $nfses = is_array($payload['nfses'] ?? null) ? $payload['nfses'] : [];
+    $projectId = (int) ($payload['projectId'] ?? 0);
+    $vencimentoDias = max(1, min(365, (int) ($payload['vencimentoDias'] ?? 30)));
+    $xmlFile = basename(trim((string) ($payload['xmlFile'] ?? '')));
+    if (!$nfses) {
+        fail('Nenhuma NFS-e selecionada.', 400);
+    }
+    if (!$projectId) {
+        fail('Selecione a obra/projeto — toda nota fiscal do sistema é vinculada a uma obra.', 400);
+    }
+    $stmt = $pdo->prepare('SELECT id FROM projects WHERE id = ? LIMIT 1');
+    $stmt->execute([$projectId]);
+    if (!$stmt->fetchColumn()) {
+        fail('Obra/projeto não encontrado.', 404);
+    }
+    $xmlPath = null;
+    if ($xmlFile !== '' && preg_match('/^[A-Za-z0-9._-]+\.xml$/i', $xmlFile)) {
+        $candidate = rtrim($config['upload_dir'] ?? '/var/lib/financeiro/uploads', '/') . '/notas-fiscais/' . $xmlFile;
+        if (is_file($candidate)) {
+            $xmlPath = $candidate;
+        }
+    }
+
+    $importadas = 0;
+    $duplicatas = 0;
+    $pdo->beginTransaction();
+    try {
+        $dupCheck = $pdo->prepare('SELECT id FROM fiscal_documents WHERE documentNumber = ? LIMIT 1');
+        foreach ($nfses as $nf) {
+            if (!is_array($nf) || !($nf['importar'] ?? true)) {
+                continue;
+            }
+            $numero = trim((string) ($nf['numero'] ?? ''));
+            $dataEmissao = trim((string) ($nf['dataEmissao'] ?? ''));
+            $valor = round((float) ($nf['valorLiquido'] ?? 0), 2);
+            $emitida = ($nf['tipo'] ?? '') === 'emitida';
+            $discriminacao = trim((string) ($nf['discriminacao'] ?? ''));
+            $codigo = trim((string) ($nf['codigoVerificacao'] ?? ''));
+            $entityId = (int) ($nf['entityId'] ?? 0) ?: null;
+            if ($numero === '' || $valor <= 0 || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $dataEmissao)) {
+                continue;
+            }
+            $documentNumber = 'NFS-e ' . $numero;
+            $dupCheck->execute([$documentNumber]);
+            if ($dupCheck->fetchColumn()) {
+                $duplicatas++;
+                continue;
+            }
+
+            $notes = trim(($codigo !== '' ? "Código de verificação: {$codigo}\n" : '') . $discriminacao);
+            $fiscalId = insert_dynamic($pdo, 'fiscal_documents', [
+                'projectId' => $projectId,
+                'supplierId' => $emitida ? null : $entityId,
+                'documentNumber' => $documentNumber,
+                'issueDate' => $dataEmissao,
+                'amount' => $valor,
+                'type' => 'Nota Fiscal de Serviço',
+                'status' => 'Pendente',
+                'xmlPath' => $xmlPath,
+                'notes' => $notes !== '' ? mb_substr($notes, 0, 2000) : null,
+            ]);
+
+            $vencimento = date_add_days($dataEmissao, $vencimentoDias);
+            // insert_dynamic descarta colunas inexistentes (referencia_tipo/_id
+            // dependem da migration de integração) — funciona nos dois cenários.
+            if ($emitida) {
+                $receivableId = insert_dynamic($pdo, 'accounts_receivable', [
+                    'document' => $documentNumber,
+                    'issueDate' => $dataEmissao,
+                    'dueDate' => $vencimento,
+                    'clientId' => $entityId,
+                    'projectId' => $projectId,
+                    'amount' => $valor,
+                    'status' => 'Aberto',
+                    'referencia_tipo' => 'fiscal_document',
+                    'referencia_id' => $fiscalId,
+                ]);
+                update_dynamic($pdo, 'fiscal_documents', $fiscalId, ['receivableId' => $receivableId]);
+            } else {
+                $payableId = insert_dynamic($pdo, 'accounts_payable', [
+                    'document' => $documentNumber,
+                    'issueDate' => $dataEmissao,
+                    'dueDate' => $vencimento,
+                    'supplierId' => $entityId,
+                    'projectId' => $projectId,
+                    'amount' => $valor,
+                    'status' => 'Aberto',
+                    'referencia_tipo' => 'fiscal_document',
+                    'referencia_id' => $fiscalId,
+                ]);
+                update_dynamic($pdo, 'fiscal_documents', $fiscalId, ['payableId' => $payableId]);
+            }
+            $importadas++;
+        }
+        $pdo->commit();
+    } catch (Throwable $error) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        error_log('[ObraSync NFS-e] Importação falhou: ' . $error->getMessage());
+        fail('Erro ao importar as NFS-e. Nada foi gravado — tente novamente.', 500);
+    }
+
+    server_audit($pdo, $authUser, 'import', 'fiscalDocuments', null, "NFS-e XML: {$importadas} importadas, {$duplicatas} duplicadas");
+    respond(['ok' => true, 'data' => ['importadas' => $importadas, 'duplicatas' => $duplicatas],
+        'message' => "{$importadas} NFS-e importadas, {$duplicatas} já existiam."]);
 }
 
 function bearer_token(): string
