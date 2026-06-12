@@ -624,13 +624,6 @@ function buildPrintReport(selectivity, logoSrc) {
   const c = calc;
   const report = qs("printReport");
 
-  const footerEmpresa = `
-    <div class="print-footer-empresa">
-      <p>Schimanski Engenharia e Soluções LTDA</p>
-      <p>CNPJ: 44.930.777/0001-20</p>
-      <p>schimanskiengenharia@outlook.com.br</p>
-    </div>`;
-
   report.innerHTML = `
     <table class="print-layout">
     <tbody><tr><td>
@@ -771,6 +764,7 @@ function buildPrintReport(selectivity, logoSrc) {
       <img src="${chartImage("ambos", "Coordenograma — Fase + Neutro")}" alt="Coordenograma fase e neutro" />
     </div>
 
+    <h2>9. Assinaturas</h2>
     ${(() => {
       const engNome  = txt("projEngenheiro");
       const engCrea  = txt("projCrea");
@@ -810,7 +804,11 @@ function buildPrintReport(selectivity, logoSrc) {
     })()}
     </td></tr></tbody>
     <tfoot><tr><td>
-      ${footerEmpresa}
+      <div class="print-footer-empresa">
+        <p>Schimanski Engenharia e Soluções LTDA</p>
+        <p>CNPJ: 44.930.777/0001-20</p>
+        <p>schimanskiengenharia@outlook.com.br</p>
+      </div>
     </td></tr></tfoot>
     </table>
   `;
