@@ -6,17 +6,8 @@
     <meta name="robots" content="noindex, nofollow" />
     <title>Estudo de Seletividade — ObraSync</title>
     <link rel="icon" type="image/png" href="../../assets/favicon.png" />
-    <script>
-      // Aplica o tema do ObraSync (claro/escuro/automático) antes do primeiro paint.
-      (function () {
-        var pref = "auto";
-        try { pref = localStorage.getItem("finconta.theme") || "auto"; } catch (e) { /* sem armazenamento */ }
-        if (pref !== "light" && pref !== "dark" && pref !== "auto") pref = "auto";
-        var dark = pref === "dark" || (pref === "auto" && window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
-        document.documentElement.dataset.theme = dark ? "dark" : "light";
-        document.documentElement.dataset.themePref = pref;
-      })();
-    </script>
+    <!-- Tema do ObraSync antes do primeiro paint; arquivo compartilhado por causa do CSP. -->
+    <script src="../../theme-init.js?v=1722"></script>
     <link rel="stylesheet" href="style.css?v=6" />
   </head>
   <body class="checking">
@@ -189,6 +180,6 @@
     <!-- Relatório de impressão (A4) montado pelo JS ao clicar em "Gerar PDF" -->
     <div id="printReport" class="print-report" hidden></div>
 
-    <script src="app.js?v=9"></script>
+    <script src="app.js?v=10"></script>
   </body>
 </html>

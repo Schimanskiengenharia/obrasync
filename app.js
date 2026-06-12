@@ -309,6 +309,8 @@ let sinapiTypeFilter = "all";
 let sinapiLastImportHtml = "";
 let sinapiJobPollTimer = null;
 let sinapiJobPollSeq = 0; // invalida correntes de polling antigas após re-render
+let sinapiSearchFetchTimer = null;
+let sinapiSearchLastFetched = ""; // último termo já buscado no servidor (evita repetição)
 let proposalGeneratorState = null;
 let agendaViewMode = "month";
 let agendaCursorDate = agendaSafeDateString(new Date());
@@ -1686,15 +1688,10 @@ function authHeaders() {
 }
 
 async function apiRequest(path, options = {}) {
-  const method = String(options.method || "GET").toUpperCase();
   let url = `${API_BASE}/${path}`;
-  // Alguns servidores Apache/PHP-CGI removem os headers de autenticação em
-  // métodos não convencionais (DELETE/PUT/PATCH), causando "Sessão inválida".
-  // O token vai também na query string — o bearer_token() do backend usa esse
-  // fallback — garantindo autenticação em TODAS as requisições.
-  if (authToken && ["DELETE", "PUT", "PATCH"].includes(method)) {
-    url += `${url.includes("?") ? "&" : "?"}token=${encodeURIComponent(authToken)}`;
-  }
+  // Apache/PHP-CGI pode remover o header Authorization em DELETE/PUT/PATCH; o
+  // X-Auth-Token (authHeaders) cobre esses casos. O antigo fallback ?token= na
+  // query string foi removido: deixava o token de sessão nos access logs.
   let response;
   try {
     response = await fetch(url, {
@@ -1745,7 +1742,7 @@ async function apiRequest(path, options = {}) {
 }
 
 // Wrapper para uploads multipart (FormData) — não pode usar apiRequest pois ele força JSON.
-async function fetchForm(path, formData) {
+async function fetchForm(path, formData, _retried = false) {
   let response;
   try {
     response = await fetch(`${API_BASE}/${path}`, { method: "POST", headers: authHeaders(), body: formData });
@@ -1766,6 +1763,15 @@ async function fetchForm(path, formData) {
     }
   }
   if (response.status === 401) {
+    // Mesma renovação do apiRequest: o token em memória pode estar defasado
+    // (outra aba refez o login) — relê o armazenamento e tenta UMA vez.
+    if (!_retried) {
+      const staleToken = authToken;
+      readAuthSession();
+      if (authToken && authToken !== staleToken) {
+        return fetchForm(path, formData, true);
+      }
+    }
     authToken = null;
     clearAuthSession();
     if (currentUser) showLogin(payload.error || "Sessão expirada. Faça login novamente.");
@@ -3430,6 +3436,8 @@ function normalizeViabilityAnalysis(data) {
     const detail = isManual ? `manual${String(data.verdictJustification || "").trim() ? `: ${String(data.verdictJustification).trim()}` : ""}` : "automático";
     const line = `${stamp} — ${author}: parecer ${previousVerdict ? `alterado de "${previousVerdict}" para` : "definido como"} "${data.finalVerdict}" (${detail})`;
     history = history ? `${history}\n${line}` : line;
+    // Só as últimas 20 entradas: o histórico crescia sem limite a cada mudança.
+    history = history.split("\n").slice(-20).join("\n");
   }
   data.verdictHistory = history;
   return "";
@@ -3655,6 +3663,10 @@ function renderCrud(key) {
   qs("content").querySelectorAll("[data-delete]").forEach((button) => button.addEventListener("click", () => removeRecord(key, button.dataset.delete)));
   qs("content").querySelectorAll("[data-toggle-block]").forEach((btn) => btn.addEventListener("click", () => toggleUserBlock(btn.dataset.toggleBlock, btn.dataset.blockState !== "1")));
   qs("content").querySelectorAll(".reveal-btn").forEach((btn) => btn.addEventListener("click", () => { btn.parentElement.innerHTML = svgText(btn.dataset.original); }));
+  qs("content").querySelectorAll("[data-fiscal-download]").forEach((btn) => btn.addEventListener("click", () => {
+    const [id, kind] = btn.dataset.fiscalDownload.split(":");
+    downloadFiscalFile(id, kind);
+  }));
   qs("content").querySelectorAll("[data-convert-proposal]").forEach((button) => button.addEventListener("click", () => convertProposalToSale(button.dataset.convertProposal)));
   qs("content").querySelectorAll("[data-preview-proposal]").forEach((button) => button.addEventListener("click", () => openSavedProposalPreview(button.dataset.previewProposal)));
   qs("content").querySelectorAll("[data-create-proposal-receivables]").forEach((button) => button.addEventListener("click", () => createReceivablesFromProposal(button.dataset.createProposalReceivables)));
@@ -3848,9 +3860,11 @@ function formatCell(field, value, row = {}) {
   if (field === "scheduleStepId") return nameOf("projectSchedule", value);
   if (field === "milestoneId") return nameOf("projectMilestones", value);
   if (field === "responsibleUserId") return nameOf("users", value);
-  if (field === "generatedLink") return value ? `<a href="${svgText(value)}" target="_blank" rel="noopener">Abrir link</a>` : "";
-  if (field === "hasPdf") return value ? `<a href="${API_BASE}/${apiResources.fiscalDocuments}/${row.id}/pdf${authToken ? `?token=${encodeURIComponent(authToken)}` : ""}" target="_blank" rel="noopener">PDF</a>` : "";
-  if (field === "hasXml") return value ? `<a href="${API_BASE}/${apiResources.fiscalDocuments}/${row.id}/xml${authToken ? `?token=${encodeURIComponent(authToken)}` : ""}" target="_blank" rel="noopener">XML</a>` : "";
+  // Só http(s) vira link clicável: escapeHtml não bloqueia esquemas como javascript:.
+  if (field === "generatedLink") return value ? (/^https?:\/\//i.test(String(value)) ? `<a href="${svgText(value)}" target="_blank" rel="noopener">Abrir link</a>` : escapeHtml(value)) : "";
+  // Downloads via fetch autenticado (blob): o token não vai mais na URL (access logs).
+  if (field === "hasPdf") return value ? `<button class="secondary" type="button" data-fiscal-download="${escapeHtml(row.id)}:pdf">PDF</button>` : "";
+  if (field === "hasXml") return value ? `<button class="secondary" type="button" data-fiscal-download="${escapeHtml(row.id)}:xml">XML</button>` : "";
   if (field === "fiscalDocumentNumber") {
     const match = (db.fiscalDocuments || []).find((doc) => sameId(doc.payableId, row.id) || sameId(doc.receivableId, row.id));
     return match ? match.documentNumber : "";
@@ -4697,7 +4711,13 @@ function agendaEventsSorted() {
 }
 
 function agendaOptions(collection) {
-  return (db[collection] || []).map((row) => {
+  // Só registros ativos: compromissos não devem apontar para cadastros desativados.
+  const rows = (db[collection] || []).filter((row) => {
+    if (collection === "projects") return row.status !== "Cancelada";
+    if (collection === "users") return row.status === "Ativo" && !Number(row.blocked || 0);
+    return row.status === undefined || row.status === "" || row.status === "Ativo";
+  });
+  return rows.map((row) => {
     const label = row.fullName || row.name || row.nome || row.titulo || row.username || String(row.id);
     return `<option value="${row.id}">${svgText(label)}</option>`;
   }).join("");
@@ -5497,7 +5517,7 @@ function renderSinapiReferences() {
     <section class="module-head">
       <div>
         <h2>Base SINAPI</h2>
-        <p>Importe e consulte a base SINAPI/CAIXA. Padrão inicial: ${svgText(settings.defaultUf || "MS")} ${settings.defaultReferenceMonth || 4}/${settings.defaultReferenceYear || 2026}, Campo Grande/MS.</p>
+        <p>Importe e consulte a base SINAPI/CAIXA. Padrão inicial: ${svgText(settings.defaultUf || "MS")} ${settings.defaultReferenceMonth || 4}/${settings.defaultReferenceYear || 2026}, Campo Grande/MS.${serverMode ? " As listas mostram um recorte recente — a pesquisa consulta a base completa no servidor." : ""}</p>
       </div>
       <div class="actions">
         ${editable ? '<button class="primary" type="button" id="newRecord">Nova referência</button>' : ""}
@@ -5546,6 +5566,10 @@ function renderSinapiReferences() {
   qs("runSinapiImport")?.addEventListener("click", () => importSinapiFile("confirm"));
   qs("sinapiSearch")?.addEventListener("input", (event) => {
     sinapiSearchTerm = event.target.value;
+    // O bootstrap traz só um recorte das tabelas SINAPI: a pesquisa consulta a
+    // base completa no servidor (debounce) e mescla os resultados no cache local.
+    clearTimeout(sinapiSearchFetchTimer);
+    sinapiSearchFetchTimer = setTimeout(() => sinapiServerSearch(sinapiSearchTerm), 350);
     render();
   });
   qs("sinapiUfFilter")?.addEventListener("change", (event) => {
@@ -5577,6 +5601,36 @@ function renderSinapiReferences() {
       addBudgetItemFromSource(sourceKey, id);
     });
   });
+}
+
+// Busca a base SINAPI completa no servidor e mescla os resultados no cache local
+// (o bootstrap carrega só um recorte — ver SINAPI_BOOTSTRAP_LIMIT na API).
+async function sinapiServerSearch(term) {
+  const cleaned = (term || "").trim();
+  if (!serverMode || cleaned.length < 2 || cleaned === sinapiSearchLastFetched) return;
+  sinapiSearchLastFetched = cleaned;
+  const params = `search=${encodeURIComponent(cleaned)}&limit=120`;
+  const sources = [
+    ["sinapiInputs", "sinapi-insumos"],
+    ["sinapiCompositions", "sinapi-composicoes"],
+    ["sinapiLabor", "sinapi-mao-de-obra"],
+    ["sinapiFamilies", "sinapi-familias-coeficientes"],
+    ["sinapiMaintenances", "sinapi-manutencoes"],
+  ];
+  const results = await Promise.all(sources.map(([, resource]) => apiRequest(`${resource}?${params}`).catch(() => ({ data: [] }))));
+  let merged = false;
+  results.forEach((payload, index) => {
+    const key = sources[index][0];
+    db[key] = db[key] || [];
+    const existing = new Set(db[key].map((row) => String(row.id)));
+    (payload.data || []).forEach((row) => {
+      if (!existing.has(String(row.id))) {
+        db[key].push(row);
+        merged = true;
+      }
+    });
+  });
+  if (merged && currentModule === "sinapiReferences") render();
 }
 
 function filterSinapiRows(rows) {
@@ -8497,6 +8551,21 @@ function saveAuditLog(entries) {
   safeLocalSet(AUDIT_LOG_KEY, JSON.stringify(entries.slice(-AUDIT_MAX_ENTRIES)));
 }
 
+// Abre PDF/XML da nota com fetch autenticado (headers) e blob: o token de sessão
+// não aparece mais na URL — antes ficava gravado nos access logs do Apache.
+async function downloadFiscalFile(id, kind) {
+  try {
+    const response = await fetch(`${API_BASE}/${apiResources.fiscalDocuments}/${id}/${kind}`, { headers: authHeaders() });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    window.open(url, "_blank", "noopener");
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (error) {
+    alert(`Não foi possível abrir o arquivo: ${error.message}`);
+  }
+}
+
 function logAudit(action, module, detail = "") {
   if (!currentUser) return;
   const log = getAuditLog();
@@ -8504,14 +8573,48 @@ function logAudit(action, module, detail = "") {
   saveAuditLog(log);
 }
 
+// Tabela do log REAL do servidor (audit_log): registro compartilhado entre
+// máquinas e não apagável pelo usuário — o localStorage vira histórico auxiliar.
+async function loadServerAuditLog() {
+  const container = qs("serverAuditLog");
+  if (!container) return;
+  try {
+    const payload = await apiRequest("audit-log?limit=500");
+    const rows = payload.data || [];
+    if (!rows.length) {
+      container.innerHTML = '<div class="empty">Nenhum registro no servidor ainda.</div>';
+      return;
+    }
+    container.innerHTML = `
+      <section class="table-wrap">
+        <table>
+          <thead><tr><th>Data/hora</th><th>Usuário</th><th>Perfil</th><th>Ação</th><th>Módulo</th><th>Registro</th><th>Detalhes</th><th>IP</th></tr></thead>
+          <tbody>${rows.map((r) => `<tr>
+            <td>${escapeHtml(r.createdAt || "")}</td>
+            <td>${escapeHtml(r.username || "—")}</td>
+            <td>${escapeHtml(roleLabels[r.role] || r.role || "—")}</td>
+            <td><span class="audit-action a-${escapeHtml(r.action || "")}">${escapeHtml(r.action || "")}</span></td>
+            <td>${escapeHtml(moduleLabels[r.module] || r.module || "")}</td>
+            <td>${escapeHtml(r.recordId || "")}</td>
+            <td>${escapeHtml(r.details || "")}</td>
+            <td>${escapeHtml(r.ip || "")}</td>
+          </tr>`).join("")}</tbody>
+        </table>
+      </section>`;
+  } catch (error) {
+    container.innerHTML = `<div class="empty">Falha ao carregar o log do servidor: ${escapeHtml(error.message)}</div>`;
+  }
+}
+
 function renderAuditLog() {
   if (!isAdmin()) { qs("content").innerHTML = '<div class="empty">Acesso restrito a administradores.</div>'; return; }
   const all = getAuditLog().slice().reverse();
   qs("content").innerHTML = `
     <section class="module-head">
-      <div><h2>Log de Auditoria</h2><p>Histórico de ações (últimas ${AUDIT_MAX_ENTRIES}).</p></div>
-      <button class="secondary" id="clearAuditLogBtn" type="button">Limpar log</button>
+      <div><h2>Log de Auditoria</h2><p>${serverMode ? "Registro do servidor (compartilhado e permanente) + histórico local deste navegador." : `Histórico de ações (últimas ${AUDIT_MAX_ENTRIES}).`}</p></div>
+      <button class="secondary" id="clearAuditLogBtn" type="button">Limpar log local</button>
     </section>
+    ${serverMode ? '<h3>Registro do servidor</h3><div id="serverAuditLog" class="empty">Carregando registro do servidor…</div><h3>Histórico local deste navegador</h3>' : ""}
     <section class="audit-filters">
       <label>Usuário<select id="afUser"><option value="">Todos</option>${[...new Set(all.map((e) => e.username))].map((u) => `<option>${svgText(u)}</option>`).join("")}</select></label>
       <label>Módulo<select id="afModule"><option value="">Todos</option>${[...new Set(all.map((e) => e.module))].map((m) => `<option value="${svgText(m)}">${svgText(moduleLabels[m] || m)}</option>`).join("")}</select></label>
@@ -8534,10 +8637,11 @@ function renderAuditLog() {
   }
   ["afUser", "afModule", "afFrom", "afTo"].forEach((id) => document.getElementById(id).addEventListener("change", applyAuditFilters));
   document.getElementById("clearAuditLogBtn").addEventListener("click", () => {
-    if (!confirm("Apagar todo o log de auditoria?")) return;
+    if (!confirm("Apagar o log LOCAL deste navegador? O registro do servidor não é afetado.")) return;
     saveAuditLog([]);
     renderAuditLog();
   });
+  if (serverMode) loadServerAuditLog();
 }
 
 function auditTableHtml(entries) {
@@ -8885,6 +8989,8 @@ qs("logoutBtn").addEventListener("click", () => {
   clearTimeout(sessionWarnTimer);
   clearInterval(sessionWarnIntervalId);
   currentModuleTracked = "";
+  // Tela de login volta ao tema automático: não mantém a preferência do último usuário.
+  applyThemePreference("auto", false);
   if (AUTH_BYPASS_FOR_TESTS && !serverMode) restoreSession();
   else showLogin();
 });

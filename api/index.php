@@ -12,6 +12,16 @@ header('X-Content-Type-Options: nosniff');
 const CONFIG_PATH = '/etc/financeiro/config.php';
 // Tempo máximo de inatividade da sessão: igual ao AUTH_TIMEOUT_MS do frontend (30 min).
 const AUTH_IDLE_SECONDS = 1800;
+// TTL absoluto da sessão: mesmo em uso contínuo, o token expira e exige novo login.
+const AUTH_MAX_SESSION_SECONDS = 43200; // 12 h
+// Proteção contra força bruta no login (janela deslizante).
+const LOGIN_WINDOW_SECONDS = 900;   // 15 min
+const LOGIN_MAX_PER_USER = 8;
+const LOGIN_MAX_PER_IP = 20;
+const RESET_WINDOW_SECONDS = 3600;  // 1 h
+const RESET_MAX_PER_IP = 5;
+// Recorte das tabelas SINAPI no bootstrap; a base completa é consultada sob demanda.
+const SINAPI_BOOTSTRAP_LIMIT = 300;
 
 $config = load_config();
 $pdo = db($config);
@@ -71,7 +81,18 @@ try {
 
     if ($resource === 'logout') {
         require_method($method, ['POST']);
+        server_audit($pdo, $authUser, 'logout', 'sistema');
         handle_logout($pdo);
+    }
+
+    // Log de auditoria real (server-side), visível só ao admin.
+    if ($resource === 'audit-log') {
+        require_method($method, ['GET']);
+        require_admin($authUser);
+        ensure_audit_log_table($pdo);
+        $limit = isset($_GET['limit']) ? max(1, min(2000, (int) $_GET['limit'])) : 500;
+        $stmt = $pdo->query('SELECT * FROM audit_log ORDER BY id DESC LIMIT ' . $limit);
+        respond(['ok' => true, 'data' => $stmt->fetchAll()]);
     }
 
     if ($resource === 'change-password') {
@@ -126,7 +147,7 @@ try {
     if ($resource === 'sinapi-reprocess-job') {
         require_method($method, ['POST']);
         require_admin($authUser);
-        handle_sinapi_reprocess_job($pdo, $config, read_json());
+        handle_sinapi_reprocess_job($pdo, $config, read_json(), $authUser);
     }
 
     if ($resource === 'project-upload') {
@@ -169,19 +190,20 @@ try {
         respond(['ok' => true, 'data' => list_records($pdo, $resources[$key])]);
     }
 
-    // Qualidade PBQP-H: numeração automática da NC e automações pós-gravação
-    // (NC por FVS/FVM reprovada, PES vigente único, totais de auditoria).
+    // Qualidade PBQP-H: validação de integridade do SGQ, numeração automática da
+    // NC e automações pós-gravação (NC por FVS/FVM reprovada, PES vigente único).
     if (str_starts_with($key, 'qualidade') && $method === 'POST') {
         $payload = read_json();
-        if ($key === 'qualidadeNc' && empty(normalize_payload_aliases($payload)['numero'])) {
-            $payload['numero'] = qualidade_proximo_numero_nc($pdo);
-        }
-        $record = create_record($pdo, $resources[$key], $payload);
+        qualidade_validar_payload($pdo, $key, $payload, null, $authUser);
+        $record = $key === 'qualidadeNc'
+            ? qualidade_criar_nc_registro($pdo, $resources[$key], $payload)
+            : create_record($pdo, $resources[$key], $payload);
         try {
             $record = qualidade_pos_gravacao($pdo, $key, $record, null) ?? $record;
         } catch (Throwable $error) {
             error_log('[ObraSync] Automação de qualidade (create) falhou: ' . $error->getMessage());
         }
+        server_audit($pdo, $authUser, 'create', $key, $record['id'] ?? null, (string) ($record['numero'] ?? ''));
         respond(['ok' => true, 'record' => $record], 201);
     }
 
@@ -211,6 +233,7 @@ try {
         if ($key === 'agendaEvents') {
             $record['automation'] = create_event_day_notification($pdo, $record);
         }
+        server_audit($pdo, $authUser, 'create', $key, $record['id'] ?? null);
         respond(['ok' => true, 'record' => $record], 201);
     }
 
@@ -227,18 +250,21 @@ try {
             fail($bloqueio, 422);
         }
         $record = update_record($pdo, $resources[$key], (int) $id, $payload);
+        server_audit($pdo, $authUser, 'update', $key, $id);
         respond(['ok' => true, 'record' => $record]);
     }
 
     if (str_starts_with($key, 'qualidade') && ($method === 'PUT' || $method === 'PATCH')) {
         $payload = read_json();
         $previous = raw_record($pdo, $resources[$key], (int) $id);
+        qualidade_validar_payload($pdo, $key, $payload, $previous, $authUser);
         $record = update_record($pdo, $resources[$key], (int) $id, $payload);
         try {
             $record = qualidade_pos_gravacao($pdo, $key, $record, $previous) ?? $record;
         } catch (Throwable $error) {
             error_log('[ObraSync] Automação de qualidade (update) falhou: ' . $error->getMessage());
         }
+        server_audit($pdo, $authUser, 'update', $key, $id, (string) ($record['numero'] ?? ''));
         respond(['ok' => true, 'record' => $record]);
     }
 
@@ -379,11 +405,13 @@ try {
         if ($key === 'kanbanCards' && kanban_card_is_done($pdo, $record)) {
             $record['completionPrompt'] = 'Card movido para Concluído. Deseja atualizar o status do item vinculado?';
         }
+        server_audit($pdo, $authUser, 'update', $key, $id);
         respond(['ok' => true, 'record' => $record]);
     }
 
     if ($method === 'DELETE') {
         delete_record($pdo, $resources[$key], (int) $id);
+        server_audit($pdo, $authUser, 'delete', $key, $id);
         respond(['ok' => true]);
     }
 
@@ -886,7 +914,7 @@ function list_records(PDO $pdo, array $meta): array
     }
     if (!empty($_GET['search'])) {
         $like = '%' . $_GET['search'] . '%';
-        $searchable = array_filter($meta['fields'], fn ($field) => in_array($field, $columns, true) && !in_array($field, $meta['hidden'] ?? [], true) && preg_match('/name|document|description|history|notes|username|email|address/i', $field));
+        $searchable = array_filter($meta['fields'], fn ($field) => in_array($field, $columns, true) && !in_array($field, $meta['hidden'] ?? [], true) && preg_match('/name|document|description|history|notes|username|email|address|code|numero/i', $field));
         if ($searchable) {
             $where[] = '(' . implode(' OR ', array_map(fn ($field) => "`$field` LIKE ?", $searchable)) . ')';
             foreach ($searchable as $_) {
@@ -912,6 +940,14 @@ function list_records(PDO $pdo, array $meta): array
         $sql .= ' WHERE ' . implode(' AND ', $where);
     }
     $sql .= ' ORDER BY id DESC';
+    // Paginação opcional (?limit=&offset=): GETs sem limite continuam devolvendo
+    // tudo por compatibilidade, mas consultas sob demanda (ex.: busca SINAPI)
+    // podem restringir o volume. Teto de 5000 por requisição.
+    $limit = isset($_GET['limit']) ? max(1, min(5000, (int) $_GET['limit'])) : 0;
+    $offset = isset($_GET['offset']) ? max(0, (int) $_GET['offset']) : 0;
+    if ($limit > 0) {
+        $sql .= ' LIMIT ' . $limit . ($offset ? ' OFFSET ' . $offset : '');
+    }
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
     return array_map(fn ($record) => sanitize_record($meta, $record), $stmt->fetchAll());
@@ -1213,7 +1249,7 @@ function sanitize_user_profile_fields(PDO $pdo, array $payload, ?int $id, bool $
     return $payload;
 }
 
-function bootstrap_data(PDO $pdo, array $resources, ?array $authUser = null): array
+function bootstrap_data(PDO $pdo, array $resources, ?array $authUser = null, bool $full = false): array
 {
     $role = (string) ($authUser['role'] ?? 'admin');
     // Garante a tabela de plugins já no bootstrap: o menu lateral depende dela.
@@ -1246,13 +1282,23 @@ function bootstrap_data(PDO $pdo, array $resources, ?array $authUser = null): ar
             continue;
         }
         try {
-            $stmt = $pdo->query('SELECT * FROM `' . $meta['table'] . '` ORDER BY id DESC');
+            // Tabelas SINAPI são gigantes com a base oficial completa (o Analítico
+            // passa de 100 mil linhas): o bootstrap leva só um recorte recente e a
+            // base completa é consultada sob demanda via ?search=&limit= (módulo
+            // Base SINAPI). Sem isso, o JSON do bootstrap inviabiliza o login.
+            $limit = !$full && in_array($key, sinapi_heavy_resources(), true) ? ' LIMIT ' . SINAPI_BOOTSTRAP_LIMIT : '';
+            $stmt = $pdo->query('SELECT * FROM `' . $meta['table'] . '` ORDER BY id DESC' . $limit);
             $data[$key] = array_map(fn ($record) => sanitize_record($meta, $record), $stmt->fetchAll());
         } catch (PDOException $error) {
             $data[$key] = [];
         }
     }
     return $data;
+}
+
+function sinapi_heavy_resources(): array
+{
+    return ['sinapiInputs', 'sinapiCompositions', 'sinapiCompositionItems', 'sinapiLabor', 'sinapiFamilies', 'sinapiMaintenances'];
 }
 
 function sanitize_record(array $meta, array $record): array
@@ -1571,6 +1617,67 @@ function ensure_qualidade_tables(PDO $pdo): void
     $done = true;
 }
 
+// Regras de integridade do SGQ aplicadas no SERVIDOR (não confiar só no frontend,
+// inclusive por exigência de registros controlados do SiAC 7.5): FVS concluída
+// exige assinaturas e itens; NC só fecha com ação corretiva + verificação de
+// eficácia, e nunca pelo perfil operador.
+function qualidade_validar_payload(PDO $pdo, string $key, array $payload, ?array $previous, array $authUser): void
+{
+    $merged = array_merge($previous ?? [], normalize_payload_aliases($payload));
+    if ($key === 'qualidadeFvs') {
+        $status = (string) ($merged['status'] ?? '');
+        $resultado = (string) ($merged['resultado'] ?? '');
+        if (in_array($status, ['Aprovada', 'Reprovada'], true) || $resultado !== '') {
+            if (trim((string) ($merged['assinaturaExecutor'] ?? '')) === '' || trim((string) ($merged['assinaturaInspetor'] ?? '')) === '') {
+                fail('As assinaturas do executor e do inspetor são obrigatórias para concluir a FVS.', 422);
+            }
+            $itensRaw = $merged['itensVerificacao'] ?? '[]';
+            $itens = is_array($itensRaw) ? $itensRaw : (json_decode((string) $itensRaw, true) ?: []);
+            if (!count($itens)) {
+                fail('A FVS precisa dos itens de verificação gerados pelo PES vigente do serviço.', 422);
+            }
+            if ($resultado === 'Reprovado' && $status === 'Aprovada') {
+                fail('FVS com resultado Reprovado não pode ficar com status Aprovada.', 422);
+            }
+            if (in_array($resultado, ['Aprovado', 'Aprovado com ressalvas'], true) && $status === 'Reprovada') {
+                fail('FVS com resultado aprovado não pode ficar com status Reprovada.', 422);
+            }
+        }
+    }
+    if ($key === 'qualidadeNc' && (string) ($merged['status'] ?? '') === 'Fechada') {
+        $jaFechada = $previous && ($previous['status'] ?? '') === 'Fechada';
+        if (!$jaFechada) {
+            if (($authUser['role'] ?? '') === 'operador') {
+                fail('Operadores não podem fechar Não Conformidades — o fechamento exige gestor ou engenharia.', 403);
+            }
+            if (trim((string) ($merged['acaoCorretiva'] ?? '')) === '' || trim((string) ($merged['verificacaoEficacia'] ?? '')) === '') {
+                fail('Para fechar a NC, informe a ação corretiva e a verificação de eficácia.', 422);
+            }
+        }
+    }
+}
+
+// Criação de NC com retry: o sequencial NC-ANO-SEQ vem de MAX+1 e duas criações
+// simultâneas podem colidir no UNIQUE — regenera o número e tenta de novo.
+function qualidade_criar_nc_registro(PDO $pdo, array $meta, array $payload): array
+{
+    $numeroInformado = (string) (normalize_payload_aliases($payload)['numero'] ?? '');
+    for ($attempt = 0; $attempt < 3; $attempt++) {
+        if ($numeroInformado === '') {
+            $payload['numero'] = qualidade_proximo_numero_nc($pdo);
+        }
+        try {
+            return create_record($pdo, $meta, $payload);
+        } catch (PDOException $error) {
+            if ($numeroInformado === '' && (int) ($error->errorInfo[1] ?? 0) === 1062 && $attempt < 2) {
+                continue;
+            }
+            throw $error;
+        }
+    }
+    fail('Não foi possível gerar o número da NC. Tente novamente.', 500);
+}
+
 function qualidade_proximo_numero_nc(PDO $pdo): string
 {
     $ano = date('Y');
@@ -1582,14 +1689,26 @@ function qualidade_proximo_numero_nc(PDO $pdo): string
 
 function criar_nc_automatica(PDO $pdo, int $projectId, ?int $pqoId, string $origem, ?int $fvsId, ?int $fvmId, string $descricao, ?int $servicoSiacId, ?string $servicoNome, ?string $localObra): string
 {
-    $numero = qualidade_proximo_numero_nc($pdo);
     if ($servicoSiacId && !$servicoNome) {
         $servicoNome = servicos_siac()[$servicoSiacId]['nome'] ?? null;
     }
-    $pdo->prepare("INSERT INTO qualidade_nc
-            (projectId, pqoId, numero, origem, fvsId, fvmId, descricaoNC, servicoSiacId, servicoNome, localObra, grau, dataDeteccao, status)
-        VALUES (?,?,?,?,?,?,?,?,?,?,'Menor',CURDATE(),'Aberta')")
-        ->execute([$projectId, $pqoId, $numero, $origem, $fvsId, $fvmId, $descricao, $servicoSiacId, $servicoNome, $localObra]);
+    // Retry contra corrida no sequencial (mesma proteção de qualidade_criar_nc_registro).
+    $numero = '';
+    for ($attempt = 0; $attempt < 3; $attempt++) {
+        $numero = qualidade_proximo_numero_nc($pdo);
+        try {
+            $pdo->prepare("INSERT INTO qualidade_nc
+                    (projectId, pqoId, numero, origem, fvsId, fvmId, descricaoNC, servicoSiacId, servicoNome, localObra, grau, dataDeteccao, status)
+                VALUES (?,?,?,?,?,?,?,?,?,?,'Menor',CURDATE(),'Aberta')")
+                ->execute([$projectId, $pqoId, $numero, $origem, $fvsId, $fvmId, $descricao, $servicoSiacId, $servicoNome, $localObra]);
+            break;
+        } catch (PDOException $error) {
+            if ((int) ($error->errorInfo[1] ?? 0) === 1062 && $attempt < 2) {
+                continue;
+            }
+            throw $error;
+        }
+    }
     if ($fvsId) {
         $stmt = $pdo->prepare('SELECT etapaId FROM qualidade_fvs WHERE id = ?');
         $stmt->execute([$fvsId]);
@@ -1823,6 +1942,7 @@ function authenticate_request(PDO $pdo, array $config): array
     $stmt = $pdo->prepare(
         'SELECT s.id AS sessionId, s.lastActivity,
                 TIMESTAMPDIFF(SECOND, s.lastActivity, NOW()) AS idleSeconds,
+                TIMESTAMPDIFF(SECOND, s.createdAt, NOW()) AS ageSeconds,
                 u.id, u.username, u.role, u.status, u.blocked
            FROM api_sessions s
            JOIN system_users u ON u.id = s.userId
@@ -1837,6 +1957,11 @@ function authenticate_request(PDO $pdo, array $config): array
     if ((int) $session['idleSeconds'] > AUTH_IDLE_SECONDS) {
         $pdo->prepare('DELETE FROM api_sessions WHERE id = ?')->execute([$session['sessionId']]);
         fail('Sessão expirada por inatividade. Faça login novamente.', 401);
+    }
+    // TTL absoluto: um token roubado/mantido vivo não dura mais que 12 h.
+    if ((int) $session['ageSeconds'] > AUTH_MAX_SESSION_SECONDS) {
+        $pdo->prepare('DELETE FROM api_sessions WHERE id = ?')->execute([$session['sessionId']]);
+        fail('Sessão expirada. Faça login novamente.', 401);
     }
     if (($session['status'] ?? '') !== 'Ativo' || !empty($session['blocked'])) {
         fail('Usuário inativo ou bloqueado.', 403);
@@ -1866,6 +1991,100 @@ function handle_check_session(PDO $pdo, array $user): never
             'role' => $user['role'],
         ],
     ]);
+}
+
+// Log de auditoria server-side: o logAudit() do frontend grava só no localStorage
+// do navegador — aqui fica o registro real, compartilhado e não apagável pelo
+// próprio usuário (módulo Log de Auditoria, visível ao admin).
+function ensure_audit_log_table(PDO $pdo): void
+{
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    $pdo->exec(
+        "CREATE TABLE IF NOT EXISTS audit_log (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            userId BIGINT UNSIGNED NULL,
+            username VARCHAR(120) NOT NULL DEFAULT '',
+            role VARCHAR(40) NOT NULL DEFAULT '',
+            action VARCHAR(20) NOT NULL,
+            module VARCHAR(60) NOT NULL DEFAULT '',
+            recordId VARCHAR(40) NULL,
+            details VARCHAR(400) NOT NULL DEFAULT '',
+            ip VARCHAR(45) NOT NULL DEFAULT '',
+            createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            KEY idx_audit_created (createdAt),
+            KEY idx_audit_user (userId)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+    );
+    $done = true;
+}
+
+// Nunca derruba a operação principal: auditoria falha em silêncio no error_log.
+function server_audit(PDO $pdo, ?array $user, string $action, string $module, $recordId = null, string $details = ''): void
+{
+    try {
+        ensure_audit_log_table($pdo);
+        $pdo->prepare('INSERT INTO audit_log (userId, username, role, action, module, recordId, details, ip) VALUES (?,?,?,?,?,?,?,?)')
+            ->execute([
+                (int) ($user['id'] ?? 0) ?: null,
+                (string) ($user['username'] ?? ''),
+                (string) ($user['role'] ?? ''),
+                $action,
+                $module,
+                $recordId !== null && $recordId !== '' ? (string) $recordId : null,
+                function_exists('mb_substr') ? mb_substr($details, 0, 400) : substr($details, 0, 400),
+                (string) ($_SERVER['REMOTE_ADDR'] ?? ''),
+            ]);
+    } catch (Throwable $error) {
+        error_log('[ObraSync] Falha no audit log: ' . $error->getMessage());
+    }
+}
+
+// Tentativas de login/reset registradas para o rate limit (janela deslizante).
+function ensure_login_attempts_table(PDO $pdo): void
+{
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    $pdo->exec(
+        "CREATE TABLE IF NOT EXISTS login_attempts (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            context VARCHAR(20) NOT NULL DEFAULT 'login',
+            username VARCHAR(190) NOT NULL DEFAULT '',
+            ip VARCHAR(45) NOT NULL DEFAULT '',
+            createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            KEY idx_attempt_user (context, username, createdAt),
+            KEY idx_attempt_ip (context, ip, createdAt)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+    );
+    $done = true;
+}
+
+function count_recent_attempts(PDO $pdo, string $context, string $field, string $value, int $windowSeconds): int
+{
+    $column = $field === 'ip' ? 'ip' : 'username';
+    $stmt = $pdo->prepare("SELECT COUNT(*) FROM login_attempts WHERE context = ? AND `{$column}` = ? AND createdAt > (NOW() - INTERVAL {$windowSeconds} SECOND)");
+    $stmt->execute([$context, $value]);
+    return (int) $stmt->fetchColumn();
+}
+
+function register_attempt(PDO $pdo, string $context, string $username, string $ip): void
+{
+    $pdo->prepare('INSERT INTO login_attempts (context, username, ip) VALUES (?, ?, ?)')->execute([$context, $username, $ip]);
+}
+
+// Comparação de senha: hash sempre; o legado em texto plano (seeds com
+// TROQUE_NO_PRIMEIRO_ACESSO) só vale quando a troca obrigatória está pendente —
+// qualquer outro valor não-hash na coluna deixa de funcionar como senha.
+function password_matches(string $stored, string $password, bool $allowLegacyPlain): bool
+{
+    if ($stored !== '' && password_verify($password, $stored)) {
+        return true;
+    }
+    return $allowLegacyPlain && $stored !== '' && !str_starts_with($stored, '$') && hash_equals($stored, $password);
 }
 
 function handle_logout(PDO $pdo): never
@@ -1992,21 +2211,39 @@ function handle_login(PDO $pdo, array $payload): never
     if ($username === '' || $password === '') {
         fail('Usuário e senha são obrigatórios.', 400);
     }
+
+    // Rate limit: janela deslizante por usuário e por IP antes de qualquer consulta.
+    $ip = (string) ($_SERVER['REMOTE_ADDR'] ?? '');
+    ensure_login_attempts_table($pdo);
+    $pdo->prepare('DELETE FROM login_attempts WHERE createdAt < (NOW() - INTERVAL ' . RESET_WINDOW_SECONDS . ' SECOND)')->execute();
+    if (count_recent_attempts($pdo, 'login', 'username', $username, LOGIN_WINDOW_SECONDS) >= LOGIN_MAX_PER_USER
+        || count_recent_attempts($pdo, 'login', 'ip', $ip, LOGIN_WINDOW_SECONDS) >= LOGIN_MAX_PER_IP) {
+        fail('Muitas tentativas de login. Aguarde 15 minutos e tente novamente.', 429);
+    }
+
     $stmt = $pdo->prepare("SELECT * FROM system_users WHERE username = ? AND status = 'Ativo' LIMIT 1");
     $stmt->execute([$username]);
     $user = $stmt->fetch();
     if (!$user) {
+        register_attempt($pdo, 'login', $username, $ip);
+        server_audit($pdo, null, 'login_failed', 'sistema', null, $username);
         fail('Usuário ou senha inválidos.', 401);
     }
     if (!empty($user['blocked'])) {
         fail('Usuário bloqueado. Fale com o administrador.', 403);
     }
     $stored = (string) ($user['password'] ?? '');
-    $valid = password_verify($password, $stored) || hash_equals($stored, $password);
+    $hashedOk = $stored !== '' && password_verify($password, $stored);
+    $legacyPlain = !$hashedOk && password_matches($stored, $password, !empty($user['mustChangePassword']));
+    $valid = $hashedOk || $legacyPlain;
     if (!$valid) {
+        register_attempt($pdo, 'login', $username, $ip);
+        server_audit($pdo, null, 'login_failed', 'sistema', null, $username);
         fail('Usuário ou senha inválidos.', 401);
     }
-    if (hash_equals($stored, $password)) {
+    $pdo->prepare("DELETE FROM login_attempts WHERE context = 'login' AND username = ?")->execute([$username]);
+    server_audit($pdo, $user, 'login', 'sistema');
+    if ($legacyPlain) {
         $hash = password_hash($password, PASSWORD_DEFAULT);
         $update = $pdo->prepare('UPDATE system_users SET password = ? WHERE id = ?');
         $update->execute([$hash, $user['id']]);
@@ -2017,7 +2254,7 @@ function handle_login(PDO $pdo, array $payload): never
     // definir uma senha temporária forte e ainda exigir a troca no primeiro acesso.
 
     ensure_api_sessions_table($pdo);
-    $pdo->prepare('DELETE FROM api_sessions WHERE lastActivity < (NOW() - INTERVAL ' . AUTH_IDLE_SECONDS . ' SECOND)')->execute();
+    $pdo->prepare('DELETE FROM api_sessions WHERE lastActivity < (NOW() - INTERVAL ' . AUTH_IDLE_SECONDS . ' SECOND) OR createdAt < (NOW() - INTERVAL ' . AUTH_MAX_SESSION_SECONDS . ' SECOND)')->execute();
     $token = bin2hex(random_bytes(32));
     $tokenHash = hash('sha256', $token);
     try {
@@ -2085,6 +2322,16 @@ function handle_request_password_reset(PDO $pdo, array $config, array $payload):
     if ($email === '') {
         fail('Informe o e-mail cadastrado.', 400);
     }
+
+    // Rate limit por IP: evita disparo de e-mails em massa e sondagem da base.
+    $ip = (string) ($_SERVER['REMOTE_ADDR'] ?? '');
+    ensure_login_attempts_table($pdo);
+    $pdo->prepare('DELETE FROM login_attempts WHERE createdAt < (NOW() - INTERVAL ' . RESET_WINDOW_SECONDS . ' SECOND)')->execute();
+    if (count_recent_attempts($pdo, 'reset', 'ip', $ip, RESET_WINDOW_SECONDS) >= RESET_MAX_PER_IP) {
+        fail('Muitas solicitações de redefinição. Aguarde 1 hora e tente novamente.', 429);
+    }
+    register_attempt($pdo, 'reset', $email, $ip);
+
     $stmt = $pdo->prepare(
         "SELECT id, username, email FROM system_users
           WHERE email = ? AND status = 'Ativo' AND blocked = 0
@@ -2093,8 +2340,10 @@ function handle_request_password_reset(PDO $pdo, array $config, array $payload):
     $stmt->execute([$email]);
     $user = $stmt->fetch();
 
+    // Resposta idêntica com ou sem cadastro: não confirma quais e-mails existem.
+    $genericMessage = 'Se o e-mail estiver cadastrado, o link de redefinição foi enviado.';
     if (!$user) {
-        fail('E-mail não cadastrado. Verifique ou contate o administrador.', 404);
+        respond(['ok' => true, 'message' => $genericMessage]);
     }
 
     ensure_password_reset_table($pdo);
@@ -2107,7 +2356,7 @@ function handle_request_password_reset(PDO $pdo, array $config, array $payload):
         error_log('[ObraSync] Reset URL para ' . $user['username'] . ': ' . reset_url($config, $token));
     }
 
-    respond(['ok' => true, 'message' => 'Link de redefinição enviado para o e-mail cadastrado.']);
+    respond(['ok' => true, 'message' => $genericMessage]);
 }
 
 function handle_reset_password(PDO $pdo, array $payload): never
@@ -2149,7 +2398,7 @@ function handle_change_password(PDO $pdo, array $user, array $payload): never
     if ($currentPassword === '') {
         fail('Informe a senha atual.', 400);
     }
-    $stmt = $pdo->prepare('SELECT password FROM system_users WHERE id = ? LIMIT 1');
+    $stmt = $pdo->prepare('SELECT password, mustChangePassword FROM system_users WHERE id = ? LIMIT 1');
     $stmt->execute([$user['id']]);
     $row = $stmt->fetch();
     if (!$row) {
@@ -2157,7 +2406,7 @@ function handle_change_password(PDO $pdo, array $user, array $payload): never
     }
     // A senha atual precisa estar correta antes de qualquer outra validação.
     $stored = (string) ($row['password'] ?? '');
-    if (!password_verify($currentPassword, $stored) && !hash_equals($stored, $currentPassword)) {
+    if (!password_matches($stored, $currentPassword, !empty($row['mustChangePassword']))) {
         fail('Senha atual incorreta.', 400);
     }
     $pwErr = validate_password_strength($newPassword);
@@ -2167,6 +2416,16 @@ function handle_change_password(PDO $pdo, array $user, array $payload): never
     $hash = password_hash($newPassword, PASSWORD_DEFAULT);
     $pdo->prepare('UPDATE system_users SET password = ?, mustChangePassword = 0 WHERE id = ?')
         ->execute([$hash, $user['id']]);
+    // Troca de senha derruba as DEMAIS sessões do usuário (a atual continua válida) —
+    // mesmo comportamento da troca obrigatória.
+    try {
+        $currentTokenHash = hash('sha256', bearer_token());
+        $pdo->prepare('DELETE FROM api_sessions WHERE userId = ? AND tokenHash != ?')
+            ->execute([(int) $user['id'], $currentTokenHash]);
+    } catch (Throwable $error) {
+        error_log('[ObraSync] Falha ao encerrar outras sessões após troca voluntária de senha: ' . $error->getMessage());
+    }
+    server_audit($pdo, $user, 'password', 'sistema', null, 'Troca voluntária de senha');
     respond(['ok' => true, 'message' => 'Senha alterada com sucesso.']);
 }
 
@@ -2193,7 +2452,7 @@ function handle_forced_change_password(PDO $pdo, array $payload): never
     $user = null;
     if ($token !== '') {
         $stmt = $pdo->prepare(
-            'SELECT u.id, u.username, u.password, u.status, u.blocked
+            'SELECT u.id, u.username, u.password, u.status, u.blocked, u.mustChangePassword
                FROM api_sessions s
                JOIN system_users u ON u.id = s.userId
               WHERE s.tokenHash = ?
@@ -2203,7 +2462,7 @@ function handle_forced_change_password(PDO $pdo, array $payload): never
         $user = $stmt->fetch() ?: null;
     }
     if (!$user && $username !== '') {
-        $stmt = $pdo->prepare('SELECT id, username, password, status, blocked FROM system_users WHERE username = ? LIMIT 1');
+        $stmt = $pdo->prepare('SELECT id, username, password, status, blocked, mustChangePassword FROM system_users WHERE username = ? LIMIT 1');
         $stmt->execute([$username]);
         $user = $stmt->fetch() ?: null;
     }
@@ -2216,7 +2475,7 @@ function handle_forced_change_password(PDO $pdo, array $payload): never
 
     // A senha atual precisa estar correta antes de qualquer outra validação.
     $stored = (string) ($user['password'] ?? '');
-    if (!password_verify($currentPassword, $stored) && !hash_equals($stored, $currentPassword)) {
+    if (!password_matches($stored, $currentPassword, !empty($user['mustChangePassword']))) {
         fail('Senha atual incorreta.', 400);
     }
 
@@ -2424,13 +2683,20 @@ function handle_safe_file_upload(array $config, string $subdir, array $extension
         mkdir($uploadDir, 0750, true);
     }
     $path = store_upload($_FILES['file'], $uploadDir, $extensions, $mimes);
-    respond(['ok' => true, 'file' => $path]);
+    // Só o nome do arquivo na resposta: o caminho absoluto expõe a estrutura do servidor.
+    respond(['ok' => true, 'file' => basename($path)]);
 }
 
 function handle_sinapi_import(PDO $pdo, array $resources, array $config): never
 {
     if (empty($_FILES['file']['tmp_name'])) {
         fail('Arquivo SINAPI não informado.', 400);
+    }
+    // O caminho síncrono processa o arquivo inteiro dentro da requisição web:
+    // arquivos grandes (ex.: Referência completa de 13 MB) estouram memória/tempo
+    // do PHP-CGI — para esses, use a importação em background (Configuração SINAPI).
+    if ((int) ($_FILES['file']['size'] ?? 0) > 4 * 1024 * 1024) {
+        fail('Arquivo acima de 4 MB no importador síncrono. Use a "Importar Tabela SINAPI" em Configuração SINAPI (processamento em background).', 413);
     }
     $mode = ($_POST['mode'] ?? 'preview') === 'confirm' ? 'confirm' : 'preview';
     $fileType = (string) ($_POST['fileType'] ?? 'reference');
@@ -2481,7 +2747,7 @@ function handle_sinapi_import(PDO $pdo, array $resources, array $config): never
         }
     }
 
-    respond(['ok' => true, 'mode' => $mode, 'file' => $path, 'summary' => $summary, 'samples' => $samples]);
+    respond(['ok' => true, 'mode' => $mode, 'file' => basename($path), 'summary' => $summary, 'samples' => $samples]);
 }
 
 // Campos de upload aceitos pela importação em background e as abas que identificam
@@ -2590,6 +2856,7 @@ function handle_sinapi_import_async(PDO $pdo, array $config, array $authUser): n
 
     spawn_sinapi_worker($pdo, $config, $jobId);
 
+    server_audit($pdo, $authUser, 'import', 'sinapiSettings', $jobId, "Importação SINAPI UF {$uf} {$referenceMonth}/{$referenceYear}");
     respond(['ok' => true, 'jobId' => $jobId], 201);
 }
 
@@ -2644,21 +2911,12 @@ function spawn_sinapi_worker(PDO $pdo, array $config, string $jobId): void
         escapeshellarg($logFile)
     ));
 
-    // O worker marca o job como running logo ao iniciar. Se em 2 s continuar
-    // queued, registra o aviso no log (o frontend alerta o usuário após 30 s).
-    sleep(2);
-    $stmt = $pdo->prepare('SELECT status FROM sinapi_import_jobs WHERE id = ? LIMIT 1');
-    $stmt->execute([$jobId]);
-    if ($stmt->fetchColumn() === 'queued') {
-        @file_put_contents(
-            $logFile,
-            date('[Y-m-d H:i:s] ') . "AVISO: worker ainda não iniciou 2 s após o exec ({$php}). Se o job continuar em queued, verifique permissões/exec do usuário do Apache.\n",
-            FILE_APPEND
-        );
-    }
+    // A confirmação de que o worker subiu fica no polling de sinapi-import-status
+    // (o frontend alerta após 30 s em queued): segurar a requisição aqui com sleep
+    // bloqueava um worker FPM/CGI sem necessidade.
 }
 
-function handle_sinapi_reprocess_job(PDO $pdo, array $config, array $payload): never
+function handle_sinapi_reprocess_job(PDO $pdo, array $config, array $payload, array $authUser): never
 {
     ensure_sinapi_import_jobs_table($pdo);
     $jobId = trim((string) ($payload['jobId'] ?? ''));
@@ -2682,6 +2940,7 @@ function handle_sinapi_reprocess_job(PDO $pdo, array $config, array $payload): n
     $pdo->prepare("UPDATE sinapi_import_jobs SET status = 'queued', currentStep = 'Aguardando reprocessamento', progress = 0, total = 0, errorMessage = NULL, finishedAt = NULL WHERE id = ?")
         ->execute([$jobId]);
     spawn_sinapi_worker($pdo, $config, $jobId);
+    server_audit($pdo, $authUser, 'import', 'sinapiSettings', $jobId, 'Reprocessamento da importação SINAPI');
     respond(['ok' => true, 'jobId' => $jobId]);
 }
 
@@ -3676,25 +3935,33 @@ function migrate_payload(PDO $pdo, array $resources, array $payload): array
 
 function find_existing_id(PDO $pdo, array $meta, array $row): ?int
 {
+    // Matching pela COMBINAÇÃO (AND) dos campos únicos presentes no registro:
+    // testar cada campo isoladamente fazia um homônimo (mesmo nome, documento
+    // diferente) ser tratado como o mesmo registro e sobrescrito na migração.
+    $where = [];
+    $params = [];
     foreach ($meta['unique'] as $field) {
         if (empty($row[$field])) {
             continue;
         }
-        $stmt = $pdo->prepare('SELECT id FROM `' . $meta['table'] . '` WHERE `' . $field . '` = ? LIMIT 1');
-        $stmt->execute([$row[$field]]);
-        $id = $stmt->fetchColumn();
-        if ($id) {
-            return (int) $id;
-        }
+        $where[] = '`' . $field . '` = ?';
+        $params[] = $row[$field];
     }
-    return null;
+    if (!$where) {
+        return null;
+    }
+    $stmt = $pdo->prepare('SELECT id FROM `' . $meta['table'] . '` WHERE ' . implode(' AND ', $where) . ' LIMIT 1');
+    $stmt->execute($params);
+    $id = $stmt->fetchColumn();
+    return $id ? (int) $id : null;
 }
 
 function handle_backup(PDO $pdo, array $resources, array $config, string $method, array $segments): never
 {
     $action = $segments[1] ?? 'export';
     if ($method === 'GET' && $action === 'export') {
-        $data = bootstrap_data($pdo, $resources);
+        // Backup exporta TUDO — inclusive as tabelas SINAPI fora do bootstrap normal.
+        $data = bootstrap_data($pdo, $resources, null, true);
         $dir = rtrim($config['backup_dir'], '/');
         if (!is_dir($dir)) {
             mkdir($dir, 0750, true);

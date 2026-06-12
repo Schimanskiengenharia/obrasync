@@ -674,7 +674,7 @@ function buildPrintReport(selectivity, logoSrc) {
       ["Potência do transformador", `${fmt(c.kva, 1)} kVA`],
       ["Demanda prevista", `${fmt(c.kw, 1)} kW`],
       ["Fator de potência", fmt(c.fp, 2)],
-      ["Tipo de isolação", `${qs("instIsolacao").selectedOptions[0].textContent}`],
+      ["Tipo de isolação", `${qs("instIsolacao").selectedOptions[0]?.textContent || "—"}`],
       ["RTC", fmt(c.rtc, 1)],
       ["Curvas IEC (fase / neutro)", `${c.curvaFase} / ${c.curvaNeutro}`],
     ])}

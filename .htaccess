@@ -14,6 +14,12 @@ Options -Indexes
   Header always set X-Frame-Options "SAMEORIGIN"
   Header always set Referrer-Policy "strict-origin-when-cross-origin"
   Header always set Permissions-Policy "camera=(), microphone=(), geolocation=()"
-  # HSTS: força HTTPS por 1 ano (ative só após confirmar que HTTPS está 100% funcional)
-  # Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
+  # HSTS: força HTTPS por 1 ano. Sem includeSubDomains de propósito — outros
+  # subdomínios podem não servir HTTPS; avalie antes de ampliar.
+  Header always set Strict-Transport-Security "max-age=31536000"
+  # CSP: scripts só do próprio sistema (o tema saiu do inline para theme-init.js);
+  # 'unsafe-inline' apenas em style-src por causa dos style="" dos templates.
+  # Com o token de sessão no localStorage, esta é a defesa em profundidade contra
+  # XSS exfiltrar a sessão para fora do domínio.
+  Header always set Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'self'; base-uri 'self'; form-action 'self'; object-src 'none'"
 </IfModule>
