@@ -738,6 +738,12 @@ function buildPrintReport(selectivity, logoSrc) {
         ${txt("projCreaExec") || "CREA"}
       </div>
     </div>
+
+    <div class="print-footer-empresa">
+      <p>Schimanski Engenharia e Soluções LTDA</p>
+      <p>CNPJ: 44.930.777/0001-20</p>
+      <p>schimanskiengenharia@outlook.com.br</p>
+    </div>
   `;
   report.hidden = false;
 }

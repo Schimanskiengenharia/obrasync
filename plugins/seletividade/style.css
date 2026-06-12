@@ -556,6 +556,27 @@ input:focus, select:focus {
     margin: 0 18px 6px;
   }
 
+  .print-footer-empresa {
+    margin-top: 32px;
+    padding-top: 12px;
+    border-top: 1px solid #b9c6c2;
+    text-align: center;
+    page-break-inside: avoid;
+  }
+
+  .print-footer-empresa p {
+    margin: 2px 0;
+    font-size: 10px;
+    color: #6b7280;
+    font-weight: 400;
+  }
+
+  .print-footer-empresa p:first-child {
+    font-weight: 700;
+    color: #134e4a;
+    font-size: 11px;
+  }
+
   /* Memorial descritivo dinâmico (antes da seção 1) */
   .memorial p {
     text-align: justify;
