@@ -162,7 +162,7 @@ button:focus-visible {
   padding: 20px;
   background:
     linear-gradient(120deg, rgba(16, 25, 24, 0.92), rgba(15, 118, 110, 0.72)),
-    url("assets/finance-banner.png") center / cover;
+    url("assets/finance-banner.jpg") center / cover;
 }
 
 .login-card {
@@ -1787,7 +1787,7 @@ button.danger:hover { background: #9b1d14; }
   border-radius: 8px;
   background:
     linear-gradient(90deg, rgba(16, 25, 24, 0.9), rgba(16, 25, 24, 0.52)),
-    url("assets/finance-banner.png") center / cover;
+    url("assets/finance-banner.jpg") center / cover;
   color: white;
 }
 
