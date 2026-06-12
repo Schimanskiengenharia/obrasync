@@ -1827,6 +1827,27 @@ async function refreshAndRender() {
   render();
 }
 
+// Módulos cuja gravação dispara automações no SERVIDOR que criam ou alteram
+// registros em OUTRAS coleções (kanban da obra, NC automática, conta a receber
+// de marco, bloqueio de etapa, obra gerada por proposta aprovada...). Só esses
+// precisam refazer o bootstrap completo após salvar; o CRUD comum já aplica o
+// registro retornado pela API no db local e apenas re-renderiza — sem baixar o
+// banco inteiro a cada "Salvar".
+const SERVER_AUTOMATION_KEYS = new Set([
+  "projects", "purchaseOrders", "projectMilestones", "projectSchedule",
+  "proposals", "agendaEvents", "kanbanCards",
+  "qualidadePolitica", "qualidadePes", "qualidadePqo", "qualidadeFvs",
+  "qualidadeFvm", "qualidadeNc", "qualidadeAuditorias",
+]);
+
+async function refreshAfterMutation(key) {
+  if (serverMode && SERVER_AUTOMATION_KEYS.has(key)) {
+    await refreshAndRender();
+    return;
+  }
+  render();
+}
+
 function nowMs() {
   return Date.now();
 }
@@ -4202,9 +4223,10 @@ async function saveForm(event) {
     showLogin("Senha alterada com sucesso! Faça login com a nova senha.");
     return;
   }
+  const savedKey = editing.key;
   qs("recordDialog").close();
-  await refreshAndRender();
-  if (editing.key === "users" && selfPasswordChanged) showToast("Senha atualizada com sucesso!");
+  await refreshAfterMutation(savedKey);
+  if (savedKey === "users" && selfPasswordChanged) showToast("Senha atualizada com sucesso!");
 }
 
 function validateCurrentForm(form) {
@@ -4391,7 +4413,9 @@ async function removeRecord(key, id) {
     alert(`Não foi possível excluir: ${error.message}`);
     return;
   }
-  await refreshAndRender();
+  // Exclusões não disparam automação no servidor e o db local já foi filtrado:
+  // re-renderizar basta, sem refazer o bootstrap inteiro.
+  render();
 }
 
 async function createIntegratedRecord(key, data) {
