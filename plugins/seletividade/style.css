@@ -575,64 +575,42 @@ input:focus, select:focus {
     color: #0d0d0d;
   }
 
-  /* ── Páginas dos coordenogramas — paisagem A4 ───────────────────────── */
-  /* @page nomeado com orientação mista: suportado pelo Chromium (validado
-     em headless Edge: retrato 595×842pt + paisagem 842×595pt no mesmo PDF).
-     Os blocos ficam fora da .print-layout e levam rodapé próprio. */
-  @page chart-page {
-    size: A4 landscape;
-    margin: 15mm 15mm 15mm 20mm;
-  }
-
-  .print-chart-page {
-    page: chart-page;
+  /* ── Coordenogramas ──────────────────────────────────────────────────── */
+  /* Imagem gerada em paisagem (10:7) e rotacionada 90° na página RETRATO:
+     o box de layout fica ~160×112mm mas o desenho pintado ocupa ~112×160mm;
+     as margens verticais de 28mm reservam o excedente da rotação para o
+     desenho não cobrir o título nem invadir o rodapé. Altura 225mm = área
+     útil ABNT (247mm) menos o rodapé repetido do tfoot. */
+  .print-chart {
     page-break-before: always;
     page-break-inside: avoid;
     display: flex;
     flex-direction: column;
-    width: 100%;
-    height: 176mm; /* área útil em paisagem: 210 − 15 − 15 = 180mm, com folga */
-  }
-
-  /* Título no TOPO da página — mesmo padrão visual das seções anteriores */
-  .print-chart-header {
-    display: flex;
-    align-items: baseline;
-    gap: 6pt;
-    padding-bottom: 4pt;
-    border-bottom: 1.5pt solid #1e3a5f;
-    margin-bottom: 8pt;
-  }
-
-  .print-chart-num,
-  .print-chart-titulo {
-    font-size: 12pt;
-    font-weight: 700;
-    color: #1e3a5f;
-  }
-
-  .print-chart-titulo {
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
-
-  /* Imagem ocupa a área restante entre título e rodapé, sem distorção */
-  .print-chart-body {
-    flex: 1;
-    min-height: 0;
-    display: flex;
     align-items: center;
     justify-content: center;
+    height: 225mm;
   }
 
-  .print-chart-body img {
+  .print-chart h2 {
+    width: 100%;
+    margin-top: 0;
+    margin-bottom: 6mm;
+  }
+
+  .print-chart img {
     display: block;
-    max-width: 100%;
-    max-height: 145mm;
     width: auto;
     height: auto;
+    max-width: 100%;
+    max-height: 190mm;
+    object-fit: contain;
     border: 0.5pt solid #9ca3af;
+    transform: rotate(90deg);
+    transform-origin: center center;
+    margin: 28mm 0;
   }
+
+  .page-break { page-break-before: always; }
 
   /* ── Badge de seletividade ───────────────────────────────────────────── */
   .print-badge { font-weight: 700; }
