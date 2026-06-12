@@ -615,30 +615,57 @@ input:focus, select:focus {
   .print-signatures {
     display: flex;
     justify-content: space-around;
-    gap: 30pt;
+    align-items: flex-end;
+    gap: 20pt;
     margin-top: 48pt;
     page-break-inside: avoid;
   }
 
-  .print-signatures > div {
+  /* 2 assinaturas: blocos mais largos */
+  .print-signatures.cols-2 .sig-block {
+    flex: 0 0 220pt;
+    max-width: 220pt;
+  }
+
+  /* 3 assinaturas: blocos menores para caber na linha */
+  .print-signatures.cols-3 .sig-block {
     flex: 1;
+    min-width: 0;
+  }
+
+  .sig-block {
     text-align: center;
     font-size: 10pt;
     line-height: 1.4;
   }
 
-  .print-signatures .sig-line {
+  .sig-block .sig-line {
     border-top: 0.75pt solid #0d0d0d;
-    margin: 0 18pt 6pt;
+    margin: 0 8pt 6pt;
+    width: 100%;
   }
 
-  .print-signatures.single {
-    justify-content: center;
+  .sig-block .sig-titulo {
+    margin: 0 0 2pt;
+    font-size: 9pt;
+    font-weight: 700;
+    color: #1e3a5f;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
   }
 
-  .print-signatures.single > div {
-    flex: 0 0 240pt;
-    max-width: 240pt;
+  .sig-block .sig-nome {
+    margin: 0 0 1pt;
+    font-size: 10pt;
+    font-weight: 700;
+    color: #0d0d0d;
+  }
+
+  .sig-block .sig-complemento {
+    margin: 0;
+    font-size: 9pt;
+    color: #444;
+    font-weight: 400;
   }
 
   /* ── Layout com rodapé fixo repetido em todas as páginas ────────────── */

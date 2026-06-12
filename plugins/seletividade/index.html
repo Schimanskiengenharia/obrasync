@@ -8,7 +8,7 @@
     <link rel="icon" type="image/png" href="../../assets/favicon.png" />
     <!-- Tema do ObraSync antes do primeiro paint; arquivo compartilhado por causa do CSP. -->
     <script src="../../theme-init.js?v=1722"></script>
-    <link rel="stylesheet" href="style.css?v=10" />
+    <link rel="stylesheet" href="style.css?v=11" />
   </head>
   <body class="checking">
     <div id="sessionGate" class="session-gate">Verificando sessão do ObraSync…</div>
@@ -39,6 +39,7 @@
               <label>Cliente<input id="projCliente" placeholder="Razão social" /></label>
               <label>CNPJ<input id="projCnpj" placeholder="00.000.000/0001-00" /></label>
               <label class="full">Endereço<input id="projEndereco" placeholder="Rua, número, cidade/UF" /></label>
+              <label class="full">Nome do cliente (para assinatura)<input id="projClienteAssinatura" placeholder="Ex.: João da Silva ou Empresa XYZ" /></label>
               <label>Engenheiro responsável<input id="projEngenheiro" placeholder="Nome do engenheiro" /></label>
               <label>CREA (projeto)<input id="projCrea" placeholder="CREA-MS 000000" /></label>
               <label>Responsável execução<input id="projExecutor" placeholder="Nome" /></label>
@@ -180,6 +181,6 @@
     <!-- Relatório de impressão (A4) montado pelo JS ao clicar em "Gerar PDF" -->
     <div id="printReport" class="print-report" hidden></div>
 
-    <script src="app.js?v=14"></script>
+    <script src="app.js?v=15"></script>
   </body>
 </html>

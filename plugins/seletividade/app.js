@@ -764,39 +764,39 @@ function buildPrintReport(selectivity, logoSrc) {
     </div>
 
     ${(() => {
-      const engNome  = txt("projEngenheiro") || "Engenheiro responsável";
-      const engCrea  = txt("projCrea")       || "CREA";
-      const execNome = txt("projExecutor")   || "Responsável pela execução";
-      const execCrea = txt("projCreaExec")   || "CREA";
+      const engNome  = txt("projEngenheiro");
+      const engCrea  = txt("projCrea");
+      const execNome = txt("projExecutor");
+      const execCrea = txt("projCreaExec");
+      const clienteNome = txt("projClienteAssinatura") || txt("projCliente") || "";
 
-      // Campos vazios contam como pessoas distintas (duas assinaturas)
+      // Campos vazios contam como pessoas distintas (txt() já aplica trim)
       const mesmaPessoa =
-        txt("projEngenheiro") !== "" &&
-        txt("projExecutor") !== "" &&
+        engNome !== "" &&
         engNome.toLowerCase() === execNome.toLowerCase();
 
+      const sigBlock = (titulo, nome, complemento) => `
+        <div class="sig-block">
+          <div class="sig-line"></div>
+          <p class="sig-titulo">${titulo}</p>
+          <p class="sig-nome">${nome || "—"}</p>
+          ${complemento ? `<p class="sig-complemento">${complemento}</p>` : ""}
+        </div>`;
+
       if (mesmaPessoa) {
+        // Mesmo profissional: Responsável Técnico + Cliente
         return `
-          <div class="print-signatures single">
-            <div>
-              <div class="sig-line"></div>
-              <strong>${engNome}</strong><br />
-              Projeto &amp; Execução &nbsp;·&nbsp; ${engCrea}
-            </div>
+          <div class="print-signatures cols-2">
+            ${sigBlock("Responsável Técnico", engNome, engCrea ? `CREA: ${engCrea}` : "")}
+            ${sigBlock("Cliente", clienteNome, "")}
           </div>`;
       }
+      // Profissionais diferentes: Projeto + Execução + Cliente
       return `
-        <div class="print-signatures">
-          <div>
-            <div class="sig-line"></div>
-            <strong>${engNome}</strong><br />
-            Projetista &nbsp;·&nbsp; ${engCrea}
-          </div>
-          <div>
-            <div class="sig-line"></div>
-            <strong>${execNome}</strong><br />
-            Executor &nbsp;·&nbsp; ${execCrea}
-          </div>
+        <div class="print-signatures cols-3">
+          ${sigBlock("Responsável pelo Projeto", engNome, engCrea ? `CREA: ${engCrea}` : "")}
+          ${sigBlock("Responsável pela Execução", execNome, execCrea ? `CREA: ${execCrea}` : "")}
+          ${sigBlock("Cliente", clienteNome, "")}
         </div>`;
     })()}
     </td></tr></tbody>
