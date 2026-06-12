@@ -272,8 +272,15 @@ try {
         $payload = read_json();
         $newStatus = normalize_payload_aliases($payload)['status'] ?? null;
 
-        if (!in_array($newStatus, ['Aprovada', 'Aprovado'], true)) {
+        // A automação de aprovação (criar obra + orçamento) roda apenas na
+        // TRANSIÇÃO para Aprovada: reeditar uma proposta já aprovada (o frontend
+        // reenvia o registro inteiro, status incluso) duplicava obra e orçamento.
+        $previousProposal = raw_record($pdo, $resources[$key], (int) $id);
+        $alreadyApproved = in_array((string) ($previousProposal['status'] ?? ''), ['Aprovada', 'Aprovado'], true);
+
+        if (!in_array($newStatus, ['Aprovada', 'Aprovado'], true) || $alreadyApproved) {
             $record = update_record($pdo, $resources[$key], (int) $id, $payload);
+            server_audit($pdo, $authUser, 'update', $key, $id);
             respond(['ok' => true, 'record' => $record]);
         }
 
@@ -362,6 +369,7 @@ try {
 
             $pdo->commit();
 
+            server_audit($pdo, $authUser, 'update', $key, $id, 'Proposta aprovada — obra e orçamento gerados');
             $updatedRecord = get_record($pdo, $resources[$key], (int) $id);
             respond(['ok' => true, 'record' => $updatedRecord, 'projectId' => $projectId, 'workBudgetId' => $workBudgetId]);
 
