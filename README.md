@@ -738,14 +738,14 @@ Após subir os arquivos, execute as migrations novas que ainda não foram rodada
 
 ---
 
-## Auditoria de Código — 2026-06-11 (pendências PARA CORRIGIR)
+## Auditoria de Código — 2026-06-11 (1ª rodada — CONCLUÍDA)
 
-> **Como usar esta seção:** estes itens foram identificados em revisão de ponta a
-> ponta e **ainda NÃO foram corrigidos** (registro intencional para correção em
-> outra sessão). Ao corrigir: trate na ordem de prioridade, valide com
-> `php -l api/index.php` e `node --check app.js`, faça bump do `?v=` no
-> `index.html` quando alterar JS/CSS, e marque o item como ~~riscado~~ com a
-> data e o hash do commit.
+> ✅ **2026-06-11 — TODOS os itens desta seção foram corrigidos.** A1 (1–5) no
+> commit `80ee8a2`; A2 (6–11) e A3 (12–16) no commit `613e4de`. Os textos abaixo
+> ficam como registro histórico do que foi encontrado.
+> ⚠️ **Continuam MANUAIS (item 2):** trocar a senha real do usuário em produção
+> (a antiga permanece no histórico do Git) e avaliar limpeza do histórico se o
+> repositório não for privado.
 
 ### A1 — Bugs reais e segurança (corrigir primeiro)
 
@@ -847,13 +847,18 @@ Após subir os arquivos, execute as migrations novas que ainda não foram rodada
 16. **Tema após logout** mantém a preferência do último usuário no login
     (cosmético; o tema correto é reaplicado ao logar).
 
-## Auditoria de Código — 2026-06-11 (2ª rodada, pendências PARA CORRIGIR)
+## Auditoria de Código — 2026-06-11 (2ª rodada — CONCLUÍDA)
 
-> Revisão de ponta a ponta após os módulos SINAPI assíncrono, permissões e
-> Qualidade PBQP-H. Mesma mecânica da seção anterior: corrigir na ordem,
-> validar com `php -l` / `node --check`, bump do `?v=` quando tocar JS/CSS e
-> riscar com data + hash. Os itens A2 (6–11) e A3 (12–16) da 1ª rodada
-> CONTINUAM pendentes.
+> ✅ **2026-06-11 — TODOS os itens desta seção (17–30) foram corrigidos no
+> commit `613e4de`.** Os textos abaixo ficam como registro histórico. Resumo:
+> bootstrap SINAPI com recorte (LIMIT 300) + busca paginada no servidor; rate
+> limit de login/reset; reset sem enumeração de e-mail; senha plana restrita a
+> mustChangePassword; TTL absoluto de sessão (12 h); validação server-side da
+> qualidade (assinaturas da FVS, fechamento de NC); retry na numeração da NC;
+> importador síncrono limitado a 4 MB; spawn sem sleep(2); uploads sem caminho
+> absoluto; tokens fora das URLs (headers + download via blob); audit_log
+> server-side; CSP + HSTS ativos (tema extraído para theme-init.js);
+> list_records com ?limit/?offset; operador não fecha NC.
 
 ### B1 — Alta prioridade
 
