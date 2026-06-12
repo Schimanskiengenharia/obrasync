@@ -2242,9 +2242,6 @@ function handle_login(PDO $pdo, array $payload): never
         server_audit($pdo, null, 'login_failed', 'sistema', null, $username);
         fail('Usuário ou senha inválidos.', 401);
     }
-    if (!empty($user['blocked'])) {
-        fail('Usuário bloqueado. Fale com o administrador.', 403);
-    }
     $stored = (string) ($user['password'] ?? '');
     $hashedOk = $stored !== '' && password_verify($password, $stored);
     $legacyPlain = !$hashedOk && password_matches($stored, $password, !empty($user['mustChangePassword']));
@@ -2253,6 +2250,12 @@ function handle_login(PDO $pdo, array $payload): never
         register_attempt($pdo, 'login', $username, $ip);
         server_audit($pdo, null, 'login_failed', 'sistema', null, $username);
         fail('Usuário ou senha inválidos.', 401);
+    }
+    // O aviso de bloqueio só depois da senha conferida: responder "bloqueado"
+    // antes confirmava a um atacante que aquele username existe (enumeração).
+    if (!empty($user['blocked'])) {
+        server_audit($pdo, $user, 'login_failed', 'sistema', null, 'Login com senha correta em conta bloqueada');
+        fail('Usuário bloqueado. Fale com o administrador.', 403);
     }
     $pdo->prepare("DELETE FROM login_attempts WHERE context = 'login' AND username = ?")->execute([$username]);
     server_audit($pdo, $user, 'login', 'sistema');
