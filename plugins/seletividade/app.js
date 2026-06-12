@@ -141,6 +141,21 @@ const nf = new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 2 });
 const fmt = (value, decimals = 2) =>
   Number.isFinite(value) ? value.toLocaleString("pt-BR", { minimumFractionDigits: decimals, maximumFractionDigits: decimals }) : "—";
 
+// Instantâneo da retaguarda: aceita número ou a palavra BLOQ (função 50
+// bloqueada no relé da concessionária). BLOQ/vazio → 0 → plotCurve não
+// desenha a queda vertical e a curva 51 desce naturalmente até tMin.
+function parseInstValue(id) {
+  const raw = String(qs(id)?.value ?? "").trim().toUpperCase();
+  if (raw === "BLOQ" || raw === "") return 0;
+  const n = parseFloat(raw.replace(",", "."));
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function isInstBloq(id) {
+  const raw = String(qs(id)?.value ?? "").trim().toUpperCase();
+  return raw === "BLOQ";
+}
+
 function allFieldIds() {
   return [...document.querySelectorAll(".panel-left input, .panel-left select")].map((el) => el.id).filter(Boolean);
 }
@@ -208,8 +223,8 @@ function computeStudy() {
     icc3f: num("nccIcc3f"),
     iccFt: num("nccIccFt"),
     ret: {
-      fase: { ip: num("retFaseIp"), dial: num("retFaseDial"), curva: txt("retFaseCurva") || "NI", inst: num("retFaseInst") },
-      neutro: { ip: num("retNeutroIp"), dial: num("retNeutroDial"), curva: txt("retNeutroCurva") || "NI", inst: num("retNeutroInst") },
+      fase: { ip: num("retFaseIp"), dial: num("retFaseDial"), curva: txt("retFaseCurva") || "NI", inst: parseInstValue("retFaseInst"), instBloq: isInstBloq("retFaseInst") },
+      neutro: { ip: num("retNeutroIp"), dial: num("retNeutroDial"), curva: txt("retNeutroCurva") || "NI", inst: parseInstValue("retNeutroInst"), instBloq: isInstBloq("retNeutroInst") },
     },
     ansi: {
       fase: { i: num("ansiFaseI"), t: num("ansiFaseT") },
@@ -533,12 +548,12 @@ function drawChart(ctx, W, H, mode, options = {}) {
   const legend = [];
   if (showFase) {
     legend.push({ color: COLORS.inst, dash: [], label: `51F instalação (${calc.curvaFase})` });
-    legend.push({ color: COLORS.ret, dash: [], label: `51F retaguarda (${calc.ret.fase.curva})` });
+    legend.push({ color: COLORS.ret, dash: [], label: `51F retaguarda (${calc.ret.fase.curva})${calc.ret.fase.instBloq ? " — 50F BLOQ" : ""}` });
     legend.push({ color: COLORS.inst, dash: [2, 4], label: "50F instantâneo" });
   }
   if (showNeutro) {
     legend.push({ color: COLORS.inst, dash: [9, 6], label: `51N instalação (${calc.curvaNeutro})` });
-    legend.push({ color: COLORS.ret, dash: [9, 6], label: `51N retaguarda (${calc.ret.neutro.curva})` });
+    legend.push({ color: COLORS.ret, dash: [9, 6], label: `51N retaguarda (${calc.ret.neutro.curva})${calc.ret.neutro.instBloq ? " — 50N BLOQ" : ""}` });
     legend.push({ color: COLORS.inst, dash: [2, 4], label: "50N instantâneo" });
   }
   legend.push({ color: COLORS.icc, dash: [8, 5], label: "Icc (máx/mín)" });
@@ -546,7 +561,10 @@ function drawChart(ctx, W, H, mode, options = {}) {
   legend.push({ color: COLORS.ansi, tri: true, label: "Ponto ANSI" });
 
   const lineH = fontSize + Math.round(7 * scale);
-  const lw = Math.round(235 * scale);
+  // Largura dinâmica: rótulos com sufixo "— 50x BLOQ" excedem os 235px fixos
+  ctx.font = `${fontSize}px Inter, Arial, sans-serif`;
+  const maxLabelW = Math.max(...legend.map((item) => ctx.measureText(item.label).width));
+  const lw = Math.max(Math.round(235 * scale), Math.ceil(maxLabelW + 52 * scale));
   const lh = legend.length * lineH + Math.round(14 * scale);
   const lx = pad.left + plotW - lw - Math.round(10 * scale);
   const ly = pad.top + Math.round(10 * scale);
@@ -624,6 +642,9 @@ function buildPrintReport(selectivity, logoSrc) {
   const c = calc;
   const report = qs("printReport");
 
+  // Instantâneo da retaguarda: "BLOQ" quando a função 50 está bloqueada
+  const fmtInst = (val, bloq) => (bloq ? "BLOQ" : (val > 0 ? `${fmt(val, 0)} A` : "—"));
+
   report.innerHTML = `
     <table class="print-layout">
     <tbody><tr><td>
@@ -690,7 +711,7 @@ function buildPrintReport(selectivity, logoSrc) {
       <p><strong>Função 51N — Temporizado de Neutro:</strong> corrente de partida equivalente a 1/3 da corrente de fase, resultando em <strong>${fmt(c.aj51N)} A secundário / ${fmt(c.prim51N)} A primário</strong>. Curva adotada: IEC <strong>${c.curvaNeutro}</strong>, dial calculado <strong>${fmt(c.dialNeutro, 4)}</strong>.</p>
       <p><strong>Função 50F — Instantâneo de Fase:</strong> corrente de partida definida em 110% da corrente de INRUSH de demanda, resultando em <strong>${fmt(c.aj50F)} A secundário / ${fmt(c.prim50F)} A primário</strong>, com atuação instantânea, evitando operação indevida do relé durante a energização do transformador.</p>
       <p><strong>Função 50N — Instantâneo de Neutro:</strong> corrente de partida equivalente a 1/3 da corrente instantânea de fase, resultando em <strong>${fmt(c.aj50N)} A secundário / ${fmt(c.prim50N)} A primário</strong>, com atuação instantânea.</p>
-      <p>Os ajustes foram definidos atendendo ao intervalo de coordenação mínimo de <strong>0,3 s</strong> em relação à proteção de retaguarda da concessionária: Fase Ip = ${fmt(c.ret.fase.ip, 0)} A · Dial ${fmt(c.ret.fase.dial, 2)} · Curva ${c.ret.fase.curva} · Inst. ${fmt(c.ret.fase.inst, 0)} A — Neutro Ip = ${fmt(c.ret.neutro.ip, 0)} A · Dial ${fmt(c.ret.neutro.dial, 2)} · Curva ${c.ret.neutro.curva} · Inst. ${fmt(c.ret.neutro.inst, 0)} A, conforme recomendação da distribuidora.</p>
+      <p>Os ajustes foram definidos atendendo ao intervalo de coordenação mínimo de <strong>0,3 s</strong> em relação à proteção de retaguarda da concessionária: Fase Ip = ${fmt(c.ret.fase.ip, 0)} A · Dial ${fmt(c.ret.fase.dial, 2)} · Curva ${c.ret.fase.curva} · Inst. ${fmtInst(c.ret.fase.inst, c.ret.fase.instBloq)} — Neutro Ip = ${fmt(c.ret.neutro.ip, 0)} A · Dial ${fmt(c.ret.neutro.dial, 2)} · Curva ${c.ret.neutro.curva} · Inst. ${fmtInst(c.ret.neutro.inst, c.ret.neutro.instBloq)}, conforme recomendação da distribuidora.</p>
     </div>
 
     <h2>1. Informações do NCC (Energisa)</h2>
@@ -703,8 +724,8 @@ function buildPrintReport(selectivity, logoSrc) {
       ["Z0 (pu)", `${fmt(num("nccZ0Re"), 4)} + j${fmt(num("nccZ0Im"), 4)}`],
       ["Icc trifásico", `${fmt(c.icc3f, 0)} A ∠ ${fmt(num("nccIcc3fAng"), 1)}°`],
       ["Icc fase-terra", `${fmt(c.iccFt, 0)} A ∠ ${fmt(num("nccIccFtAng"), 1)}°`],
-      ["Retaguarda Fase", `Ip ${fmt(c.ret.fase.ip, 1)} A · Dial ${fmt(c.ret.fase.dial, 2)} · Curva ${c.ret.fase.curva} · Inst. ${fmt(c.ret.fase.inst, 0)} A`],
-      ["Retaguarda Neutro", `Ip ${fmt(c.ret.neutro.ip, 1)} A · Dial ${fmt(c.ret.neutro.dial, 2)} · Curva ${c.ret.neutro.curva} · Inst. ${fmt(c.ret.neutro.inst, 0)} A`],
+      ["Retaguarda Fase", `Ip ${fmt(c.ret.fase.ip, 1)} A · Dial ${fmt(c.ret.fase.dial, 2)} · Curva ${c.ret.fase.curva} · Inst. ${fmtInst(c.ret.fase.inst, c.ret.fase.instBloq)}`],
+      ["Retaguarda Neutro", `Ip ${fmt(c.ret.neutro.ip, 1)} A · Dial ${fmt(c.ret.neutro.dial, 2)} · Curva ${c.ret.neutro.curva} · Inst. ${fmtInst(c.ret.neutro.inst, c.ret.neutro.instBloq)}`],
     ])}
 
     <h2>2. Dados da instalação</h2>
@@ -899,6 +920,28 @@ async function init() {
   loadLogoBase64();
 
   restoreDraft();
+
+  // Botões BLOQ — alternam o campo entre "BLOQ" e vazio
+  document.querySelectorAll(".btn-bloq").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const input = qs(btn.dataset.target);
+      if (!input) return;
+      const isBloq = input.value.trim().toUpperCase() === "BLOQ";
+      input.value = isBloq ? "" : "BLOQ";
+      input.classList.toggle("is-bloq", !isBloq);
+      saveDraft();
+      if (calc) runCalculation(); // recalcula e replota se já houve cálculo
+    });
+  });
+
+  // Classe visual .is-bloq: reaplicada após o restoreDraft e ao digitar
+  ["retFaseInst", "retNeutroInst"].forEach((id) => {
+    const el = qs(id);
+    if (!el) return;
+    const syncBloqClass = () => el.classList.toggle("is-bloq", el.value.trim().toUpperCase() === "BLOQ");
+    syncBloqClass();
+    el.addEventListener("input", syncBloqClass);
+  });
 
   qs("btnCalcular").addEventListener("click", runCalculationWithFeedback);
   qs("btnLimpar").addEventListener("click", clearAll);

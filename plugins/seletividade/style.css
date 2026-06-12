@@ -285,6 +285,46 @@ input:focus, select:focus {
 
 .hint { font-weight: 500; font-size: 12px; color: var(--muted); align-self: center; }
 
+/* ── Instantâneo da retaguarda com suporte a BLOQ ──────────────────────── */
+
+.inst-input-wrap {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.inst-input-wrap input {
+  flex: 1;
+  min-width: 0;
+}
+
+.btn-bloq {
+  flex-shrink: 0;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--red);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+  white-space: nowrap;
+}
+
+.btn-bloq:hover {
+  background: rgba(180, 35, 24, 0.10);
+  border-color: var(--red);
+}
+
+/* Quando o campo contém BLOQ — destaque visual */
+.inst-input-wrap input.is-bloq {
+  color: var(--red);
+  font-weight: 700;
+  border-color: var(--red);
+  background: rgba(180, 35, 24, 0.06);
+}
+
 .actions-row { display: flex; gap: 10px; }
 .actions-row .primary { flex: 1; }
 
