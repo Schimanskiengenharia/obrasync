@@ -8423,11 +8423,24 @@ async function analisarNfseXml() {
 }
 
 function renderizarPreviewNfse(data) {
+  const naoEncontrados = nfseData.filter((nf) => !nf.entityId && !nf.jaImportada).length;
   qs("nfseResumo").innerHTML = `
-    <span class="ofx-badge">📄 ${data.total} NFS-e no arquivo</span>
-    <span class="ofx-badge ofx-badge-green">▲ ${data.emitidas} emitidas → A Receber</span>
-    <span class="ofx-badge ofx-badge-yellow">▼ ${data.recebidas} recebidas → A Pagar</span>
-    <span class="ofx-badge">💰 Total: ${asMoney(data.valorTotal)}</span>
+    <div class="nfse-badges">
+      <span class="ofx-badge">📄 ${data.total} NFS-e no arquivo</span>
+      <span class="ofx-badge ofx-badge-green">▲ ${data.emitidas} emitidas → A Receber</span>
+      <span class="ofx-badge ofx-badge-yellow">▼ ${data.recebidas} recebidas → A Pagar</span>
+      <span class="ofx-badge">💰 Total: ${asMoney(data.valorTotal)}</span>
+    </div>
+    ${naoEncontrados > 0 ? `
+    <div class="nfse-criar-box">
+      <label class="nfse-criar-label">
+        <input type="checkbox" id="nfseAutoCreate" checked />
+        <div>
+          <strong>Criar automaticamente ${naoEncontrados} ${naoEncontrados === 1 ? "cliente/fornecedor" : "clientes/fornecedores"} não cadastrado${naoEncontrados === 1 ? "" : "s"}</strong>
+          <p>Os dados serão preenchidos a partir do XML (nome, CNPJ/CPF, endereço, e-mail, telefone). Você poderá completar as informações depois em Cadastros.</p>
+        </div>
+      </label>
+    </div>` : ""}
   `;
   qs("nfseTableWrap").innerHTML = `
     <table class="ofx-table">
@@ -8473,6 +8486,8 @@ async function importarNfsesSelecionadas() {
   const vencimentoDias = Math.max(1, Math.min(365, Number(qs("nfseVencimentoDias")?.value || 30)));
   if (!confirm(`Importar ${selecionadas.length} NFS-e?\n\n• Emitidas → Contas a Receber (venc. em ${vencimentoDias} dias)\n• Recebidas → Contas a Pagar (venc. em ${vencimentoDias} dias)\n\nVocê poderá editar os registros depois.`)) return;
 
+  const criarEntidades = qs("nfseAutoCreate")?.checked ?? false;
+
   const btn = qs("btnNfseImportar");
   btn.disabled = true;
   btn.textContent = "Importando…";
@@ -8483,6 +8498,7 @@ async function importarNfsesSelecionadas() {
         projectId,
         vencimentoDias,
         xmlFile: nfseXmlFile,
+        criarEntidades,
         nfses: selecionadas.map((nf) => ({
           numero: nf.numero,
           dataEmissao: nf.dataEmissao,
@@ -8491,11 +8507,17 @@ async function importarNfsesSelecionadas() {
           discriminacao: nf.discriminacao,
           codigoVerificacao: nf.codigoVerificacao,
           entityId: nf.entityId,
+          tomador: nf.tomador,
+          prestador: nf.prestador,
           importar: true,
         })),
       }),
     });
-    showToast(`✅ ${payload.data.importadas} NFS-e importadas, ${payload.data.duplicatas} já existiam.`);
+    const criados = payload.data.criados?.length || 0;
+    const criadosMsg = criados
+      ? `, ${criados} ${criados === 1 ? "cadastro criado" : "cadastros criados"}`
+      : "";
+    showToast(`✅ ${payload.data.importadas} NFS-e importadas, ${payload.data.duplicatas} já existiam${criadosMsg}.`);
     fecharModalNfse();
     await refreshAndRender(); // NFs + contas a receber/pagar vieram do servidor
   } catch (error) {

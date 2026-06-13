@@ -2668,6 +2668,10 @@ function parse_nfse_abrasf(string $xmlContent, string $cnpjEmpresa): array
         $tomadorId = $inf->TomadorServico->IdentificacaoTomador->CpfCnpj ?? null;
         $codigoVerificacao = trim((string) ($inf->CodigoVerificacao ?? ''));
 
+        // Endereço/contato para permitir criar cliente/fornecedor na importação.
+        $tomadorEndereco = $inf->TomadorServico->Endereco ?? null;
+        $prestadorEndereco = $inf->PrestadorServico->Endereco ?? null;
+
         $result[] = [
             'numero' => $numero,
             'codigoVerificacao' => $codigoVerificacao,
@@ -2684,11 +2688,23 @@ function parse_nfse_abrasf(string $xmlContent, string $cnpjEmpresa): array
             'prestador' => [
                 'cnpj' => $cnpjPrestador,
                 'nome' => trim((string) ($inf->PrestadorServico->RazaoSocial ?? '')),
+                'email' => trim((string) ($inf->PrestadorServico->Contato->Email ?? '')),
+                'telefone' => trim((string) ($inf->PrestadorServico->Contato->Telefone ?? '')),
+                'endereco' => trim((string) ($prestadorEndereco->Endereco ?? '')),
+                'numero' => trim((string) ($prestadorEndereco->Numero ?? '')),
+                'bairro' => trim((string) ($prestadorEndereco->Bairro ?? '')),
+                'cep' => preg_replace('/\D/', '', (string) ($prestadorEndereco->Cep ?? '')),
             ],
             'tomador' => [
                 'cnpj' => $tomadorId ? preg_replace('/\D/', '', (string) ($tomadorId->Cnpj ?? '')) : '',
                 'cpf' => $tomadorId ? preg_replace('/\D/', '', (string) ($tomadorId->Cpf ?? '')) : '',
                 'nome' => trim((string) ($inf->TomadorServico->RazaoSocial ?? '')),
+                'email' => trim((string) ($inf->TomadorServico->Contato->Email ?? '')),
+                'telefone' => trim((string) ($inf->TomadorServico->Contato->Telefone ?? '')),
+                'endereco' => trim((string) ($tomadorEndereco->Endereco ?? '')),
+                'numero' => trim((string) ($tomadorEndereco->Numero ?? '')),
+                'bairro' => trim((string) ($tomadorEndereco->Bairro ?? '')),
+                'cep' => preg_replace('/\D/', '', (string) ($tomadorEndereco->Cep ?? '')),
             ],
         ];
     }
@@ -2709,6 +2725,49 @@ function nfse_find_entity(PDO $pdo, string $documentDigits, string $table): arra
     $stmt->execute([$digits]);
     $row = $stmt->fetch();
     return $row ? ['id' => (int) $row['id'], 'nome' => (string) $row['name']] : ['id' => null, 'nome' => null];
+}
+
+// Cria cliente (emitida → tomador) ou fornecedor (recebida → prestador) a partir
+// dos dados do XML NFS-e e devolve o ID. Reconfere o documento antes de inserir
+// para não duplicar quando duas NFs da mesma parte chegam no mesmo lote.
+function nfse_create_entity(PDO $pdo, string $table, array $party): ?int
+{
+    if (!in_array($table, ['clients', 'suppliers'], true)) {
+        return null;
+    }
+    $digits = preg_replace('/\D/', '', ($party['cnpj'] ?? '') ?: ($party['cpf'] ?? ''));
+    $nome = trim((string) ($party['nome'] ?? ''));
+    if ($digits === '' || $nome === '') {
+        return null;
+    }
+
+    // Reconfere (corrida dentro do mesmo lote / cadastro recém-criado).
+    $existing = nfse_find_entity($pdo, $digits, $table);
+    if ($existing['id']) {
+        return $existing['id'];
+    }
+
+    $docFormatado = strlen($digits) === 11
+        ? preg_replace('/(\d{3})(\d{3})(\d{3})(\d{2})/', '$1.$2.$3-$4', $digits)
+        : (strlen($digits) === 14
+            ? preg_replace('/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/', '$1.$2.$3/$4-$5', $digits)
+            : $digits);
+
+    $enderecoCompleto = trim(implode(', ', array_filter([
+        trim((string) ($party['endereco'] ?? '')),
+        trim((string) ($party['numero'] ?? '')),
+        trim((string) ($party['bairro'] ?? '')),
+    ], static fn ($part) => $part !== '')));
+
+    return insert_dynamic($pdo, $table, [
+        'name' => mb_substr($nome, 0, 160),
+        'document' => $docFormatado,
+        'zipCode' => preg_replace('/\D/', '', (string) ($party['cep'] ?? '')) ?: null,
+        'address' => $enderecoCompleto !== '' ? mb_substr($enderecoCompleto, 0, 255) : null,
+        'email' => trim((string) ($party['email'] ?? '')) ?: null,
+        'phone' => preg_replace('/[^\d()+\- ]/', '', (string) ($party['telefone'] ?? '')) ?: null,
+        'status' => 'Ativo',
+    ]);
 }
 
 function handle_nfse_preview(PDO $pdo, array $config): never
@@ -2772,6 +2831,7 @@ function handle_nfse_import(PDO $pdo, array $config, array $authUser, array $pay
     $nfses = is_array($payload['nfses'] ?? null) ? $payload['nfses'] : [];
     $projectId = (int) ($payload['projectId'] ?? 0);
     $vencimentoDias = max(1, min(365, (int) ($payload['vencimentoDias'] ?? 30)));
+    $criarEntidades = (bool) ($payload['criarEntidades'] ?? false);
     $xmlFile = basename(trim((string) ($payload['xmlFile'] ?? '')));
     if (!$nfses) {
         fail('Nenhuma NFS-e selecionada.', 400);
@@ -2794,6 +2854,7 @@ function handle_nfse_import(PDO $pdo, array $config, array $authUser, array $pay
 
     $importadas = 0;
     $duplicatas = 0;
+    $criados = [];
     $pdo->beginTransaction();
     try {
         $dupCheck = $pdo->prepare('SELECT id FROM fiscal_documents WHERE documentNumber = ? LIMIT 1');
@@ -2816,6 +2877,30 @@ function handle_nfse_import(PDO $pdo, array $config, array $authUser, array $pay
             if ($dupCheck->fetchColumn()) {
                 $duplicatas++;
                 continue;
+            }
+
+            // Cliente/fornecedor não cadastrado: cria a partir do XML quando o
+            // usuário marcou a opção na prévia. Falha de criação não aborta a
+            // importação — a NF entra sem vínculo (entityId nulo).
+            if (!$entityId && $criarEntidades) {
+                $table = $emitida ? 'clients' : 'suppliers';
+                $party = is_array($nf[$emitida ? 'tomador' : 'prestador'] ?? null)
+                    ? $nf[$emitida ? 'tomador' : 'prestador'] : [];
+                try {
+                    $novoId = nfse_create_entity($pdo, $table, $party);
+                } catch (Throwable $error) {
+                    error_log('[ObraSync NFS-e] Falha ao criar ' . $table . ': ' . $error->getMessage());
+                    $novoId = null;
+                }
+                if ($novoId) {
+                    $entityId = $novoId;
+                    $criados[] = [
+                        'id' => $novoId,
+                        'nome' => trim((string) ($party['nome'] ?? '')),
+                        'documento' => preg_replace('/\D/', '', ($party['cnpj'] ?? '') ?: ($party['cpf'] ?? '')),
+                        'tipo' => $emitida ? 'cliente' : 'fornecedor',
+                    ];
+                }
             }
 
             $notes = trim(($codigo !== '' ? "Código de verificação: {$codigo}\n" : '') . $discriminacao);
@@ -2872,8 +2957,9 @@ function handle_nfse_import(PDO $pdo, array $config, array $authUser, array $pay
         fail('Erro ao importar as NFS-e. Nada foi gravado — tente novamente.', 500);
     }
 
-    server_audit($pdo, $authUser, 'import', 'fiscalDocuments', null, "NFS-e XML: {$importadas} importadas, {$duplicatas} duplicadas");
-    respond(['ok' => true, 'data' => ['importadas' => $importadas, 'duplicatas' => $duplicatas],
+    $totalCriados = count($criados);
+    server_audit($pdo, $authUser, 'import', 'fiscalDocuments', null, "NFS-e XML: {$importadas} importadas, {$duplicatas} duplicadas, {$totalCriados} cadastros criados");
+    respond(['ok' => true, 'data' => ['importadas' => $importadas, 'duplicatas' => $duplicatas, 'criados' => $criados],
         'message' => "{$importadas} NFS-e importadas, {$duplicatas} já existiam."]);
 }
 
