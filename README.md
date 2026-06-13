@@ -1,10 +1,52 @@
 # ObraSync
 
-> Versão `v1.8.0` · 2026-06-10
+> Versão `v1.11.0` · 2026-06-13
 
 ObraSync é uma aplicação web em HTML, CSS, JavaScript puro, PHP e MariaDB/MySQL para gestão integrada de obras, financeiro, comercial e contabilidade gerencial. O frontend fica em `/var/www/financeiro`, a URL pública é `https://schimanskiengenharia.com.br/financeiro`, os dados persistentes ficam no banco e os arquivos de dados ficam fora da pasta pública.
 
 Antes de atualizar em produção, faça backup do banco e de `/var/lib/financeiro`. **Nunca sobrescreva `/etc/financeiro/config.php`**, uploads, backups ou o banco MariaDB/MySQL.
+
+---
+
+## Para quem está retomando o projeto (leia primeiro)
+
+Esta seção orienta qualquer pessoa — ou outra IA — que precise continuar o trabalho sem se perder.
+
+- **Versão atual:** `v1.11.0` (2026-06-13). A versão fica em **dois lugares que devem andar juntos**: a constante `APP_VERSION`/`APP_VERSION_DATE` no topo de `app.js` (com `APP_CHANGELOG`) e o cabeçalho deste README. O painel "Versão" em Configurações lê de `APP_VERSION`.
+- **Cache busting:** sempre que `app.js` ou `styles.css` mudarem, **incremente o `?v=NNNN`** das tags correspondentes em `index.html` (hoje `app.js?v=1731`, `styles.css?v=1730`). Sem isso o navegador serve a versão velha.
+- **Arquitetura:** SPA sem build. Todo o frontend está em `app.js` (arquivo único, ~10 mil linhas) + `index.html` (shell) + `styles.css`. Todo o backend está em `api/index.php` (arquivo único). O banco é MariaDB/MySQL.
+- **Convenções do backend (siga-as):** respostas via `respond(['ok' => true, 'data' => ...])` e erros via `fail($msg, $status)`; INSERT/UPDATE genéricos via `insert_dynamic()`/`update_dynamic()` (descartam colunas inexistentes — toleram diferenças de schema); auditoria via `server_audit()`. Muitas tabelas novas são criadas sob demanda por funções `ensure_*` no próprio `index.php` (além das migrations).
+- **Convenções do frontend:** chamadas autenticadas via `apiRequest()`; uploads via `fetchForm()`; toasts via `showToast()`; escape de HTML via `svgText()`/`escapeHtml()`. O token de sessão vai no header `Authorization: Bearer`.
+- **Deploy:** push na `main` → webhook GitHub → `deploy.php` roda `git pull` + backup pré-deploy. Em produção rode as migrations novas manualmente após o deploy. Nunca toque em `/etc/financeiro/config.php`, uploads, backups ou banco.
+- **Onde o histórico está documentado:** o changelog navegável está em `APP_CHANGELOG` (app.js) e na seção **Histórico de Versões** logo abaixo; as duas rodadas de auditoria de código (todas concluídas) estão no fim deste README como registro histórico.
+
+---
+
+## Histórico de Versões
+
+Mapa de cada marco do produto, do mais novo ao mais antigo, com as features e as tabelas/arquivos envolvidos. Use-o para entender *o que existe e por quê* antes de mexer.
+
+### v1.11.0 — 2026-06-13 · Importação de NFS-e (XML ABRASF)
+- **Importação de XML NFS-e** (`handle_nfse_preview`/`handle_nfse_import` + `parse_nfse_abrasf` em `api/index.php`; `setupNfseImport`/`analisarNfseXml`/`renderizarPreviewNfse`/`importarNfsesSelecionadas` em `app.js`). Lê o XML padrão ABRASF (uma ou várias NFs), mostra prévia em lote e grava: NFs **emitidas** pela empresa → **Contas a Receber**; NFs de **fornecedores** → **Contas a Pagar**. Cada NF vira também um `fiscal_documents` vinculado à obra (obrigatória). Controle de duplicatas por `documentNumber` (`NFS-e <numero>`). Tudo transacional.
+- **Criação automática de cliente/fornecedor** (`nfse_create_entity`): quando o tomador (emitida) ou prestador (recebida) não está cadastrado, o usuário pode marcar na prévia para criar o registro a partir do XML (nome, CNPJ/CPF, endereço, CEP, e-mail, telefone). O parser passou a extrair endereço/contato das duas partes; o frontend envia `criarEntidades` + os objetos `tomador`/`prestador`; a API devolve `data.criados[]`.
+
+### v1.10.0 — 2026-06-12 · Conciliação bancária OFX
+- **Importação OFX multi-banco** (migration `2026-06-12-ofx-conciliacao.sql`; tabelas `ofx_imports` e `ofx_fitids`; colunas de conciliação em `accounts_payable`/`accounts_receivable`). Parser de OFX, controle de duplicatas por **FITID**, saldo por extrato, KPI cards por banco, cadastro simplificado de conta, prévia e histórico.
+- **Match automático** por valor + data com **baixa automática** das contas a pagar/receber e importação avulsa de lançamentos sem contraparte.
+
+### v1.9.0 — 2026-06-09 a 2026-06-11 · Produtividade, qualidade, plugins e hardening
+- **Agenda e Kanban** integrados às obras (migration `2026-06-09-agenda-kanban.sql`; `agenda_eventos`, `kanban_boards`, `kanban_colunas`, `kanban_cards`; correção de enums em `2026-06-10-fix-agenda-enums.sql`).
+- **Importador SINAPI assíncrono** (migration `2026-06-11-sinapi-import-jobs.sql`; tabela `sinapi_import_jobs`; worker `scripts/sinapi_import_worker.php`). Upload dos 4 arquivos CEF, processamento em fila, prévia e acompanhamento de progresso. Importação restrita ao **admin**.
+- **Módulo PBQP-H Nível B** (commit `7526d50`; tabelas `qualidade_politica`, `qualidade_pqo`, `qualidade_pes`, `qualidade_fvs`, `qualidade_fvm`, `qualidade_nc`, `qualidade_treinamentos`, `qualidade_auditorias`). PQO, PES, FVS, FVM, NC, Treinamentos, Auditoria e Dashboard, integrados ao cronograma.
+- **Sistema de plugins** (migration `2026-06-10-system-plugins.sql`; tabela `system_plugins`) e **plugin de Estudo de Seletividade** (`plugins/seletividade/`) com estudos salvos no banco e PDF técnico em padrão ABNT NBR 14724.
+- **Análises de viabilidade** (migration `2026-06-10-viability-analyses.sql`; tabela `viability_analyses`) com histórico de parecer.
+- **Endurecimento de segurança** (auditorias de 2026-06-11, todas concluídas — ver fim do README): rate limit de login/reset (`login_attempts`), reset sem enumeração de e-mail, TTL absoluto de sessão de 12 h, **audit_log server-side** (`audit_log`), CSP/HSTS, tema extraído para `theme-init.js`, tokens fora das URLs, `list_records` com `?limit/?offset`.
+
+### v1.8.0 — 2026-06-10 · Autenticação real e força de senha
+- Token de sessão na API (`api_sessions`), autorização por rota/perfil (`role_permissions`), força de senha (PHP+JS), reset por e-mail com token de 2 h (`password_reset_tokens`), `mustChangePassword` no primeiro login.
+
+### Até v1.8.0 — base do produto
+- Gestão integrada de obras, financeiro, comercial e contabilidade gerencial; orçamentos com base SINAPI; gerador de propostas a partir de orçamento; cronograma físico-financeiro + Gantt + Microsoft Project (XML); estruturas editáveis; RBAC; deploy automático por webhook. Ver `APP_CHANGELOG` em `app.js` para a lista completa.
 
 ---
 
@@ -25,18 +67,25 @@ Antes de atualizar em produção, faça backup do banco e de `/var/lib/financeir
 
 ```
 /var/www/financeiro          ← raiz pública
-  index.html                 # Shell único da SPA
-  app.js                     # Toda a lógica do frontend (~6.500 linhas)
+  index.html                 # Shell único da SPA (cache busting via ?v=NNNN)
+  app.js                     # Toda a lógica do frontend (arquivo único, ~10 mil linhas)
+  theme-init.js              # Aplica o tema antes do render (extraído por causa do CSP)
   styles.css                 # Estilos e responsividade
-  schema.sql                 # Schema completo do banco (70+ tabelas)
+  schema.sql                 # Schema base do banco (tabelas criadas no install do zero)
   deploy.php                 # Webhook de deploy automático via GitHub
-  .htaccess                  # Segurança e headers HTTP
+  backup-pre-deploy.sh       # Backup automático disparado pelo deploy.php
+  .htaccess                  # Segurança e headers HTTP (CSP/HSTS)
+  .deployignore              # Lista do que o deploy NUNCA pode tocar
   api/
-    index.php                # API REST PHP (CRUD genérico + rotas especiais)
+    index.php                # API REST PHP (CRUD genérico + rotas especiais + ensure_*)
     config.sample.php        # Exemplo de configuração (copie para /etc/financeiro/)
-    cron/jobs.php            # Tarefas agendadas (backup automático)
+    cron/jobs.php            # Tarefas agendadas (backup; expurgo de audit_log/login_attempts)
     .htaccess
-  migrations/                # 10 migrações SQL incrementais
+  migrations/                # Migrações SQL incrementais (ver lista abaixo)
+  scripts/
+    sinapi_import_worker.php # Worker da fila de importação SINAPI (assíncrono)
+  plugins/
+    seletividade/            # Plugin Estudo de Seletividade (app.js, index.html, style.css)
   assets/                    # Imagens estáticas
   README.md
 
@@ -60,7 +109,7 @@ Antes de atualizar em produção, faça backup do banco e de `/var/lib/financeir
 
 ## Módulos do Sistema
 
-A navegação é organizada em 7 seções na sidebar:
+A navegação é organizada em seções na sidebar (os módulos visíveis dependem do perfil e dos plugins habilitados):
 
 ### Dashboard
 KPIs dinâmicos, gráficos SVG, indicadores gerais e por obra, filtros por período/cliente/projeto/status.
@@ -88,6 +137,12 @@ Contas a receber, Contas a pagar, Movimentações de caixa, Fluxo de caixa, Conc
 
 ### Contabilidade Gerencial
 Plano de contas, Lançamentos contábeis, **DRE gerencial**, Documentos fiscais, Impostos.
+
+### Qualidade (PBQP-H Nível B)
+Política da qualidade, PQO, PES, FVS, FVM, NC, Treinamentos, Auditoria e Dashboard da qualidade, integrados ao cronograma da obra. *(v1.9.0)*
+
+### Plugins
+Módulos opcionais habilitáveis por instalação (`system_plugins`). Inclui o **Estudo de Seletividade** (engenharia elétrica) com estudos salvos e PDF técnico ABNT, e **Análises de viabilidade**. *(v1.9.0)*
 
 ### Relatórios
 Financeiro, por cliente, por fornecedor, por centro de custo, por obra/projeto; Exportações.
@@ -128,9 +183,14 @@ mysql -u root -p financeiro < /var/www/financeiro/schema.sql
 - **SINAPI/Orçamentos**: `sinapi_referencias`, `sinapi_insumos`, `sinapi_composicoes`, `sinapi_composicao_itens`, `sinapi_mao_de_obra`, `sinapi_familias_coeficientes`, `sinapi_manutencoes`, `sinapi_configuracoes`, `orcamentos_obras`, `orcamento_obra_itens`, `composicoes_proprias`, `cotacoes`.
 - **Comercial**: `commercial_proposals`, `proposta_itens`, `proposta_arquivos`, `proposta_status_historico`, `proposta_orcamento_vinculos`, `proposta_variaveis`, `proposal_models`, `proposal_areas`, `proposal_action_types`, `proposal_service_subtypes`, `budgets`, `sales_contracts`.
 - **Financeiro**: `accounts_receivable`, `accounts_payable`, `cash_bank_movements`.
+- **Conciliação OFX**: `ofx_imports`, `ofx_fitids` (+ colunas de conciliação em `accounts_receivable`/`accounts_payable`).
 - **Contabilidade**: `chart_accounts`, `journal_entries`, `taxes`, `tax_documents`, `fiscal_documents`, `tipos_documento`.
 - **Produtividade**: `agenda_eventos`, `kanban_boards`, `kanban_colunas`, `kanban_cards`, `checklists`, `checklist_itens`, `mensagens_padrao`, `modelos_relatorio`, `tipos_medicao`.
-- **Sistema**: `system_users`, `role_permissions`, `regras_visualizacao`, `company_settings`, `system_preferences`, `sistema_versoes`, `api_sessions`, `password_reset_tokens`.
+- **Qualidade (PBQP-H Nível B)**: `qualidade_politica`, `qualidade_pqo`, `qualidade_pes`, `qualidade_fvs`, `qualidade_fvm`, `qualidade_nc`, `qualidade_treinamentos`, `qualidade_auditorias`.
+- **Plugins / análises**: `system_plugins`, `viability_analyses` (+ tabelas próprias de cada plugin, ex.: estudos de seletividade salvos).
+- **Sistema**: `system_users`, `role_permissions`, `regras_visualizacao`, `company_settings`, `system_preferences`, `sistema_versoes`, `api_sessions`, `password_reset_tokens`, `audit_log`, `login_attempts`, `sinapi_import_jobs`.
+
+> Algumas tabelas mais novas (ex.: qualidade, OFX, audit_log, login_attempts) são criadas tanto pelas migrations quanto, em fallback, por funções `ensure_*` em `api/index.php` na primeira utilização. Isso permite que o módulo funcione mesmo se a migration ainda não foi rodada — mas o correto é rodar a migration.
 
 ### Migrações incrementais
 
@@ -145,11 +205,21 @@ mysql -u root -p financeiro < /var/www/financeiro/migrations/2026-06-07-physical
 mysql -u root -p financeiro < /var/www/financeiro/migrations/2026-06-08-proposal-generator-from-work-budget.sql
 mysql -u root -p financeiro < /var/www/financeiro/migrations/2026-06-08-sinapi-2026-04-ms-importer.sql
 mysql -u root -p financeiro < /var/www/financeiro/migrations/2026-06-08-sinapi-msproject-editable-structures.sql
+mysql -u root -p financeiro < /var/www/financeiro/migrations/2026-06-09-agenda-kanban.sql
 mysql -u root -p financeiro < /var/www/financeiro/migrations/2026-06-10-api-auth-sessions.sql
+mysql -u root -p financeiro < /var/www/financeiro/migrations/2026-06-10-fix-agenda-enums.sql
+mysql -u root -p financeiro < /var/www/financeiro/migrations/2026-06-10-fix-login-usuarios-iniciais.sql
 mysql -u root -p financeiro < /var/www/financeiro/migrations/2026-06-10-password-strength.sql
+mysql -u root -p financeiro < /var/www/financeiro/migrations/2026-06-10-system-plugins.sql
+mysql -u root -p financeiro < /var/www/financeiro/migrations/2026-06-10-viability-analyses.sql
+mysql -u root -p financeiro < /var/www/financeiro/migrations/2026-06-11-sinapi-import-jobs.sql
+mysql -u root -p financeiro < /var/www/financeiro/migrations/2026-06-11-usuarios-cpf-nascimento-celular.sql
+mysql -u root -p financeiro < /var/www/financeiro/migrations/2026-06-12-ofx-conciliacao.sql
 ```
 
 A migration `2026-06-10-password-strength.sql` adiciona `email` e `mustChangePassword` em `system_users` e cria `password_reset_tokens`. Todos os usuários existentes ficam marcados para redefinir a senha no próximo login.
+
+> **Ordem importa**: rode na ordem cronológica acima. Todas usam `IF NOT EXISTS`/`ADD COLUMN` idempotentes — repetir não reseta dados. As tabelas de qualidade (PBQP-H) e algumas colunas novas também têm fallback `ensure_*` no `api/index.php`, mas rodar a migration é o caminho recomendado em produção.
 
 ---
 
@@ -372,8 +442,16 @@ POST   /financeiro/api/migrate                  ← admin
 GET    /financeiro/api/backup/export            ← admin
 POST   /financeiro/api/backup/import            ← admin
 POST   /financeiro/api/sinapi-upload
-POST   /financeiro/api/sinapi-import
+POST   /financeiro/api/sinapi-import               ← caminho síncrono (limitado)
+POST   /financeiro/api/sinapi-import-async         ← enfileira o job (worker)
+GET    /financeiro/api/sinapi-import-status        ← progresso do job
 POST   /financeiro/api/project-upload
+POST   /financeiro/api/nfse-preview                ← analisa o XML NFS-e (multipart)
+POST   /financeiro/api/nfse-import                 ← grava NFs + contas (+ cria entidades)
+POST   /financeiro/api/ofx-preview                 ← analisa o extrato OFX
+POST   /financeiro/api/ofx-import                  ← grava lançamentos do extrato
+POST   /financeiro/api/ofx-conciliar               ← match/baixa contra contas
+GET    /financeiro/api/ofx-history                 ← histórico de importações OFX
 ```
 
 Downloads de notas fiscais aceitam token via `?token=` por serem navegação direta do navegador:
@@ -563,6 +641,52 @@ sudo chown -R www-data:www-data /var/lib/financeiro/uploads/notas-fiscais
 sudo chmod -R 750 /var/lib/financeiro/uploads/notas-fiscais
 ```
 
+### Importação de XML NFS-e (padrão ABRASF) — v1.11.0
+
+No módulo Notas Fiscais, o botão **📄 Importar XML NFS-e** abre um assistente em duas etapas.
+
+Fluxo:
+
+1. Selecione o XML exportado da prefeitura (padrão ABRASF; aceita um arquivo com várias NFS-e), a **obra/projeto** (obrigatória) e o vencimento em dias.
+2. Clique em **Analisar XML** — a API (`nfse-preview`) faz o parse (`parse_nfse_abrasf`), identifica emitidas × recebidas comparando o CNPJ do prestador com o CNPJ da empresa, casa cada NF com cliente/fornecedor pelos dígitos do documento (`nfse_find_entity`) e marca duplicatas (por `documentNumber`).
+3. Na prévia, revise a lista e desmarque o que não quer importar. Se houver partes **não cadastradas**, aparece a opção **"Criar automaticamente N clientes/fornecedores"** (marcada por padrão).
+4. Clique em **Importar selecionadas** (`nfse-import`). Para cada NF nova: cria um `fiscal_documents` vinculado à obra e a conta correspondente — **emitida → Contas a Receber**, **recebida → Contas a Pagar** — com referência cruzada. Tudo transacional.
+
+Criação automática de entidade (`nfse_create_entity`): quando a NF não tem vínculo e a opção está marcada, cria o registro em `clients` (emitida → tomador) ou `suppliers` (recebida → prestador) com nome, CNPJ/CPF formatado, endereço (logradouro+número+bairro), CEP, e-mail e telefone extraídos do XML. Reconfere o documento antes de inserir para não duplicar dentro do mesmo lote. Falha ao criar não aborta a importação (a NF entra sem vínculo). A resposta traz `data.criados[]` com os cadastros criados.
+
+> Detalhe de implementação: o frontend (`importarNfsesSelecionadas`) envia, além de `criarEntidades`, os objetos `tomador` e `prestador` de cada NF — o parser extrai endereço/contato das duas partes. Sem esses dados no payload, a criação no servidor não teria como preencher os campos.
+
+---
+
+## Conciliação Bancária OFX — v1.10.0
+
+No módulo Financeiro, a conciliação importa extratos **OFX** de múltiplos bancos.
+
+- Parser de OFX com controle de duplicatas por **FITID** (tabelas `ofx_imports` e `ofx_fitids`) — reimportar o mesmo extrato não duplica lançamentos.
+- Saldo por extrato, KPI cards por banco e cadastro simplificado de conta bancária.
+- Prévia antes de gravar e histórico de importações.
+- **Match automático** por valor + data contra contas a pagar/receber em aberto, com **baixa automática** ao conciliar. Lançamentos sem contraparte podem ser importados avulsos.
+- As colunas de conciliação ficam em `accounts_receivable`/`accounts_payable` (migration `2026-06-12-ofx-conciliacao.sql`).
+
+---
+
+## Qualidade — PBQP-H Nível B — v1.9.0
+
+Módulo de Sistema de Gestão da Qualidade alinhado ao PBQP-H/SiAC Nível B, integrado ao cronograma das obras:
+
+- **Política da qualidade** (`qualidade_politica`), **PQO** — Plano da Qualidade da Obra (`qualidade_pqo`), **PES** — Plano de Execução de Serviços (`qualidade_pes`).
+- **FVS** — Ficha de Verificação de Serviço (`qualidade_fvs`) e **FVM** — Ficha de Verificação de Material (`qualidade_fvm`), com regras de assinaturas e resultado validadas no servidor.
+- **NC** — Não Conformidades (`qualidade_nc`) com numeração sequencial protegida contra corrida.
+- **Treinamentos** (`qualidade_treinamentos`), **Auditoria** (`qualidade_auditorias`) e **Dashboard** da qualidade.
+
+---
+
+## Plugins e Estudos Técnicos — v1.9.0
+
+- **Sistema de plugins** (`system_plugins`): habilita/desabilita módulos opcionais por instalação. Os arquivos de cada plugin ficam em `plugins/<nome>/`.
+- **Estudo de Seletividade** (`plugins/seletividade/`): plugin de engenharia elétrica para estudo de seletividade/coordenação de proteção, com estudos salvos no banco (salvar, listar, carregar, duplicar, excluir por usuário) e geração de **PDF técnico** em padrão ABNT NBR 14724 (cabeçalho, rodapé da empresa em todas as páginas, assinaturas de Resp. Técnico/Execução/Cliente, coordenogramas).
+- **Análises de viabilidade** (`viability_analyses`): parecer de viabilidade com histórico de mudanças de parecer.
+
 ---
 
 ## Propostas Comerciais
@@ -686,8 +810,15 @@ Após subir os arquivos, execute as migrations novas que ainda não foram rodada
 
 ---
 
-## Checklist Pós-Deploy (v1.8.0)
+## Checklist Pós-Deploy (v1.11.0)
 
+- [ ] **Incrementou o `?v=NNNN`** das tags `styles.css`/`app.js` em `index.html` (evita cache velho).
+- [ ] Todas as migrations pendentes executadas (ver lista em "Migrações incrementais", até `2026-06-12-ofx-conciliacao.sql`).
+- [ ] Importação OFX: prévia, detecção de duplicatas por FITID, match/baixa automática.
+- [ ] Importação XML NFS-e: prévia em lote, criação de Contas a Receber/Pagar e criação automática de cliente/fornecedor não cadastrado.
+- [ ] Módulo Qualidade (PBQP-H): criar FVS/FVM/NC e validar regras server-side.
+- [ ] Importador SINAPI assíncrono: enfileirar e acompanhar progresso (worker ativo).
+- [ ] Plugin Seletividade: salvar estudo, gerar PDF, duplicar/excluir.
 - [ ] Migrations `2026-06-10-api-auth-sessions.sql` e `2026-06-10-password-strength.sql` executadas.
 - [ ] `deploy_secret` configurado em `/etc/financeiro/config.php` e no GitHub Webhook.
 - [ ] Seção `mail` configurada em `/etc/financeiro/config.php` (SMTP ou relay Postfix).

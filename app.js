@@ -19,8 +19,8 @@ if (APP_ENV === "production" && location.protocol === "http:") {
   location.replace(location.href.replace(/^http:/, "https:"));
 }
 const APP_NAME = "ObraSync";
-const APP_VERSION = "v1.8.0";
-const APP_VERSION_DATE = "2026-06-10";
+const APP_VERSION = "v1.11.0";
+const APP_VERSION_DATE = "2026-06-13";
 const APP_CHANGELOG = [
   "Controle interno de versão e instruções de atualização segura.",
   "Perfis e permissões preparados por módulo e ação.",
@@ -34,6 +34,15 @@ const APP_CHANGELOG = [
   "Gerador de proposta comercial a partir de orçamento de obra, com modelo editável, variáveis dinâmicas, itens do orçamento e impressão/PDF A4.",
   "Importador SINAPI 04/2026 preparado para XLSX/CSV, UF padrão MS, manutenções, mão de obra, famílias/coeficientes e configuração de propostas SINAPI.",
   "Autenticação por token na API com autorização por rota e perfil, tratamento de respostas inválidas, blindagem do armazenamento local, validação de datas nos filtros e escape padrão de HTML no CRUD.",
+  "Agenda e Kanban integrados às obras (v1.9.0).",
+  "Importador SINAPI assíncrono via worker em fila (sinapi_import_jobs), com prévia e acompanhamento de progresso (v1.9.0).",
+  "Módulo PBQP-H Nível B: PQO, PES, FVS, FVM, NC, Treinamentos, Auditoria e Dashboard, integrado ao cronograma (v1.9.0).",
+  "Sistema de plugins (system_plugins) e plugin de Estudo de Seletividade com estudos salvos no banco e PDF técnico ABNT (v1.9.0).",
+  "Análises de viabilidade (viability_analyses) com histórico de parecer (v1.9.0).",
+  "Endurecimento de segurança: rate limit de login/reset, sem enumeração de e-mail, TTL absoluto de sessão (12 h), audit_log server-side, CSP/HSTS, tokens fora das URLs (v1.9.0).",
+  "Conciliação bancária OFX multi-banco: parser, controle de duplicatas por FITID (ofx_imports/ofx_fitids), prévia, match automático por valor+data e baixa automática de contas a pagar/receber (v1.10.0).",
+  "Importação de XML NFS-e (padrão ABRASF): leitura automática, prévia em lote, criação de Contas a Receber (emitidas) e a Pagar (recebidas) vinculadas à obra (v1.11.0).",
+  "Criação automática de cliente/fornecedor a partir do XML NFS-e durante a importação, com dados de nome, CNPJ/CPF, endereço, e-mail e telefone (v1.11.0).",
 ];
 
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
