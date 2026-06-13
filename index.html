@@ -12,7 +12,7 @@
     <link rel="icon" type="image/png" href="assets/favicon.png" />
     <!-- Tema antes do primeiro paint; arquivo separado para o CSP sem 'unsafe-inline'. -->
     <script src="theme-init.js?v=1722"></script>
-    <link rel="stylesheet" href="styles.css?v=1730" />
+    <link rel="stylesheet" href="styles.css?v=1731" />
   </head>
   <body>
     <section id="loginScreen" class="login-screen">
@@ -196,6 +196,100 @@
       </main>
     </div>
 
+    <!-- Drawer de cadastro rápido de cliente/fornecedor a partir da NFS-e -->
+    <div id="drawerNfseEntidade" class="nfse-drawer hidden">
+      <div class="nfse-drawer-box">
+        <div class="nfse-drawer-head">
+          <div>
+            <h3 id="drawerNfsetitulo">Cadastrar cliente</h3>
+            <p id="drawerNfsesubtitle" class="nfse-drawer-sub">
+              Dados pré-preenchidos a partir da nota fiscal. Revise e complete antes de salvar.
+            </p>
+          </div>
+          <button id="btnFecharDrawerNfse" class="nfse-close sel-close" type="button" aria-label="Fechar">✕</button>
+        </div>
+
+        <div class="nfse-drawer-form">
+          <div class="nfse-drawer-grid">
+            <label class="nfse-drawer-label full">
+              Nome / Razão Social <span class="nfse-obrig">*</span>
+              <input id="drawerNome" type="text" placeholder="Nome completo ou razão social" />
+            </label>
+
+            <label class="nfse-drawer-label">
+              CPF / CNPJ <span class="nfse-obrig">*</span>
+              <input id="drawerDocumento" type="text" placeholder="000.000.000-00 ou 00.000.000/0001-00" readonly />
+            </label>
+
+            <label class="nfse-drawer-label">
+              Tipo
+              <select id="drawerTipo" disabled>
+                <option value="PF">Pessoa Física (CPF)</option>
+                <option value="PJ">Pessoa Jurídica (CNPJ)</option>
+              </select>
+            </label>
+
+            <label class="nfse-drawer-label">
+              CEP
+              <input id="drawerCep" type="text" placeholder="00000-000" maxlength="9" />
+            </label>
+
+            <label class="nfse-drawer-label full">
+              Endereço
+              <input id="drawerEndereco" type="text" placeholder="Rua, Avenida..." />
+            </label>
+
+            <label class="nfse-drawer-label">
+              Número
+              <input id="drawerNumero" type="text" placeholder="123" />
+            </label>
+
+            <label class="nfse-drawer-label">
+              Bairro
+              <input id="drawerBairro" type="text" placeholder="Bairro" />
+            </label>
+
+            <label class="nfse-drawer-label">
+              Cidade
+              <input id="drawerCidade" type="text" placeholder="Cidade" />
+            </label>
+
+            <label class="nfse-drawer-label">
+              UF
+              <input id="drawerUf" type="text" placeholder="MS" maxlength="2" />
+            </label>
+
+            <label class="nfse-drawer-label">
+              Email
+              <input id="drawerEmail" type="email" placeholder="email@exemplo.com" />
+            </label>
+
+            <label class="nfse-drawer-label">
+              Telefone
+              <input id="drawerTelefone" type="text" placeholder="(67) 99999-9999" maxlength="15" />
+            </label>
+
+            <label class="nfse-drawer-label">
+              Status
+              <select id="drawerStatus">
+                <option value="Ativo" selected>Ativo</option>
+                <option value="Inativo">Inativo</option>
+              </select>
+            </label>
+          </div>
+
+          <input type="hidden" id="drawerNfseIdx" value="" />
+          <input type="hidden" id="drawerEntidadeTipo" value="" />
+
+          <div class="nfse-drawer-actions">
+            <button class="secondary" id="btnCancelarDrawerNfse" type="button">Cancelar</button>
+            <button class="primary" id="btnSalvarDrawerNfse" type="button">Salvar e vincular à NF</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="drawerNfseOverlay" class="nfse-drawer-overlay hidden"></div>
+
     <dialog id="recordDialog">
       <form id="recordForm" method="dialog">
         <div class="dialog-head">
@@ -264,6 +358,6 @@
       </menu>
     </dialog>
 
-    <script src="app.js?v=1731"></script>
+    <script src="app.js?v=1732"></script>
   </body>
 </html>

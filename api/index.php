@@ -199,6 +199,11 @@ try {
         authorize_request($pdo, $authUser, 'fiscalDocuments', 'edit');
         handle_nfse_preview($pdo, $config);
     }
+    if ($resource === 'nfse-cadastrar-entidade' || $resource === 'nfseCadastrarEntidade') {
+        require_method($method, ['POST']);
+        authorize_request($pdo, $authUser, 'fiscalDocuments', 'edit');
+        handle_nfse_create_entity_quick($pdo, $authUser, read_json());
+    }
     if ($resource === 'nfse-import') {
         require_method($method, ['POST']);
         authorize_request($pdo, $authUser, 'fiscalDocuments', 'edit');
@@ -2693,6 +2698,8 @@ function parse_nfse_abrasf(string $xmlContent, string $cnpjEmpresa): array
                 'endereco' => trim((string) ($prestadorEndereco->Endereco ?? '')),
                 'numero' => trim((string) ($prestadorEndereco->Numero ?? '')),
                 'bairro' => trim((string) ($prestadorEndereco->Bairro ?? '')),
+                'cidade' => trim((string) ($prestadorEndereco->Municipio ?? $prestadorEndereco->Cidade ?? $prestadorEndereco->CodigoMunicipio ?? '')),
+                'uf' => strtoupper(trim((string) ($prestadorEndereco->Uf ?? $prestadorEndereco->UF ?? ''))),
                 'cep' => preg_replace('/\D/', '', (string) ($prestadorEndereco->Cep ?? '')),
             ],
             'tomador' => [
@@ -2704,6 +2711,8 @@ function parse_nfse_abrasf(string $xmlContent, string $cnpjEmpresa): array
                 'endereco' => trim((string) ($tomadorEndereco->Endereco ?? '')),
                 'numero' => trim((string) ($tomadorEndereco->Numero ?? '')),
                 'bairro' => trim((string) ($tomadorEndereco->Bairro ?? '')),
+                'cidade' => trim((string) ($tomadorEndereco->Municipio ?? $tomadorEndereco->Cidade ?? $tomadorEndereco->CodigoMunicipio ?? '')),
+                'uf' => strtoupper(trim((string) ($tomadorEndereco->Uf ?? $tomadorEndereco->UF ?? ''))),
                 'cep' => preg_replace('/\D/', '', (string) ($tomadorEndereco->Cep ?? '')),
             ],
         ];
@@ -2727,6 +2736,83 @@ function nfse_find_entity(PDO $pdo, string $documentDigits, string $table): arra
     return $row ? ['id' => (int) $row['id'], 'nome' => (string) $row['name']] : ['id' => null, 'nome' => null];
 }
 
+function nfse_format_document_digits(string $digits): string
+{
+    $digits = preg_replace('/\D/', '', $digits);
+    if (strlen($digits) === 11) {
+        return preg_replace('/(\d{3})(\d{3})(\d{3})(\d{2})/', '$1.$2.$3-$4', $digits);
+    }
+    if (strlen($digits) === 14) {
+        return preg_replace('/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/', '$1.$2.$3/$4-$5', $digits);
+    }
+    return $digits;
+}
+
+function nfse_address_from_parts(array $parts): string
+{
+    return trim(implode(', ', array_filter([
+        trim((string) ($parts['endereco'] ?? '')),
+        trim((string) ($parts['numero'] ?? '')),
+        trim((string) ($parts['bairro'] ?? '')),
+        trim((string) ($parts['cidade'] ?? '')),
+        strtoupper(trim((string) ($parts['uf'] ?? ''))),
+    ], static fn ($part) => $part !== '')));
+}
+
+function handle_nfse_create_entity_quick(PDO $pdo, array $authUser, array $payload): never
+{
+    $table = trim((string) ($payload['table'] ?? ''));
+    $nome = trim((string) ($payload['nome'] ?? $payload['name'] ?? ''));
+    $documento = preg_replace('/\D/', '', (string) ($payload['documento'] ?? $payload['document'] ?? ''));
+
+    if (!in_array($table, ['clients', 'suppliers'], true)) {
+        fail('Tabela inválida.', 400);
+    }
+    if ($nome === '') {
+        fail('Nome obrigatório.', 400);
+    }
+    if ($documento === '' || !in_array(strlen($documento), [11, 14], true)) {
+        fail('CPF/CNPJ obrigatório ou inválido.', 400);
+    }
+
+    $existing = nfse_find_entity($pdo, $documento, $table);
+    if ($existing['id']) {
+        respond(['ok' => true, 'data' => [
+            'id' => $existing['id'],
+            'nomeFormatado' => $existing['nome'],
+            'criado' => false,
+        ], 'message' => 'Já cadastrado — vinculando.']);
+    }
+
+    $status = in_array((string) ($payload['status'] ?? ''), ['Ativo', 'Inativo'], true)
+        ? (string) $payload['status']
+        : 'Ativo';
+    $address = nfse_address_from_parts($payload);
+    $fields = [
+        'name' => mb_substr($nome, 0, 160),
+        'document' => nfse_format_document_digits($documento),
+        'zipCode' => preg_replace('/\D/', '', (string) ($payload['cep'] ?? $payload['zipCode'] ?? '')) ?: null,
+        'address' => $address !== '' ? mb_substr($address, 0, 255) : null,
+        'email' => trim((string) ($payload['email'] ?? '')) ?: null,
+        'phone' => preg_replace('/[^\d()+\- ]/', '', (string) ($payload['telefone'] ?? $payload['phone'] ?? '')) ?: null,
+        'status' => $status,
+    ];
+
+    try {
+        $newId = insert_dynamic($pdo, $table, $fields);
+    } catch (Throwable $error) {
+        error_log('[ObraSync NFS-e] Cadastro rápido falhou em ' . $table . ': ' . $error->getMessage());
+        fail('Erro ao cadastrar. Nada foi gravado — tente novamente.', 500);
+    }
+
+    server_audit($pdo, $authUser, 'create', $table, $newId, 'Cadastro rápido NFS-e: ' . $nome);
+    respond(['ok' => true, 'data' => [
+        'id' => $newId,
+        'nomeFormatado' => $nome,
+        'criado' => true,
+    ], 'message' => ($table === 'clients' ? 'Cliente' : 'Fornecedor') . ' cadastrado com sucesso.'], 201);
+}
+
 // Cria cliente (emitida → tomador) ou fornecedor (recebida → prestador) a partir
 // dos dados do XML NFS-e e devolve o ID. Reconfere o documento antes de inserir
 // para não duplicar quando duas NFs da mesma parte chegam no mesmo lote.
@@ -2747,17 +2833,8 @@ function nfse_create_entity(PDO $pdo, string $table, array $party): ?int
         return $existing['id'];
     }
 
-    $docFormatado = strlen($digits) === 11
-        ? preg_replace('/(\d{3})(\d{3})(\d{3})(\d{2})/', '$1.$2.$3-$4', $digits)
-        : (strlen($digits) === 14
-            ? preg_replace('/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/', '$1.$2.$3/$4-$5', $digits)
-            : $digits);
-
-    $enderecoCompleto = trim(implode(', ', array_filter([
-        trim((string) ($party['endereco'] ?? '')),
-        trim((string) ($party['numero'] ?? '')),
-        trim((string) ($party['bairro'] ?? '')),
-    ], static fn ($part) => $part !== '')));
+    $docFormatado = nfse_format_document_digits($digits);
+    $enderecoCompleto = nfse_address_from_parts($party);
 
     return insert_dynamic($pdo, $table, [
         'name' => mb_substr($nome, 0, 160),

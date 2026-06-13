@@ -8303,6 +8303,7 @@ async function carregarHistoricoOFX() {
 
 let nfseData = []; // NFs da prévia atual
 let nfseXmlFile = ""; // nome do XML salvo no servidor (vira xmlPath das NFs)
+let drawerNfseIdx = null; // índice da NF em nfseData usado pelo drawer de cadastro rápido
 
 // Injetado pelo renderCrud quando o módulo é fiscalDocuments: botão no
 // cabeçalho + modal em dois passos (upload/configuração → prévia em lote).
@@ -8400,10 +8401,16 @@ function setupNfseImport() {
     const index = Number(checkbox.dataset.idx);
     if (nfseData[index]) nfseData[index].importar = checkbox.checked;
   });
+  qs("nfseTableWrap")?.addEventListener("click", (event) => {
+    const button = event.target.closest(".nfse-btn-cadastrar");
+    if (!button) return;
+    abrirDrawerNfseEntidade(Number(button.dataset.idx));
+  });
 }
 
 function fecharModalNfse() {
   qs("modalNfse")?.classList.add("hidden");
+  fecharDrawerNfseEntidade();
   nfseData = [];
   nfseXmlFile = "";
 }
@@ -8461,20 +8468,16 @@ function renderizarPreviewNfse(data) {
       </thead>
       <tbody>
         ${nfseData.map((nf, index) => {
-          const party = nf.tipo === "emitida" ? nf.tomador : nf.prestador;
+          const party = nfseParteEntidade(nf);
           const doc = party.cnpj || party.cpf || "";
-          const entidadeHtml = `
-            <div class="nfse-entity">${svgText(nf.entityNome || party.nome || "—")}</div>
-            ${nf.entityId
-              ? '<div class="nfse-entity-ok">✅ Cadastrado no sistema</div>'
-              : `<div class="nfse-entity-warn">⚠️ ${svgText(maskDocument(doc))} — não cadastrado</div>`}`;
+          const entidadeHtml = nfseEntidadePreviewHtml(nf, party, doc, index);
           const resumoDisc = nf.discriminacao.length > 60 ? `${nf.discriminacao.slice(0, 60)}…` : nf.discriminacao;
           return `
-            <tr class="${nf.jaImportada ? "ofx-dup" : ""}">
+            <tr data-nfse-idx="${index}" class="${nf.jaImportada ? "ofx-dup" : ""}">
               <td><input type="checkbox" class="nfse-cb" data-idx="${index}" ${nf.jaImportada ? "disabled" : "checked"} /></td>
               <td><strong>${svgText(nf.numero)}</strong></td>
               <td>${asDate(nf.dataEmissao)}</td>
-              <td>${entidadeHtml}</td>
+              <td class="nfse-cell-entidade">${entidadeHtml}</td>
               <td class="ofx-memo" title="${svgText(nf.discriminacao)}">${svgText(resumoDisc)}</td>
               <td class="ofx-amount ${nf.tipo === "emitida" ? "ofx-entrada" : "ofx-saida"}">${nf.tipo === "emitida" ? "+" : "-"} ${asMoney(nf.valorLiquido)}</td>
               <td><span class="ofx-badge ${nf.tipo === "emitida" ? "ofx-badge-green" : "ofx-badge-yellow"}">${nf.tipo === "emitida" ? "▲ A Receber" : "▼ A Pagar"}</span></td>
@@ -8485,6 +8488,152 @@ function renderizarPreviewNfse(data) {
     </table>
   `;
   nfseData.forEach((nf) => { nf.importar = !nf.jaImportada; });
+}
+
+function nfseParteEntidade(nf) {
+  return nf?.tipo === "emitida" ? (nf.tomador || {}) : (nf.prestador || {});
+}
+
+function nfseEntidadePreviewHtml(nf, party, doc, index) {
+  if (nf.entityId) {
+    return `
+      <div class="nfse-entity">${svgText(nf.entityNome || party.nome || "—")}</div>
+      <div class="nfse-entity-ok">✅ Cadastrado — vinculado automaticamente</div>
+    `;
+  }
+  if (nf.jaImportada) {
+    return `
+      <div class="nfse-entity muted">${svgText(nf.entityNome || party.nome || "—")}</div>
+    `;
+  }
+  return `
+    <div class="nfse-entity">${svgText(party.nome || "—")}</div>
+    <div class="nfse-entity-missing">
+      <span class="nfse-entity-warn">⚠️ ${svgText(maskDocument(doc))} — não cadastrado</span>
+      <button class="nfse-btn-cadastrar" data-idx="${index}" type="button">+ Cadastrar agora</button>
+    </div>
+  `;
+}
+
+function abrirDrawerNfseEntidade(index) {
+  const nf = nfseData[index];
+  if (!nf || nf.entityId || nf.jaImportada) return;
+  const party = nfseParteEntidade(nf);
+  const docDigits = onlyDigits((party.cnpj || party.cpf || ""));
+  if (!docDigits) {
+    alert("A NFS-e não trouxe CPF/CNPJ para cadastrar automaticamente esta entidade.");
+    return;
+  }
+
+  drawerNfseIdx = index;
+  const emitida = nf.tipo === "emitida";
+  const isPF = docDigits.length === 11;
+  qs("drawerNfsetitulo").textContent = emitida ? "Cadastrar cliente" : "Cadastrar fornecedor";
+  qs("drawerNfsesubtitle").textContent = `Dados da NFS-e ${nf.numero} — revise e complete antes de salvar.`;
+  qs("drawerNome").value = party.nome || "";
+  qs("drawerDocumento").value = maskDocument(docDigits);
+  qs("drawerTipo").value = isPF ? "PF" : "PJ";
+  qs("drawerCep").value = party.cep ? maskCep(party.cep) : "";
+  qs("drawerEndereco").value = party.endereco || "";
+  qs("drawerNumero").value = party.numero || "";
+  qs("drawerBairro").value = party.bairro || "";
+  qs("drawerCidade").value = party.cidade || "";
+  qs("drawerUf").value = String(party.uf || "").slice(0, 2).toUpperCase();
+  qs("drawerEmail").value = party.email || "";
+  qs("drawerTelefone").value = party.telefone ? maskPhone(party.telefone) : "";
+  qs("drawerStatus").value = "Ativo";
+  qs("drawerNfseIdx").value = String(index);
+  qs("drawerEntidadeTipo").value = emitida ? "clients" : "suppliers";
+  qs("drawerNome").style.borderColor = "";
+
+  qs("drawerNfseEntidade").classList.remove("hidden");
+  qs("drawerNfseOverlay").classList.remove("hidden");
+  document.body.style.overflow = "hidden";
+  setTimeout(() => (qs("drawerNome").value ? qs("drawerEmail") : qs("drawerNome"))?.focus(), 100);
+}
+
+function fecharDrawerNfseEntidade() {
+  qs("drawerNfseEntidade")?.classList.add("hidden");
+  qs("drawerNfseOverlay")?.classList.add("hidden");
+  document.body.style.overflow = "";
+  drawerNfseIdx = null;
+}
+
+async function salvarDrawerNfseEntidade() {
+  const index = Number(qs("drawerNfseIdx")?.value);
+  const nf = nfseData[index];
+  const nome = qs("drawerNome")?.value.trim() || "";
+  const table = qs("drawerEntidadeTipo")?.value || "";
+  const documento = onlyDigits(qs("drawerDocumento")?.value || "");
+  if (!nf || !["clients", "suppliers"].includes(table)) return;
+  if (!nome) {
+    qs("drawerNome").style.borderColor = "var(--red)";
+    qs("drawerNome").focus();
+    return;
+  }
+  if (!documento) return alert("CPF/CNPJ obrigatório.");
+
+  const btn = qs("btnSalvarDrawerNfse");
+  btn.disabled = true;
+  btn.textContent = "Salvando...";
+  try {
+    const payload = await apiRequest("nfse-cadastrar-entidade", {
+      method: "POST",
+      body: JSON.stringify({
+        table,
+        nome,
+        documento,
+        endereco: qs("drawerEndereco").value.trim(),
+        numero: qs("drawerNumero").value.trim(),
+        bairro: qs("drawerBairro").value.trim(),
+        cidade: qs("drawerCidade").value.trim(),
+        uf: qs("drawerUf").value.trim().toUpperCase(),
+        cep: onlyDigits(qs("drawerCep").value),
+        email: qs("drawerEmail").value.trim(),
+        telefone: qs("drawerTelefone").value.trim(),
+        status: qs("drawerStatus").value,
+      }),
+    });
+    const entity = payload.data || {};
+    nf.entityId = entity.id;
+    nf.entityNome = entity.nomeFormatado || nome;
+    atualizarLinhaPreviewNfse(index, nf.entityId, nf.entityNome);
+    atualizarResumoEntidadesNfse();
+    fecharDrawerNfseEntidade();
+    showToast(`✅ ${table === "clients" ? "Cliente" : "Fornecedor"} "${nf.entityNome}" cadastrado e vinculado à NF ${nf.numero}.`);
+    refreshData().catch(() => {});
+  } catch (error) {
+    alert(`Erro ao salvar: ${error.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Salvar e vincular à NF";
+  }
+}
+
+function atualizarLinhaPreviewNfse(index, entityId, nomeFormatado) {
+  const row = qs("nfseTableWrap")?.querySelector(`tr[data-nfse-idx="${index}"]`);
+  if (!row) return;
+  const cell = row.querySelector(".nfse-cell-entidade");
+  if (cell) {
+    cell.innerHTML = `
+      <div class="nfse-entity">${svgText(nomeFormatado || "—")}</div>
+      <div class="nfse-entity-ok">✅ Cadastrado e vinculado</div>
+    `;
+  }
+  row.querySelector(".nfse-btn-cadastrar")?.remove();
+}
+
+function atualizarResumoEntidadesNfse() {
+  const box = qs("nfseResumo")?.querySelector(".nfse-criar-box");
+  if (!box) return;
+  const naoEncontrados = nfseData.filter((nf) => !nf.entityId && !nf.jaImportada).length;
+  if (!naoEncontrados) {
+    box.remove();
+    return;
+  }
+  const label = naoEncontrados === 1 ? "cliente/fornecedor" : "clientes/fornecedores";
+  box.querySelector("strong").textContent =
+    `Criar automaticamente ${naoEncontrados} ${label} não cadastrado${naoEncontrados === 1 ? "" : "s"}`;
 }
 
 async function importarNfsesSelecionadas() {
@@ -9523,6 +9672,36 @@ async function bootstrapApp() {
   }
   restoreSession();
 }
+
+document.addEventListener("click", (event) => {
+  if (event.target.id === "btnFecharDrawerNfse" || event.target.id === "btnCancelarDrawerNfse") {
+    fecharDrawerNfseEntidade();
+  }
+  if (event.target.id === "btnSalvarDrawerNfse") {
+    salvarDrawerNfseEntidade();
+  }
+  if (event.target.id === "drawerNfseOverlay") {
+    fecharDrawerNfseEntidade();
+  }
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && drawerNfseIdx !== null) {
+    fecharDrawerNfseEntidade();
+  }
+});
+
+qs("drawerTelefone")?.addEventListener("input", (event) => {
+  event.target.value = maskPhone(event.target.value);
+});
+
+qs("drawerCep")?.addEventListener("input", (event) => {
+  event.target.value = maskCep(event.target.value);
+});
+
+qs("drawerUf")?.addEventListener("input", (event) => {
+  event.target.value = event.target.value.replace(/[^a-z]/gi, "").slice(0, 2).toUpperCase();
+});
 
 document.addEventListener("change", (event) => {
   handleUserActivity();
