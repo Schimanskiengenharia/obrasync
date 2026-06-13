@@ -13,7 +13,7 @@ Antes de atualizar em produção, faça backup do banco e de `/var/lib/financeir
 Esta seção orienta qualquer pessoa — ou outra IA — que precise continuar o trabalho sem se perder.
 
 - **Versão atual:** `v1.11.0` (2026-06-13). A versão fica em **dois lugares que devem andar juntos**: a constante `APP_VERSION`/`APP_VERSION_DATE` no topo de `app.js` (com `APP_CHANGELOG`) e o cabeçalho deste README. O painel "Versão" em Configurações lê de `APP_VERSION`.
-- **Cache busting:** sempre que `app.js` ou `styles.css` mudarem, **incremente o `?v=NNNN`** das tags correspondentes em `index.html` (hoje `app.js?v=1732`, `styles.css?v=1731`). Sem isso o navegador serve a versão velha.
+- **Cache busting:** sempre que `app.js` ou `styles.css` mudarem, **incremente o `?v=NNNN`** das tags correspondentes em `index.html` (hoje `app.js?v=1733`, `styles.css?v=1731`). Sem isso o navegador serve a versão velha.
 - **Arquitetura:** SPA sem build. Todo o frontend está em `app.js` (arquivo único, ~10 mil linhas) + `index.html` (shell) + `styles.css`. Todo o backend está em `api/index.php` (arquivo único). O banco é MariaDB/MySQL.
 - **Convenções do backend (siga-as):** respostas via `respond(['ok' => true, 'data' => ...])` e erros via `fail($msg, $status)`; INSERT/UPDATE genéricos via `insert_dynamic()`/`update_dynamic()` (descartam colunas inexistentes — toleram diferenças de schema); auditoria via `server_audit()`. Muitas tabelas novas são criadas sob demanda por funções `ensure_*` no próprio `index.php` (além das migrations).
 - **Convenções do frontend:** chamadas autenticadas via `apiRequest()`; uploads via `fetchForm()`; toasts via `showToast()`; escape de HTML via `svgText()`/`escapeHtml()`. O token de sessão vai no header `Authorization: Bearer`.
@@ -215,6 +215,7 @@ mysql -u root -p financeiro < /var/www/financeiro/migrations/2026-06-10-viabilit
 mysql -u root -p financeiro < /var/www/financeiro/migrations/2026-06-11-sinapi-import-jobs.sql
 mysql -u root -p financeiro < /var/www/financeiro/migrations/2026-06-11-usuarios-cpf-nascimento-celular.sql
 mysql -u root -p financeiro < /var/www/financeiro/migrations/2026-06-12-ofx-conciliacao.sql
+mysql -u root -p financeiro < /var/www/financeiro/migrations/2026-06-13-nfse-fiscal-documents-permissions.sql
 ```
 
 A migration `2026-06-10-password-strength.sql` adiciona `email` e `mustChangePassword` em `system_users` e cria `password_reset_tokens`. Todos os usuários existentes ficam marcados para redefinir a senha no próximo login.
@@ -813,7 +814,7 @@ Após subir os arquivos, execute as migrations novas que ainda não foram rodada
 ## Checklist Pós-Deploy (v1.11.0)
 
 - [ ] **Incrementou o `?v=NNNN`** das tags `styles.css`/`app.js` em `index.html` (evita cache velho).
-- [ ] Todas as migrations pendentes executadas (ver lista em "Migrações incrementais", até `2026-06-12-ofx-conciliacao.sql`).
+- [ ] Todas as migrations pendentes executadas (ver lista em "Migrações incrementais", até `2026-06-13-nfse-fiscal-documents-permissions.sql`).
 - [ ] Importação OFX: prévia, detecção de duplicatas por FITID, match/baixa automática.
 - [ ] Importação XML NFS-e: prévia em lote, criação de Contas a Receber/Pagar e criação automática de cliente/fornecedor não cadastrado.
 - [ ] Módulo Qualidade (PBQP-H): criar FVS/FVM/NC e validar regras server-side.
