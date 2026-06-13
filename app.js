@@ -8345,10 +8345,6 @@ function setupNfseImport() {
                 ${(db.projects || []).map((project) => `<option value="${Number(project.id) || svgText(project.id)}">${svgText(project.name)}</option>`).join("")}
               </select>
             </label>
-            <label class="ofx-label">
-              Vencimento (dias após emissão)
-              <input id="nfseVencimentoDias" type="number" value="30" min="1" max="365" />
-            </label>
           </div>
           <div class="nfse-actions">
             <button id="btnNfsePreview" class="primary" type="button">🔍 Analisar XML</button>
@@ -8598,9 +8594,23 @@ async function salvarDrawerNfseEntidade() {
     nf.entityId = entity.id;
     nf.entityNome = entity.nomeFormatado || nome;
     atualizarLinhaPreviewNfse(index, nf.entityId, nf.entityNome);
+    // Propaga para NFs irmãs do mesmo lote (mesmo CPF/CNPJ): o backend já evita
+    // duplicar o cadastro; aqui só refletimos na prévia para o usuário não ter
+    // de clicar "Cadastrar agora" de novo em cada linha repetida da entidade.
+    let vinculadas = 1;
+    nfseData.forEach((outra, i) => {
+      if (i === index || outra.entityId || outra.jaImportada) return;
+      const p = nfseParteEntidade(outra);
+      if (onlyDigits(p.cnpj || p.cpf || "") !== documento) return;
+      outra.entityId = entity.id;
+      outra.entityNome = entity.nomeFormatado || nome;
+      atualizarLinhaPreviewNfse(i, outra.entityId, outra.entityNome);
+      vinculadas++;
+    });
     atualizarResumoEntidadesNfse();
     fecharDrawerNfseEntidade();
-    showToast(`✅ ${table === "clients" ? "Cliente" : "Fornecedor"} "${nf.entityNome}" cadastrado e vinculado à NF ${nf.numero}.`);
+    const alvo = vinculadas > 1 ? `${vinculadas} NFs deste lote` : `NF ${nf.numero}`;
+    showToast(`✅ ${table === "clients" ? "Cliente" : "Fornecedor"} "${nf.entityNome}" cadastrado e vinculado a ${alvo}.`);
     refreshData().catch(() => {});
   } catch (error) {
     alert(`Erro ao salvar: ${error.message}`);
@@ -8641,8 +8651,7 @@ async function importarNfsesSelecionadas() {
   if (!projectId) return alert("Selecione a obra/projeto — toda nota fiscal é vinculada a uma obra.");
   const selecionadas = nfseData.filter((nf) => nf.importar && !nf.jaImportada);
   if (!selecionadas.length) return alert("Nenhuma NFS-e selecionada para importar.");
-  const vencimentoDias = Math.max(1, Math.min(365, Number(qs("nfseVencimentoDias")?.value || 30)));
-  if (!confirm(`Importar ${selecionadas.length} NFS-e?\n\n• Emitidas → Contas a Receber (venc. em ${vencimentoDias} dias)\n• Recebidas → Contas a Pagar (venc. em ${vencimentoDias} dias)\n\nVocê poderá editar os registros depois.`)) return;
+  if (!confirm(`Importar ${selecionadas.length} NFS-e?\n\n• Emitidas → Contas a Receber\n• Recebidas → Contas a Pagar\n\nO vencimento entra como a data de emissão — ajuste depois em cada conta.`)) return;
 
   const criarEntidades = qs("nfseAutoCreate")?.checked ?? false;
 
@@ -8654,7 +8663,6 @@ async function importarNfsesSelecionadas() {
       method: "POST",
       body: JSON.stringify({
         projectId,
-        vencimentoDias,
         xmlFile: nfseXmlFile,
         criarEntidades,
         nfses: selecionadas.map((nf) => ({

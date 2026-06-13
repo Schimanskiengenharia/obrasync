@@ -2907,7 +2907,6 @@ function handle_nfse_import(PDO $pdo, array $config, array $authUser, array $pay
 {
     $nfses = is_array($payload['nfses'] ?? null) ? $payload['nfses'] : [];
     $projectId = (int) ($payload['projectId'] ?? 0);
-    $vencimentoDias = max(1, min(365, (int) ($payload['vencimentoDias'] ?? 30)));
     $criarEntidades = (bool) ($payload['criarEntidades'] ?? false);
     $xmlFile = basename(trim((string) ($payload['xmlFile'] ?? '')));
     if (!$nfses) {
@@ -2993,7 +2992,10 @@ function handle_nfse_import(PDO $pdo, array $config, array $authUser, array $pay
                 'notes' => $notes !== '' ? mb_substr($notes, 0, 2000) : null,
             ]);
 
-            $vencimento = date_add_days($dataEmissao, $vencimentoDias);
+            // A importação não define vencimento: dueDate é NOT NULL, então
+            // usamos a própria data de emissão como fallback. O usuário ajusta
+            // o vencimento real depois, na conta a pagar/receber gerada.
+            $vencimento = $dataEmissao;
             // insert_dynamic descarta colunas inexistentes (referencia_tipo/_id
             // dependem da migration de integração) — funciona nos dois cenários.
             if ($emitida) {
