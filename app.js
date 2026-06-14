@@ -206,6 +206,18 @@ const roleModules = {
   visualizador: modules.map(([key]) => key),
 };
 
+// Mutação por papel (espelho de default_role_edit_modules no servidor). Fonte
+// única, reusada por canEditModule e pelo cálculo do padrão na grade de
+// permissões por usuário.
+const EDITABLE_BY_ROLE = {
+  financeiro: ["fiscalDocuments", "receivable", "payable", "cashMoves", "cashFlow", "reconciliation", "categories", "costCenters", "bankAccounts", "chartAccounts", "journalEntries", "taxDocuments", "taxes", "exports", "projectSchedule", "agenda", "kanban", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "sinapiSettings", "quotes", "sales", "viabilityAnalyses"],
+  comercial: ["clients", "budgets", "proposals", "agenda", "kanban", "viabilityAnalyses"],
+  engenharia: ["rdo", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "purchaseOrders", "fiscalDocuments", "technicalReports", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
+  gestor_obra: ["rdo", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "purchaseOrders", "fiscalDocuments", "technicalReports", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
+  gerente: modules.map(([k]) => k).filter((k) => !["users", "permissions"].includes(k)),
+  operador: ["rdo", "clients", "suppliers", "products", "services", "categories", "costCenters", "bankAccounts", "projects", "projectCosts", "projectRevenues", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "ownCompositions", "quotes", "fiscalDocuments", "receivable", "payable", "cashMoves", "reconciliation", "budgets", "proposals", "sales", "purchaseOrders", "projectSchedule", "projectMilestones", "agenda", "kanban", "qualidadeFvs", "qualidadeFvm", "qualidadeNc"],
+};
+
 const moduleLabels = Object.fromEntries(modules);
 const openNavGroups = new Set();
 
@@ -1665,6 +1677,7 @@ let db = loadDb();
 let currentModule = "dashboard";
 let editing = null;
 let currentUser = null;
+let myPermissions = {}; // overrides de permissão do usuário logado (vêm do bootstrap)
 
 function loadDb() {
   let loaded = null;
@@ -1819,6 +1832,7 @@ async function loadServerData() {
   Object.keys(seed).forEach((key) => {
     if (!Array.isArray(db[key])) db[key] = [];
   });
+  myPermissions = payload.data.userPermissions || {};
   serverMode = true;
   serverStatus = "Conectado ao servidor";
 }
@@ -1830,6 +1844,7 @@ async function refreshData() {
   Object.keys(seed).forEach((key) => {
     if (!Array.isArray(db[key])) db[key] = [];
   });
+  myPermissions = payload.data.userPermissions || {};
 }
 
 async function refreshAndRender() {
@@ -2176,16 +2191,10 @@ function canEdit() {
 function canEditModule(key = currentModule) {
   if (isAdmin()) return true;
   const permissionKey = { agendaEvents: "agenda", kanbanBoards: "kanban", kanbanColumns: "kanban", kanbanCards: "kanban" }[key] || key;
+  const override = myPermissions[permissionKey];
+  if (override) return !!override.edit;
   if (currentUser?.role === "visualizador") return false;
-  const editableByRole = {
-    financeiro: ["fiscalDocuments", "receivable", "payable", "cashMoves", "cashFlow", "reconciliation", "categories", "costCenters", "bankAccounts", "chartAccounts", "journalEntries", "taxDocuments", "taxes", "exports", "projectSchedule", "agenda", "kanban", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "sinapiSettings", "quotes", "sales", "viabilityAnalyses"],
-    comercial: ["clients", "budgets", "proposals", "agenda", "kanban", "viabilityAnalyses"],
-    engenharia: ["rdo", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "purchaseOrders", "fiscalDocuments", "technicalReports", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
-    gestor_obra: ["rdo", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "purchaseOrders", "fiscalDocuments", "technicalReports", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
-    gerente: modules.map(([k]) => k).filter((k) => !["users", "permissions"].includes(k)),
-    operador: ["rdo", "clients", "suppliers", "products", "services", "categories", "costCenters", "bankAccounts", "projects", "projectCosts", "projectRevenues", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "ownCompositions", "quotes", "fiscalDocuments", "receivable", "payable", "cashMoves", "reconciliation", "budgets", "proposals", "sales", "purchaseOrders", "projectSchedule", "projectMilestones", "agenda", "kanban", "qualidadeFvs", "qualidadeFvm", "qualidadeNc"],
-  };
-  return (editableByRole[currentUser?.role] || []).includes(permissionKey);
+  return (EDITABLE_BY_ROLE[currentUser?.role] || []).includes(permissionKey);
 }
 
 function visibleRowsForModule(key, rows) {
@@ -2203,11 +2212,129 @@ function visibleRowsForModule(key, rows) {
 
 function visibleModules() {
   const allowed = roleModules[currentUser?.role] || [];
-  return modules.filter(([key]) => allowed.includes(key));
+  return modules.filter(([key]) => {
+    const override = myPermissions[key];
+    if (override) return !!override.view;
+    return allowed.includes(key);
+  });
 }
 
 function canAccessModule(key) {
   return visibleModules().some(([moduleKey]) => moduleKey === key);
+}
+
+// Padrão do PAPEL (sem override) — base da grade de permissões por usuário.
+function roleCanViewDefault(role, moduleKey) {
+  if (role === "admin") return true;
+  return (roleModules[role] || []).includes(moduleKey);
+}
+
+function roleCanEditDefault(role, moduleKey) {
+  if (role === "admin") return true;
+  if (role === "visualizador") return false;
+  return (EDITABLE_BY_ROLE[role] || []).includes(moduleKey);
+}
+
+// ── Permissões por usuário (override do papel) — modal admin ─────────────────
+let permUserState = { userId: null, role: "", overrides: {} };
+
+async function abrirPermissoesUsuario(userId) {
+  if (!isAdmin()) return;
+  try {
+    const r = await apiRequest(`user-permissions-get?userId=${userId}`, { method: "GET" });
+    permUserState = { userId: Number(userId), role: r.data.role, overrides: r.data.overrides || {} };
+    renderPermUserModal();
+  } catch (e) {
+    alert(`Erro ao carregar permissões: ${e.message}`);
+  }
+}
+
+// Estado efetivo de um módulo: override explícito se houver, senão padrão do papel.
+function permModuleState(moduleKey) {
+  const ov = permUserState.overrides[moduleKey];
+  if (ov) return { view: !!ov.canView, create: !!ov.canCreate, edit: !!ov.canEdit, del: !!ov.canDelete };
+  const edit = roleCanEditDefault(permUserState.role, moduleKey);
+  return { view: roleCanViewDefault(permUserState.role, moduleKey), create: edit, edit, del: edit };
+}
+
+function renderPermUserModal() {
+  const user = byId("users", permUserState.userId);
+  const nome = user ? (user.fullName || user.name || user.username) : `#${permUserState.userId}`;
+  qs("permUserModal")?.remove();
+  const overlay = document.createElement("div");
+  overlay.id = "permUserModal";
+  overlay.className = "nfse-overlay";
+  overlay.innerHTML = `
+    <div class="nfse-box perm-box">
+      <div class="nfse-head">
+        <h3>Permissões — ${svgText(nome)} <small>(${svgText(roleLabels[permUserState.role] || permUserState.role)})</small></h3>
+        <button class="nfse-close" type="button" id="permFechar" aria-label="Fechar">✕</button>
+      </div>
+      <p class="nfse-hint">Marque o que este usuário pode além (ou aquém) do papel. Linhas iguais ao padrão do papel não viram exceção. O admin sempre tem acesso total.</p>
+      <div class="perm-table-wrap">
+        <table class="perm-table">
+          <thead><tr><th>Módulo</th><th>Ver</th><th>Criar</th><th>Editar</th><th>Excluir</th></tr></thead>
+          <tbody>
+            ${modules.map(([key, label]) => {
+              const s = permModuleState(key);
+              return `<tr data-perm-module="${key}">
+                <td>${svgText(label)}</td>
+                <td><input type="checkbox" class="perm-cb" data-col="view" ${s.view ? "checked" : ""}></td>
+                <td><input type="checkbox" class="perm-cb" data-col="create" ${s.create ? "checked" : ""}></td>
+                <td><input type="checkbox" class="perm-cb" data-col="edit" ${s.edit ? "checked" : ""}></td>
+                <td><input type="checkbox" class="perm-cb" data-col="delete" ${s.del ? "checked" : ""}></td>
+              </tr>`;
+            }).join("")}
+          </tbody>
+        </table>
+      </div>
+      <div class="nfse-actions">
+        <button class="secondary" type="button" id="permReset">Restaurar padrão do papel</button>
+        <button class="primary" type="button" id="permSalvar">Salvar permissões</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  qs("permFechar")?.addEventListener("click", () => overlay.remove());
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+  qs("permReset")?.addEventListener("click", permResetUsuario);
+  qs("permSalvar")?.addEventListener("click", permSalvarUsuario);
+}
+
+async function permSalvarUsuario() {
+  const role = permUserState.role;
+  const permissions = [];
+  qs("permUserModal")?.querySelectorAll("[data-perm-module]").forEach((row) => {
+    const key = row.dataset.permModule;
+    const get = (col) => row.querySelector(`.perm-cb[data-col="${col}"]`)?.checked || false;
+    const cur = { view: get("view"), create: get("create"), edit: get("edit"), del: get("delete") };
+    const editDef = roleCanEditDefault(role, key);
+    const def = { view: roleCanViewDefault(role, key), create: editDef, edit: editDef, del: editDef };
+    if (cur.view !== def.view || cur.create !== def.create || cur.edit !== def.edit || cur.del !== def.del) {
+      permissions.push({ module: key, canView: cur.view, canCreate: cur.create, canEdit: cur.edit, canDelete: cur.del });
+    }
+  });
+  try {
+    await apiRequest("user-permissions-save", { method: "POST", body: JSON.stringify({ userId: permUserState.userId, permissions }) });
+    showToast(`Permissões salvas — ${permissions.length} exceção${permissions.length === 1 ? "" : "ões"} ao papel.`);
+    qs("permUserModal")?.remove();
+    if (sameId(permUserState.userId, currentUser?.id)) await refreshData();
+    render();
+  } catch (e) {
+    alert(`Erro ao salvar: ${e.message}`);
+  }
+}
+
+async function permResetUsuario() {
+  if (!confirm("Remover todas as exceções e voltar ao padrão do papel?")) return;
+  try {
+    await apiRequest("user-permissions-reset", { method: "POST", body: JSON.stringify({ userId: permUserState.userId }) });
+    showToast("Permissões restauradas ao padrão do papel.");
+    qs("permUserModal")?.remove();
+    if (sameId(permUserState.userId, currentUser?.id)) await refreshData();
+    render();
+  } catch (e) {
+    alert(`Erro ao restaurar: ${e.message}`);
+  }
 }
 
 // Navegação lateral: accordion, recolhimento desktop e menu ocultável no mobile.
@@ -4309,6 +4436,7 @@ function renderCrud(key) {
   qs("content").querySelectorAll("[data-edit]").forEach((button) => button.addEventListener("click", () => openForm(key, button.dataset.edit)));
   qs("content").querySelectorAll("[data-delete]").forEach((button) => button.addEventListener("click", () => removeRecord(key, button.dataset.delete)));
   qs("content").querySelectorAll("[data-toggle-block]").forEach((btn) => btn.addEventListener("click", () => toggleUserBlock(btn.dataset.toggleBlock, btn.dataset.blockState !== "1")));
+  qs("content").querySelectorAll("[data-user-perms]").forEach((btn) => btn.addEventListener("click", () => abrirPermissoesUsuario(btn.dataset.userPerms)));
   qs("content").querySelectorAll(".reveal-btn").forEach((btn) => btn.addEventListener("click", () => { btn.parentElement.innerHTML = svgText(btn.dataset.original); }));
   qs("content").querySelectorAll("[data-fiscal-download]").forEach((btn) => btn.addEventListener("click", () => {
     const [id, kind] = btn.dataset.fiscalDownload.split(":");
@@ -4356,9 +4484,11 @@ function table(title, rows, fields, actions = false, actionKey = "") {
 }
 
 function extraRowActions(actionKey, row) {
-  if (actionKey === "users" && isAdmin() && row.id !== currentUser?.id) {
+  if (actionKey === "users" && isAdmin()) {
+    const perms = `<button class="secondary" type="button" data-user-perms="${row.id}">Permissões</button>`;
+    if (row.id === currentUser?.id) return perms;
     const blocked = row.blocked;
-    return `<button class="secondary" type="button" data-toggle-block="${row.id}" data-block-state="${blocked ? "1" : "0"}">${blocked ? "Desbloquear" : "Bloquear"}</button>`;
+    return `${perms}<button class="secondary" type="button" data-toggle-block="${row.id}" data-block-state="${blocked ? "1" : "0"}">${blocked ? "Desbloquear" : "Bloquear"}</button>`;
   }
   if (["sinapiInputs", "sinapiCompositions", "ownCompositions", "quotes"].includes(actionKey)) {
     return `<button class="secondary" type="button" data-add-budget-item="${actionKey}:${row.id}">Adicionar</button>`;

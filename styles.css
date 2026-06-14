@@ -3721,6 +3721,16 @@ menu {
   .rdo-pdf-fotos figure { break-inside: avoid; }
 }
 
+/* ── Permissões por usuário (modal) ──────────────────────────────────────── */
+.perm-box { max-width: 720px; }
+.perm-table-wrap { max-height: 55vh; overflow-y: auto; margin: 8px 0; }
+.perm-table { width: 100%; border-collapse: collapse; }
+.perm-table th, .perm-table td { padding: 5px 8px; border-bottom: 1px solid var(--border, #e5e7eb); font-size: 13px; }
+.perm-table thead th { position: sticky; top: 0; background: var(--card, #fff); text-align: center; }
+.perm-table thead th:first-child { text-align: left; }
+.perm-table td:not(:first-child) { text-align: center; }
+.perm-table tbody tr:hover { background: rgba(15, 118, 110, 0.05); }
+
 /* ── Drawer de cadastro rápido NFS-e ────────────────────────────────────── */
 .nfse-drawer-overlay {
   position: fixed;

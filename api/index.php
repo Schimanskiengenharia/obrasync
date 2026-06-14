@@ -279,6 +279,23 @@ try {
         handle_obra_disciplinas_delete($pdo, $authUser, (int) (read_json()['id'] ?? 0));
     }
 
+    // Permissões por usuário (override do papel) — só admin gerencia.
+    if ($resource === 'user-permissions-get') {
+        require_method($method, ['GET']);
+        require_admin($authUser);
+        handle_user_permissions_get($pdo);
+    }
+    if ($resource === 'user-permissions-save') {
+        require_method($method, ['POST']);
+        require_admin($authUser);
+        handle_user_permissions_save($pdo, $authUser, read_json());
+    }
+    if ($resource === 'user-permissions-reset') {
+        require_method($method, ['POST']);
+        require_admin($authUser);
+        handle_user_permissions_reset($pdo, $authUser, read_json());
+    }
+
     $key = normalize_resource($resource, $resources);
     if (!$key) {
         fail('Recurso não encontrado.', 404);
@@ -1442,6 +1459,9 @@ function bootstrap_data(PDO $pdo, array $resources, ?array $authUser = null, boo
             $data[$key] = [];
         }
     }
+    // Overrides de permissão do usuário logado: o frontend gateia menu/edição
+    // por cima do papel. Ausência de chave = herda do papel (igual à API).
+    $data['userPermissions'] = user_effective_permissions($pdo, (int) ($authUser['id'] ?? 0));
     return $data;
 }
 
@@ -3975,12 +3995,170 @@ function require_admin(?array $user): void
     }
 }
 
+// ── Permissões por usuário (override do papel) ──────────────────────────────
+// Camada acima de role_can: quando existe linha em user_permissions para
+// (userId, module), ela vale; na AUSÊNCIA, herda do papel. Sem nenhuma linha,
+// o comportamento é idêntico ao anterior.
+function ensure_user_permissions_table(PDO $pdo): void
+{
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    $pdo->exec("CREATE TABLE IF NOT EXISTS user_permissions (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        userId BIGINT UNSIGNED NOT NULL,
+        module VARCHAR(60) NOT NULL,
+        canView TINYINT(1) NOT NULL DEFAULT 0,
+        canCreate TINYINT(1) NOT NULL DEFAULT 0,
+        canEdit TINYINT(1) NOT NULL DEFAULT 0,
+        canDelete TINYINT(1) NOT NULL DEFAULT 0,
+        createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uk_userperm (userId, module),
+        INDEX idx_userperm_user (userId)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+    $done = true;
+}
+
+function user_can(PDO $pdo, ?array $user, string $module, string $action): bool
+{
+    if (!$user) {
+        return false;
+    }
+    if ((string) ($user['role'] ?? '') === 'admin') {
+        return true;
+    }
+    $userId = (int) ($user['id'] ?? 0);
+    if ($userId > 0) {
+        $column = ['view' => 'canView', 'create' => 'canCreate', 'edit' => 'canEdit', 'delete' => 'canDelete'][$action] ?? 'canEdit';
+        try {
+            ensure_user_permissions_table($pdo);
+            $stmt = $pdo->prepare("SELECT `{$column}` AS allowed FROM user_permissions WHERE userId = ? AND module = ? LIMIT 1");
+            $stmt->execute([$userId, $module]);
+            $row = $stmt->fetch();
+            if ($row) {
+                return (int) $row['allowed'] === 1;
+            }
+        } catch (PDOException $error) {
+            // Tabela ausente / sem DDL: herda do papel.
+        }
+    }
+    return role_can($pdo, (string) ($user['role'] ?? ''), $module, $action);
+}
+
+// Mapa de overrides do usuário para o frontend (só os módulos com linha
+// explícita; ausência = herda do papel). Vai no bootstrap.
+function user_effective_permissions(PDO $pdo, int $userId): array
+{
+    if ($userId <= 0) {
+        return [];
+    }
+    try {
+        ensure_user_permissions_table($pdo);
+        $stmt = $pdo->prepare('SELECT module, canView, canCreate, canEdit, canDelete FROM user_permissions WHERE userId = ?');
+        $stmt->execute([$userId]);
+        $map = [];
+        foreach ($stmt->fetchAll() as $r) {
+            $map[(string) $r['module']] = [
+                'view' => (int) $r['canView'] === 1,
+                'create' => (int) $r['canCreate'] === 1,
+                'edit' => (int) $r['canEdit'] === 1,
+                'delete' => (int) $r['canDelete'] === 1,
+            ];
+        }
+        return $map;
+    } catch (PDOException $error) {
+        return [];
+    }
+}
+
+function handle_user_permissions_get(PDO $pdo): never
+{
+    ensure_user_permissions_table($pdo);
+    $userId = (int) ($_GET['userId'] ?? 0);
+    if (!$userId) {
+        fail('Usuário não informado.', 400);
+    }
+    $u = $pdo->prepare('SELECT role FROM system_users WHERE id = ? LIMIT 1');
+    $u->execute([$userId]);
+    $role = $u->fetchColumn();
+    if ($role === false) {
+        fail('Usuário não encontrado.', 404);
+    }
+    $stmt = $pdo->prepare('SELECT module, canView, canCreate, canEdit, canDelete FROM user_permissions WHERE userId = ?');
+    $stmt->execute([$userId]);
+    $overrides = [];
+    foreach ($stmt->fetchAll() as $r) {
+        $overrides[(string) $r['module']] = [
+            'canView' => (int) $r['canView'] === 1,
+            'canCreate' => (int) $r['canCreate'] === 1,
+            'canEdit' => (int) $r['canEdit'] === 1,
+            'canDelete' => (int) $r['canDelete'] === 1,
+        ];
+    }
+    respond(['ok' => true, 'data' => ['role' => (string) $role, 'overrides' => $overrides]]);
+}
+
+function handle_user_permissions_save(PDO $pdo, array $authUser, array $payload): never
+{
+    ensure_user_permissions_table($pdo);
+    $userId = (int) ($payload['userId'] ?? 0);
+    if (!$userId) {
+        fail('Usuário não informado.', 400);
+    }
+    $perms = is_array($payload['permissions'] ?? null) ? $payload['permissions'] : [];
+    $pdo->beginTransaction();
+    try {
+        $pdo->prepare('DELETE FROM user_permissions WHERE userId = ?')->execute([$userId]);
+        $ins = $pdo->prepare('INSERT INTO user_permissions (userId, module, canView, canCreate, canEdit, canDelete) VALUES (?, ?, ?, ?, ?, ?)');
+        foreach ($perms as $p) {
+            if (!is_array($p)) {
+                continue;
+            }
+            $module = trim((string) ($p['module'] ?? ''));
+            if ($module === '') {
+                continue;
+            }
+            $ins->execute([
+                $userId,
+                mb_substr($module, 0, 60),
+                !empty($p['canView']) ? 1 : 0,
+                !empty($p['canCreate']) ? 1 : 0,
+                !empty($p['canEdit']) ? 1 : 0,
+                !empty($p['canDelete']) ? 1 : 0,
+            ]);
+        }
+        $pdo->commit();
+    } catch (Throwable $error) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        error_log('[ObraSync] user_permissions save: ' . $error->getMessage());
+        fail('Erro ao salvar permissões.', 500);
+    }
+    server_audit($pdo, $authUser, 'update', 'user_permissions', $userId, 'Permissões por usuário atualizadas');
+    respond(['ok' => true]);
+}
+
+function handle_user_permissions_reset(PDO $pdo, array $authUser, array $payload): never
+{
+    ensure_user_permissions_table($pdo);
+    $userId = (int) ($payload['userId'] ?? 0);
+    if (!$userId) {
+        fail('Usuário não informado.', 400);
+    }
+    $pdo->prepare('DELETE FROM user_permissions WHERE userId = ?')->execute([$userId]);
+    server_audit($pdo, $authUser, 'update', 'user_permissions', $userId, 'Permissões restauradas ao papel');
+    respond(['ok' => true]);
+}
+
 function authorize_request(PDO $pdo, ?array $user, string $module, string $action): void
 {
     if (!$user) {
         fail('Não autenticado. Faça login para acessar a API.', 401);
     }
-    if (!role_can($pdo, (string) ($user['role'] ?? ''), permission_module_key($module), $action)) {
+    if (!user_can($pdo, $user, permission_module_key($module), $action)) {
         fail('Permissão negada para este módulo.', 403);
     }
 }
