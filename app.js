@@ -9532,13 +9532,24 @@ async function importarNfsesSelecionadas() {
   }
 }
 
+let dreMostrarRepasse = true; // DRE: exibir a seção de Repasses (conta de passagem)
+
 function renderDre() {
   const revenue = applyFilters(db.receivable).filter((r) => categoryType(r.categoryId) === "Receita" && r.status !== "Cancelado");
-  const expenses = applyFilters(db.payable).filter((p) => categoryType(p.categoryId) !== "Investimento" && p.status !== "Cancelado");
+  const expenses = applyFilters(db.payable).filter((p) => categoryType(p.categoryId) !== "Investimento" && categoryType(p.categoryId) !== "Repasse" && p.status !== "Cancelado");
   const grossRevenue = sum(revenue, "amount");
   const operatingExpenses = sum(expenses, "amount");
   const result = grossRevenue - operatingExpenses;
+  // Repasses — conta de passagem: material/terceiros que só transitam pela
+  // empresa; não compõem o resultado operacional.
+  const repasseRecebido = sum(applyFilters(db.receivable).filter((r) => categoryType(r.categoryId) === "Repasse" && r.status !== "Cancelado"), "amount");
+  const repassePago = sum(applyFilters(db.payable).filter((p) => categoryType(p.categoryId) === "Repasse" && p.status !== "Cancelado"), "amount");
+  const saldoRepasse = repasseRecebido - repassePago;
   qs("content").innerHTML = `
+    <label class="dre-toggle-repasse no-print">
+      <input type="checkbox" id="dreToggleRepasse" ${dreMostrarRepasse ? "checked" : ""} />
+      Incluir seção de Repasses (conta de passagem)
+    </label>
     <section class="kpi-grid">
       ${kpi("Receita bruta", grossRevenue)}
       ${kpi("Despesas", operatingExpenses)}
@@ -9554,7 +9565,23 @@ function renderDre() {
       { line: "Despesas e custos operacionais", amount: -operatingExpenses },
       { line: "Resultado gerencial", amount: result },
     ], ["line", "amount"])}
+    ${(dreMostrarRepasse && (repasseRecebido || repassePago)) ? `
+      <section class="dre-repasse-section">
+        <h3>Repasses de terceiros (conta de passagem)</h3>
+        <p class="dre-repasse-nota">Valores de material/terceiros que apenas transitam pela empresa — não compõem o resultado operacional.</p>
+        ${table("Repasses", [
+          { line: "(+) Repasses recebidos", amount: repasseRecebido },
+          { line: "(−) Repasses pagos", amount: -repassePago },
+          { line: "Saldo de repasses (idealmente zero)", amount: saldoRepasse },
+        ], ["line", "amount"])}
+        ${Math.abs(saldoRepasse) > 0.009 ? `<p class="dre-repasse-alerta">⚠️ Saldo de repasse diferente de zero — material recebido ainda não comprado, ou vice-versa.</p>` : ""}
+      </section>
+    ` : ""}
   `;
+  qs("dreToggleRepasse")?.addEventListener("change", (event) => {
+    dreMostrarRepasse = event.target.checked;
+    renderDre();
+  });
 }
 
 function renderReports(mode = "reports") {
