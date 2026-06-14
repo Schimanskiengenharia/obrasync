@@ -9533,8 +9533,10 @@ async function importarNfsesSelecionadas() {
 }
 
 let dreMostrarRepasse = true; // DRE: exibir a seção de Repasses (conta de passagem)
+let dreModo = "simples"; // "simples" (competência) | "hibrido" (competência + conciliação de caixa)
 
 function renderDre() {
+  // Competência: tudo reconhecido no período (status ≠ Cancelado), por categoria.
   const revenue = applyFilters(db.receivable).filter((r) => categoryType(r.categoryId) === "Receita" && r.status !== "Cancelado");
   const expenses = applyFilters(db.payable).filter((p) => categoryType(p.categoryId) !== "Investimento" && categoryType(p.categoryId) !== "Repasse" && p.status !== "Cancelado");
   const grossRevenue = sum(revenue, "amount");
@@ -9545,39 +9547,100 @@ function renderDre() {
   const repasseRecebido = sum(applyFilters(db.receivable).filter((r) => categoryType(r.categoryId) === "Repasse" && r.status !== "Cancelado"), "amount");
   const repassePago = sum(applyFilters(db.payable).filter((p) => categoryType(p.categoryId) === "Repasse" && p.status !== "Cancelado"), "amount");
   const saldoRepasse = repasseRecebido - repassePago;
-  qs("content").innerHTML = `
-    <label class="dre-toggle-repasse no-print">
-      <input type="checkbox" id="dreToggleRepasse" ${dreMostrarRepasse ? "checked" : ""} />
-      Incluir seção de Repasses (conta de passagem)
-    </label>
-    <section class="kpi-grid">
-      ${kpi("Receita bruta", grossRevenue)}
-      ${kpi("Despesas", operatingExpenses)}
-      ${kpi("Resultado gerencial", result)}
-      ${kpi("Margem", grossRevenue ? asPercent((result / grossRevenue) * 100) : asPercent(0), false)}
-    </section>
+  // Caixa (modo híbrido): da competência, quanto já virou caixa (status
+  // Recebido/Pago); o restante segue em aberto (a receber / a pagar).
+  const recebido = sum(revenue.filter((r) => r.status === "Recebido"), "amount");
+  const pago = sum(expenses.filter((p) => p.status === "Pago"), "amount");
+  const geracaoCaixa = recebido - pago;
+  const aReceber = grossRevenue - recebido;
+  const aPagar = operatingExpenses - pago;
+
+  const controles = `
+    <div class="dre-controles no-print">
+      <label class="dre-modo">Visão do DRE
+        <select id="dreModo">
+          <option value="simples" ${dreModo === "simples" ? "selected" : ""}>Simples (competência)</option>
+          <option value="hibrido" ${dreModo === "hibrido" ? "selected" : ""}>Híbrido (competência + caixa)</option>
+        </select>
+      </label>
+      <label class="dre-toggle-repasse">
+        <input type="checkbox" id="dreToggleRepasse" ${dreMostrarRepasse ? "checked" : ""} />
+        Incluir seção de Repasses (conta de passagem)
+      </label>
+    </div>
+  `;
+
+  const categorias = `
     <section class="split">
       <div class="panel"><h3>Receitas por categoria</h3>${bars(groupByCategory(revenue))}</div>
       <div class="panel"><h3>Despesas por categoria</h3>${bars(groupByCategory(expenses).map((r) => ({ ...r, value: -Math.abs(r.value) })))}</div>
     </section>
-    ${table("DRE gerencial", [
-      { line: "Receita operacional bruta", amount: grossRevenue },
-      { line: "Despesas e custos operacionais", amount: -operatingExpenses },
-      { line: "Resultado gerencial", amount: result },
-    ], ["line", "amount"])}
-    ${(dreMostrarRepasse && (repasseRecebido || repassePago)) ? `
-      <section class="dre-repasse-section">
-        <h3>Repasses de terceiros (conta de passagem)</h3>
-        <p class="dre-repasse-nota">Valores de material/terceiros que apenas transitam pela empresa — não compõem o resultado operacional.</p>
-        ${table("Repasses", [
-          { line: "(+) Repasses recebidos", amount: repasseRecebido },
-          { line: "(−) Repasses pagos", amount: -repassePago },
-          { line: "Saldo de repasses (idealmente zero)", amount: saldoRepasse },
-        ], ["line", "amount"])}
-        ${Math.abs(saldoRepasse) > 0.009 ? `<p class="dre-repasse-alerta">⚠️ Saldo de repasse diferente de zero — material recebido ainda não comprado, ou vice-versa.</p>` : ""}
-      </section>
-    ` : ""}
   `;
+
+  const repasseSection = (dreMostrarRepasse && (repasseRecebido || repassePago)) ? `
+    <section class="dre-repasse-section">
+      <h3>Repasses de terceiros (conta de passagem)</h3>
+      <p class="dre-repasse-nota">Valores de material/terceiros que apenas transitam pela empresa — não compõem o resultado operacional.</p>
+      ${table("Repasses", [
+        { line: "(+) Repasses recebidos", amount: repasseRecebido },
+        { line: "(−) Repasses pagos", amount: -repassePago },
+        { line: "Saldo de repasses (idealmente zero)", amount: saldoRepasse },
+      ], ["line", "amount"])}
+      ${Math.abs(saldoRepasse) > 0.009 ? `<p class="dre-repasse-alerta">⚠️ Saldo de repasse diferente de zero — material recebido ainda não comprado, ou vice-versa.</p>` : ""}
+    </section>
+  ` : "";
+
+  if (dreModo === "hibrido") {
+    qs("content").innerHTML = `
+      ${controles}
+      <section class="kpi-grid">
+        ${kpi("Resultado (competência)", result)}
+        ${kpi("Geração de caixa", geracaoCaixa)}
+        ${kpi("A receber (em aberto)", aReceber)}
+        ${kpi("A pagar (em aberto)", aPagar)}
+      </section>
+      ${categorias}
+      ${table("DRE gerencial (competência)", [
+        { line: "Receita operacional bruta", amount: grossRevenue },
+        { line: "(−) Despesas e custos operacionais", amount: -operatingExpenses },
+        { line: "= Resultado (competência)", amount: result },
+      ], ["line", "amount"])}
+      <section class="dre-caixa-section">
+        <h3>Conciliação de caixa</h3>
+        <p class="dre-caixa-nota">Do que foi reconhecido na competência, quanto já entrou/saiu de caixa no período (status Recebido/Pago) e o que segue em aberto.</p>
+        ${table("Caixa", [
+          { line: "Recebido no período", amount: recebido },
+          { line: "(−) Pago no período", amount: -pago },
+          { line: "= Geração de caixa", amount: geracaoCaixa },
+          { line: "A receber (em aberto)", amount: aReceber },
+          { line: "A pagar (em aberto)", amount: aPagar },
+        ], ["line", "amount"])}
+      </section>
+      ${repasseSection}
+    `;
+  } else {
+    qs("content").innerHTML = `
+      ${controles}
+      <section class="kpi-grid">
+        ${kpi("Receita bruta", grossRevenue)}
+        ${kpi("Despesas", operatingExpenses)}
+        ${kpi("Resultado gerencial", result)}
+        ${kpi("Margem", grossRevenue ? asPercent((result / grossRevenue) * 100) : asPercent(0), false)}
+      </section>
+      ${categorias}
+      ${table("DRE gerencial", [
+        { line: "Receita operacional bruta", amount: grossRevenue },
+        { line: "Despesas e custos operacionais", amount: -operatingExpenses },
+        { line: "Resultado gerencial", amount: result },
+      ], ["line", "amount"])}
+      ${repasseSection}
+    `;
+  }
+
+  qs("dreModo")?.addEventListener("change", (event) => {
+    dreModo = event.target.value;
+    renderDre();
+  });
   qs("dreToggleRepasse")?.addEventListener("change", (event) => {
     dreMostrarRepasse = event.target.checked;
     renderDre();
