@@ -3666,6 +3666,61 @@ menu {
   line-height: 1.5;
 }
 
+/* ── Obra/Projeto opcional por NF na importação ─────────────────────────── */
+.nfse-obra-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: rgba(15, 118, 110, 0.05);
+  border: 1px solid rgba(15, 118, 110, 0.2);
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.nfse-obra-bar select { min-width: 200px; }
+.nfse-obra-sel { width: 100%; min-width: 130px; font-size: 12px; }
+.nfse-cell-obra { min-width: 150px; }
+
+/* ── Diário de Obra (RDO) ────────────────────────────────────────────────── */
+.rdo-mini-table { width: 100%; border-collapse: collapse; margin: 6px 0; }
+.rdo-mini-table th, .rdo-mini-table td { padding: 4px 6px; border-bottom: 1px solid var(--border, #e5e7eb); text-align: left; font-size: 13px; }
+.rdo-mini-table input, .rdo-mini-table select { width: 100%; }
+.rdo-add-disc { display: flex; gap: 8px; margin-top: 8px; }
+.rdo-add-disc input { flex: 1; }
+.rdo-foto-upload { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+.rdo-fotos-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
+.rdo-foto { margin: 0; border: 1px solid var(--border, #e5e7eb); border-radius: 8px; padding: 6px; }
+.rdo-foto img { width: 100%; height: 120px; object-fit: cover; border-radius: 6px; background: #f1f5f9; }
+.rdo-foto figcaption { font-size: 11px; color: var(--muted); margin: 4px 0; }
+.rdo-assinaturas { list-style: none; padding: 0; margin: 0 0 10px; }
+.rdo-assinaturas li { padding: 3px 0; font-size: 13px; }
+.rdo-assinaturas-panel { border-left: 4px solid var(--teal, #0f766e); }
+
+/* PDF do RDO: impresso por um container dedicado que só aparece no @media print */
+#rdoPrint { display: none; }
+.rdo-pdf-head h1 { font-size: 18px; margin: 0 0 4px; }
+.rdo-pdf-head p { margin: 2px 0; font-size: 12px; }
+.rdo-pdf-table { width: 100%; border-collapse: collapse; margin: 4px 0 10px; }
+.rdo-pdf-table th, .rdo-pdf-table td { border: 1px solid #999; padding: 4px 6px; font-size: 12px; text-align: left; }
+.rdo-pdf-text { font-size: 12px; white-space: pre-wrap; }
+.rdo-pdf-fotos { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.rdo-pdf-fotos img { width: 100%; height: auto; }
+.rdo-pdf-fotos figcaption { font-size: 11px; }
+.rdo-pdf-assinaturas { display: flex; flex-wrap: wrap; gap: 24px; margin-top: 30px; }
+.rdo-pdf-assina { text-align: center; min-width: 180px; }
+.rdo-pdf-assina .linha { display: block; border-top: 1px solid #000; margin-bottom: 4px; }
+.rdo-pdf-assina small { display: block; color: #555; }
+
+@media print {
+  body.rdo-printing > *:not(#rdoPrint) { display: none !important; }
+  body.rdo-printing #rdoPrint { display: block !important; }
+  .rdo-pdf-fotos figure { break-inside: avoid; }
+}
+
 /* ── Drawer de cadastro rápido NFS-e ────────────────────────────────────── */
 .nfse-drawer-overlay {
   position: fixed;

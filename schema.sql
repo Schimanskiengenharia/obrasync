@@ -637,7 +637,7 @@ CREATE TABLE IF NOT EXISTS accounts_payable (
 
 CREATE TABLE IF NOT EXISTS fiscal_documents (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  projectId BIGINT UNSIGNED NOT NULL,
+  projectId BIGINT UNSIGNED NULL, -- opcional: lote de NFS-e pode ter obras diferentes ou nenhuma
   supplierId BIGINT UNSIGNED NULL,
   documentNumber VARCHAR(100) NOT NULL,
   issueDate DATE NOT NULL,

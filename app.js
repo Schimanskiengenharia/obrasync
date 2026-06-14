@@ -74,6 +74,7 @@ const modules = [
   ["quotes", "Cotações"],
   ["abcCurve", "Curva ABC"],
   ["fiscalDocuments", "Notas Fiscais / Documentos Fiscais"],
+  ["rdo", "Diário de Obra (RDO)"],
   ["projectReport", "Relatório por obra"],
   ["qualidadeDashboard", "Dashboard Qualidade"],
   ["qualidadePolitica", "Política da Qualidade"],
@@ -157,7 +158,7 @@ const sidebarSections = [
   { id: "cadastros", label: "Cadastros", icon: "C", modules: ["clients", "suppliers", "products", "services", "categories", "costCenters", "bankAccounts"] },
   { id: "comercial", label: "Comercial", icon: "V", modules: ["budgets", "proposals", "proposalModels", "proposalAreas", "proposalActionTypes", "proposalServiceSubtypes", "sales"] },
   { id: "viabilidade", label: "Viabilidade", icon: "%", modules: ["viabilityAnalyses"] },
-  { id: "obras", label: "Obras/Projetos", icon: "O", modules: ["projects", "projectCosts", "projectRevenues", "fiscalDocuments", "projectNotifications", "projectTrackingLinks", "projectReport"] },
+  { id: "obras", label: "Obras/Projetos", icon: "O", modules: ["projects", "projectCosts", "projectRevenues", "fiscalDocuments", "rdo", "projectNotifications", "projectTrackingLinks", "projectReport"] },
   { id: "qualidadePbqph", label: "Qualidade PBQP-H", icon: "✅", modules: ["qualidadeDashboard", "qualidadePolitica", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos", "qualidadeAuditorias"] },
   { id: "orcamentoObra", label: "Orçamento de Obra", icon: "Σ", modules: ["workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "purchaseOrders"] },
   { id: "planejamento", label: "Planejamento", icon: "P", modules: ["projectSchedule", "projectMilestones", "agenda", "kanban", "technicalReports"] },
@@ -194,14 +195,14 @@ const roleModules = {
     "reports", "reportFinancial", "reportClient", "reportSupplier", "reportCostCenter", "reportProject", "exports", "systemVersion", "qualidadeDashboard",
   ],
   comercial: ["dashboard", "clients", "projects", "projectSchedule", "agenda", "kanban", "workBudgets", "abcCurve", "viabilityAnalyses", "budgets", "proposals", "proposalModels", "sales", "reportClient", "systemVersion"],
-  engenharia: ["dashboard", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "viabilityAnalyses", "purchaseOrders", "fiscalDocuments", "technicalReports", "projectReport", "proposals", "reportProject", "systemVersion", "qualidadeDashboard", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
-  gestor_obra: ["dashboard", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "viabilityAnalyses", "purchaseOrders", "fiscalDocuments", "technicalReports", "projectReport", "proposals", "reportProject", "systemVersion", "qualidadeDashboard", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
+  engenharia: ["dashboard", "rdo", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "viabilityAnalyses", "purchaseOrders", "fiscalDocuments", "technicalReports", "projectReport", "proposals", "reportProject", "systemVersion", "qualidadeDashboard", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
+  gestor_obra: ["dashboard", "rdo", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "viabilityAnalyses", "purchaseOrders", "fiscalDocuments", "technicalReports", "projectReport", "proposals", "reportProject", "systemVersion", "qualidadeDashboard", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
   equipe_campo: ["dashboard", "projectReport", "systemVersion"],
   cliente_obra: ["dashboard", "projectReport", "projectSchedule", "technicalReports", "systemVersion"],
   fornecedor_terceiro: ["dashboard", "systemVersion"],
   consulta: ["dashboard", "projectReport", "cashFlow", "dre", "reports", "reportFinancial", "reportClient", "reportSupplier", "reportCostCenter", "reportProject", "exports", "qualidadeDashboard"],
   gerente: modules.map(([key]) => key).filter((k) => !["users", "permissions"].includes(k)),
-  operador: ["dashboard", "clients", "suppliers", "products", "services", "categories", "costCenters", "bankAccounts", "projects", "projectCosts", "projectRevenues", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "ownCompositions", "quotes", "abcCurve", "fiscalDocuments", "receivable", "payable", "cashMoves", "cashFlow", "reconciliation", "budgets", "proposals", "sales", "purchaseOrders", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectReport", "reports", "reportFinancial", "reportClient", "reportSupplier", "reportCostCenter", "reportProject", "myProfile", "qualidadeDashboard", "qualidadeFvs", "qualidadeFvm", "qualidadeNc"],
+  operador: ["dashboard", "rdo", "clients", "suppliers", "products", "services", "categories", "costCenters", "bankAccounts", "projects", "projectCosts", "projectRevenues", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "ownCompositions", "quotes", "abcCurve", "fiscalDocuments", "receivable", "payable", "cashMoves", "cashFlow", "reconciliation", "budgets", "proposals", "sales", "purchaseOrders", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectReport", "reports", "reportFinancial", "reportClient", "reportSupplier", "reportCostCenter", "reportProject", "myProfile", "qualidadeDashboard", "qualidadeFvs", "qualidadeFvm", "qualidadeNc"],
   visualizador: modules.map(([key]) => key),
 };
 
@@ -756,7 +757,7 @@ const configs = {
     title: "Notas Fiscais / Documentos Fiscais",
     description: "Notas fiscais, recibos, comprovantes e anexos fiscais vinculados a obras/projetos.",
     fields: [
-      ["projectId", "Obra/Projeto", "project", true],
+      ["projectId", "Obra/Projeto", "project"],
       ["supplierId", "Fornecedor/prestador", "supplier"],
       ["documentNumber", "Número da nota fiscal", "text", true],
       ["issueDate", "Data de emissão", "date", true],
@@ -2179,10 +2180,10 @@ function canEditModule(key = currentModule) {
   const editableByRole = {
     financeiro: ["fiscalDocuments", "receivable", "payable", "cashMoves", "cashFlow", "reconciliation", "categories", "costCenters", "bankAccounts", "chartAccounts", "journalEntries", "taxDocuments", "taxes", "exports", "projectSchedule", "agenda", "kanban", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "sinapiSettings", "quotes", "sales", "viabilityAnalyses"],
     comercial: ["clients", "budgets", "proposals", "agenda", "kanban", "viabilityAnalyses"],
-    engenharia: ["projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "purchaseOrders", "fiscalDocuments", "technicalReports", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
-    gestor_obra: ["projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "purchaseOrders", "fiscalDocuments", "technicalReports", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
+    engenharia: ["rdo", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "purchaseOrders", "fiscalDocuments", "technicalReports", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
+    gestor_obra: ["rdo", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "purchaseOrders", "fiscalDocuments", "technicalReports", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
     gerente: modules.map(([k]) => k).filter((k) => !["users", "permissions"].includes(k)),
-    operador: ["clients", "suppliers", "products", "services", "categories", "costCenters", "bankAccounts", "projects", "projectCosts", "projectRevenues", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "ownCompositions", "quotes", "fiscalDocuments", "receivable", "payable", "cashMoves", "reconciliation", "budgets", "proposals", "sales", "purchaseOrders", "projectSchedule", "projectMilestones", "agenda", "kanban", "qualidadeFvs", "qualidadeFvm", "qualidadeNc"],
+    operador: ["rdo", "clients", "suppliers", "products", "services", "categories", "costCenters", "bankAccounts", "projects", "projectCosts", "projectRevenues", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "ownCompositions", "quotes", "fiscalDocuments", "receivable", "payable", "cashMoves", "reconciliation", "budgets", "proposals", "sales", "purchaseOrders", "projectSchedule", "projectMilestones", "agenda", "kanban", "qualidadeFvs", "qualidadeFvm", "qualidadeNc"],
   };
   return (editableByRole[currentUser?.role] || []).includes(permissionKey);
 }
@@ -2475,6 +2476,7 @@ function render() {
   if (currentModule === "qualidadeAuditorias") return renderQualidadeAuditorias();
   if (currentModule === "abcCurve") return renderAbcCurve();
   if (currentModule === "projectSchedule") return renderProjectSchedule();
+  if (currentModule === "rdo") return renderRdo();
   if (currentModule === "agenda") return renderAgenda();
   if (currentModule === "kanban") return renderKanban();
   if (currentModule === "auditLog") return renderAuditLog();
@@ -2489,6 +2491,640 @@ function render() {
   if (currentModule === "backupLocal") return renderBackupLocal();
   if (currentModule === "migration") return renderMigration();
   renderCrud(currentModule);
+}
+
+// ── Diário de Obra (RDO) ────────────────────────────────────────────────────
+const rdoUI = { view: "list", filtroObra: "", filtroDe: "", filtroAte: "", lista: [], atual: null, discObra: { projectId: "", lista: [] } };
+const RDO_CLIMA = ["", "Bom", "Nublado", "Chuvoso", "Chuva forte"];
+const RDO_SITUACAO = ["Operando", "Parado", "Manutenção"];
+
+function rdoCanEdit() {
+  return canEditModule("rdo");
+}
+
+function rdoHoje() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function rdoUserOptions(selectedId) {
+  const users = (db.users || []).filter((u) => String(u.status || "Ativo") !== "Inativo" && !u.blocked);
+  return `<option value="">— selecione —</option>` + users.map((u) => {
+    const nome = u.fullName || u.name || u.username || `#${u.id}`;
+    return `<option value="${u.id}" ${sameId(u.id, selectedId) ? "selected" : ""}>${svgText(nome)}</option>`;
+  }).join("");
+}
+
+function rdoObraOptions(selectedId) {
+  return `<option value="">Selecione a obra…</option>` + (db.projects || []).map((p) =>
+    `<option value="${p.id}" ${sameId(p.id, selectedId) ? "selected" : ""}>${svgText(p.name)}</option>`).join("");
+}
+
+function renderRdo() {
+  if (rdoUI.view === "disciplinas") return renderRdoDisciplinas();
+  if (rdoUI.view === "form") return renderRdoForm();
+  return renderRdoLista();
+}
+
+function renderRdoLista() {
+  const editable = rdoCanEdit();
+  qs("content").innerHTML = `
+    <section class="module-head">
+      <div>
+        <h2>Diário de Obra (RDO)</h2>
+        <p>Um RDO por obra por dia. O responsável geral e os responsáveis das disciplinas que atuaram assinam; quando todas as assinaturas são coletadas, o RDO é finalizado.</p>
+      </div>
+      <div class="row-actions">
+        ${editable ? '<button class="secondary" type="button" id="rdoBtnDisc">🏗️ Disciplinas da obra</button>' : ""}
+        ${editable ? '<button class="primary" type="button" id="rdoBtnNovo">+ Novo RDO</button>' : ""}
+      </div>
+    </section>
+    <section class="schedule-toolbar">
+      <label>Obra <select id="rdoFiltroObra">${rdoObraOptions(rdoUI.filtroObra)}</select></label>
+      <label>De <input type="date" id="rdoFiltroDe" value="${svgText(rdoUI.filtroDe)}"></label>
+      <label>Até <input type="date" id="rdoFiltroAte" value="${svgText(rdoUI.filtroAte)}"></label>
+      <button class="secondary" type="button" id="rdoFiltrar">Filtrar</button>
+    </section>
+    <div id="rdoListaWrap"><div class="empty">Carregando…</div></div>
+  `;
+  qs("rdoBtnNovo")?.addEventListener("click", rdoAbrirNovo);
+  qs("rdoBtnDisc")?.addEventListener("click", () => { rdoUI.view = "disciplinas"; rdoUI.discObra.projectId = rdoUI.filtroObra; render(); });
+  qs("rdoFiltrar")?.addEventListener("click", () => {
+    rdoUI.filtroObra = qs("rdoFiltroObra").value;
+    rdoUI.filtroDe = qs("rdoFiltroDe").value;
+    rdoUI.filtroAte = qs("rdoFiltroAte").value;
+    rdoCarregarLista();
+  });
+  rdoCarregarLista();
+}
+
+async function rdoCarregarLista() {
+  const wrap = qs("rdoListaWrap");
+  if (!wrap) return;
+  const params = new URLSearchParams();
+  if (rdoUI.filtroObra) params.set("projectId", rdoUI.filtroObra);
+  if (rdoUI.filtroDe) params.set("de", rdoUI.filtroDe);
+  if (rdoUI.filtroAte) params.set("ate", rdoUI.filtroAte);
+  try {
+    const r = await apiRequest(`rdo-list?${params.toString()}`, { method: "GET" });
+    rdoUI.lista = r.data || [];
+    rdoRenderTabela();
+  } catch (e) {
+    wrap.innerHTML = `<div class="empty">Erro ao carregar: ${svgText(e.message)}</div>`;
+  }
+}
+
+function rdoStatusBadge(status) {
+  const map = { Rascunho: "ofx-badge-gray", "Aguardando assinaturas": "ofx-badge-yellow", Finalizado: "ofx-badge-green" };
+  return `<span class="ofx-badge ${map[status] || ""}">${svgText(status || "—")}</span>`;
+}
+
+function rdoRenderTabela() {
+  const wrap = qs("rdoListaWrap");
+  if (!wrap) return;
+  if (!rdoUI.lista.length) {
+    wrap.innerHTML = `<div class="empty">Nenhum RDO encontrado.</div>`;
+    return;
+  }
+  const editable = rdoCanEdit();
+  wrap.innerHTML = `
+    <section class="table-wrap"><table>
+      <thead><tr><th>Nº</th><th>Data</th><th>Obra</th><th>Condição</th><th>Assinaturas</th><th>Status</th><th>Ações</th></tr></thead>
+      <tbody>
+        ${rdoUI.lista.map((r) => {
+          const obrig = Number(r.assinaturasObrig || 0) + 1;
+          const feitas = Number(r.assinaturasFeitas || 0) + (r.status === "Finalizado" ? 1 : 0);
+          return `<tr>
+            <td>${svgText(String(r.numeroSequencial || "—"))}</td>
+            <td>${asDate(r.data)}</td>
+            <td>${svgText(nameOf("projects", r.projectId) || "—")}</td>
+            <td>${svgText(r.condicaoTrabalho || "—")}</td>
+            <td>${feitas}/${obrig}</td>
+            <td>${rdoStatusBadge(r.status)}</td>
+            <td><div class="row-actions">
+              <button class="secondary" type="button" data-rdo-abrir="${r.id}">Abrir</button>
+              <button class="secondary" type="button" data-rdo-pdf="${r.id}">PDF</button>
+              ${editable ? `<button class="danger" type="button" data-rdo-del="${r.id}">Excluir</button>` : ""}
+            </div></td>
+          </tr>`;
+        }).join("")}
+      </tbody>
+    </table></section>
+  `;
+  wrap.querySelectorAll("[data-rdo-abrir]").forEach((b) => b.addEventListener("click", () => rdoAbrir(Number(b.dataset.rdoAbrir))));
+  wrap.querySelectorAll("[data-rdo-pdf]").forEach((b) => b.addEventListener("click", () => rdoGerarPdf(Number(b.dataset.rdoPdf))));
+  wrap.querySelectorAll("[data-rdo-del]").forEach((b) => b.addEventListener("click", () => rdoExcluir(Number(b.dataset.rdoDel))));
+}
+
+function rdoNovoDraft(obraId) {
+  return {
+    id: null, projectId: obraId || "", etapaId: "", data: rdoHoje(),
+    climaManha: "", climaTarde: "", climaNoite: "", condicaoTrabalho: "Praticável",
+    atividades: "", ocorrencias: "", observacoes: "", efetivo: [], equipamentos: [],
+    responsavelGeralUserId: "", responsavelGeralNome: "", status: "Rascunho",
+    disciplinas: [], assinaturas: [], fotos: [], numeroSequencial: null,
+  };
+}
+
+function rdoAbrirNovo() {
+  const draft = rdoNovoDraft(rdoUI.filtroObra);
+  if (draft.projectId) {
+    const obra = byId("projects", draft.projectId);
+    if (obra?.projectManagerId) {
+      draft.responsavelGeralUserId = obra.projectManagerId;
+      draft.responsavelGeralNome = nameOf("users", obra.projectManagerId) || obra.responsible || "";
+    }
+  }
+  rdoUI.atual = draft;
+  rdoUI.view = "form";
+  render();
+}
+
+async function rdoAbrir(id) {
+  try {
+    const r = await apiRequest(`rdo-get?id=${id}`, { method: "GET" });
+    rdoUI.atual = r.data;
+    rdoUI.view = "form";
+    render();
+  } catch (e) {
+    alert(`Erro ao abrir o RDO: ${e.message}`);
+  }
+}
+
+function rdoVoltarLista() {
+  rdoUI.view = "list";
+  rdoUI.atual = null;
+  render();
+}
+
+function rdoEfetivoRowHtml(item, disabled) {
+  return `<tr class="rdo-efetivo-row">
+    <td><input class="rdo-ef-funcao" value="${svgText(item.funcao || "")}" placeholder="Pedreiro" ${disabled}></td>
+    <td><input class="rdo-ef-qtd" type="number" min="0" value="${svgText(String(item.quantidade ?? ""))}" ${disabled}></td>
+    <td>${disabled ? "" : '<button class="danger" type="button" data-rdo-remrow>✕</button>'}</td>
+  </tr>`;
+}
+
+function rdoEquipRowHtml(item, disabled) {
+  return `<tr class="rdo-equip-row">
+    <td><input class="rdo-eq-nome" value="${svgText(item.nome || "")}" placeholder="Betoneira" ${disabled}></td>
+    <td><input class="rdo-eq-qtd" type="number" min="0" value="${svgText(String(item.quantidade ?? ""))}" ${disabled}></td>
+    <td><select class="rdo-eq-sit" ${disabled}>${RDO_SITUACAO.map((s) => `<option ${s === (item.situacao || "Operando") ? "selected" : ""}>${s}</option>`).join("")}</select></td>
+    <td>${disabled ? "" : '<button class="danger" type="button" data-rdo-remrow>✕</button>'}</td>
+  </tr>`;
+}
+
+function rdoDiscRowHtml(disc, disabled) {
+  return `<tr class="rdo-disc-row" data-disc-id="${disc.id || ""}" data-disc-disciplina-id="${disc.disciplinaId || ""}" data-disc-nome="${svgText(disc.disciplinaNome || "")}">
+    <td><input type="checkbox" class="rdo-disc-atuou" ${disc.atuouNoDia ? "checked" : ""} ${disabled}></td>
+    <td>${svgText(disc.disciplinaNome || "")}</td>
+    <td><select class="rdo-disc-resp" ${disabled}>${rdoUserOptions(disc.responsavelUserId)}</select></td>
+    <td>${disc.assinado ? "✅" : ""}</td>
+  </tr>`;
+}
+
+function rdoAssinaturasPainelHtml(d) {
+  if (d.status === "Rascunho") return "";
+  const linhas = [];
+  const geralAssinado = (d.assinaturas || []).some((a) => a.tipo === "Geral" && a.evento === "Assinatura");
+  linhas.push({ label: `Responsável geral — ${d.responsavelGeralNome || "—"}`, assinado: geralAssinado || d.status === "Finalizado" });
+  (d.disciplinas || []).filter((x) => Number(x.atuouNoDia) === 1).forEach((x) => {
+    linhas.push({ label: `${x.disciplinaNome} — ${x.responsavelNome || "—"}`, assinado: !!Number(x.assinado) });
+  });
+  const uid = currentUser?.id;
+  const admin = isAdmin();
+  const minhaPendencia = (!geralAssinado && sameId(d.responsavelGeralUserId, uid))
+    || (d.disciplinas || []).some((x) => Number(x.atuouNoDia) === 1 && !Number(x.assinado) && sameId(x.responsavelUserId, uid));
+  const podeAssinar = d.status === "Aguardando assinaturas" && (minhaPendencia || admin);
+  const podeReabrir = d.status !== "Rascunho" && (admin || sameId(d.responsavelGeralUserId, uid));
+  return `<section class="panel rdo-assinaturas-panel">
+    <h3>Assinaturas</h3>
+    <ul class="rdo-assinaturas">
+      ${linhas.map((l) => `<li>${l.assinado ? "✅" : "⏳"} ${svgText(l.label)}</li>`).join("")}
+    </ul>
+    <div class="row-actions">
+      ${d.status === "Aguardando assinaturas" ? `<button class="primary" type="button" id="rdoBtnAssinar" ${podeAssinar ? "" : 'disabled title="Somente o responsável (ou admin) assina"'}>Assinar minhas pendências</button>` : ""}
+      ${podeReabrir ? '<button class="secondary" type="button" id="rdoBtnReabrir">Reabrir (volta a rascunho)</button>' : ""}
+    </div>
+  </section>`;
+}
+
+function rdoFotosHtml(d) {
+  if (!d.id) return '<p class="field-hint">Salve o rascunho para anexar fotos.</p>';
+  const podeEditar = rdoCanEdit() && d.status !== "Finalizado";
+  return `
+    ${podeEditar ? `<div class="rdo-foto-upload">
+      <input type="file" id="rdoFotoFile" accept="image/jpeg,image/png,image/webp">
+      <input type="text" id="rdoFotoLegenda" placeholder="Legenda (opcional)" maxlength="200">
+      <button class="secondary" type="button" id="rdoFotoEnviar">Enviar foto</button>
+    </div>` : ""}
+    <div class="rdo-fotos-grid" id="rdoFotosGrid">
+      ${(d.fotos || []).map((f) => `<figure class="rdo-foto" data-foto-id="${f.id}">
+        <img alt="${svgText(f.legenda || "Foto do RDO")}" data-foto-load="${f.id}">
+        <figcaption>${svgText(f.legenda || "")}</figcaption>
+        ${podeEditar ? `<button class="danger" type="button" data-foto-del="${f.id}">Remover</button>` : ""}
+      </figure>`).join("") || '<p class="field-hint">Sem fotos.</p>'}
+    </div>`;
+}
+
+function renderRdoForm() {
+  const d = rdoUI.atual;
+  if (!d) return rdoVoltarLista();
+  const editable = rdoCanEdit();
+  const locked = !editable || d.status === "Aguardando assinaturas" || d.status === "Finalizado";
+  const dis = locked ? "disabled" : "";
+  const etapas = (db.projectSchedule || []).filter((e) => sameId(e.projectId, d.projectId));
+  const etapaSel = etapas.find((e) => sameId(e.id, d.etapaId));
+  const titulo = d.id ? `RDO Nº ${d.numeroSequencial || ""} — ${asDate(d.data)}` : "Novo RDO";
+  qs("content").innerHTML = `
+    <section class="module-head">
+      <div><h2>${svgText(titulo)}</h2><p>${rdoStatusBadge(d.status)} ${svgText(nameOf("projects", d.projectId) || "")}</p></div>
+      <div class="row-actions"><button class="secondary" type="button" id="rdoBtnVoltar">← Voltar</button></div>
+    </section>
+    <section class="panel">
+      <h3>Cabeçalho</h3>
+      <div class="form-grid">
+        <label>Obra (obrigatória)<select id="rdoFormObra" ${d.id ? "disabled" : dis}>${rdoObraOptions(d.projectId)}</select></label>
+        <label>Data<input type="date" id="rdoFormData" value="${svgText(d.data)}" ${d.id ? "disabled" : dis}></label>
+        <label>Etapa do cronograma (opcional)<select id="rdoFormEtapa" ${dis}><option value="">Sem vínculo</option>${etapas.map((e) => `<option value="${e.id}" ${sameId(e.id, d.etapaId) ? "selected" : ""}>${svgText(e.stageName)}</option>`).join("")}</select></label>
+        <label>Responsável da etapa<input value="${svgText(etapaSel?.responsible || "—")}" disabled></label>
+        <label>Responsável geral (assina/finaliza)<select id="rdoRespGeral" ${dis}>${rdoUserOptions(d.responsavelGeralUserId)}</select></label>
+      </div>
+      ${etapaSel?.servicoSiacId ? '<p class="field-hint">⚠️ Etapa é serviço controlado — a FVS será exigida na conclusão.</p>' : ""}
+    </section>
+    <section class="panel">
+      <h3>Clima e condição</h3>
+      <div class="form-grid">
+        <label>Manhã<select id="rdoClimaManha" ${dis}>${RDO_CLIMA.map((c) => `<option ${c === d.climaManha ? "selected" : ""}>${c}</option>`).join("")}</select></label>
+        <label>Tarde<select id="rdoClimaTarde" ${dis}>${RDO_CLIMA.map((c) => `<option ${c === d.climaTarde ? "selected" : ""}>${c}</option>`).join("")}</select></label>
+        <label>Noite<select id="rdoClimaNoite" ${dis}>${RDO_CLIMA.map((c) => `<option ${c === d.climaNoite ? "selected" : ""}>${c}</option>`).join("")}</select></label>
+        <label>Condição de trabalho<select id="rdoCondicao" ${dis}>${["Praticável", "Parcialmente praticável", "Impraticável"].map((c) => `<option ${c === d.condicaoTrabalho ? "selected" : ""}>${c}</option>`).join("")}</select></label>
+      </div>
+    </section>
+    <section class="panel">
+      <h3>Efetivo</h3>
+      <table class="rdo-mini-table"><thead><tr><th>Função</th><th>Qtd</th><th></th></tr></thead>
+        <tbody id="rdoEfetivoBody">${(d.efetivo || []).map((it) => rdoEfetivoRowHtml(it, dis)).join("")}</tbody></table>
+      ${locked ? "" : '<button class="secondary" type="button" id="rdoAddEfetivo">+ Linha</button>'}
+    </section>
+    <section class="panel">
+      <h3>Equipamentos</h3>
+      <table class="rdo-mini-table"><thead><tr><th>Equipamento</th><th>Qtd</th><th>Situação</th><th></th></tr></thead>
+        <tbody id="rdoEquipBody">${(d.equipamentos || []).map((it) => rdoEquipRowHtml(it, dis)).join("")}</tbody></table>
+      ${locked ? "" : '<button class="secondary" type="button" id="rdoAddEquip">+ Linha</button>'}
+    </section>
+    <section class="panel">
+      <h3>Registro do dia</h3>
+      <div class="form-grid">
+        <label class="full">Atividades executadas<textarea id="rdoAtividades" rows="3" ${dis}>${svgText(d.atividades || "")}</textarea></label>
+        <label class="full">Ocorrências / paralisações<textarea id="rdoOcorrencias" rows="2" ${dis}>${svgText(d.ocorrencias || "")}</textarea></label>
+        <label class="full">Observações<textarea id="rdoObservacoes" rows="2" ${dis}>${svgText(d.observacoes || "")}</textarea></label>
+      </div>
+    </section>
+    <section class="panel">
+      <h3>Disciplinas do dia</h3>
+      ${d.id ? `<table class="rdo-mini-table"><thead><tr><th>Atuou</th><th>Disciplina</th><th>Responsável (login)</th><th>Assin.</th></tr></thead>
+        <tbody id="rdoDiscBody">${(d.disciplinas || []).map((x) => rdoDiscRowHtml(x, dis)).join("") || '<tr><td colspan="4" class="field-hint">Nenhuma disciplina cadastrada para esta obra. Use "Disciplinas da obra" na lista.</td></tr>'}</tbody></table>
+        ${locked ? "" : '<div class="rdo-add-disc"><input id="rdoNovaDiscNome" placeholder="Adicionar disciplina avulsa"><button class="secondary" type="button" id="rdoAddDisc">+ Disciplina</button></div>'}`
+        : '<p class="field-hint">Salve o rascunho para carregar as disciplinas da obra e marcar quem atuou.</p>'}
+    </section>
+    <section class="panel">
+      <h3>Fotos</h3>
+      ${rdoFotosHtml(d)}
+    </section>
+    ${rdoAssinaturasPainelHtml(d)}
+    <section class="panel rdo-form-actions">
+      <div class="row-actions">
+        ${!locked ? '<button class="primary" type="button" id="rdoBtnSalvar">Salvar rascunho</button>' : ""}
+        ${!locked && d.id ? '<button class="primary" type="button" id="rdoBtnEnviar">Enviar para assinaturas</button>' : ""}
+        ${d.id ? '<button class="secondary" type="button" id="rdoBtnPdf">Gerar PDF</button>' : ""}
+      </div>
+    </section>
+  `;
+  rdoWireForm(d, locked);
+}
+
+function rdoWireForm(d, locked) {
+  qs("rdoBtnVoltar")?.addEventListener("click", rdoVoltarLista);
+  qs("rdoFormObra")?.addEventListener("change", (e) => {
+    d.projectId = e.target.value;
+    const obra = byId("projects", d.projectId);
+    if (obra?.projectManagerId && !d.responsavelGeralUserId) {
+      d.responsavelGeralUserId = obra.projectManagerId;
+    }
+    render();
+  });
+  qs("rdoFormEtapa")?.addEventListener("change", (e) => { d.etapaId = e.target.value; render(); });
+  qs("rdoAddEfetivo")?.addEventListener("click", () => qs("rdoEfetivoBody")?.insertAdjacentHTML("beforeend", rdoEfetivoRowHtml({}, "")));
+  qs("rdoAddEquip")?.addEventListener("click", () => qs("rdoEquipBody")?.insertAdjacentHTML("beforeend", rdoEquipRowHtml({}, "")));
+  qs("content").querySelectorAll("[data-rdo-remrow]").forEach((b) => b.addEventListener("click", () => b.closest("tr")?.remove()));
+  qs("rdoAddDisc")?.addEventListener("click", () => {
+    const nome = qs("rdoNovaDiscNome")?.value.trim();
+    if (!nome) return;
+    qs("rdoDiscBody")?.insertAdjacentHTML("beforeend", rdoDiscRowHtml({ disciplinaNome: nome, atuouNoDia: 1 }, ""));
+    qs("rdoNovaDiscNome").value = "";
+  });
+  qs("rdoBtnSalvar")?.addEventListener("click", () => rdoSalvar(false));
+  qs("rdoBtnEnviar")?.addEventListener("click", rdoEnviarAssinaturas);
+  qs("rdoBtnPdf")?.addEventListener("click", () => rdoGerarPdf(d.id));
+  qs("rdoBtnAssinar")?.addEventListener("click", rdoAssinar);
+  qs("rdoBtnReabrir")?.addEventListener("click", rdoReabrir);
+  qs("rdoFotoEnviar")?.addEventListener("click", rdoEnviarFoto);
+  qs("content").querySelectorAll("[data-foto-del]").forEach((b) => b.addEventListener("click", () => rdoExcluirFoto(Number(b.dataset.fotoDel))));
+  qs("content").querySelectorAll("[data-foto-load]").forEach((img) => rdoCarregarFoto(img, Number(img.dataset.fotoLoad)));
+}
+
+function rdoColetarForm() {
+  const d = rdoUI.atual;
+  const efetivo = [...document.querySelectorAll(".rdo-efetivo-row")].map((row) => ({
+    funcao: row.querySelector(".rdo-ef-funcao")?.value.trim() || "",
+    quantidade: Number(row.querySelector(".rdo-ef-qtd")?.value || 0),
+  })).filter((x) => x.funcao || x.quantidade);
+  const equipamentos = [...document.querySelectorAll(".rdo-equip-row")].map((row) => ({
+    nome: row.querySelector(".rdo-eq-nome")?.value.trim() || "",
+    quantidade: Number(row.querySelector(".rdo-eq-qtd")?.value || 0),
+    situacao: row.querySelector(".rdo-eq-sit")?.value || "Operando",
+  })).filter((x) => x.nome);
+  const disciplinas = [...document.querySelectorAll(".rdo-disc-row")].map((row) => ({
+    id: Number(row.dataset.discId) || null,
+    disciplinaId: Number(row.dataset.discDisciplinaId) || null,
+    disciplinaNome: row.dataset.discNome || "",
+    atuouNoDia: row.querySelector(".rdo-disc-atuou")?.checked ? 1 : 0,
+    responsavelUserId: Number(row.querySelector(".rdo-disc-resp")?.value || 0) || null,
+  }));
+  const respSel = qs("rdoRespGeral");
+  return {
+    id: d.id || null,
+    projectId: Number(qs("rdoFormObra")?.value || d.projectId) || null,
+    data: qs("rdoFormData")?.value || d.data,
+    etapaId: Number(qs("rdoFormEtapa")?.value || 0) || null,
+    climaManha: qs("rdoClimaManha")?.value || "",
+    climaTarde: qs("rdoClimaTarde")?.value || "",
+    climaNoite: qs("rdoClimaNoite")?.value || "",
+    condicaoTrabalho: qs("rdoCondicao")?.value || "Praticável",
+    atividades: qs("rdoAtividades")?.value || "",
+    ocorrencias: qs("rdoOcorrencias")?.value || "",
+    observacoes: qs("rdoObservacoes")?.value || "",
+    efetivo, equipamentos, disciplinas,
+    responsavelGeralUserId: Number(respSel?.value || 0) || null,
+    responsavelGeralNome: respSel?.selectedOptions?.[0]?.textContent?.trim() || d.responsavelGeralNome || "",
+  };
+}
+
+async function rdoSalvar() {
+  const payload = rdoColetarForm();
+  if (!payload.projectId) return alert("Selecione a obra.");
+  if (!payload.data) return alert("Informe a data.");
+  try {
+    const r = await apiRequest("rdo-save", { method: "POST", body: JSON.stringify(payload) });
+    rdoUI.atual = r.data;
+    showToast("RDO salvo.");
+    render();
+  } catch (e) {
+    alert(`Erro ao salvar: ${e.message}`);
+  }
+}
+
+async function rdoEnviarAssinaturas() {
+  if (!rdoUI.atual?.id) return;
+  await rdoSalvar();
+  if (!rdoUI.atual?.id) return;
+  if (!confirm("Enviar para assinaturas? Os campos de conteúdo ficam travados até a finalização ou reabertura.")) return;
+  try {
+    const r = await apiRequest("rdo-enviar-assinaturas", { method: "POST", body: JSON.stringify({ id: rdoUI.atual.id }) });
+    rdoUI.atual = r.data;
+    showToast("RDO enviado para assinaturas.");
+    render();
+  } catch (e) {
+    alert(`Não foi possível enviar: ${e.message}`);
+  }
+}
+
+async function rdoAssinar() {
+  if (!rdoUI.atual?.id) return;
+  try {
+    const r = await apiRequest("rdo-assinar", { method: "POST", body: JSON.stringify({ id: rdoUI.atual.id }) });
+    rdoUI.atual = r.data;
+    showToast(r.data.status === "Finalizado" ? "✅ RDO finalizado — todas as assinaturas coletadas." : "Assinatura registrada.");
+    render();
+  } catch (e) {
+    alert(`Erro ao assinar: ${e.message}`);
+  }
+}
+
+async function rdoReabrir() {
+  if (!rdoUI.atual?.id) return;
+  if (!confirm("Reabrir o RDO? Ele volta para rascunho e as assinaturas são zeradas (o histórico é mantido).")) return;
+  try {
+    const r = await apiRequest("rdo-reabrir", { method: "POST", body: JSON.stringify({ id: rdoUI.atual.id }) });
+    rdoUI.atual = r.data;
+    showToast("RDO reaberto.");
+    render();
+  } catch (e) {
+    alert(`Erro ao reabrir: ${e.message}`);
+  }
+}
+
+async function rdoExcluir(id) {
+  if (!confirm("Excluir este RDO e suas fotos? Esta ação não pode ser desfeita.")) return;
+  try {
+    await apiRequest("rdo-delete", { method: "POST", body: JSON.stringify({ id }) });
+    showToast("RDO excluído.");
+    rdoCarregarLista();
+  } catch (e) {
+    alert(`Erro ao excluir: ${e.message}`);
+  }
+}
+
+async function rdoEnviarFoto() {
+  const file = qs("rdoFotoFile")?.files?.[0];
+  if (!file) return alert("Escolha uma imagem.");
+  if (!rdoUI.atual?.id) return;
+  const form = new FormData();
+  form.append("file", file);
+  form.append("rdoId", String(rdoUI.atual.id));
+  form.append("legenda", qs("rdoFotoLegenda")?.value || "");
+  try {
+    await fetchForm("rdo-foto-upload", form);
+    await rdoAbrir(rdoUI.atual.id);
+    showToast("Foto anexada.");
+  } catch (e) {
+    alert(`Erro ao enviar foto: ${e.message}`);
+  }
+}
+
+async function rdoExcluirFoto(id) {
+  if (!confirm("Remover esta foto?")) return;
+  try {
+    await apiRequest("rdo-foto-delete", { method: "POST", body: JSON.stringify({ id }) });
+    if (rdoUI.atual?.id) await rdoAbrir(rdoUI.atual.id);
+  } catch (e) {
+    alert(`Erro ao remover: ${e.message}`);
+  }
+}
+
+async function rdoCarregarFoto(imgEl, fotoId) {
+  try {
+    const resp = await fetch(`${API_BASE}/rdo-foto?id=${fotoId}`, { headers: authHeaders() });
+    if (!resp.ok) return;
+    imgEl.src = URL.createObjectURL(await resp.blob());
+  } catch {
+    // imagem indisponível: deixa o alt
+  }
+}
+
+// ── Disciplinas da obra (gestão) ────────────────────────────────────────────
+function renderRdoDisciplinas() {
+  const editable = rdoCanEdit();
+  qs("content").innerHTML = `
+    <section class="module-head">
+      <div><h2>Disciplinas da obra</h2><p>Defina as disciplinas de cada obra e o responsável (usuário com login) que assina o RDO daquela disciplina.</p></div>
+      <div class="row-actions"><button class="secondary" type="button" id="rdoDiscVoltar">← Voltar aos RDOs</button></div>
+    </section>
+    <section class="schedule-toolbar">
+      <label>Obra <select id="rdoDiscObra">${rdoObraOptions(rdoUI.discObra.projectId)}</select></label>
+    </section>
+    <div id="rdoDiscWrap"><div class="empty">Selecione a obra.</div></div>
+  `;
+  qs("rdoDiscVoltar")?.addEventListener("click", () => { rdoUI.view = "list"; render(); });
+  qs("rdoDiscObra")?.addEventListener("change", (e) => { rdoUI.discObra.projectId = e.target.value; rdoCarregarDisciplinas(); });
+  if (rdoUI.discObra.projectId) rdoCarregarDisciplinas();
+}
+
+async function rdoCarregarDisciplinas() {
+  const wrap = qs("rdoDiscWrap");
+  if (!wrap || !rdoUI.discObra.projectId) return;
+  try {
+    const r = await apiRequest(`obra-disciplinas-list?projectId=${rdoUI.discObra.projectId}`, { method: "GET" });
+    rdoUI.discObra.lista = r.data || [];
+    rdoRenderDisciplinas();
+  } catch (e) {
+    wrap.innerHTML = `<div class="empty">Erro: ${svgText(e.message)}</div>`;
+  }
+}
+
+function rdoRenderDisciplinas() {
+  const wrap = qs("rdoDiscWrap");
+  if (!wrap) return;
+  const editable = rdoCanEdit();
+  const sugestoes = ["Elétrica", "Hidráulica", "Fundação", "Estrutura", "Alvenaria", "Cobertura", "Revestimento", "Acabamento", "Instalações", "SPDA"];
+  wrap.innerHTML = `
+    ${editable ? `<section class="panel">
+      <h3>Adicionar disciplina</h3>
+      <div class="form-grid">
+        <label>Disciplina<input id="rdoDiscNome" list="rdoDiscSugestoes" placeholder="Elétrica…"><datalist id="rdoDiscSugestoes">${sugestoes.map((s) => `<option value="${s}">`).join("")}</datalist></label>
+        <label>Responsável (login)<select id="rdoDiscResp">${rdoUserOptions("")}</select></label>
+        <div class="actions"><button class="primary" type="button" id="rdoDiscAdd">Adicionar</button></div>
+      </div>
+    </section>` : ""}
+    <section class="table-wrap"><table>
+      <thead><tr><th>Disciplina</th><th>Responsável</th><th>Status</th>${editable ? "<th>Ações</th>" : ""}</tr></thead>
+      <tbody>
+        ${(rdoUI.discObra.lista || []).map((x) => `<tr>
+          <td>${svgText(x.nome)}</td>
+          <td>${svgText(x.responsavelNome || "—")}</td>
+          <td>${svgText(x.status)}</td>
+          ${editable ? `<td><div class="row-actions"><button class="danger" type="button" data-disc-del="${x.id}">Excluir</button></div></td>` : ""}
+        </tr>`).join("") || `<tr><td colspan="4" class="empty">Nenhuma disciplina nesta obra.</td></tr>`}
+      </tbody>
+    </table></section>
+  `;
+  qs("rdoDiscAdd")?.addEventListener("click", rdoSalvarDisciplina);
+  wrap.querySelectorAll("[data-disc-del]").forEach((b) => b.addEventListener("click", () => rdoExcluirDisciplina(Number(b.dataset.discDel))));
+}
+
+async function rdoSalvarDisciplina() {
+  const nome = qs("rdoDiscNome")?.value.trim();
+  if (!nome) return alert("Informe o nome da disciplina.");
+  try {
+    await apiRequest("obra-disciplinas-save", { method: "POST", body: JSON.stringify({
+      projectId: Number(rdoUI.discObra.projectId),
+      nome,
+      responsavelUserId: Number(qs("rdoDiscResp")?.value || 0) || null,
+    }) });
+    showToast("Disciplina salva.");
+    rdoCarregarDisciplinas();
+  } catch (e) {
+    alert(`Erro: ${e.message}`);
+  }
+}
+
+async function rdoExcluirDisciplina(id) {
+  if (!confirm("Excluir esta disciplina da obra?")) return;
+  try {
+    await apiRequest("obra-disciplinas-delete", { method: "POST", body: JSON.stringify({ id }) });
+    rdoCarregarDisciplinas();
+  } catch (e) {
+    alert(`Erro: ${e.message}`);
+  }
+}
+
+// ── PDF do RDO (window.print + container dedicado) ───────────────────────────
+async function rdoGerarPdf(id) {
+  let d = rdoUI.atual && sameId(rdoUI.atual.id, id) ? rdoUI.atual : null;
+  try {
+    if (!d) {
+      const r = await apiRequest(`rdo-get?id=${id}`, { method: "GET" });
+      d = r.data;
+    }
+  } catch (e) {
+    return alert(`Erro ao gerar PDF: ${e.message}`);
+  }
+  const fotos = [];
+  for (const f of (d.fotos || [])) {
+    try {
+      const resp = await fetch(`${API_BASE}/rdo-foto?id=${f.id}`, { headers: authHeaders() });
+      if (resp.ok) fotos.push({ url: URL.createObjectURL(await resp.blob()), legenda: f.legenda });
+    } catch {
+      // ignora foto indisponível
+    }
+  }
+  let box = qs("rdoPrint");
+  if (!box) {
+    box = document.createElement("div");
+    box.id = "rdoPrint";
+    document.body.appendChild(box);
+  }
+  box.innerHTML = rdoPdfHtml(d, fotos);
+  document.body.classList.add("rdo-printing");
+  const cleanup = () => {
+    document.body.classList.remove("rdo-printing");
+    window.removeEventListener("afterprint", cleanup);
+  };
+  window.addEventListener("afterprint", cleanup);
+  window.print();
+}
+
+function rdoPdfHtml(d, fotos) {
+  const obra = nameOf("projects", d.projectId) || "";
+  const tabela = (titulo, head, linhas) => linhas.length
+    ? `<h3>${titulo}</h3><table class="rdo-pdf-table"><thead><tr>${head.map((h) => `<th>${h}</th>`).join("")}</tr></thead><tbody>${linhas}</tbody></table>`
+    : "";
+  const efetivo = tabela("Efetivo", ["Função", "Qtd"], (d.efetivo || []).map((x) => `<tr><td>${svgText(x.funcao || "")}</td><td>${svgText(String(x.quantidade ?? ""))}</td></tr>`).join(""));
+  const equip = tabela("Equipamentos", ["Equipamento", "Qtd", "Situação"], (d.equipamentos || []).map((x) => `<tr><td>${svgText(x.nome || "")}</td><td>${svgText(String(x.quantidade ?? ""))}</td><td>${svgText(x.situacao || "")}</td></tr>`).join(""));
+  const atuou = (d.disciplinas || []).filter((x) => Number(x.atuouNoDia) === 1);
+  const discTab = tabela("Disciplinas que atuaram", ["Disciplina", "Responsável"], atuou.map((x) => `<tr><td>${svgText(x.disciplinaNome)}</td><td>${svgText(x.responsavelNome || "—")}</td></tr>`).join(""));
+  const bloco = (titulo, txt) => txt ? `<h3>${titulo}</h3><p class="rdo-pdf-text">${svgText(txt).replace(/\n/g, "<br>")}</p>` : "";
+  const fotosHtml = fotos.length ? `<h3>Registro fotográfico</h3><div class="rdo-pdf-fotos">${fotos.map((f) => `<figure><img src="${f.url}"><figcaption>${svgText(f.legenda || "")}</figcaption></figure>`).join("")}</div>` : "";
+  const assinaturas = `<div class="rdo-pdf-assinaturas">
+    <div class="rdo-pdf-assina"><span class="linha"></span><span>${svgText(d.responsavelGeralNome || "")}</span><small>Responsável pela Obra</small></div>
+    ${atuou.map((x) => `<div class="rdo-pdf-assina"><span class="linha"></span><span>${svgText(x.responsavelNome || "")}</span><small>${svgText(x.disciplinaNome)}</small></div>`).join("")}
+  </div>`;
+  return `
+    <div class="rdo-pdf-head">
+      <h1>RELATÓRIO DIÁRIO DE OBRA (RDO) Nº ${svgText(String(d.numeroSequencial || ""))}</h1>
+      <p><strong>${svgText(obra)}</strong> — ${asDate(d.data)} — Condição: ${svgText(d.condicaoTrabalho || "—")}</p>
+      <p>Clima: manhã ${svgText(d.climaManha || "—")} · tarde ${svgText(d.climaTarde || "—")} · noite ${svgText(d.climaNoite || "—")}</p>
+    </div>
+    ${efetivo}
+    ${equip}
+    ${bloco("Atividades executadas", d.atividades)}
+    ${bloco("Ocorrências / paralisações", d.ocorrencias)}
+    ${bloco("Observações", d.observacoes)}
+    ${discTab}
+    ${fotosHtml}
+    ${assinaturas}
+  `;
 }
 
 function totals() {
@@ -3649,7 +4285,10 @@ function setupViabilityFormPreview() {
 
 function renderCrud(key) {
   const config = configs[key];
-  const rows = visibleRowsForModule(key, applyFilters(db[key] || []));
+  let rows = visibleRowsForModule(key, applyFilters(db[key] || []));
+  if (key === "fiscalDocuments" && fiscalSoSemObra) {
+    rows = rows.filter((row) => !row.projectId);
+  }
   const editable = canEditModule(key);
   const tableFields = config.fields
     .filter((field) => !String(field[2]).startsWith("file"))
@@ -3685,6 +4324,7 @@ function renderCrud(key) {
     addBudgetItemFromSource(sourceKey, id);
   }));
   if (key === "fiscalDocuments") setupNfseImport();
+  if (key === "fiscalDocuments") setupFiscalSemObraFilter();
 }
 
 // Campos cujo formatCell devolve HTML intencional (links e badges); todo o resto é escapado.
@@ -8304,6 +8944,28 @@ async function carregarHistoricoOFX() {
 let nfseData = []; // NFs da prévia atual
 let nfseXmlFile = ""; // nome do XML salvo no servidor (vira xmlPath das NFs)
 let drawerNfseIdx = null; // índice da NF em nfseData usado pelo drawer de cadastro rápido
+let fiscalSoSemObra = false; // filtro "Sem obra" da listagem de Documentos Fiscais
+
+// Chip "Sem obra" no cabeçalho de Documentos Fiscais: localiza NFs importadas
+// sem obra para reclassificar. Disponível também em modo leitura (é só um filtro
+// de exibição) e some quando não há nota sem obra nem filtro ativo.
+function setupFiscalSemObraFilter() {
+  const head = qs("content")?.querySelector(".module-head");
+  if (!head || qs("btnFiscalSemObra")) return;
+  const semObra = (db.fiscalDocuments || []).filter((doc) => !doc.projectId).length;
+  if (!semObra && !fiscalSoSemObra) return;
+  const btn = document.createElement("button");
+  btn.id = "btnFiscalSemObra";
+  btn.type = "button";
+  btn.className = fiscalSoSemObra ? "primary" : "secondary";
+  btn.textContent = fiscalSoSemObra ? `Mostrando sem obra (${semObra}) ✕` : `🏗️ Sem obra (${semObra})`;
+  const ancora = head.querySelector("#btnImportarNfse") || head.querySelector("#newRecord");
+  head.insertBefore(btn, ancora || null);
+  btn.addEventListener("click", () => {
+    fiscalSoSemObra = !fiscalSoSemObra;
+    renderCrud("fiscalDocuments");
+  });
+}
 
 // Injetado pelo renderCrud quando o módulo é fiscalDocuments: botão no
 // cabeçalho + modal em dois passos (upload/configuração → prévia em lote).
@@ -8328,7 +8990,7 @@ function setupNfseImport() {
           <button id="btnFecharNfse" class="nfse-close" type="button" aria-label="Fechar">✕</button>
         </div>
         <div id="nfseStep1">
-          <p class="nfse-hint">Selecione o XML exportado da prefeitura (padrão ABRASF) — aceita arquivo com várias NFS-e. NFs emitidas pela empresa viram <strong>Contas a Receber</strong>; NFs de fornecedores viram <strong>Contas a Pagar</strong>.</p>
+          <p class="nfse-hint">Selecione o XML exportado da prefeitura (padrão ABRASF) — aceita arquivo com várias NFS-e. NFs emitidas pela empresa viram <strong>Contas a Receber</strong>; NFs de fornecedores viram <strong>Contas a Pagar</strong>. A <strong>obra é opcional</strong> e pode ser definida por nota na próxima etapa.</p>
           <div class="nfse-form">
             <label class="ofx-label">
               Arquivo XML NFS-e
@@ -8337,13 +8999,6 @@ function setupNfseImport() {
                 <input id="nfseFile" type="file" accept=".xml" class="ofx-file-input" />
                 <span id="nfseFileName" class="ofx-file-name">Nenhum arquivo selecionado</span>
               </div>
-            </label>
-            <label class="ofx-label">
-              Obra/Projeto (obrigatório)
-              <select id="nfseProjeto">
-                <option value="">Selecione a obra…</option>
-                ${(db.projects || []).map((project) => `<option value="${Number(project.id) || svgText(project.id)}">${svgText(project.name)}</option>`).join("")}
-              </select>
             </label>
           </div>
           <div class="nfse-actions">
@@ -8392,6 +9047,12 @@ function setupNfseImport() {
       });
       return;
     }
+    const obraSel = event.target.closest(".nfse-obra-sel");
+    if (obraSel) {
+      const index = Number(obraSel.dataset.idx);
+      if (nfseData[index]) nfseData[index].projectId = Number(obraSel.value) || null;
+      return;
+    }
     const checkbox = event.target.closest(".nfse-cb");
     if (!checkbox) return;
     const index = Number(checkbox.dataset.idx);
@@ -8436,12 +9097,21 @@ async function analisarNfseXml() {
 
 function renderizarPreviewNfse(data) {
   const naoEncontrados = nfseData.filter((nf) => !nf.entityId && !nf.jaImportada).length;
+  const projetoOpcoes = (db.projects || []).map((project) => `<option value="${Number(project.id) || svgText(project.id)}">${svgText(project.name)}</option>`).join("");
   qs("nfseResumo").innerHTML = `
     <div class="nfse-badges">
       <span class="ofx-badge">📄 ${data.total} NFS-e no arquivo</span>
       <span class="ofx-badge ofx-badge-green">▲ ${data.emitidas} emitidas → A Receber</span>
       <span class="ofx-badge ofx-badge-yellow">▼ ${data.recebidas} recebidas → A Pagar</span>
       <span class="ofx-badge">💰 Total: ${asMoney(data.valorTotal)}</span>
+    </div>
+    <div class="nfse-obra-bar">
+      <span>🏗️ A obra é opcional: defina por nota na coluna "Obra", ou aplique uma de uma vez às que ficarem sem obra.</span>
+      <select id="nfseObraGlobal">
+        <option value="">— escolher obra —</option>
+        ${projetoOpcoes}
+      </select>
+      <button id="btnNfseObraAplicar" class="secondary" type="button">Aplicar às vazias</button>
     </div>
     ${naoEncontrados > 0 ? `
     <div class="nfse-criar-box">
@@ -8459,7 +9129,7 @@ function renderizarPreviewNfse(data) {
       <thead>
         <tr>
           <th><input type="checkbox" id="nfseCheckAll" checked /></th>
-          <th>NF</th><th>Emissão</th><th>Cliente/Fornecedor</th><th>Discriminação</th><th>Valor líquido</th><th>Destino</th><th>Status</th>
+          <th>NF</th><th>Emissão</th><th>Cliente/Fornecedor</th><th>Discriminação</th><th>Valor líquido</th><th>Destino</th><th>Obra (opcional)</th><th>Status</th>
         </tr>
       </thead>
       <tbody>
@@ -8468,6 +9138,9 @@ function renderizarPreviewNfse(data) {
           const doc = party.cnpj || party.cpf || "";
           const entidadeHtml = nfseEntidadePreviewHtml(nf, party, doc, index);
           const resumoDisc = nf.discriminacao.length > 60 ? `${nf.discriminacao.slice(0, 60)}…` : nf.discriminacao;
+          const obraCell = nf.jaImportada
+            ? '<span class="muted">—</span>'
+            : `<select class="nfse-obra-sel" data-idx="${index}">${nfseProjectOptions(nf.projectId)}</select>`;
           return `
             <tr data-nfse-idx="${index}" class="${nf.jaImportada ? "ofx-dup" : ""}">
               <td><input type="checkbox" class="nfse-cb" data-idx="${index}" ${nf.jaImportada ? "disabled" : "checked"} /></td>
@@ -8477,13 +9150,46 @@ function renderizarPreviewNfse(data) {
               <td class="ofx-memo" title="${svgText(nf.discriminacao)}">${svgText(resumoDisc)}</td>
               <td class="ofx-amount ${nf.tipo === "emitida" ? "ofx-entrada" : "ofx-saida"}">${nf.tipo === "emitida" ? "+" : "-"} ${asMoney(nf.valorLiquido)}</td>
               <td><span class="ofx-badge ${nf.tipo === "emitida" ? "ofx-badge-green" : "ofx-badge-yellow"}">${nf.tipo === "emitida" ? "▲ A Receber" : "▼ A Pagar"}</span></td>
+              <td class="nfse-cell-obra">${obraCell}</td>
               <td>${nf.jaImportada ? '<span class="ofx-badge ofx-badge-gray">⏭️ Já importada</span>' : '<span class="ofx-badge ofx-badge-green">✅ Nova</span>'}</td>
             </tr>`;
         }).join("")}
       </tbody>
     </table>
   `;
-  nfseData.forEach((nf) => { nf.importar = !nf.jaImportada; });
+  nfseData.forEach((nf) => {
+    nf.importar = !nf.jaImportada;
+    if (nf.projectId === undefined) nf.projectId = null;
+  });
+  qs("btnNfseObraAplicar")?.addEventListener("click", aplicarObraGlobalNfse);
+}
+
+// Opções do <select> de obra por NF: "— sem obra —" + obras, marcando a atual.
+function nfseProjectOptions(selectedId) {
+  const opcoes = (db.projects || []).map((project) => {
+    const value = Number(project.id) || svgText(project.id);
+    const sel = sameId(project.id, selectedId) ? " selected" : "";
+    return `<option value="${value}"${sel}>${svgText(project.name)}</option>`;
+  }).join("");
+  return `<option value=""${selectedId ? "" : " selected"}>— sem obra —</option>${opcoes}`;
+}
+
+// Aplica a obra escolhida no seletor global só às NFs que ainda estão sem obra
+// (não sobrescreve escolhas feitas linha a linha).
+function aplicarObraGlobalNfse() {
+  const value = Number(qs("nfseObraGlobal")?.value || 0) || null;
+  if (!value) return alert("Escolha uma obra para aplicar às NFs sem obra.");
+  let aplicadas = 0;
+  nfseData.forEach((nf, index) => {
+    if (nf.jaImportada || nf.projectId) return;
+    nf.projectId = value;
+    const sel = qs("nfseTableWrap")?.querySelector(`.nfse-obra-sel[data-idx="${index}"]`);
+    if (sel) sel.value = String(value);
+    aplicadas++;
+  });
+  showToast(aplicadas
+    ? `🏗️ Obra aplicada a ${aplicadas} NF${aplicadas === 1 ? "" : "s"} sem obra.`
+    : "Todas as NFs já têm obra — nada a aplicar.");
 }
 
 function nfseParteEntidade(nf) {
@@ -8647,11 +9353,13 @@ function atualizarResumoEntidadesNfse() {
 }
 
 async function importarNfsesSelecionadas() {
-  const projectId = Number(qs("nfseProjeto")?.value || 0);
-  if (!projectId) return alert("Selecione a obra/projeto — toda nota fiscal é vinculada a uma obra.");
   const selecionadas = nfseData.filter((nf) => nf.importar && !nf.jaImportada);
   if (!selecionadas.length) return alert("Nenhuma NFS-e selecionada para importar.");
-  if (!confirm(`Importar ${selecionadas.length} NFS-e?\n\n• Emitidas → Contas a Receber\n• Recebidas → Contas a Pagar\n\nO vencimento entra como a data de emissão — ajuste depois em cada conta.`)) return;
+  const semObra = selecionadas.filter((nf) => !nf.projectId).length;
+  const obraMsg = semObra
+    ? `\n\n⚠️ ${semObra} NF${semObra === 1 ? "" : "s"} sem obra — entra${semObra === 1 ? "" : "m"} como "sem projeto"; reclassifique depois pelo filtro "Sem obra".`
+    : "";
+  if (!confirm(`Importar ${selecionadas.length} NFS-e?\n\n• Emitidas → Contas a Receber\n• Recebidas → Contas a Pagar${obraMsg}\n\nO vencimento entra como a data de emissão — ajuste depois em cada conta.`)) return;
 
   const criarEntidades = qs("nfseAutoCreate")?.checked ?? false;
 
@@ -8662,7 +9370,6 @@ async function importarNfsesSelecionadas() {
     const payload = await apiRequest("nfse-import", {
       method: "POST",
       body: JSON.stringify({
-        projectId,
         xmlFile: nfseXmlFile,
         criarEntidades,
         nfses: selecionadas.map((nf) => ({
@@ -8673,6 +9380,7 @@ async function importarNfsesSelecionadas() {
           discriminacao: nf.discriminacao,
           codigoVerificacao: nf.codigoVerificacao,
           entityId: nf.entityId,
+          projectId: nf.projectId ?? null,
           tomador: nf.tomador,
           prestador: nf.prestador,
           importar: true,

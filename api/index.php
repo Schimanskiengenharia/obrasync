@@ -210,6 +210,75 @@ try {
         handle_nfse_import($pdo, $config, $authUser, read_json());
     }
 
+    // Diário de Obra (RDO) e as disciplinas por obra que ele consome. Workflow
+    // próprio (1/obra/dia, assinaturas múltiplas, fotos privadas) — actions
+    // dedicadas em vez do CRUD genérico.
+    if ($resource === 'rdo-list') {
+        require_method($method, ['GET']);
+        authorize_request($pdo, $authUser, 'rdo', 'view');
+        handle_rdo_list($pdo);
+    }
+    if ($resource === 'rdo-get') {
+        require_method($method, ['GET']);
+        authorize_request($pdo, $authUser, 'rdo', 'view');
+        handle_rdo_get($pdo, (int) ($_GET['id'] ?? 0));
+    }
+    if ($resource === 'rdo-save') {
+        require_method($method, ['POST']);
+        authorize_request($pdo, $authUser, 'rdo', 'edit');
+        handle_rdo_save($pdo, $authUser, read_json());
+    }
+    if ($resource === 'rdo-enviar-assinaturas') {
+        require_method($method, ['POST']);
+        authorize_request($pdo, $authUser, 'rdo', 'edit');
+        handle_rdo_enviar_assinaturas($pdo, $authUser, read_json());
+    }
+    if ($resource === 'rdo-assinar') {
+        require_method($method, ['POST']);
+        authorize_request($pdo, $authUser, 'rdo', 'edit');
+        handle_rdo_assinar($pdo, $authUser, read_json());
+    }
+    if ($resource === 'rdo-reabrir') {
+        require_method($method, ['POST']);
+        authorize_request($pdo, $authUser, 'rdo', 'edit');
+        handle_rdo_reabrir($pdo, $authUser, read_json());
+    }
+    if ($resource === 'rdo-delete') {
+        require_method($method, ['POST']);
+        authorize_request($pdo, $authUser, 'rdo', 'delete');
+        handle_rdo_delete($pdo, $authUser, (int) (read_json()['id'] ?? 0), $config);
+    }
+    if ($resource === 'rdo-foto-upload') {
+        require_method($method, ['POST']);
+        authorize_request($pdo, $authUser, 'rdo', 'edit');
+        handle_rdo_upload_foto($pdo, $config, $authUser);
+    }
+    if ($resource === 'rdo-foto-delete') {
+        require_method($method, ['POST']);
+        authorize_request($pdo, $authUser, 'rdo', 'edit');
+        handle_rdo_delete_foto($pdo, $authUser, (int) (read_json()['id'] ?? 0));
+    }
+    if ($resource === 'rdo-foto') {
+        require_method($method, ['GET']);
+        authorize_request($pdo, $authUser, 'rdo', 'view');
+        handle_rdo_foto_download($pdo, (int) ($_GET['id'] ?? 0));
+    }
+    if ($resource === 'obra-disciplinas-list') {
+        require_method($method, ['GET']);
+        authorize_request($pdo, $authUser, 'rdo', 'view');
+        handle_obra_disciplinas_list($pdo);
+    }
+    if ($resource === 'obra-disciplinas-save') {
+        require_method($method, ['POST']);
+        authorize_request($pdo, $authUser, 'rdo', 'edit');
+        handle_obra_disciplinas_save($pdo, $authUser, read_json());
+    }
+    if ($resource === 'obra-disciplinas-delete') {
+        require_method($method, ['POST']);
+        authorize_request($pdo, $authUser, 'rdo', 'edit');
+        handle_obra_disciplinas_delete($pdo, $authUser, (int) (read_json()['id'] ?? 0));
+    }
+
     $key = normalize_resource($resource, $resources);
     if (!$key) {
         fail('Recurso não encontrado.', 404);
@@ -2141,6 +2210,21 @@ function ensure_ofx_tables(PDO $pdo): void
     } catch (Throwable $error) {
         error_log('[ObraSync OFX] ensure colunas de vínculo: ' . $error->getMessage());
     }
+    // NFS-e: Obra/Projeto opcional em notas fiscais — um lote pode conter NFs de
+    // obras diferentes ou sem obra. Torna projectId nullable só se ainda for
+    // NOT NULL (idempotente, sem DDL desnecessário a cada boot).
+    try {
+        $nullable = $pdo->query(
+            "SELECT IS_NULLABLE FROM information_schema.COLUMNS
+              WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'fiscal_documents'
+                AND COLUMN_NAME = 'projectId'"
+        )->fetchColumn();
+        if ($nullable === 'NO') {
+            $pdo->exec('ALTER TABLE fiscal_documents MODIFY COLUMN projectId BIGINT UNSIGNED NULL');
+        }
+    } catch (Throwable $error) {
+        error_log('[ObraSync NFS-e] ensure projectId nullable: ' . $error->getMessage());
+    }
     $done = true;
 }
 
@@ -2847,6 +2931,603 @@ function nfse_create_entity(PDO $pdo, string $table, array $party): ?int
     ]);
 }
 
+// ── Diário de Obra (RDO) ────────────────────────────────────────────────────
+// Cria as tabelas sob demanda (chamada no início de cada action de RDO/
+// disciplinas). Idempotente: guarda estática + CREATE IF NOT EXISTS.
+function ensure_rdo_tables(PDO $pdo): void
+{
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    $pdo->exec("CREATE TABLE IF NOT EXISTS obra_disciplinas (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        projectId BIGINT UNSIGNED NOT NULL,
+        nome VARCHAR(80) NOT NULL,
+        responsavelUserId BIGINT UNSIGNED NULL,
+        responsavelNome VARCHAR(120) NULL,
+        status ENUM('Ativa','Inativa') NOT NULL DEFAULT 'Ativa',
+        createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_disc_project (projectId),
+        UNIQUE KEY uk_disc_obra_nome (projectId, nome)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS obra_rdo (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        projectId BIGINT UNSIGNED NOT NULL,
+        etapaId BIGINT UNSIGNED NULL,
+        data DATE NOT NULL,
+        numeroSequencial INT NULL,
+        climaManha VARCHAR(40) NULL,
+        climaTarde VARCHAR(40) NULL,
+        climaNoite VARCHAR(40) NULL,
+        condicaoTrabalho ENUM('Praticável','Parcialmente praticável','Impraticável') NULL DEFAULT 'Praticável',
+        atividades LONGTEXT NULL,
+        ocorrencias LONGTEXT NULL,
+        observacoes LONGTEXT NULL,
+        efetivo JSON NULL,
+        equipamentos JSON NULL,
+        responsavelGeralNome VARCHAR(120) NULL,
+        responsavelGeralUserId BIGINT UNSIGNED NULL,
+        createdByUserId BIGINT UNSIGNED NULL,
+        status ENUM('Rascunho','Aguardando assinaturas','Finalizado') NOT NULL DEFAULT 'Rascunho',
+        createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uk_rdo_obra_dia (projectId, data),
+        INDEX idx_rdo_project (projectId),
+        INDEX idx_rdo_data (data),
+        INDEX idx_rdo_etapa (etapaId)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS obra_rdo_disciplinas (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        rdoId BIGINT UNSIGNED NOT NULL,
+        disciplinaId BIGINT UNSIGNED NULL,
+        disciplinaNome VARCHAR(80) NOT NULL,
+        responsavelUserId BIGINT UNSIGNED NULL,
+        responsavelNome VARCHAR(120) NULL,
+        atuouNoDia TINYINT(1) NOT NULL DEFAULT 1,
+        assinado TINYINT(1) NOT NULL DEFAULT 0,
+        assinadoEm TIMESTAMP NULL DEFAULT NULL,
+        assinadoPorUserId BIGINT UNSIGNED NULL,
+        INDEX idx_rdodisc_rdo (rdoId)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+
+    // 'evento' distingue assinatura de reabertura: na reabertura mantemos a
+    // trilha histórica em vez de apagar (auditoria de documento).
+    $pdo->exec("CREATE TABLE IF NOT EXISTS obra_rdo_assinaturas (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        rdoId BIGINT UNSIGNED NOT NULL,
+        tipo ENUM('Geral','Disciplina') NOT NULL,
+        disciplinaNome VARCHAR(80) NULL,
+        assinanteNome VARCHAR(120) NULL,
+        assinanteUserId BIGINT UNSIGNED NULL,
+        evento ENUM('Assinatura','Reabertura') NOT NULL DEFAULT 'Assinatura',
+        assinadoEm TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_rdoass_rdo (rdoId)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS obra_rdo_fotos (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        rdoId BIGINT UNSIGNED NOT NULL,
+        caminho VARCHAR(300) NOT NULL,
+        legenda VARCHAR(200) NULL,
+        createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_rdo_foto (rdoId)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+
+    $done = true;
+}
+
+// Nome completo de um usuário (cache do responsável em disciplinas/RDO).
+function rdo_user_fullname(PDO $pdo, ?int $userId): ?string
+{
+    if (!$userId) {
+        return null;
+    }
+    $stmt = $pdo->prepare('SELECT fullName FROM system_users WHERE id = ? LIMIT 1');
+    $stmt->execute([$userId]);
+    $name = $stmt->fetchColumn();
+    return $name !== false ? (string) $name : null;
+}
+
+// Responsável da obra: prioriza projectManagerId (FK → system_users); cai no
+// texto responsible/technicalResponsible se não houver gestor por ID.
+function rdo_project_responsible(PDO $pdo, int $projectId): array
+{
+    $stmt = $pdo->prepare('SELECT projectManagerId, responsible, technicalResponsible FROM projects WHERE id = ? LIMIT 1');
+    $stmt->execute([$projectId]);
+    $p = $stmt->fetch() ?: [];
+    $userId = (int) ($p['projectManagerId'] ?? 0) ?: null;
+    $nome = $userId ? rdo_user_fullname($pdo, $userId) : null;
+    if ($nome === null || $nome === '') {
+        $nome = trim((string) ($p['responsible'] ?? '')) ?: (trim((string) ($p['technicalResponsible'] ?? '')) ?: null);
+    }
+    return ['userId' => $userId, 'nome' => $nome];
+}
+
+// Normaliza efetivo/equipamentos para string JSON (array) ou null.
+function rdo_json_or_null($value): ?string
+{
+    if ($value === null || $value === '') {
+        return null;
+    }
+    if (is_string($value)) {
+        $decoded = json_decode($value, true);
+        $value = is_array($decoded) ? $decoded : null;
+    }
+    if (!is_array($value) || !$value) {
+        return null;
+    }
+    return json_encode(array_values($value), JSON_UNESCAPED_UNICODE);
+}
+
+// Copia as disciplinas ativas da obra para o RDO (uma vez, na criação).
+function rdo_snapshot_disciplinas(PDO $pdo, int $rdoId, int $projectId): void
+{
+    $stmt = $pdo->prepare("SELECT id, nome, responsavelUserId, responsavelNome FROM obra_disciplinas WHERE projectId = ? AND status = 'Ativa' ORDER BY nome");
+    $stmt->execute([$projectId]);
+    $ins = $pdo->prepare('INSERT INTO obra_rdo_disciplinas (rdoId, disciplinaId, disciplinaNome, responsavelUserId, responsavelNome, atuouNoDia) VALUES (?, ?, ?, ?, ?, 0)');
+    foreach ($stmt->fetchAll() as $d) {
+        $ins->execute([$rdoId, $d['id'], $d['nome'], $d['responsavelUserId'], $d['responsavelNome']]);
+    }
+}
+
+// Aplica marcação "atuou no dia"/responsável vindos do form; permite adicionar
+// disciplina nova on-the-fly (linha sem id).
+function rdo_aplicar_disciplinas(PDO $pdo, int $rdoId, array $disciplinas): void
+{
+    $upd = $pdo->prepare('UPDATE obra_rdo_disciplinas SET atuouNoDia = ?, responsavelUserId = ?, responsavelNome = ? WHERE id = ? AND rdoId = ?');
+    $ins = $pdo->prepare('INSERT INTO obra_rdo_disciplinas (rdoId, disciplinaId, disciplinaNome, responsavelUserId, responsavelNome, atuouNoDia) VALUES (?, ?, ?, ?, ?, ?)');
+    foreach ($disciplinas as $d) {
+        if (!is_array($d)) {
+            continue;
+        }
+        $atuou = !empty($d['atuouNoDia']) ? 1 : 0;
+        $userId = (int) ($d['responsavelUserId'] ?? 0) ?: null;
+        $nome = $userId ? rdo_user_fullname($pdo, $userId) : (trim((string) ($d['responsavelNome'] ?? '')) ?: null);
+        $rowId = (int) ($d['id'] ?? 0);
+        if ($rowId) {
+            $upd->execute([$atuou, $userId, $nome, $rowId, $rdoId]);
+        } else {
+            $discNome = trim((string) ($d['disciplinaNome'] ?? ''));
+            if ($discNome === '') {
+                continue;
+            }
+            $ins->execute([$rdoId, (int) ($d['disciplinaId'] ?? 0) ?: null, mb_substr($discNome, 0, 80), $userId, $nome, $atuou]);
+        }
+    }
+}
+
+function handle_obra_disciplinas_list(PDO $pdo): never
+{
+    ensure_rdo_tables($pdo);
+    $projectId = (int) ($_GET['projectId'] ?? 0);
+    if (!$projectId) {
+        fail('Informe a obra.', 400);
+    }
+    $stmt = $pdo->prepare('SELECT * FROM obra_disciplinas WHERE projectId = ? ORDER BY status, nome');
+    $stmt->execute([$projectId]);
+    respond(['ok' => true, 'data' => $stmt->fetchAll()]);
+}
+
+function handle_obra_disciplinas_save(PDO $pdo, array $authUser, array $payload): never
+{
+    ensure_rdo_tables($pdo);
+    $projectId = (int) ($payload['projectId'] ?? 0);
+    $nome = trim((string) ($payload['nome'] ?? ''));
+    $id = (int) ($payload['id'] ?? 0) ?: null;
+    if (!$projectId || $nome === '') {
+        fail('Obra e nome da disciplina são obrigatórios.', 400);
+    }
+    $responsavelUserId = (int) ($payload['responsavelUserId'] ?? 0) ?: null;
+    $responsavelNome = $responsavelUserId
+        ? rdo_user_fullname($pdo, $responsavelUserId)
+        : (trim((string) ($payload['responsavelNome'] ?? '')) ?: null);
+    $status = in_array((string) ($payload['status'] ?? 'Ativa'), ['Ativa', 'Inativa'], true) ? (string) $payload['status'] : 'Ativa';
+    $fields = [
+        'projectId' => $projectId,
+        'nome' => mb_substr($nome, 0, 80),
+        'responsavelUserId' => $responsavelUserId,
+        'responsavelNome' => $responsavelNome,
+        'status' => $status,
+    ];
+    try {
+        if ($id) {
+            update_dynamic($pdo, 'obra_disciplinas', $id, $fields);
+        } else {
+            $id = insert_dynamic($pdo, 'obra_disciplinas', $fields);
+        }
+    } catch (Throwable $e) {
+        fail('Já existe uma disciplina com esse nome nesta obra.', 409);
+    }
+    server_audit($pdo, $authUser, $id ? 'update' : 'create', 'obra_disciplinas', $id, 'Disciplina: ' . $nome);
+    $stmt = $pdo->prepare('SELECT * FROM obra_disciplinas WHERE id = ?');
+    $stmt->execute([$id]);
+    respond(['ok' => true, 'data' => $stmt->fetch()]);
+}
+
+function handle_obra_disciplinas_delete(PDO $pdo, array $authUser, int $id): never
+{
+    ensure_rdo_tables($pdo);
+    if (!$id) {
+        fail('Disciplina inválida.', 400);
+    }
+    $pdo->prepare('DELETE FROM obra_disciplinas WHERE id = ?')->execute([$id]);
+    server_audit($pdo, $authUser, 'delete', 'obra_disciplinas', $id, 'Disciplina removida');
+    respond(['ok' => true]);
+}
+
+function handle_rdo_list(PDO $pdo): never
+{
+    ensure_rdo_tables($pdo);
+    $projectId = (int) ($_GET['projectId'] ?? 0) ?: null;
+    $de = preg_match('/^\d{4}-\d{2}-\d{2}$/', (string) ($_GET['de'] ?? '')) ? (string) $_GET['de'] : null;
+    $ate = preg_match('/^\d{4}-\d{2}-\d{2}$/', (string) ($_GET['ate'] ?? '')) ? (string) $_GET['ate'] : null;
+    $where = [];
+    $args = [];
+    if ($projectId) {
+        $where[] = 'r.projectId = ?';
+        $args[] = $projectId;
+    }
+    if ($de) {
+        $where[] = 'r.data >= ?';
+        $args[] = $de;
+    }
+    if ($ate) {
+        $where[] = 'r.data <= ?';
+        $args[] = $ate;
+    }
+    $sql = "SELECT r.*,
+              (SELECT COUNT(*) FROM obra_rdo_disciplinas d WHERE d.rdoId = r.id AND d.atuouNoDia = 1) AS assinaturasObrig,
+              (SELECT COUNT(*) FROM obra_rdo_disciplinas d WHERE d.rdoId = r.id AND d.atuouNoDia = 1 AND d.assinado = 1) AS assinaturasFeitas
+            FROM obra_rdo r";
+    if ($where) {
+        $sql .= ' WHERE ' . implode(' AND ', $where);
+    }
+    $sql .= ' ORDER BY r.data DESC, r.id DESC LIMIT 500';
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($args);
+    respond(['ok' => true, 'data' => $stmt->fetchAll()]);
+}
+
+function handle_rdo_get(PDO $pdo, int $id): never
+{
+    ensure_rdo_tables($pdo);
+    if (!$id) {
+        fail('RDO inválido.', 400);
+    }
+    $stmt = $pdo->prepare('SELECT * FROM obra_rdo WHERE id = ? LIMIT 1');
+    $stmt->execute([$id]);
+    $rdo = $stmt->fetch();
+    if (!$rdo) {
+        fail('RDO não encontrado.', 404);
+    }
+    $rdo['efetivo'] = $rdo['efetivo'] ? (json_decode((string) $rdo['efetivo'], true) ?: []) : [];
+    $rdo['equipamentos'] = $rdo['equipamentos'] ? (json_decode((string) $rdo['equipamentos'], true) ?: []) : [];
+    $d = $pdo->prepare('SELECT * FROM obra_rdo_disciplinas WHERE rdoId = ? ORDER BY disciplinaNome');
+    $d->execute([$id]);
+    $rdo['disciplinas'] = $d->fetchAll();
+    $a = $pdo->prepare('SELECT * FROM obra_rdo_assinaturas WHERE rdoId = ? ORDER BY assinadoEm');
+    $a->execute([$id]);
+    $rdo['assinaturas'] = $a->fetchAll();
+    $f = $pdo->prepare('SELECT id, legenda FROM obra_rdo_fotos WHERE rdoId = ? ORDER BY id');
+    $f->execute([$id]);
+    $rdo['fotos'] = $f->fetchAll();
+    respond(['ok' => true, 'data' => $rdo]);
+}
+
+function handle_rdo_save(PDO $pdo, array $authUser, array $payload): never
+{
+    ensure_rdo_tables($pdo);
+    $id = (int) ($payload['id'] ?? 0) ?: null;
+    $projectId = (int) ($payload['projectId'] ?? 0);
+    $data = trim((string) ($payload['data'] ?? ''));
+    if (!$projectId || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $data)) {
+        fail('Obra e data são obrigatórias.', 400);
+    }
+    $dup = $pdo->prepare('SELECT id FROM obra_rdo WHERE projectId = ? AND data = ? LIMIT 1');
+    $dup->execute([$projectId, $data]);
+    $existingId = (int) ($dup->fetchColumn() ?: 0);
+    if ($existingId && $existingId !== (int) $id) {
+        respond(['ok' => false, 'error' => 'Já existe um RDO para esta obra nesta data. Abra o RDO existente para editar.', 'rdoId' => $existingId], 409);
+    }
+
+    $current = null;
+    if ($id) {
+        $cur = $pdo->prepare('SELECT * FROM obra_rdo WHERE id = ? LIMIT 1');
+        $cur->execute([$id]);
+        $current = $cur->fetch();
+        if (!$current) {
+            fail('RDO não encontrado.', 404);
+        }
+        if ($current['status'] === 'Finalizado') {
+            fail('RDO finalizado — reabra para editar.', 409);
+        }
+    }
+
+    if (!empty($payload['responsavelGeralUserId'])) {
+        $respUserId = (int) $payload['responsavelGeralUserId'];
+        $respNome = rdo_user_fullname($pdo, $respUserId);
+    } elseif (!empty($payload['responsavelGeralNome'])) {
+        $respUserId = null;
+        $respNome = trim((string) $payload['responsavelGeralNome']);
+    } elseif (!$id) {
+        $resp = rdo_project_responsible($pdo, $projectId);
+        $respUserId = $resp['userId'];
+        $respNome = $resp['nome'];
+    } else {
+        $respUserId = (int) ($current['responsavelGeralUserId'] ?? 0) ?: null;
+        $respNome = $current['responsavelGeralNome'] ?? null;
+    }
+
+    $condicoes = ['Praticável', 'Parcialmente praticável', 'Impraticável'];
+    $fields = [
+        'projectId' => $projectId,
+        'etapaId' => (int) ($payload['etapaId'] ?? 0) ?: null,
+        'data' => $data,
+        'climaManha' => trim((string) ($payload['climaManha'] ?? '')) ?: null,
+        'climaTarde' => trim((string) ($payload['climaTarde'] ?? '')) ?: null,
+        'climaNoite' => trim((string) ($payload['climaNoite'] ?? '')) ?: null,
+        'condicaoTrabalho' => in_array((string) ($payload['condicaoTrabalho'] ?? ''), $condicoes, true) ? (string) $payload['condicaoTrabalho'] : 'Praticável',
+        'atividades' => trim((string) ($payload['atividades'] ?? '')) ?: null,
+        'ocorrencias' => trim((string) ($payload['ocorrencias'] ?? '')) ?: null,
+        'observacoes' => trim((string) ($payload['observacoes'] ?? '')) ?: null,
+        'efetivo' => rdo_json_or_null($payload['efetivo'] ?? null),
+        'equipamentos' => rdo_json_or_null($payload['equipamentos'] ?? null),
+        'responsavelGeralUserId' => $respUserId,
+        'responsavelGeralNome' => $respNome,
+    ];
+
+    $pdo->beginTransaction();
+    try {
+        if (!$id) {
+            $numStmt = $pdo->prepare('SELECT COALESCE(MAX(numeroSequencial), 0) + 1 FROM obra_rdo WHERE projectId = ?');
+            $numStmt->execute([$projectId]);
+            $fields['numeroSequencial'] = (int) $numStmt->fetchColumn();
+            $fields['createdByUserId'] = (int) ($authUser['id'] ?? 0) ?: null;
+            $id = insert_dynamic($pdo, 'obra_rdo', $fields);
+            rdo_snapshot_disciplinas($pdo, $id, $projectId);
+        } else {
+            update_dynamic($pdo, 'obra_rdo', $id, $fields);
+        }
+        if (is_array($payload['disciplinas'] ?? null)) {
+            rdo_aplicar_disciplinas($pdo, $id, $payload['disciplinas']);
+        }
+        $pdo->commit();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        error_log('[ObraSync RDO] save: ' . $e->getMessage());
+        fail('Erro ao salvar o RDO.', 500);
+    }
+    server_audit($pdo, $authUser, $current ? 'update' : 'create', 'obra_rdo', $id, 'RDO ' . $data);
+    handle_rdo_get($pdo, $id);
+}
+
+function handle_rdo_enviar_assinaturas(PDO $pdo, array $authUser, array $payload): never
+{
+    ensure_rdo_tables($pdo);
+    $id = (int) ($payload['id'] ?? 0);
+    $stmt = $pdo->prepare('SELECT * FROM obra_rdo WHERE id = ? LIMIT 1');
+    $stmt->execute([$id]);
+    $rdo = $stmt->fetch();
+    if (!$rdo) {
+        fail('RDO não encontrado.', 404);
+    }
+    if ($rdo['status'] === 'Finalizado') {
+        fail('RDO já finalizado.', 409);
+    }
+    if (!$rdo['responsavelGeralUserId']) {
+        fail('Defina o responsável geral (usuário com login) antes de enviar para assinaturas.', 422);
+    }
+    $d = $pdo->prepare('SELECT disciplinaNome FROM obra_rdo_disciplinas WHERE rdoId = ? AND atuouNoDia = 1 AND (responsavelUserId IS NULL OR responsavelUserId = 0)');
+    $d->execute([$id]);
+    $semResp = $d->fetchAll(PDO::FETCH_COLUMN);
+    if ($semResp) {
+        fail('Defina um responsável (com login) para: ' . implode(', ', $semResp), 422);
+    }
+    $tem = $pdo->prepare('SELECT COUNT(*) FROM obra_rdo_disciplinas WHERE rdoId = ? AND atuouNoDia = 1');
+    $tem->execute([$id]);
+    if ((int) $tem->fetchColumn() === 0) {
+        fail('Marque ao menos uma disciplina que atuou no dia.', 422);
+    }
+    update_dynamic($pdo, 'obra_rdo', $id, ['status' => 'Aguardando assinaturas']);
+    server_audit($pdo, $authUser, 'update', 'obra_rdo', $id, 'RDO enviado para assinaturas');
+    handle_rdo_get($pdo, $id);
+}
+
+function handle_rdo_assinar(PDO $pdo, array $authUser, array $payload): never
+{
+    ensure_rdo_tables($pdo);
+    $id = (int) ($payload['id'] ?? 0);
+    $stmt = $pdo->prepare('SELECT * FROM obra_rdo WHERE id = ? LIMIT 1');
+    $stmt->execute([$id]);
+    $rdo = $stmt->fetch();
+    if (!$rdo) {
+        fail('RDO não encontrado.', 404);
+    }
+    if ($rdo['status'] !== 'Aguardando assinaturas') {
+        fail('O RDO precisa estar aguardando assinaturas.', 409);
+    }
+    $uid = (int) ($authUser['id'] ?? 0);
+    $isAdmin = ($authUser['role'] ?? '') === 'admin';
+    $assinou = [];
+    $pdo->beginTransaction();
+    try {
+        if (((int) $rdo['responsavelGeralUserId'] === $uid || $isAdmin) && $rdo['responsavelGeralUserId']) {
+            $jaGeral = $pdo->prepare("SELECT 1 FROM obra_rdo_assinaturas WHERE rdoId = ? AND tipo = 'Geral' AND evento = 'Assinatura' LIMIT 1");
+            $jaGeral->execute([$id]);
+            if (!$jaGeral->fetchColumn()) {
+                $pdo->prepare("INSERT INTO obra_rdo_assinaturas (rdoId, tipo, assinanteNome, assinanteUserId, evento) VALUES (?, 'Geral', ?, ?, 'Assinatura')")
+                    ->execute([$id, $rdo['responsavelGeralNome'], $rdo['responsavelGeralUserId']]);
+                $assinou[] = 'Responsável geral';
+            }
+        }
+        $sel = $pdo->prepare('SELECT * FROM obra_rdo_disciplinas WHERE rdoId = ? AND atuouNoDia = 1 AND assinado = 0 AND (responsavelUserId = ? OR 1 = ?)');
+        $sel->execute([$id, $uid, $isAdmin ? 1 : 0]);
+        $discs = $sel->fetchAll();
+        $updD = $pdo->prepare('UPDATE obra_rdo_disciplinas SET assinado = 1, assinadoEm = NOW(), assinadoPorUserId = ? WHERE id = ?');
+        $insA = $pdo->prepare("INSERT INTO obra_rdo_assinaturas (rdoId, tipo, disciplinaNome, assinanteNome, assinanteUserId, evento) VALUES (?, 'Disciplina', ?, ?, ?, 'Assinatura')");
+        foreach ($discs as $disc) {
+            $updD->execute([$uid, $disc['id']]);
+            $insA->execute([$id, $disc['disciplinaNome'], $disc['responsavelNome'], $disc['responsavelUserId']]);
+            $assinou[] = $disc['disciplinaNome'];
+        }
+        if (!$assinou) {
+            $pdo->rollBack();
+            fail('Você não é responsável por nenhuma assinatura pendente neste RDO.', 403);
+        }
+        $pend = $pdo->prepare('SELECT COUNT(*) FROM obra_rdo_disciplinas WHERE rdoId = ? AND atuouNoDia = 1 AND assinado = 0');
+        $pend->execute([$id]);
+        $discPend = (int) $pend->fetchColumn();
+        $geralStmt = $pdo->prepare("SELECT 1 FROM obra_rdo_assinaturas WHERE rdoId = ? AND tipo = 'Geral' AND evento = 'Assinatura' LIMIT 1");
+        $geralStmt->execute([$id]);
+        $geralOk = (bool) $geralStmt->fetchColumn();
+        if ($discPend === 0 && $geralOk) {
+            update_dynamic($pdo, 'obra_rdo', $id, ['status' => 'Finalizado']);
+        }
+        $pdo->commit();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        error_log('[ObraSync RDO] assinar: ' . $e->getMessage());
+        fail('Erro ao registrar assinatura.', 500);
+    }
+    server_audit($pdo, $authUser, 'update', 'obra_rdo', $id, 'Assinatura RDO: ' . implode(', ', $assinou));
+    handle_rdo_get($pdo, $id);
+}
+
+function handle_rdo_reabrir(PDO $pdo, array $authUser, array $payload): never
+{
+    ensure_rdo_tables($pdo);
+    $id = (int) ($payload['id'] ?? 0);
+    $stmt = $pdo->prepare('SELECT * FROM obra_rdo WHERE id = ? LIMIT 1');
+    $stmt->execute([$id]);
+    $rdo = $stmt->fetch();
+    if (!$rdo) {
+        fail('RDO não encontrado.', 404);
+    }
+    $uid = (int) ($authUser['id'] ?? 0);
+    $isAdmin = ($authUser['role'] ?? '') === 'admin';
+    if (!$isAdmin && (int) $rdo['responsavelGeralUserId'] !== $uid) {
+        fail('Apenas o responsável geral ou o admin podem reabrir o RDO.', 403);
+    }
+    $pdo->beginTransaction();
+    try {
+        $pdo->prepare('UPDATE obra_rdo_disciplinas SET assinado = 0, assinadoEm = NULL, assinadoPorUserId = NULL WHERE rdoId = ?')->execute([$id]);
+        $pdo->prepare("INSERT INTO obra_rdo_assinaturas (rdoId, tipo, assinanteNome, assinanteUserId, evento) VALUES (?, 'Geral', ?, ?, 'Reabertura')")
+            ->execute([$id, (string) ($authUser['fullName'] ?? $authUser['username'] ?? ''), $uid ?: null]);
+        update_dynamic($pdo, 'obra_rdo', $id, ['status' => 'Rascunho']);
+        $pdo->commit();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        fail('Erro ao reabrir o RDO.', 500);
+    }
+    server_audit($pdo, $authUser, 'update', 'obra_rdo', $id, 'RDO reaberto');
+    handle_rdo_get($pdo, $id);
+}
+
+function handle_rdo_delete(PDO $pdo, array $authUser, int $id, array $config): never
+{
+    ensure_rdo_tables($pdo);
+    if (!$id) {
+        fail('RDO inválido.', 400);
+    }
+    $f = $pdo->prepare('SELECT caminho FROM obra_rdo_fotos WHERE rdoId = ?');
+    $f->execute([$id]);
+    foreach ($f->fetchAll(PDO::FETCH_COLUMN) as $caminho) {
+        if (is_string($caminho) && is_file($caminho)) {
+            @unlink($caminho);
+        }
+    }
+    $pdo->beginTransaction();
+    try {
+        $pdo->prepare('DELETE FROM obra_rdo_fotos WHERE rdoId = ?')->execute([$id]);
+        $pdo->prepare('DELETE FROM obra_rdo_disciplinas WHERE rdoId = ?')->execute([$id]);
+        $pdo->prepare('DELETE FROM obra_rdo_assinaturas WHERE rdoId = ?')->execute([$id]);
+        $pdo->prepare('DELETE FROM obra_rdo WHERE id = ?')->execute([$id]);
+        $pdo->commit();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        fail('Erro ao excluir o RDO.', 500);
+    }
+    server_audit($pdo, $authUser, 'delete', 'obra_rdo', $id, 'RDO excluído');
+    respond(['ok' => true]);
+}
+
+function handle_rdo_upload_foto(PDO $pdo, array $config, array $authUser): never
+{
+    ensure_rdo_tables($pdo);
+    $rdoId = (int) ($_POST['rdoId'] ?? 0);
+    if (!$rdoId) {
+        fail('RDO não informado.', 400);
+    }
+    $chk = $pdo->prepare('SELECT status FROM obra_rdo WHERE id = ? LIMIT 1');
+    $chk->execute([$rdoId]);
+    $status = $chk->fetchColumn();
+    if ($status === false) {
+        fail('RDO não encontrado.', 404);
+    }
+    if ($status === 'Finalizado') {
+        fail('RDO finalizado — não aceita novas fotos.', 409);
+    }
+    $dir = rtrim($config['upload_dir'] ?? '/var/lib/financeiro/uploads', '/') . '/rdo';
+    if (!is_dir($dir)) {
+        mkdir($dir, 0750, true);
+    }
+    $path = store_upload($_FILES['file'] ?? [], $dir, ['jpg', 'jpeg', 'png', 'webp'], ['image/jpeg', 'image/png', 'image/webp']);
+    $legenda = trim((string) ($_POST['legenda'] ?? '')) ?: null;
+    $fotoId = insert_dynamic($pdo, 'obra_rdo_fotos', [
+        'rdoId' => $rdoId,
+        'caminho' => $path,
+        'legenda' => $legenda ? mb_substr($legenda, 0, 200) : null,
+    ]);
+    server_audit($pdo, $authUser, 'create', 'obra_rdo_fotos', $fotoId, 'Foto RDO ' . $rdoId);
+    respond(['ok' => true, 'data' => ['id' => $fotoId, 'legenda' => $legenda]]);
+}
+
+function handle_rdo_delete_foto(PDO $pdo, array $authUser, int $id): never
+{
+    ensure_rdo_tables($pdo);
+    $stmt = $pdo->prepare('SELECT caminho FROM obra_rdo_fotos WHERE id = ? LIMIT 1');
+    $stmt->execute([$id]);
+    $caminho = $stmt->fetchColumn();
+    if ($caminho === false) {
+        fail('Foto não encontrada.', 404);
+    }
+    if (is_string($caminho) && is_file($caminho)) {
+        @unlink($caminho);
+    }
+    $pdo->prepare('DELETE FROM obra_rdo_fotos WHERE id = ?')->execute([$id]);
+    respond(['ok' => true]);
+}
+
+function handle_rdo_foto_download(PDO $pdo, int $id): never
+{
+    ensure_rdo_tables($pdo);
+    $stmt = $pdo->prepare('SELECT caminho FROM obra_rdo_fotos WHERE id = ? LIMIT 1');
+    $stmt->execute([$id]);
+    $path = $stmt->fetchColumn();
+    if ($path === false || !is_string($path) || !is_file($path)) {
+        fail('Imagem não encontrada.', 404);
+    }
+    $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+    $mime = ['jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'png' => 'image/png', 'webp' => 'image/webp'][$ext] ?? 'application/octet-stream';
+    header_remove('Content-Type');
+    header('Content-Type: ' . $mime);
+    header('Content-Length: ' . filesize($path));
+    readfile($path);
+    exit;
+}
+
 function handle_nfse_preview(PDO $pdo, array $config): never
 {
     if (empty($_FILES['xml']['tmp_name'])) {
@@ -2906,20 +3587,29 @@ function handle_nfse_preview(PDO $pdo, array $config): never
 function handle_nfse_import(PDO $pdo, array $config, array $authUser, array $payload): never
 {
     $nfses = is_array($payload['nfses'] ?? null) ? $payload['nfses'] : [];
-    $projectId = (int) ($payload['projectId'] ?? 0);
+    // Obra/Projeto é opcional: um lote pode conter NFs de obras diferentes (cada
+    // NF traz seu projectId) ou sem obra (projectId nulo). $defaultProject é só um
+    // fallback caso ainda venha um id global no payload.
+    $defaultProject = (int) ($payload['projectId'] ?? 0) ?: null;
     $criarEntidades = (bool) ($payload['criarEntidades'] ?? false);
     $xmlFile = basename(trim((string) ($payload['xmlFile'] ?? '')));
     if (!$nfses) {
         fail('Nenhuma NFS-e selecionada.', 400);
     }
-    if (!$projectId) {
-        fail('Selecione a obra/projeto — toda nota fiscal do sistema é vinculada a uma obra.', 400);
-    }
-    $stmt = $pdo->prepare('SELECT id FROM projects WHERE id = ? LIMIT 1');
-    $stmt->execute([$projectId]);
-    if (!$stmt->fetchColumn()) {
-        fail('Obra/projeto não encontrado.', 404);
-    }
+    // Valida o projectId de cada NF contra projects (com cache) para não estourar
+    // a FK; id inexistente vira null em vez de abortar a importação inteira.
+    $projectCache = [];
+    $resolveProject = static function (?int $id) use ($pdo, &$projectCache): ?int {
+        if (!$id) {
+            return null;
+        }
+        if (!array_key_exists($id, $projectCache)) {
+            $stmt = $pdo->prepare('SELECT id FROM projects WHERE id = ? LIMIT 1');
+            $stmt->execute([$id]);
+            $projectCache[$id] = $stmt->fetchColumn() ? $id : null;
+        }
+        return $projectCache[$id];
+    };
     $xmlPath = null;
     if ($xmlFile !== '' && preg_match('/^[A-Za-z0-9._-]+\.xml$/i', $xmlFile)) {
         $candidate = rtrim($config['upload_dir'] ?? '/var/lib/financeiro/uploads', '/') . '/notas-fiscais/' . $xmlFile;
@@ -2945,6 +3635,7 @@ function handle_nfse_import(PDO $pdo, array $config, array $authUser, array $pay
             $discriminacao = trim((string) ($nf['discriminacao'] ?? ''));
             $codigo = trim((string) ($nf['codigoVerificacao'] ?? ''));
             $entityId = (int) ($nf['entityId'] ?? 0) ?: null;
+            $nfProjectId = $resolveProject(((int) ($nf['projectId'] ?? 0)) ?: $defaultProject);
             if ($numero === '' || $valor <= 0 || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $dataEmissao)) {
                 continue;
             }
@@ -2981,7 +3672,7 @@ function handle_nfse_import(PDO $pdo, array $config, array $authUser, array $pay
 
             $notes = trim(($codigo !== '' ? "Código de verificação: {$codigo}\n" : '') . $discriminacao);
             $fiscalId = insert_dynamic($pdo, 'fiscal_documents', [
-                'projectId' => $projectId,
+                'projectId' => $nfProjectId,
                 'supplierId' => $emitida ? null : $entityId,
                 'documentNumber' => $documentNumber,
                 'issueDate' => $dataEmissao,
@@ -3004,7 +3695,7 @@ function handle_nfse_import(PDO $pdo, array $config, array $authUser, array $pay
                     'issueDate' => $dataEmissao,
                     'dueDate' => $vencimento,
                     'clientId' => $entityId,
-                    'projectId' => $projectId,
+                    'projectId' => $nfProjectId,
                     'amount' => $valor,
                     'status' => 'Aberto',
                     'referencia_tipo' => 'fiscal_document',
@@ -3017,7 +3708,7 @@ function handle_nfse_import(PDO $pdo, array $config, array $authUser, array $pay
                     'issueDate' => $dataEmissao,
                     'dueDate' => $vencimento,
                     'supplierId' => $entityId,
-                    'projectId' => $projectId,
+                    'projectId' => $nfProjectId,
                     'amount' => $valor,
                     'status' => 'Aberto',
                     'referencia_tipo' => 'fiscal_document',
@@ -3330,13 +4021,13 @@ function default_role_view_modules(): array
     return [
         'financeiro' => ['dashboard', 'clients', 'suppliers', 'categories', 'costCenters', 'bankAccounts', 'projects', 'projectSchedule', 'agenda', 'kanban', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'sinapiLabor', 'sinapiFamilies', 'sinapiMaintenances', 'sinapiSettings', 'ownCompositions', 'quotes', 'abcCurve', 'viabilityAnalyses', 'fiscalDocuments', 'receivable', 'payable', 'cashMoves', 'cashFlow', 'reconciliation', 'proposals', 'sales', 'chartAccounts', 'journalEntries', 'dre', 'taxDocuments', 'taxes', 'reports', 'reportFinancial', 'reportClient', 'reportSupplier', 'reportCostCenter', 'reportProject', 'exports', 'systemVersion', 'plugins', 'qualidadeDashboard'],
         'comercial' => ['dashboard', 'clients', 'projects', 'projectSchedule', 'agenda', 'kanban', 'workBudgets', 'abcCurve', 'viabilityAnalyses', 'budgets', 'proposals', 'proposalModels', 'proposalAreas', 'proposalActionTypes', 'proposalServiceSubtypes', 'sales', 'reportClient', 'systemVersion', 'plugins'],
-        'engenharia' => ['dashboard', 'projects', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban', 'projectNotifications', 'projectTrackingLinks', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'sinapiLabor', 'sinapiFamilies', 'sinapiMaintenances', 'ownCompositions', 'quotes', 'abcCurve', 'viabilityAnalyses', 'purchaseOrders', 'fiscalDocuments', 'technicalReports', 'projectReport', 'proposals', 'reportProject', 'systemVersion', 'plugins', 'qualidadeDashboard', 'qualidadePes', 'qualidadePqo', 'qualidadeFvs', 'qualidadeFvm', 'qualidadeNc', 'qualidadeTreinamentos'],
-        'gestor_obra' => ['dashboard', 'projects', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban', 'projectNotifications', 'projectTrackingLinks', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'sinapiLabor', 'sinapiFamilies', 'sinapiMaintenances', 'ownCompositions', 'quotes', 'abcCurve', 'viabilityAnalyses', 'purchaseOrders', 'fiscalDocuments', 'technicalReports', 'projectReport', 'proposals', 'reportProject', 'systemVersion', 'plugins', 'qualidadeDashboard', 'qualidadePes', 'qualidadePqo', 'qualidadeFvs', 'qualidadeFvm', 'qualidadeNc', 'qualidadeTreinamentos'],
+        'engenharia' => ['dashboard', 'rdo', 'projects', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban', 'projectNotifications', 'projectTrackingLinks', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'sinapiLabor', 'sinapiFamilies', 'sinapiMaintenances', 'ownCompositions', 'quotes', 'abcCurve', 'viabilityAnalyses', 'purchaseOrders', 'fiscalDocuments', 'technicalReports', 'projectReport', 'proposals', 'reportProject', 'systemVersion', 'plugins', 'qualidadeDashboard', 'qualidadePes', 'qualidadePqo', 'qualidadeFvs', 'qualidadeFvm', 'qualidadeNc', 'qualidadeTreinamentos'],
+        'gestor_obra' => ['dashboard', 'rdo', 'projects', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban', 'projectNotifications', 'projectTrackingLinks', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'sinapiLabor', 'sinapiFamilies', 'sinapiMaintenances', 'ownCompositions', 'quotes', 'abcCurve', 'viabilityAnalyses', 'purchaseOrders', 'fiscalDocuments', 'technicalReports', 'projectReport', 'proposals', 'reportProject', 'systemVersion', 'plugins', 'qualidadeDashboard', 'qualidadePes', 'qualidadePqo', 'qualidadeFvs', 'qualidadeFvm', 'qualidadeNc', 'qualidadeTreinamentos'],
         'equipe_campo' => ['dashboard', 'projectReport', 'systemVersion', 'plugins'],
         'cliente_obra' => ['dashboard', 'projectReport', 'projectSchedule', 'technicalReports', 'systemVersion', 'plugins'],
         'fornecedor_terceiro' => ['dashboard', 'systemVersion', 'plugins'],
         'consulta' => ['dashboard', 'projectReport', 'cashFlow', 'dre', 'reports', 'reportFinancial', 'reportClient', 'reportSupplier', 'reportCostCenter', 'reportProject', 'exports', 'plugins', 'qualidadeDashboard'],
-        'operador' => ['dashboard', 'clients', 'suppliers', 'products', 'services', 'categories', 'costCenters', 'bankAccounts', 'projects', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'ownCompositions', 'quotes', 'abcCurve', 'fiscalDocuments', 'receivable', 'payable', 'cashMoves', 'cashFlow', 'reconciliation', 'budgets', 'proposals', 'sales', 'purchaseOrders', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban', 'projectReport', 'reports', 'reportFinancial', 'reportClient', 'reportSupplier', 'reportCostCenter', 'reportProject', 'myProfile', 'plugins'],
+        'operador' => ['dashboard', 'rdo', 'clients', 'suppliers', 'products', 'services', 'categories', 'costCenters', 'bankAccounts', 'projects', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'ownCompositions', 'quotes', 'abcCurve', 'fiscalDocuments', 'receivable', 'payable', 'cashMoves', 'cashFlow', 'reconciliation', 'budgets', 'proposals', 'sales', 'purchaseOrders', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban', 'projectReport', 'reports', 'reportFinancial', 'reportClient', 'reportSupplier', 'reportCostCenter', 'reportProject', 'myProfile', 'plugins'],
         'visualizador' => '*',
     ];
 }
@@ -3347,9 +4038,9 @@ function default_role_edit_modules(): array
     return [
         'financeiro' => ['fiscalDocuments', 'receivable', 'payable', 'cashMoves', 'cashFlow', 'reconciliation', 'categories', 'costCenters', 'bankAccounts', 'chartAccounts', 'journalEntries', 'taxDocuments', 'taxes', 'exports', 'projectSchedule', 'agenda', 'kanban', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'sinapiLabor', 'sinapiFamilies', 'sinapiMaintenances', 'sinapiSettings', 'quotes', 'sales', 'viabilityAnalyses'],
         'comercial' => ['clients', 'budgets', 'proposals', 'agenda', 'kanban', 'viabilityAnalyses'],
-        'engenharia' => ['projects', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban', 'projectNotifications', 'projectTrackingLinks', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'sinapiLabor', 'sinapiFamilies', 'sinapiMaintenances', 'ownCompositions', 'quotes', 'purchaseOrders', 'fiscalDocuments', 'technicalReports', 'qualidadePes', 'qualidadePqo', 'qualidadeFvs', 'qualidadeFvm', 'qualidadeNc', 'qualidadeTreinamentos'],
-        'gestor_obra' => ['projects', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban', 'projectNotifications', 'projectTrackingLinks', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'sinapiLabor', 'sinapiFamilies', 'sinapiMaintenances', 'ownCompositions', 'quotes', 'purchaseOrders', 'fiscalDocuments', 'technicalReports', 'qualidadePes', 'qualidadePqo', 'qualidadeFvs', 'qualidadeFvm', 'qualidadeNc', 'qualidadeTreinamentos'],
-        'operador' => ['clients', 'suppliers', 'products', 'services', 'categories', 'costCenters', 'bankAccounts', 'projects', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'ownCompositions', 'quotes', 'fiscalDocuments', 'receivable', 'payable', 'cashMoves', 'reconciliation', 'budgets', 'proposals', 'sales', 'purchaseOrders', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban', 'qualidadeFvs', 'qualidadeFvm', 'qualidadeNc'],
+        'engenharia' => ['rdo', 'projects', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban', 'projectNotifications', 'projectTrackingLinks', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'sinapiLabor', 'sinapiFamilies', 'sinapiMaintenances', 'ownCompositions', 'quotes', 'purchaseOrders', 'fiscalDocuments', 'technicalReports', 'qualidadePes', 'qualidadePqo', 'qualidadeFvs', 'qualidadeFvm', 'qualidadeNc', 'qualidadeTreinamentos'],
+        'gestor_obra' => ['rdo', 'projects', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban', 'projectNotifications', 'projectTrackingLinks', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'sinapiLabor', 'sinapiFamilies', 'sinapiMaintenances', 'ownCompositions', 'quotes', 'purchaseOrders', 'fiscalDocuments', 'technicalReports', 'qualidadePes', 'qualidadePqo', 'qualidadeFvs', 'qualidadeFvm', 'qualidadeNc', 'qualidadeTreinamentos'],
+        'operador' => ['rdo', 'clients', 'suppliers', 'products', 'services', 'categories', 'costCenters', 'bankAccounts', 'projects', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'ownCompositions', 'quotes', 'fiscalDocuments', 'receivable', 'payable', 'cashMoves', 'reconciliation', 'budgets', 'proposals', 'sales', 'purchaseOrders', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban', 'qualidadeFvs', 'qualidadeFvm', 'qualidadeNc'],
     ];
 }
 
