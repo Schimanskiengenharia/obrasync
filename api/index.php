@@ -594,6 +594,11 @@ function handle_agenda_module(PDO $pdo, string $method, array $query): never
             agenda_respond(true, agenda_list_events($pdo, $query));
         }
 
+        if ($action === 'feed') {
+            require_method($method, ['GET']);
+            agenda_respond(true, agenda_feed($pdo, $query));
+        }
+
         if ($action === 'get') {
             require_method($method, ['GET']);
             $id = (int) ($query['id'] ?? 0);
@@ -686,6 +691,88 @@ function agenda_list_events(PDO $pdo, array $query): array
     }
 
     $sql .= ' ORDER BY `data_inicio` ASC, `id` ASC';
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    return $stmt->fetchAll();
+}
+
+// Feed consolidado da agenda: eventos manuais + lançamentos financeiros do
+// período (contas a receber/pagar, marcos de obra e pedidos de compra),
+// retornados em uma única chamada. Parâmetros: data_inicio, data_fim, obra_id.
+function agenda_feed(PDO $pdo, array $query): array
+{
+    $start = agenda_date_only(agenda_query_value($query, ['data_inicio', 'periodo_inicio', 'inicio', 'start', 'from']));
+    $end = agenda_date_only(agenda_query_value($query, ['data_fim', 'periodo_fim', 'fim', 'end', 'to']));
+    $obraValue = agenda_query_value($query, ['obra_id', 'obraId', 'projectId', 'project_id']);
+    $obraId = ($obraValue === null || $obraValue === '') ? null : (int) $obraValue;
+
+    return [
+        'eventos' => agenda_list_events($pdo, $query),
+        'receber' => agenda_feed_financial(
+            $pdo,
+            ['accounts_receivable'],
+            'SELECT id, document, issueDate, dueDate, receivedDate, clientId, projectId, amount, status',
+            'dueDate',
+            $start,
+            $end,
+            $obraId
+        ),
+        'pagar' => agenda_feed_financial(
+            $pdo,
+            ['accounts_payable'],
+            'SELECT id, document, issueDate, dueDate, paidDate, supplierId, projectId, amount, status',
+            'dueDate',
+            $start,
+            $end,
+            $obraId
+        ),
+        'marcos' => agenda_feed_financial(
+            $pdo,
+            ['obra_cronograma_marcos'],
+            'SELECT id, projectId, scheduleStepId, name, plannedDate, completedDate, status, notes',
+            'plannedDate',
+            $start,
+            $end,
+            $obraId
+        ),
+        'pedidos' => agenda_feed_financial(
+            $pdo,
+            ['purchase_orders'],
+            'SELECT id, number, `date`, projectId, supplierId, amount, expectedDate, status',
+            'expectedDate',
+            $start,
+            $end,
+            $obraId
+        ),
+    ];
+}
+
+// Consulta genérica de um lançamento financeiro filtrado pela coluna de data do
+// período e, opcionalmente, pela obra (projectId). Retorna [] se a tabela não existir.
+function agenda_feed_financial(PDO $pdo, array $candidates, string $select, string $dateColumn, ?string $start, ?string $end, ?int $obraId): array
+{
+    $table = resolve_existing_table($pdo, $candidates, false);
+    if ($table === null) {
+        return [];
+    }
+
+    $sql = $select . ' FROM `' . $table . '` WHERE 1=1';
+    $params = [];
+
+    if ($start !== null) {
+        $sql .= ' AND `' . $dateColumn . '` >= ?';
+        $params[] = $start;
+    }
+    if ($end !== null) {
+        $sql .= ' AND `' . $dateColumn . '` <= ?';
+        $params[] = $end;
+    }
+    if ($obraId !== null) {
+        $sql .= ' AND `projectId` = ?';
+        $params[] = $obraId;
+    }
+
+    $sql .= ' ORDER BY `' . $dateColumn . '` ASC, `id` ASC';
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
     return $stmt->fetchAll();

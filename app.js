@@ -344,6 +344,7 @@ let viabilityProjectFilter = "";
 let viabilityStatusFilter = "";
 let viabilityVerdictFilter = "";
 let agendaEditingId = "";
+let agendaLegendCollapsed = false;
 let kanbanNewColumnId = "";
 let favoritesDialogSelections = new Set();
 let sessionWarnTimer = null;
@@ -5394,7 +5395,10 @@ function renderAgendaWeek() {
       ${isPastWeek ? '<p class="agenda-past-notice">Semana anterior — disponível apenas para consulta.</p>' : ""}
       <div class="agenda-layout">
         ${agendaCalendarHtml(weekStart, events)}
-        ${agendaFormHtml(canCreateInWeek, weekStart)}
+        <div class="agenda-side">
+          ${agendaLegendHtml()}
+          ${agendaFormHtml(canCreateInWeek, weekStart)}
+        </div>
       </div>
     `;
     qs("agendaPrev")?.addEventListener("click", () => moveAgendaCursor(-1));
@@ -5406,6 +5410,24 @@ function renderAgendaWeek() {
       button.addEventListener("click", () => editAgendaEvent(button.dataset.agendaEdit)));
     qs("content").querySelectorAll("[data-agenda-delete]").forEach((button) =>
       button.addEventListener("click", () => removeRecord("agendaEvents", button.dataset.agendaDelete)));
+    // Eventos financeiros (a receber/pagar, marcos e pedidos) abrem o detalhe ao clicar.
+    qs("content").querySelectorAll("[data-fin-event]").forEach((el) => {
+      const open = () => {
+        const [collection, id] = String(el.dataset.finEvent).split(":");
+        openAgendaFinancialDetail(collection, id);
+      };
+      el.addEventListener("click", open);
+      el.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") { event.preventDefault(); open(); }
+      });
+    });
+    // Legenda colapsável.
+    qs("agendaLegendToggle")?.addEventListener("click", () => {
+      agendaLegendCollapsed = !agendaLegendCollapsed;
+      qs("agendaLegend")?.classList.toggle("collapsed", agendaLegendCollapsed);
+      const toggle = qs("agendaLegendToggle");
+      if (toggle) toggle.textContent = agendaLegendCollapsed ? "+" : "−";
+    });
     // Reentra no modo edição após re-render (ex.: ao navegar entre semanas).
     if (agendaEditingId && byId("agendaEvents", agendaEditingId)) editAgendaEvent(agendaEditingId);
     else agendaEditingId = "";
@@ -5418,23 +5440,212 @@ function renderAgendaWeek() {
 function agendaCalendarHtml(weekStart, events) {
   const todayKey = agendaSafeDateString(new Date());
   const days = agendaVisibleDays(weekStart);
+  const start = agendaWeekStart(weekStart);
+  const finEvents = agendaFinancialEvents(agendaSafeDateString(start), agendaSafeDateString(addDays(start, 6)));
   return `<section class="agenda-grid agenda-week">
     ${days.map((date) => {
       const key = agendaSafeDateString(date);
       if (!key) return "";
       const isToday = key === todayKey;
       const dayEvents = events.filter((event) => agendaEventDateKey(event) === key);
+      const dayFinEvents = finEvents.filter((event) => event.dateKey === key);
+      const hasAny = dayEvents.length || dayFinEvents.length;
       return `<article class="agenda-day${isToday ? " today" : ""}">
         <header>
           <strong>${agendaDayName(date)}</strong>
           <span>${date.getDate()}</span>
         </header>
         <div class="agenda-day-events">
-          ${dayEvents.length ? dayEvents.map(agendaEventCardHtml).join("") : '<p class="empty small">Sem compromissos.</p>'}
+          ${dayFinEvents.map(agendaFinancialCardHtml).join("")}
+          ${dayEvents.map(agendaEventCardHtml).join("")}
+          ${hasAny ? "" : '<p class="empty small">Sem compromissos.</p>'}
         </div>
       </article>`;
     }).join("")}
   </section>`;
+}
+
+// Mapa único de cores/legenda dos eventos financeiros exibidos na agenda.
+// As classes correspondem às regras .agenda-evento-* definidas no styles.css.
+const AGENDA_FIN_COLORS = {
+  receber: { cls: "agenda-evento-receber", dot: "#1a73e8", label: "A Receber (no prazo)" },
+  recebido: { cls: "agenda-evento-recebido", dot: "#2e7d32", label: "Recebido" },
+  pagar: { cls: "agenda-evento-pagar", dot: "#f57c00", label: "A Pagar (no prazo)" },
+  pago: { cls: "agenda-evento-pago", dot: "#1b5e20", label: "Pago" },
+  vencido: { cls: "agenda-evento-vencido", dot: "#c62828", label: "Vencido (receber ou pagar)" },
+  marco: { cls: "agenda-evento-marco", dot: "#6a1b9a", label: "Marco de obra" },
+  compra: { cls: "agenda-evento-compra", dot: "#f9a825", label: "Entrega de compra" },
+  manual: { cls: "agenda-evento-manual", dot: "#546e7a", label: "Evento manual" },
+};
+
+// Monta os eventos financeiros automáticos do período (a receber, a pagar,
+// marcos de obra e pedidos de compra) a partir dos dados já carregados em `db`.
+// startKey/endKey são strings YYYY-MM-DD inclusivas.
+function agendaFinancialEvents(startKey, endKey) {
+  const todayKey = agendaSafeDateString(new Date());
+  const inRange = (dateKey) => Boolean(dateKey) && (!startKey || dateKey >= startKey) && (!endKey || dateKey <= endKey);
+  const dayOf = (value) => String(value || "").slice(0, 10);
+  const events = [];
+
+  // 1. Contas a receber — vencimento (dueDate).
+  (db.receivable || []).forEach((row) => {
+    if (row.status === "Cancelado") return;
+    const dateKey = dayOf(row.dueDate);
+    if (!inRange(dateKey)) return;
+    let color = "receber";
+    if (row.status === "Recebido") color = "recebido";
+    else if (dateKey < todayKey) color = "vencido";
+    events.push({
+      dateKey, color, icon: "$", collection: "receivable", id: row.id,
+      title: `Receber: ${nameOf("clients", row.clientId) || row.document || "—"} · ${asMoney(row.amount)}`,
+    });
+  });
+
+  // 2. Contas a pagar — vencimento (dueDate).
+  (db.payable || []).forEach((row) => {
+    if (row.status === "Cancelado") return;
+    const dateKey = dayOf(row.dueDate);
+    if (!inRange(dateKey)) return;
+    let color = "pagar";
+    if (row.status === "Pago") color = "pago";
+    else if (dateKey < todayKey) color = "vencido";
+    events.push({
+      dateKey, color, icon: "$", collection: "payable", id: row.id,
+      title: `Pagar: ${nameOf("suppliers", row.supplierId) || row.document || "—"} · ${asMoney(row.amount)}`,
+    });
+  });
+
+  // 3. Marcos de obra — data prevista (plannedDate).
+  (db.projectMilestones || []).forEach((row) => {
+    if (row.status === "Cancelado") return;
+    const dateKey = dayOf(row.plannedDate);
+    if (!inRange(dateKey)) return;
+    events.push({
+      dateKey, color: "marco", icon: "🏗", collection: "projectMilestones", id: row.id,
+      title: `Marco: ${row.name || nameOf("projects", row.projectId) || "—"}`,
+    });
+  });
+
+  // 4. Pedidos de compra — previsão de entrega (expectedDate).
+  (db.purchaseOrders || []).forEach((row) => {
+    if (row.status === "Cancelado") return;
+    const dateKey = dayOf(row.expectedDate);
+    if (!inRange(dateKey)) return;
+    events.push({
+      dateKey, color: "compra", icon: "📦", collection: "purchaseOrders", id: row.id,
+      title: `Compra: ${row.number || "—"} · ${asMoney(row.amount)}`,
+    });
+  });
+
+  return events.sort((a, b) => a.dateKey.localeCompare(b.dateKey));
+}
+
+function agendaFinancialCardHtml(ev) {
+  const meta = AGENDA_FIN_COLORS[ev.color] || AGENDA_FIN_COLORS.manual;
+  return `
+    <article class="agenda-event agenda-event-fin ${meta.cls}" data-fin-event="${ev.collection}:${escapeHtml(ev.id)}" role="button" tabindex="0" title="${escapeHtml(ev.title)}">
+      <strong><span class="agenda-fin-icon">${ev.icon}</span> ${svgText(ev.title)}</strong>
+    </article>
+  `;
+}
+
+function agendaLegendHtml() {
+  const collapsed = agendaLegendCollapsed ? " collapsed" : "";
+  const items = ["receber", "recebido", "pagar", "pago", "vencido", "marco", "compra", "manual"]
+    .map((key) => {
+      const meta = AGENDA_FIN_COLORS[key];
+      return `<li><span class="agenda-legend-dot" style="background:${meta.dot}"></span>${meta.label}</li>`;
+    }).join("");
+  return `
+    <aside id="agendaLegend" class="agenda-legend${collapsed}">
+      <header class="agenda-legend-head">
+        <strong>Legenda</strong>
+        <button type="button" id="agendaLegendToggle" class="agenda-legend-toggle" title="Minimizar legenda" aria-label="Minimizar legenda">${agendaLegendCollapsed ? "+" : "−"}</button>
+      </header>
+      <ul class="agenda-legend-list">${items}</ul>
+    </aside>
+  `;
+}
+
+// Detalhes exibidos no modal de cada tipo de evento financeiro.
+function agendaFinancialDetailRows(collection, row) {
+  const d = (value) => asDate(String(value || "").slice(0, 10));
+  if (collection === "receivable") return [
+    ["Documento", row.document],
+    ["Cliente", nameOf("clients", row.clientId)],
+    ["Obra/Projeto", nameOf("projects", row.projectId)],
+    ["Vencimento", d(row.dueDate)],
+    ["Recebimento", d(row.receivedDate)],
+    ["Valor", asMoney(row.amount)],
+    ["Status", row.status],
+  ];
+  if (collection === "payable") return [
+    ["Documento", row.document],
+    ["Fornecedor", nameOf("suppliers", row.supplierId)],
+    ["Obra/Projeto", nameOf("projects", row.projectId)],
+    ["Vencimento", d(row.dueDate)],
+    ["Pagamento", d(row.paidDate)],
+    ["Valor", asMoney(row.amount)],
+    ["Status", row.status],
+  ];
+  if (collection === "projectMilestones") return [
+    ["Marco", row.name],
+    ["Obra/Projeto", nameOf("projects", row.projectId)],
+    ["Data prevista", d(row.plannedDate)],
+    ["Data concluída", d(row.completedDate)],
+    ["Status", row.status],
+    ["Observações", row.notes],
+  ];
+  if (collection === "purchaseOrders") return [
+    ["Número", row.number],
+    ["Fornecedor", nameOf("suppliers", row.supplierId)],
+    ["Obra/Projeto", nameOf("projects", row.projectId)],
+    ["Data do pedido", d(row.date)],
+    ["Previsão de entrega", d(row.expectedDate)],
+    ["Valor", asMoney(row.amount)],
+    ["Status", row.status],
+  ];
+  return [];
+}
+
+// Abre um modal com os detalhes completos do registro financeiro e um atalho
+// para o módulo de origem (conta a receber/pagar, marco ou pedido).
+function openAgendaFinancialDetail(collection, id) {
+  const row = byId(collection, id);
+  if (!row) { alert("Registro não encontrado. Ele pode ter sido removido."); return; }
+  const moduleLabel = {
+    receivable: "Conta a receber",
+    payable: "Conta a pagar",
+    projectMilestones: "Marco da obra",
+    purchaseOrders: "Pedido de compra",
+  }[collection] || "Registro";
+  const body = agendaFinancialDetailRows(collection, row)
+    .map(([label, value]) => `<div class="agenda-detail-row"><dt>${escapeHtml(label)}</dt><dd>${svgText(value || "—")}</dd></div>`)
+    .join("");
+  const canOpen = typeof canAccessModule === "function" ? canAccessModule(collection) : true;
+  const dialog = document.createElement("dialog");
+  dialog.className = "agenda-detail-dialog";
+  dialog.innerHTML = `
+    <div class="modal-box agenda-detail-box">
+      <h3>${escapeHtml(moduleLabel)}</h3>
+      <dl class="agenda-detail-list">${body}</dl>
+      <div class="agenda-detail-actions">
+        ${canOpen ? '<button type="button" class="primary" data-detail-open>Abrir registro original</button>' : ""}
+        <button type="button" class="secondary" data-detail-close>Fechar</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(dialog);
+  const close = () => { try { dialog.close(); } catch { /* já fechado */ } dialog.remove(); };
+  dialog.querySelector("[data-detail-close]")?.addEventListener("click", close);
+  dialog.querySelector("[data-detail-open]")?.addEventListener("click", () => {
+    close();
+    currentModule = collection;
+    render();
+  });
+  dialog.addEventListener("cancel", (event) => { event.preventDefault(); close(); });
+  dialog.addEventListener("click", (event) => { if (event.target === dialog) close(); });
+  dialog.showModal();
 }
 
 function agendaVisibleDays(cursor) {

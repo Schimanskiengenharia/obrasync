@@ -2344,6 +2344,164 @@ button.danger:hover { background: #9b1d14; }
   grid-column: 1;
 }
 
+/* Coluna lateral da agenda: legenda (fixa) + formulário de compromisso. */
+.agenda-side {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  position: sticky;
+  top: 16px;
+  align-self: start;
+}
+
+.agenda-side .agenda-form-card {
+  position: static;
+}
+
+/* Eventos financeiros integrados (a receber/pagar, marcos e pedidos). */
+.agenda-event-fin {
+  cursor: pointer;
+  transition: filter 0.15s ease, transform 0.15s ease;
+}
+
+.agenda-event-fin:hover,
+.agenda-event-fin:focus-visible {
+  filter: brightness(1.06);
+  transform: translateY(-1px);
+  outline: none;
+}
+
+.agenda-event-fin strong {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.agenda-fin-icon {
+  flex: none;
+  font-weight: 700;
+}
+
+.agenda-evento-receber { background: #1a73e8; color: white; }
+.agenda-evento-recebido { background: #2e7d32; color: white; }
+.agenda-evento-pagar { background: #f57c00; color: white; }
+.agenda-evento-pago { background: #1b5e20; color: white; }
+.agenda-evento-vencido { background: #c62828; color: white; }
+.agenda-evento-marco { background: #6a1b9a; color: white; }
+.agenda-evento-compra { background: #f9a825; color: #333; }
+.agenda-evento-manual { background: #546e7a; color: white; }
+
+/* Legenda colapsável das cores da agenda. */
+.agenda-legend {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.agenda-legend-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.agenda-legend-head strong {
+  font-size: 14px;
+}
+
+.agenda-legend-toggle {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--ink);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.agenda-legend-list {
+  list-style: none;
+  margin: 0;
+  padding: 12px 14px;
+  display: grid;
+  gap: 9px;
+}
+
+.agenda-legend.collapsed .agenda-legend-list {
+  display: none;
+}
+
+.agenda-legend-list li {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 12.5px;
+  color: var(--ink);
+}
+
+.agenda-legend-dot {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12);
+}
+
+/* Modal de detalhes de um evento financeiro da agenda. */
+.agenda-detail-dialog {
+  width: min(480px, calc(100vw - 24px));
+}
+
+.agenda-detail-box {
+  padding: 20px;
+  display: grid;
+  gap: 16px;
+}
+
+.agenda-detail-box h3 {
+  margin: 0;
+}
+
+.agenda-detail-list {
+  margin: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.agenda-detail-row {
+  display: grid;
+  grid-template-columns: 130px 1fr;
+  gap: 12px;
+}
+
+.agenda-detail-row dt {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.agenda-detail-row dd {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.agenda-detail-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
 .kanban-board {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
@@ -3045,6 +3203,12 @@ menu {
 
   .agenda-layout {
     grid-template-columns: 1fr;
+  }
+
+  /* Em mobile a legenda/coluna lateral fica embaixo da agenda, sem sticky. */
+  .agenda-side {
+    position: static;
+    order: 2;
   }
 
   .agenda-grid {
