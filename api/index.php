@@ -861,9 +861,57 @@ function payable_group_parcels(PDO $pdo, string $rid): array
     return $stmt->fetchAll();
 }
 
+// Self-healing das colunas de recorrência: o índice e o eventos_automacao só
+// existiam via a migração manual (2026-06-09-contas-recorrentes.sql). Em
+// servidores onde a migração não foi rodada, o INSERT perdia as colunas
+// silenciosamente (insert_dynamic filtra colunas inexistentes) e o SELECT de
+// payable_group_parcels falhava com "Unknown column 'recorrencia_id'" → 500.
+// Espelha a migração e roda no início da criação de recorrência (e no bootstrap).
+function ensure_payable_recurrence_columns(PDO $pdo): void
+{
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    try {
+        $pdo->exec("ALTER TABLE accounts_payable
+            ADD COLUMN IF NOT EXISTS recorrencia_id VARCHAR(36) NULL,
+            ADD COLUMN IF NOT EXISTS parcela_numero INT NULL,
+            ADD COLUMN IF NOT EXISTS parcela_total INT NULL,
+            ADD COLUMN IF NOT EXISTS recorrencia_tipo
+                ENUM('mensal','bimestral','trimestral','semestral','anual') NULL,
+            ADD COLUMN IF NOT EXISTS juros_aplicado DECIMAL(10,2) NULL,
+            ADD COLUMN IF NOT EXISTS valor_original DECIMAL(10,2) NULL");
+        try {
+            $pdo->exec('ALTER TABLE accounts_payable ADD INDEX IF NOT EXISTS idx_recorrencia (recorrencia_id)');
+        } catch (Throwable $indexError) {
+            // Índice é otimização; sua ausência não impede a criação das parcelas.
+        }
+        $pdo->exec("CREATE TABLE IF NOT EXISTS eventos_automacao (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            tipo_evento VARCHAR(60) NOT NULL,
+            entidade_origem_tipo VARCHAR(60) NULL,
+            entidade_origem_id BIGINT UNSIGNED NULL,
+            entidade_gerada_tipo VARCHAR(60) NULL,
+            entidade_gerada_id BIGINT UNSIGNED NULL,
+            status VARCHAR(30) NOT NULL DEFAULT 'OK',
+            mensagem_erro TEXT NULL,
+            usuario_id BIGINT UNSIGNED NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_eventos_automacao_tipo (tipo_evento),
+            INDEX idx_eventos_automacao_origem (entidade_origem_tipo, entidade_origem_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        $done = true;
+    } catch (Throwable $error) {
+        error_log('[ObraSync] ensure_payable_recurrence_columns: ' . $error->getMessage());
+    }
+}
+
 function payable_create_recurrence(PDO $pdo, array $payload, array $authUser): array
 {
     $table = resolve_existing_table($pdo, ['accounts_payable']);
+    // Garante as colunas de recorrência antes de qualquer INSERT/SELECT que as use.
+    ensure_payable_recurrence_columns($pdo);
     $tipo = strtolower(trim((string) ($payload['recorrencia_tipo'] ?? 'mensal')));
     if (!in_array($tipo, ['mensal', 'bimestral', 'trimestral', 'semestral', 'anual'], true)) {
         payable_respond(false, [], 'Tipo de recorrência inválido.', 400);
@@ -2016,6 +2064,11 @@ function bootstrap_data(PDO $pdo, array $resources, ?array $authUser = null, boo
         if (resolve_existing_table($pdo, ['cash_bank_movements'], false)
             && !in_array('referencia_tipo', table_columns($pdo, 'cash_bank_movements'), true)) {
             ensure_referencia_columns($pdo);
+        }
+        // Colunas de recorrência (parcelamento/custos fixos) em contas a pagar.
+        if (resolve_existing_table($pdo, ['accounts_payable'], false)
+            && !in_array('recorrencia_id', table_columns($pdo, 'accounts_payable'), true)) {
+            ensure_payable_recurrence_columns($pdo);
         }
         // Colunas de snapshot do cliente em propostas/contratos.
         if (resolve_existing_table($pdo, ['commercial_proposals'], false)
