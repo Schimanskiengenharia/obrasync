@@ -1728,7 +1728,9 @@ function create_record(PDO $pdo, array $meta, array $payload): array
     $sql = 'INSERT INTO `' . $meta['table'] . '` (`' . implode('`,`', $columns) . '`) VALUES (' . implode(',', array_fill(0, count($columns), '?')) . ')';
     $stmt = $pdo->prepare($sql);
     $stmt->execute(array_values($data));
-    return get_record($pdo, $meta, (int) $pdo->lastInsertId());
+    $newId = (int) $pdo->lastInsertId();
+    maybe_snapshot_client($pdo, $meta['table'], $newId, null);
+    return get_record($pdo, $meta, $newId);
 }
 
 function update_record(PDO $pdo, array $meta, int $id, array $payload): array
@@ -1746,6 +1748,9 @@ function update_record(PDO $pdo, array $meta, int $id, array $payload): array
         $sets = array_map(fn ($field) => "`$field` = ?", array_keys($data));
         $stmt = $pdo->prepare('UPDATE `' . $meta['table'] . '` SET ' . implode(',', $sets) . ' WHERE id = ?');
         $stmt->execute([...array_values($data), $id]);
+        // (Re)captura o snapshot do cliente em propostas/contratos quando o
+        // cliente muda ou ainda não há snapshot — sem sobrescrever o original.
+        maybe_snapshot_client($pdo, $meta['table'], $id, $before);
         $record = get_record($pdo, $meta, $id);
         if ($transactionalAutomation && status_changed_to($before, $record, ['Concluido', 'Concluido', 'Aprovado', 'Aprovada'])) {
             if ($meta['table'] === 'obra_cronograma_marcos') {
@@ -1946,6 +1951,11 @@ function bootstrap_data(PDO $pdo, array $resources, ?array $authUser = null, boo
             && !in_array('referencia_tipo', table_columns($pdo, 'cash_bank_movements'), true)) {
             ensure_referencia_columns($pdo);
         }
+        // Colunas de snapshot do cliente em propostas/contratos.
+        if (resolve_existing_table($pdo, ['commercial_proposals'], false)
+            && !in_array('cliente_nome', table_columns($pdo, 'commercial_proposals'), true)) {
+            ensure_client_snapshot_columns($pdo);
+        }
     } catch (PDOException $error) {
         // Sem permissão de DDL/escrita: o bootstrap segue normalmente.
     }
@@ -2002,6 +2012,71 @@ function sanitize_record(array $meta, array $record): array
 
 // Colunas novas dos centros de custo (idempotente). Mantém code/name/status,
 // que já existem, e só acrescenta tipo/descricao_uso/exemplos.
+// Colunas de snapshot do cliente em propostas e contratos (idempotente).
+function ensure_client_snapshot_columns(PDO $pdo): void
+{
+    foreach (['commercial_proposals', 'sales_contracts'] as $table) {
+        $pdo->exec(
+            "ALTER TABLE `$table`
+                ADD COLUMN IF NOT EXISTS cliente_nome VARCHAR(200) NULL,
+                ADD COLUMN IF NOT EXISTS cliente_cpf_cnpj VARCHAR(20) NULL,
+                ADD COLUMN IF NOT EXISTS cliente_email VARCHAR(150) NULL,
+                ADD COLUMN IF NOT EXISTS cliente_telefone VARCHAR(20) NULL,
+                ADD COLUMN IF NOT EXISTS cliente_endereco TEXT NULL,
+                ADD COLUMN IF NOT EXISTS cliente_cidade VARCHAR(100) NULL,
+                ADD COLUMN IF NOT EXISTS cliente_estado VARCHAR(2) NULL,
+                ADD COLUMN IF NOT EXISTS cliente_cep VARCHAR(10) NULL"
+        );
+    }
+}
+
+// Copia os dados ATUAIS do cliente para as colunas de snapshot da proposta/
+// contrato. Só (re)captura na criação ($before === null), quando o cliente foi
+// trocado, ou quando o snapshot ainda está vazio — assim o registro preserva os
+// dados do momento em que foi criado mesmo que o cadastro do cliente mude depois.
+function maybe_snapshot_client(PDO $pdo, string $table, int $id, ?array $before): void
+{
+    if (!in_array($table, ['commercial_proposals', 'sales_contracts'], true)) {
+        return;
+    }
+    try {
+        $cols = table_columns($pdo, $table);
+        if (!in_array('cliente_nome', $cols, true) || !in_array('clientId', $cols, true)) {
+            return;
+        }
+        $stmt = $pdo->prepare('SELECT clientId, cliente_nome FROM `' . $table . '` WHERE id = ? LIMIT 1');
+        $stmt->execute([$id]);
+        $row = $stmt->fetch();
+        if (!$row) {
+            return;
+        }
+        $clientId = (int) ($row['clientId'] ?? 0);
+        if ($clientId <= 0) {
+            return;
+        }
+        $clientChanged = $before !== null && (int) ($before['clientId'] ?? 0) !== $clientId;
+        $snapshotEmpty = ($row['cliente_nome'] ?? '') === '' || $row['cliente_nome'] === null;
+        if ($before !== null && !$clientChanged && !$snapshotEmpty) {
+            return; // mantém o snapshot original
+        }
+        $client = clients_get_by_id($pdo, $clientId);
+        if (!$client) {
+            return;
+        }
+        update_dynamic($pdo, $table, $id, [
+            'cliente_nome' => $client['name'] ?? null,
+            'cliente_cpf_cnpj' => $client['document'] ?? null,
+            'cliente_email' => $client['email'] ?? null,
+            'cliente_telefone' => $client['phone'] ?? null,
+            'cliente_endereco' => $client['address'] ?? null,
+            'cliente_cep' => $client['zipCode'] ?? null,
+            // cidade/estado não existem na tabela clients; permanecem nulos.
+        ]);
+    } catch (Throwable $error) {
+        error_log('[ObraSync snapshot] ' . $error->getMessage());
+    }
+}
+
 function ensure_cost_center_columns(PDO $pdo): void
 {
     $pdo->exec(
