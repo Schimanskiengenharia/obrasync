@@ -3279,9 +3279,9 @@ function rdoPdfHtml(d, fotos) {
     ${atuou.map((x) => `<div class="rdo-pdf-assina"><span class="linha"></span><span>${svgText(x.responsavelNome || "")}</span><small>${svgText(x.disciplinaNome)}</small></div>`).join("")}
   </div>`;
   return `
+    ${generateDocumentHeader("Relatório Diário de Obra (RDO)", [obra, asDate(d.data)].filter(Boolean).join(" · "))}
     <div class="rdo-pdf-head">
-      <h1>RELATÓRIO DIÁRIO DE OBRA (RDO) Nº ${svgText(String(d.numeroSequencial || ""))}</h1>
-      <p><strong>${svgText(obra)}</strong> — ${asDate(d.data)} — Condição: ${svgText(d.condicaoTrabalho || "—")}</p>
+      <p><strong>RDO Nº ${svgText(String(d.numeroSequencial || ""))}</strong> · Condição: ${svgText(d.condicaoTrabalho || "—")}</p>
       <p>Clima: manhã ${svgText(d.climaManha || "—")} · tarde ${svgText(d.climaTarde || "—")} · noite ${svgText(d.climaNoite || "—")}</p>
     </div>
     ${efetivo}
@@ -3292,6 +3292,7 @@ function rdoPdfHtml(d, fotos) {
     ${discTab}
     ${fotosHtml}
     ${assinaturas}
+    ${generateDocumentFooter()}
   `;
 }
 
