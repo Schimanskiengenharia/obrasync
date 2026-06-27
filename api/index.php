@@ -120,6 +120,12 @@ try {
         handle_company_settings_module($pdo, $method, $_GET, $config, $authUser);
     }
 
+    // Itens detalhados do pedido de compra (list/create/update/delete/saveBulk).
+    if (in_array($module, ['purchaseorderitems', 'purchase_order_items', 'itens-pedido-compra'], true)) {
+        authorize_request($pdo, $authUser, 'purchaseOrders', action_for_method($method));
+        handle_purchase_order_items_module($pdo, $method, $_GET, $authUser);
+    }
+
     if ($resource === '' || $resource === 'bootstrap') {
         require_method($method, ['GET']);
         respond(['ok' => true, 'data' => bootstrap_data($pdo, $resources, $authUser)]);
@@ -1484,7 +1490,7 @@ function resource_map(): array
         'sinapiSettings' => r('sinapi_configuracoes', ['sinapi-configuracoes','configuracoes-sinapi'], ['defaultUf','defaultReferenceMonth','defaultReferenceYear','defaultReferenceType','defaultBdiPercent','defaultItemMode','showSinapiCodeInProposal','showAnalyticalInProposal','showUnitPriceInProposal','showGlobalOnlyInProposal','status'], ['defaultUf','defaultReferenceMonth','defaultReferenceYear','defaultReferenceType']),
         'ownCompositions' => r('composicoes_proprias', ['composicoes-proprias','composições-próprias'], ['code','description','unit','estimatedCost','laborCost','materialCost','equipmentCost','thirdPartyCost','marginPercent','suggestedPrice','status'], ['code']),
         'workBudgets' => r('orcamentos_obras', ['orcamentos-obras','orçamentos-obras'], ['projectId','clientId','name','version','budgetDate','sinapiReferenceId','priceType','status','bdiPercent','chargesPercent','discountPercent','directCost','totalCost','totalPrice','notes','createdByUserId','commercialUserId'], ['projectId','name','version']),
-        'workBudgetItems' => r('orcamento_obra_itens', ['itens-orcamentos-obras','itens-orçamentos-obras'], ['workBudgetId','projectId','origin','sinapiReferenceId','sinapiUf','sinapiReferenceType','code','description','unit','quantity','unitCost','totalCost','bdiPercent','unitPrice','totalPrice','stageName','costCenterId','categoryId','notes'], ['workBudgetId','code','description']),
+        'workBudgetItems' => r('orcamento_obra_itens', ['itens-orcamentos-obras','itens-orçamentos-obras'], ['workBudgetId','projectId','origin','sinapiReferenceId','sinapiUf','sinapiReferenceType','code','description','unit','quantity','unitCost','totalCost','bdiPercent','unitPrice','totalPrice','stageName','costCenterId','categoryId','notes','quantidade_realizada'], ['workBudgetId','code','description']),
         'quotes' => r('cotacoes', ['cotacoes','cotações'], ['supplierId','description','unit','quantity','unitValue','totalValue','quoteDate','validityDate','attachmentPath','projectId','workBudgetId','notes','status'], ['supplierId','description','quoteDate']),
         'fiscalDocuments' => r('fiscal_documents', ['notas-fiscais','documentos-fiscais-obra'], ['projectId','supplierId','documentNumber','issueDate','amount','type','status','payableId','receivableId','saleId','costCenterId','categoryId','pdfPath','xmlPath','notes'], ['documentNumber'], ['pdfPath','xmlPath']),
         'projectSchedule' => r('obra_cronograma_etapas', ['cronograma-fisico-financeiro','cronograma-obras','cronograma'], ['projectId','stageName','description','sortOrder','plannedStartDate','plannedEndDate','actualStartDate','actualEndDate','plannedPhysicalPercent','actualPhysicalPercent','plannedFinancialAmount','actualFinancialAmount','workBudgetId','workBudgetItemId','predecessorIds','durationDays','status','responsible','isMilestone','milestoneName','milestoneMessage','visibleToClient','notes','servicoSiacId'], ['projectId','stageName']),
@@ -1495,7 +1501,7 @@ function resource_map(): array
         'kanbanBoards' => r('kanban_boards', ['kanban-boards','quadros-kanban'], ['obra_id','nome','tipo'], ['obra_id','nome','tipo']),
         'kanbanColumns' => r('kanban_colunas', ['kanban-colunas','colunas-kanban'], ['board_id','nome','ordem','cor','limite_cards'], ['board_id','nome']),
         'kanbanCards' => r('kanban_cards', ['kanban-cards','cards-kanban'], ['coluna_id','obra_id','titulo','descricao','responsavel_id','data_vencimento','prioridade','referencia_tipo','referencia_id','ordem'], ['referencia_tipo','referencia_id','titulo']),
-        'purchaseOrders' => r('purchase_orders', ['pedidos-compra','pedidos-de-compra'], ['number','date','projectId','supplierId','costCenterId','categoryId','amount','expectedDate','status','notes'], ['number']),
+        'purchaseOrders' => r('purchase_orders', ['pedidos-compra','pedidos-de-compra'], ['number','date','projectId','supplierId','costCenterId','categoryId','amount','expectedDate','status','notes','condicoes_pagamento','desconto'], ['number']),
         'technicalReports' => r('technical_reports', ['relatorios-tecnicos','relatórios-técnicos'], ['projectId','title','date','responsible','visibleToClient','status','notes'], ['projectId','title','date']),
         // Qualidade PBQP-H Nível B — tabelas criadas sob demanda por ensure_qualidade_tables().
         // Campos JSON (itensVerificacao, servicosControlados, checklistSiac) trafegam como string.
@@ -1766,12 +1772,15 @@ function update_record(PDO $pdo, array $meta, int $id, array $payload): array
         // cliente muda ou ainda não há snapshot — sem sobrescrever o original.
         maybe_snapshot_client($pdo, $meta['table'], $id, $before);
         $record = get_record($pdo, $meta, $id);
-        if ($transactionalAutomation && status_changed_to($before, $record, ['Concluido', 'Concluido', 'Aprovado', 'Aprovada'])) {
-            if ($meta['table'] === 'obra_cronograma_marcos') {
+        if ($transactionalAutomation && status_changed_to($before, $record, ['Concluido', 'Concluido', 'Aprovado', 'Aprovada', 'Recebido'])) {
+            if ($meta['table'] === 'obra_cronograma_marcos' && status_changed_to($before, $record, ['Concluido', 'Aprovado', 'Aprovada'])) {
                 $record['automation'] = automate_approved_milestone($pdo, $id);
             }
             if ($meta['table'] === 'purchase_orders' && status_changed_to($before, $record, ['Aprovado', 'Aprovada'])) {
                 $record['automation'] = automate_approved_purchase_order($pdo, $id);
+            }
+            if ($meta['table'] === 'purchase_orders' && status_changed_to($before, $record, ['Recebido'])) {
+                $record['automation'] = automate_received_purchase_order($pdo, $id);
             }
         }
         if ($transactionalAutomation) {
@@ -1977,6 +1986,11 @@ function bootstrap_data(PDO $pdo, array $resources, ?array $authUser = null, boo
             && !in_array('logo_url', table_columns($pdo, 'company_settings'), true)) {
             ensure_company_logo_columns($pdo);
         }
+        // Itens do pedido de compra + condições de pagamento/desconto.
+        if (!resolve_existing_table($pdo, ['purchase_order_items'], false)
+            || (resolve_existing_table($pdo, ['purchase_orders'], false) && !in_array('condicoes_pagamento', table_columns($pdo, 'purchase_orders'), true))) {
+            ensure_purchase_order_items($pdo);
+        }
         // Colunas de referência cruzada caixa ↔ conta a pagar (anti dupla contagem).
         if (resolve_existing_table($pdo, ['cash_bank_movements'], false)
             && !in_array('referencia_tipo', table_columns($pdo, 'cash_bank_movements'), true)) {
@@ -2109,6 +2123,37 @@ function ensure_company_logo_columns(PDO $pdo): void
             ADD COLUMN IF NOT EXISTS instagram VARCHAR(200) NULL,
             ADD COLUMN IF NOT EXISTS whatsapp VARCHAR(20) NULL"
     );
+}
+
+// Itens detalhados do pedido de compra + condições/desconto + vínculo orçamento.
+function ensure_purchase_order_items(PDO $pdo): void
+{
+    $pdo->exec(
+        "CREATE TABLE IF NOT EXISTS purchase_order_items (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            purchase_order_id BIGINT UNSIGNED NOT NULL,
+            descricao VARCHAR(300) NOT NULL,
+            unidade VARCHAR(20) DEFAULT 'un',
+            quantidade DECIMAL(10,3) NOT NULL DEFAULT 1,
+            valor_unitario DECIMAL(10,2) NOT NULL DEFAULT 0,
+            valor_total DECIMAL(16,2) GENERATED ALWAYS AS (quantidade * valor_unitario) STORED,
+            work_budget_item_id BIGINT UNSIGNED NULL,
+            observacao VARCHAR(200) NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_pedido (purchase_order_id),
+            INDEX idx_poi_budget_item (work_budget_item_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+    );
+    $pdo->exec(
+        "ALTER TABLE purchase_orders
+            ADD COLUMN IF NOT EXISTS condicoes_pagamento VARCHAR(200) NULL,
+            ADD COLUMN IF NOT EXISTS desconto DECIMAL(10,2) DEFAULT 0"
+    );
+    try {
+        $pdo->exec("ALTER TABLE orcamento_obra_itens ADD COLUMN IF NOT EXISTS quantidade_realizada DECIMAL(18,4) NOT NULL DEFAULT 0");
+    } catch (Throwable $error) {
+        // Tabela de itens do orçamento pode não existir nesta instalação.
+    }
 }
 
 // Monta o endereço completo do cliente (logradouro, número, complemento, bairro)
@@ -2605,6 +2650,230 @@ function handle_company_logo_get(PDO $pdo, array $config): never
     header('Content-Length: ' . filesize($file));
     readfile($file);
     exit;
+}
+
+// ─── Itens detalhados do pedido de compra ───────────────────────────────────
+function handle_purchase_order_items_module(PDO $pdo, string $method, array $query, array $authUser): never
+{
+    if (!resolve_existing_table($pdo, ['purchase_order_items'], false)) {
+        ensure_purchase_order_items($pdo);
+    }
+    $action = strtolower(trim((string) ($query['action'] ?? '')));
+    if ($action === '') {
+        $action = match (true) {
+            $method === 'GET' => 'list',
+            $method === 'POST' => 'create',
+            $method === 'PUT', $method === 'PATCH' => 'update',
+            $method === 'DELETE' => 'delete',
+            default => '',
+        };
+    }
+    try {
+        if ($action === 'list') {
+            require_method($method, ['GET']);
+            poi_respond(true, poi_list($pdo, (int) ($query['purchaseOrderId'] ?? $query['purchase_order_id'] ?? 0)));
+        }
+        if ($action === 'create') {
+            require_method($method, ['POST']);
+            poi_respond(true, poi_create($pdo, read_json()), 'Item adicionado.', 201);
+        }
+        if ($action === 'update') {
+            require_method($method, ['PUT', 'PATCH', 'POST']);
+            $payload = read_json();
+            $id = (int) ($query['id'] ?? $payload['id'] ?? 0);
+            if ($id <= 0) {
+                poi_respond(false, [], 'Informe o id do item.', 400);
+            }
+            poi_respond(true, poi_update($pdo, $id, $payload), 'Item atualizado.');
+        }
+        if ($action === 'delete') {
+            require_method($method, ['DELETE', 'POST']);
+            $id = (int) ($query['id'] ?? 0);
+            if ($id <= 0) {
+                poi_respond(false, [], 'Informe o id do item.', 400);
+            }
+            poi_delete($pdo, $id);
+            poi_respond(true, [], 'Item removido.');
+        }
+        if ($action === 'savebulk') {
+            require_method($method, ['POST']);
+            poi_respond(true, poi_save_bulk($pdo, read_json(), $authUser), 'Itens do pedido salvos.');
+        }
+        poi_respond(false, [], 'Ação de itens do pedido inválida.', 400);
+    } catch (Throwable $e) {
+        error_log('[ObraSync purchaseOrderItems] ' . $e->getMessage() . ' em ' . $e->getFile() . ':' . $e->getLine());
+        poi_respond(false, [], 'Erro ao processar itens do pedido. Nada foi gravado.', 500);
+    }
+}
+
+function poi_respond(bool $success, mixed $data = [], string $message = '', int $status = 200): never
+{
+    http_response_code($status);
+    echo json_encode(['success' => $success, 'data' => $data, 'message' => $message], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
+function poi_list(PDO $pdo, int $poId): array
+{
+    if ($poId <= 0) {
+        return [];
+    }
+    $stmt = $pdo->prepare('SELECT * FROM purchase_order_items WHERE purchase_order_id = ? ORDER BY id ASC');
+    $stmt->execute([$poId]);
+    return $stmt->fetchAll();
+}
+
+// Monta os dados de um item, SEM valor_total (coluna gerada — não pode ser inserida).
+function poi_item_data(array $payload): array
+{
+    $budgetItemId = $payload['work_budget_item_id'] ?? $payload['workBudgetItemId'] ?? null;
+    $observacao = trim((string) ($payload['observacao'] ?? ''));
+    return [
+        'purchase_order_id' => (int) ($payload['purchase_order_id'] ?? $payload['purchaseOrderId'] ?? 0),
+        'descricao' => mb_substr(trim((string) ($payload['descricao'] ?? '')), 0, 300),
+        'unidade' => mb_substr((trim((string) ($payload['unidade'] ?? '')) ?: 'un'), 0, 20),
+        'quantidade' => round((float) ($payload['quantidade'] ?? 1), 3),
+        'valor_unitario' => round((float) ($payload['valor_unitario'] ?? 0), 2),
+        'work_budget_item_id' => ($budgetItemId !== null && $budgetItemId !== '') ? (int) $budgetItemId : null,
+        'observacao' => $observacao !== '' ? mb_substr($observacao, 0, 200) : null,
+    ];
+}
+
+function poi_create(PDO $pdo, array $payload): array
+{
+    $data = poi_item_data($payload);
+    if ($data['purchase_order_id'] <= 0 || $data['descricao'] === '') {
+        poi_respond(false, [], 'Informe o pedido e a descrição do item.', 400);
+    }
+    $id = insert_dynamic($pdo, 'purchase_order_items', $data);
+    poi_sync_order_total($pdo, $data['purchase_order_id']);
+    $stmt = $pdo->prepare('SELECT * FROM purchase_order_items WHERE id = ?');
+    $stmt->execute([$id]);
+    return $stmt->fetch() ?: [];
+}
+
+function poi_update(PDO $pdo, int $id, array $payload): array
+{
+    $stmt = $pdo->prepare('SELECT purchase_order_id FROM purchase_order_items WHERE id = ? LIMIT 1');
+    $stmt->execute([$id]);
+    $poId = (int) ($stmt->fetchColumn() ?: 0);
+    if ($poId <= 0) {
+        poi_respond(false, [], 'Item não encontrado.', 404);
+    }
+    $data = poi_item_data($payload + ['purchase_order_id' => $poId]);
+    unset($data['purchase_order_id']);
+    update_dynamic($pdo, 'purchase_order_items', $id, $data);
+    poi_sync_order_total($pdo, $poId);
+    $stmt = $pdo->prepare('SELECT * FROM purchase_order_items WHERE id = ?');
+    $stmt->execute([$id]);
+    return $stmt->fetch() ?: [];
+}
+
+function poi_delete(PDO $pdo, int $id): void
+{
+    $stmt = $pdo->prepare('SELECT purchase_order_id FROM purchase_order_items WHERE id = ? LIMIT 1');
+    $stmt->execute([$id]);
+    $poId = (int) ($stmt->fetchColumn() ?: 0);
+    $pdo->prepare('DELETE FROM purchase_order_items WHERE id = ?')->execute([$id]);
+    if ($poId > 0) {
+        poi_sync_order_total($pdo, $poId);
+    }
+}
+
+function poi_save_bulk(PDO $pdo, array $payload, array $authUser): array
+{
+    $poId = (int) ($payload['purchaseOrderId'] ?? $payload['purchase_order_id'] ?? 0);
+    if ($poId <= 0) {
+        poi_respond(false, [], 'Informe o pedido de compra.', 400);
+    }
+    $items = is_array($payload['items'] ?? null) ? $payload['items'] : [];
+    $desconto = round((float) ($payload['desconto'] ?? 0), 2);
+    $condicoes = array_key_exists('condicoes_pagamento', $payload) ? mb_substr(trim((string) $payload['condicoes_pagamento']), 0, 200) : null;
+
+    $pdo->beginTransaction();
+    try {
+        $pdo->prepare('DELETE FROM purchase_order_items WHERE purchase_order_id = ?')->execute([$poId]);
+        foreach ($items as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+            $data = poi_item_data($item + ['purchase_order_id' => $poId]);
+            if ($data['descricao'] === '') {
+                continue;
+            }
+            insert_dynamic($pdo, 'purchase_order_items', $data);
+        }
+        poi_sync_order_total($pdo, $poId, $desconto, $condicoes);
+        $pdo->commit();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        throw $e;
+    }
+    server_audit($pdo, $authUser, 'update', 'purchaseOrders', $poId, 'Itens do pedido salvos (' . count($items) . ')');
+    return poi_order_summary($pdo, $poId);
+}
+
+// Recalcula amount = soma(valor_total dos itens) − desconto e grava no pedido.
+function poi_sync_order_total(PDO $pdo, int $poId, ?float $desconto = null, ?string $condicoes = null): void
+{
+    $stmt = $pdo->prepare('SELECT COALESCE(SUM(valor_total),0) FROM purchase_order_items WHERE purchase_order_id = ?');
+    $stmt->execute([$poId]);
+    $subtotal = (float) $stmt->fetchColumn();
+    if ($desconto === null) {
+        $stmt = $pdo->prepare('SELECT COALESCE(desconto,0) FROM purchase_orders WHERE id = ?');
+        $stmt->execute([$poId]);
+        $desconto = (float) $stmt->fetchColumn();
+    }
+    $total = max(0, round($subtotal - $desconto, 2));
+    $fields = ['amount' => $total, 'desconto' => round($desconto, 2)];
+    if ($condicoes !== null) {
+        $fields['condicoes_pagamento'] = $condicoes;
+    }
+    update_dynamic($pdo, 'purchase_orders', $poId, $fields);
+}
+
+function poi_order_summary(PDO $pdo, int $poId): array
+{
+    $items = poi_list($pdo, $poId);
+    $subtotal = array_sum(array_map(static fn ($i) => (float) ($i['valor_total'] ?? 0), $items));
+    $stmt = $pdo->prepare('SELECT amount, desconto, condicoes_pagamento FROM purchase_orders WHERE id = ?');
+    $stmt->execute([$poId]);
+    $po = $stmt->fetch() ?: [];
+    return [
+        'items' => $items,
+        'subtotal' => round($subtotal, 2),
+        'desconto' => (float) ($po['desconto'] ?? 0),
+        'total' => (float) ($po['amount'] ?? 0),
+        'condicoes_pagamento' => $po['condicoes_pagamento'] ?? null,
+    ];
+}
+
+// Ao RECEBER o pedido: soma a quantidade dos itens vinculados em quantidade_realizada.
+function automate_received_purchase_order(PDO $pdo, int $poId): array
+{
+    if (!resolve_existing_table($pdo, ['purchase_order_items'], false) || !resolve_existing_table($pdo, ['orcamento_obra_itens'], false)) {
+        return ['updated' => 0];
+    }
+    if (!in_array('quantidade_realizada', table_columns($pdo, 'orcamento_obra_itens'), true)) {
+        return ['updated' => 0];
+    }
+    $stmt = $pdo->prepare('SELECT work_budget_item_id, quantidade FROM purchase_order_items WHERE purchase_order_id = ? AND work_budget_item_id IS NOT NULL');
+    $stmt->execute([$poId]);
+    $rows = $stmt->fetchAll();
+    $updated = 0;
+    $upd = $pdo->prepare('UPDATE orcamento_obra_itens SET quantidade_realizada = COALESCE(quantidade_realizada,0) + ? WHERE id = ?');
+    foreach ($rows as $row) {
+        $biId = (int) ($row['work_budget_item_id'] ?? 0);
+        if ($biId <= 0) {
+            continue;
+        }
+        $upd->execute([(float) $row['quantidade'], $biId]);
+        $updated++;
+    }
+    log_automation_event($pdo, 'PEDIDO_RECEBIDO', 'purchase_orders', $poId, 'orcamento_obra_itens', null, 'OK', $updated . ' item(ns) do orçamento atualizados.', null);
+    return ['updated' => $updated];
 }
 
 function ensure_api_sessions_table(PDO $pdo): void

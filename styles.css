@@ -1867,6 +1867,60 @@ html[data-theme="dark"] .cc-dup td { background: rgba(245, 200, 60, 0.12); }
   gap: 8px;
 }
 
+/* Itens detalhados do pedido de compra */
+.po-items-box {
+  border-top: 1px dashed var(--line);
+  padding-top: 12px;
+  margin-top: 4px;
+}
+
+.po-items-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.po-items-head h4 { margin: 0; font-size: 14px; }
+
+.po-items-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.po-items-table th,
+.po-items-table td {
+  border: 1px solid var(--line);
+  padding: 4px 6px;
+}
+
+.po-items-table th { background: var(--panel-2); }
+
+.po-items-table input,
+.po-items-table select {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.po-items-table .po-i-unid { width: 56px; }
+.po-items-table .po-i-qtd,
+.po-items-table .po-i-vu { width: 84px; }
+
+.po-i-total { white-space: nowrap; text-align: right; }
+.po-i-remove { padding: 2px 9px; }
+
+.po-items-totals {
+  display: flex;
+  gap: 18px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  font-size: 13px;
+}
+
+.po-total-geral strong { font-size: 15px; }
+
 /* Cabeçalho/rodapé padrão de documentos — só aparecem na impressão */
 .doc-print-only { display: none; }
 

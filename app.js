@@ -913,7 +913,9 @@ const configs = {
       ["supplierId", "Fornecedor", "supplier"],
       ["costCenterId", "Centro de custo", "costCenter"],
       ["categoryId", "Categoria", "category"],
-      ["amount", "Valor", "number"],
+      ["amount", "Valor total", "number"],
+      ["desconto", "Desconto (R$)", "money"],
+      ["condicoes_pagamento", "Condições de pagamento", "text"],
       ["expectedDate", "Previsão de entrega", "date"],
       ["status", "Status", "select", ["Solicitado", "Aprovado", "Comprado", "Recebido", "Cancelado"]],
       ["notes", "Observações", "textarea"],
@@ -5530,6 +5532,7 @@ function applyFormEnhancements() {
   if (editing?.key === "payable" && !editing.id) setupPayableRecurrence();
   if (editing?.key === "payable" && editing.id) setupPayableCashLink();
   if (editing?.key === "cashMoves" && !editing.id) setupCashPayableLink();
+  if (editing?.key === "purchaseOrders") setupPurchaseOrderForm();
 }
 
 // Seção "Vincular ao lançamento de caixa" no formulário de uma conta a pagar JÁ
@@ -6408,6 +6411,11 @@ async function saveForm(event) {
   if (editing.key === "payable" && editing.id) {
     const handled = await maybeApplyRecurrenceScopeEdit(data);
     if (handled) return; // já tratado (propagou e fechou) — não cai no fluxo normal
+  }
+  // Pedido de compra com itens detalhados: salva o pedido e os itens (saveBulk).
+  if (editing.key === "purchaseOrders") {
+    const handled = await submitPurchaseOrder(data);
+    if (handled) return;
   }
   // Novo movimento de caixa vinculado a uma conta a pagar: baixa a conta e grava
   // a referência cruzada (evita dupla contagem no centro de custo).
@@ -10212,18 +10220,30 @@ function printStandaloneDocument(innerHtml) {
 }
 
 // Pedido de compra individual imprimível (cabeçalho/rodapé da empresa).
-function openPurchaseOrderPrint(id) {
+async function openPurchaseOrderPrint(id) {
   const po = byId("purchaseOrders", id);
   if (!po) { alert("Pedido de compra não encontrado."); return; }
   const supplier = byId("suppliers", po.supplierId) || {};
-  const amount = Number(po.amount || 0);
   const supplierAddr = [
     clientFullAddress(supplier),
     [supplier.cidade, supplier.estado].filter(Boolean).join(" - "),
     supplier.zipCode ? `CEP ${maskCep(supplier.zipCode)}` : "",
   ].filter(Boolean).join(" · ");
-  const descricao = nameOf("categories", po.categoryId) || (po.number ? `Pedido ${po.number}` : "Itens do pedido");
   const linha = (label, valor) => `<p><span class="doc-kv-label">${label}:</span> ${svgText(valor || "—")}</p>`;
+
+  let items = [];
+  if (serverMode) {
+    try { items = await apiModuleRequest(`?module=purchaseOrderItems&action=list&purchaseOrderId=${encodeURIComponent(id)}`) || []; } catch { items = []; }
+  }
+  const qtd = (v) => Number(v || 0).toLocaleString("pt-BR", { maximumFractionDigits: 3 });
+  const amount = Number(po.amount || 0);
+  const desconto = Number(po.desconto || 0);
+  const subtotal = items.length ? items.reduce((s, it) => s + Number(it.valor_total || 0), 0) : amount + desconto;
+  const total = items.length ? Math.max(0, subtotal - desconto) : amount;
+  const itemRows = items.length
+    ? items.map((it, i) => `<tr><td>${i + 1}</td><td>${svgText(it.descricao || "")}</td><td>${svgText(it.unidade || "un")}</td><td>${qtd(it.quantidade)}</td><td>${asMoney(it.valor_unitario)}</td><td>${asMoney(it.valor_total)}</td></tr>`).join("")
+    : `<tr><td>1</td><td>${svgText(nameOf("categories", po.categoryId) || (po.number ? `Pedido ${po.number}` : "Itens do pedido"))}</td><td>vb</td><td>1</td><td>${asMoney(amount)}</td><td>${asMoney(amount)}</td></tr>`;
+
   const html = `
     <article class="doc-sheet">
       ${generateDocumentHeader("Pedido de Compra", [po.number ? `Nº ${po.number}` : "", asDate(po.date), po.status].filter(Boolean).join(" · "))}
@@ -10242,6 +10262,7 @@ function openPurchaseOrderPrint(id) {
           ${linha("Entrega prevista", asDate(po.expectedDate))}
           ${linha("Obra vinculada", nameOf("projects", po.projectId))}
           ${linha("Centro de custo", nameOf("costCenters", po.costCenterId))}
+          ${linha("Condições de pagamento", po.condicoes_pagamento)}
           ${linha("Status", po.status)}
         </section>
       </div>
@@ -10249,12 +10270,11 @@ function openPurchaseOrderPrint(id) {
         <h3>Itens</h3>
         <table class="doc-table">
           <thead><tr><th>Item</th><th>Descrição</th><th>Unid.</th><th>Qtd.</th><th>Valor Unit.</th><th>Total</th></tr></thead>
-          <tbody>
-            <tr><td>1</td><td>${svgText(descricao)}</td><td>vb</td><td>1</td><td>${asMoney(amount)}</td><td>${asMoney(amount)}</td></tr>
-          </tbody>
+          <tbody>${itemRows}</tbody>
           <tfoot>
-            <tr><td colspan="5" class="doc-total-label">Subtotal</td><td>${asMoney(amount)}</td></tr>
-            <tr class="doc-total-row"><td colspan="5" class="doc-total-label">Total geral</td><td>${asMoney(amount)}</td></tr>
+            <tr><td colspan="5" class="doc-total-label">Subtotal</td><td>${asMoney(subtotal)}</td></tr>
+            ${desconto > 0 ? `<tr><td colspan="5" class="doc-total-label">Desconto</td><td>− ${asMoney(desconto)}</td></tr>` : ""}
+            <tr class="doc-total-row"><td colspan="5" class="doc-total-label">TOTAL GERAL</td><td>${asMoney(total)}</td></tr>
           </tfoot>
         </table>
       </section>
@@ -10266,6 +10286,159 @@ function openPurchaseOrderPrint(id) {
       ${generateDocumentFooter()}
     </article>`;
   printStandaloneDocument(html);
+}
+
+// ─── Itens detalhados no formulário de pedido de compra ─────────────────────
+let purchaseOrderItemsState = [];
+const PO_CONDICOES_SUGESTOES = ["À vista", "30 dias", "50% entrada + 50% na entrega", "30/60 dias"];
+
+function setupPurchaseOrderForm() {
+  const formFields = qs("formFields");
+  if (!formFields || formFields.querySelector("#poItemsBox")) return;
+
+  // Datalist de condições de pagamento (sugestões + campo livre).
+  const condInput = formFields.querySelector('[name="condicoes_pagamento"]');
+  if (condInput && !formFields.querySelector("#poCondicoesList")) {
+    condInput.setAttribute("list", "poCondicoesList");
+    condInput.setAttribute("placeholder", "Ex.: À vista, 30 dias, 50% entrada + 50% na entrega…");
+    condInput.insertAdjacentHTML("afterend", `<datalist id="poCondicoesList">${PO_CONDICOES_SUGESTOES.map((c) => `<option value="${escapeHtml(c)}"></option>`).join("")}</datalist>`);
+  }
+
+  const box = document.createElement("div");
+  box.id = "poItemsBox";
+  box.className = "full po-items-box";
+  box.innerHTML = `
+    <div class="po-items-head">
+      <h4>Itens do pedido</h4>
+      <button type="button" class="secondary" id="poAddItem">+ Adicionar item</button>
+    </div>
+    <div class="table-wrap"><table class="po-items-table">
+      <thead><tr><th>Descrição</th><th>Unid.</th><th>Qtd.</th><th>Valor Unit.</th><th>Total</th><th>Item do orçamento</th><th></th></tr></thead>
+      <tbody id="poItemsBody"></tbody>
+    </table></div>
+    <div class="po-items-totals">
+      <span>Subtotal: <strong id="poSubtotal">${asMoney(0)}</strong></span>
+      <span>Desconto: <strong id="poDescontoView">${asMoney(0)}</strong></span>
+      <span class="po-total-geral">Total geral: <strong id="poTotalGeral">${asMoney(0)}</strong></span>
+    </div>`;
+  formFields.appendChild(box);
+
+  const body = box.querySelector("#poItemsBody");
+  const projectSelect = formFields.querySelector('[name="projectId"]');
+  const descontoInput = formFields.querySelector('[name="desconto"]');
+  const amountInput = formFields.querySelector('[name="amount"]');
+
+  const budgetOptionsHtml = (selectedId) => {
+    const projectId = projectSelect?.value || "";
+    const its = (db.workBudgetItems || []).filter((it) => !projectId || sameId(it.projectId, projectId));
+    return `<option value="">—</option>` + its.map((it) => `<option value="${escapeHtml(it.id)}" ${sameId(it.id, selectedId) ? "selected" : ""}>${escapeHtml(`${it.code ? it.code + " - " : ""}${it.description || it.id}`)}</option>`).join("");
+  };
+
+  const recompute = () => {
+    let subtotal = 0;
+    purchaseOrderItemsState.forEach((it, i) => {
+      const total = Number(it.quantidade || 0) * Number(it.valor_unitario || 0);
+      subtotal += total;
+      const cell = body.querySelector(`tr[data-idx="${i}"] .po-i-total`);
+      if (cell) cell.textContent = asMoney(total);
+    });
+    const desconto = descontoInput ? parseMoneyInput(descontoInput.value) : 0;
+    const totalGeral = Math.max(0, subtotal - desconto);
+    box.querySelector("#poSubtotal").textContent = asMoney(subtotal);
+    box.querySelector("#poDescontoView").textContent = asMoney(desconto);
+    box.querySelector("#poTotalGeral").textContent = asMoney(totalGeral);
+    if (amountInput) {
+      if (purchaseOrderItemsState.length) { amountInput.value = formatMoneyInput(totalGeral); amountInput.readOnly = true; }
+      else { amountInput.readOnly = false; }
+    }
+  };
+
+  const renderRows = () => {
+    body.innerHTML = purchaseOrderItemsState.map((it, i) => `
+      <tr data-idx="${i}">
+        <td><input class="po-i-desc" value="${escapeHtml(it.descricao || "")}" placeholder="Descrição do item"></td>
+        <td><input class="po-i-unid" value="${escapeHtml(it.unidade || "un")}"></td>
+        <td><input class="po-i-qtd" inputmode="decimal" value="${escapeHtml(String(it.quantidade ?? 1).replace(".", ","))}"></td>
+        <td><input class="po-i-vu" inputmode="decimal" value="${formatMoneyInput(it.valor_unitario || 0)}"></td>
+        <td class="po-i-total">${asMoney(Number(it.quantidade || 0) * Number(it.valor_unitario || 0))}</td>
+        <td><select class="po-i-budget">${budgetOptionsHtml(it.work_budget_item_id)}</select></td>
+        <td><button type="button" class="danger po-i-remove" title="Remover item">✕</button></td>
+      </tr>`).join("");
+    body.querySelectorAll("tr").forEach((tr) => {
+      const i = Number(tr.dataset.idx);
+      tr.querySelector(".po-i-desc").addEventListener("input", (e) => { purchaseOrderItemsState[i].descricao = e.target.value; });
+      tr.querySelector(".po-i-unid").addEventListener("input", (e) => { purchaseOrderItemsState[i].unidade = e.target.value; });
+      tr.querySelector(".po-i-qtd").addEventListener("input", (e) => { purchaseOrderItemsState[i].quantidade = parseMoneyInput(e.target.value); recompute(); });
+      tr.querySelector(".po-i-vu").addEventListener("input", (e) => { purchaseOrderItemsState[i].valor_unitario = parseMoneyInput(e.target.value); recompute(); });
+      tr.querySelector(".po-i-budget").addEventListener("change", (e) => {
+        purchaseOrderItemsState[i].work_budget_item_id = e.target.value || null;
+        const bi = byId("workBudgetItems", e.target.value);
+        if (bi) {
+          if (!purchaseOrderItemsState[i].descricao) { purchaseOrderItemsState[i].descricao = bi.description || ""; tr.querySelector(".po-i-desc").value = purchaseOrderItemsState[i].descricao; }
+          if (bi.unit) { purchaseOrderItemsState[i].unidade = bi.unit; tr.querySelector(".po-i-unid").value = bi.unit; }
+        }
+      });
+      tr.querySelector(".po-i-remove").addEventListener("click", () => { purchaseOrderItemsState.splice(i, 1); renderRows(); });
+    });
+    recompute();
+  };
+
+  box.querySelector("#poAddItem").addEventListener("click", () => {
+    purchaseOrderItemsState.push({ descricao: "", unidade: "un", quantidade: 1, valor_unitario: 0, work_budget_item_id: null });
+    renderRows();
+  });
+  descontoInput?.addEventListener("input", recompute);
+  projectSelect?.addEventListener("change", renderRows);
+
+  purchaseOrderItemsState = [];
+  renderRows();
+  if (editing.id && serverMode) {
+    apiModuleRequest(`?module=purchaseOrderItems&action=list&purchaseOrderId=${encodeURIComponent(editing.id)}`)
+      .then((items) => {
+        purchaseOrderItemsState = (items || []).map((it) => ({
+          descricao: it.descricao || "",
+          unidade: it.unidade || "un",
+          quantidade: Number(it.quantidade || 0),
+          valor_unitario: Number(it.valor_unitario || 0),
+          work_budget_item_id: it.work_budget_item_id || null,
+          observacao: it.observacao || "",
+        }));
+        renderRows();
+      })
+      .catch(() => {});
+  }
+}
+
+// Salva o pedido com itens detalhados (amount = subtotal − desconto) e os itens.
+// Retorna true se tratou (não cai no fluxo normal). Sem itens → fluxo normal.
+async function submitPurchaseOrder(data) {
+  if (!serverMode || !purchaseOrderItemsState.length) return false;
+  const desconto = Number(data.desconto || 0);
+  const subtotal = purchaseOrderItemsState.reduce((s, it) => s + Number(it.quantidade || 0) * Number(it.valor_unitario || 0), 0);
+  data.amount = Math.max(0, subtotal - desconto);
+  data.desconto = desconto;
+  try {
+    const record = editing.id
+      ? await updateIntegratedRecord("purchaseOrders", editing.id, data)
+      : await createIntegratedRecord("purchaseOrders", data);
+    const poId = record?.id || editing.id;
+    await apiModuleRequest("?module=purchaseOrderItems&action=saveBulk", {
+      method: "POST",
+      body: JSON.stringify({
+        purchaseOrderId: poId,
+        items: purchaseOrderItemsState,
+        desconto,
+        condicoes_pagamento: data.condicoes_pagamento || "",
+      }),
+    });
+  } catch (error) {
+    alert(`Não foi possível salvar o pedido com itens: ${error.message}`);
+    return true;
+  }
+  logAudit(editing.id ? "edit" : "create", "purchaseOrders", String(data.number || ""));
+  qs("recordDialog").close();
+  await refreshAndRender();
+  return true;
 }
 
 // Linha de contato do cabeçalho: 📱 WhatsApp · 📧 E-mail · 🌐 Site (ignora vazios).
