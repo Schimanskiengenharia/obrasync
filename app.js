@@ -4745,7 +4745,13 @@ function costCenterHistoryPaneHtml(ccId, periodKey) {
   const dupKeyOf = (m) => `${m.date}|${(Math.round(m.value * 100) / 100).toFixed(2)}`;
   const cashKeys = new Set(all.filter((m) => m.module === "cashMoves").map(dupKeyOf));
   const payKeys = new Set(all.filter((m) => m.module === "payable").map(dupKeyOf));
-  const dupKeys = new Set([...cashKeys].filter((k) => payKeys.has(k)));
+  // Só marca como duplicidade quando o reforço (fornecedor/descrição) confirma o
+  // par — desambigua pagamentos iguais no mesmo dia para fornecedores diferentes.
+  const dupKeys = new Set([...cashKeys].filter((k) => {
+    if (!payKeys.has(k)) return false;
+    const pair = findCostCenterDupPair(ccId, k);
+    return Boolean(pair.cash && pair.payable);
+  }));
   const canLink = canEditModule("cashMoves") && canEditModule("payable");
   const periodOptions = LUCRO_CAIXA_PERIODS.map(([v, l]) => `<option value="${v}" ${v === periodKey ? "selected" : ""}>${l}</option>`).join("");
   const rows = moves.length ? moves.map((m) => {
@@ -4916,19 +4922,57 @@ async function saveCostCenter(dialog, id, close) {
 // ─── Prevenção de dupla contagem: vínculo caixa ↔ conta a pagar ─────────────
 const cashDupIgnored = new Set(); // duplicidades dispensadas pelo usuário nesta sessão
 
+// Tokens significativos (≥3 letras/números, sem acento) para casar descrições.
+function dupTokenize(text) {
+  return String(text || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").match(/[a-z0-9]{3,}/g) || [];
+}
+
+// Reforço da heurística: dado um caixa e uma conta a pagar já com mesmo valor,
+// data e centro de custo, verifica se também batem por FORNECEDOR e DESCRIÇÃO.
+// O caixa não tem supplierId, então o fornecedor da conta é procurado (LIKE) no
+// texto do caixa (histórico/documento). Mesma ideia para o documento da conta.
+function cashPayableMatch(cash, payable) {
+  const norm = (s) => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+  const cashText = `${cash.history || ""} ${cash.originDocument || ""}`;
+  const cashNorm = norm(cashText);
+  const cashTokens = new Set(dupTokenize(cashText));
+  const supplierName = nameOf("suppliers", payable.supplierId) || "";
+  const supplierMatch = dupTokenize(supplierName).some((t) => cashTokens.has(t));
+  // Documento: token ≥3 OU substring direta (LIKE) — cobre números curtos (NF-2).
+  const docNorm = norm(payable.document).trim();
+  const descMatch = dupTokenize(payable.document).some((t) => cashTokens.has(t))
+    || (docNorm.length >= 3 && cashNorm.includes(docNorm));
+  return { supplierName, supplierMatch, descMatch, hasText: cashTokens.size > 0, corroborated: supplierMatch || descMatch };
+}
+
+// Escolhe a conta a pagar correspondente a um caixa entre candidatas de mesmo
+// valor/data/centro. Com um único candidato, mantém a heurística base. Havendo
+// ambiguidade (vários candidatos — ex.: pagamentos iguais no mesmo dia para
+// fornecedores diferentes), só casa quando há corroboração de fornecedor/descrição.
+function matchCashToPayable(cash, candidatePayables) {
+  if (!candidatePayables.length) return null;
+  if (candidatePayables.length === 1) return candidatePayables[0];
+  const corroborated = candidatePayables.map((p) => ({ p, info: cashPayableMatch(cash, p) })).filter((x) => x.info.corroborated);
+  return corroborated.length === 1 ? corroborated[0].p : null;
+}
+
 // Localiza o par (movimento de caixa + conta a pagar) por trás de uma chave
-// "data|valor" para o botão "Marcar como vinculado".
+// "data|valor" para o botão "Marcar como vinculado", já com o reforço acima.
 function findCostCenterDupPair(ccId, dupKey) {
   const [date, valStr] = String(dupKey).split("|");
   const val = Number(valStr);
   const round2 = (v) => Math.round(Number(v || 0) * 100) / 100;
-  const cash = (db.cashMoves || []).find((m) => sameId(m.costCenterId, ccId)
+  const cashCandidates = (db.cashMoves || []).filter((m) => sameId(m.costCenterId, ccId)
     && String(m.date || "").slice(0, 10) === date && round2(m.amount) === val
     && !(m.referencia_tipo === "CONTA_PAGAR" && m.referencia_id));
-  const payable = (db.payable || []).find((p) => sameId(p.costCenterId, ccId)
+  const payCandidates = (db.payable || []).filter((p) => sameId(p.costCenterId, ccId)
     && String(p.paidDate || p.dueDate || "").slice(0, 10) === date && round2(p.amount) === val
     && p.status !== "Cancelado" && !(p.referencia_tipo === "CAIXA_MANUAL" && p.referencia_id));
-  return { cash, payable };
+  for (const cash of cashCandidates) {
+    const payable = matchCashToPayable(cash, payCandidates);
+    if (payable) return { cash, payable };
+  }
+  return { cash: cashCandidates[0] || null, payable: null };
 }
 
 // Vincula um caixa e uma conta a pagar já existentes (servidor faz em transação;
@@ -5003,16 +5047,21 @@ function setupCashPayableLink() {
 // custo e data, ainda não vinculados entre si.
 function findPossibleDuplicates() {
   const round2 = (v) => Math.round(Number(v || 0) * 100) / 100;
-  const payables = (db.payable || []).filter((p) => p.status !== "Cancelado" && p.costCenterId && !(p.referencia_tipo === "CAIXA_MANUAL" && p.referencia_id));
+  const openPayables = (db.payable || []).filter((p) => p.status !== "Cancelado" && p.costCenterId && !(p.referencia_tipo === "CAIXA_MANUAL" && p.referencia_id));
+  const used = new Set(); // uma conta a pagar não pode casar com vários caixas
   const pairs = [];
   (db.cashMoves || []).forEach((m) => {
     if (m.type !== "Saída" || !m.costCenterId) return;
     if (m.referencia_tipo === "CONTA_PAGAR" && m.referencia_id) return;
     const date = String(m.date || "").slice(0, 10);
     const val = round2(m.amount);
-    const match = payables.find((p) => sameId(p.costCenterId, m.costCenterId) && round2(p.amount) === val
+    const candidates = openPayables.filter((p) => !used.has(p.id) && sameId(p.costCenterId, m.costCenterId) && round2(p.amount) === val
       && (String(p.paidDate || "").slice(0, 10) === date || String(p.dueDate || "").slice(0, 10) === date));
-    if (match) pairs.push({ cashId: m.id, payableId: match.id, date, value: val, costCenterId: m.costCenterId, cashDesc: m.history || m.originDocument || "Caixa", payDesc: match.document || "Conta a pagar" });
+    const match = matchCashToPayable(m, candidates);
+    if (!match) return; // ambíguo sem corroboração de fornecedor/descrição → ignora
+    used.add(match.id);
+    const info = cashPayableMatch(m, match);
+    pairs.push({ cashId: m.id, payableId: match.id, date, value: val, costCenterId: m.costCenterId, cashDesc: m.history || m.originDocument || "Caixa", payDesc: match.document || "Conta a pagar", supplier: info.supplierName });
   });
   return pairs;
 }
@@ -5025,7 +5074,7 @@ function duplicatesReportPanel() {
       <td>${svgText(nameOf("costCenters", pr.costCenterId) || "—")}</td>
       <td class="cc-neg">${asMoney(pr.value)}</td>
       <td>${svgText(pr.cashDesc)}</td>
-      <td>${svgText(pr.payDesc)}</td>
+      <td>${svgText(pr.payDesc)}${pr.supplier ? ` <span class="muted">· ${svgText(pr.supplier)}</span>` : ""}</td>
       <td><div class="row-actions">
         <button type="button" class="primary" data-dup-link="${escapeHtml(pr.cashId)}:${escapeHtml(pr.payableId)}">Vincular</button>
         <button type="button" class="secondary" data-dup-ignore="${escapeHtml(pr.cashId)}:${escapeHtml(pr.payableId)}">Ignorar</button>
@@ -5449,7 +5498,50 @@ function applyFormEnhancements() {
   const clientSelect = qs("formFields").querySelector('select[name="clientId"], select[name="cliente_id"]');
   if (clientSelect) setupClientAutofill(qs("formFields"), clientSelect);
   if (editing?.key === "payable" && !editing.id) setupPayableRecurrence();
+  if (editing?.key === "payable" && editing.id) setupPayableCashLink();
   if (editing?.key === "cashMoves" && !editing.id) setupCashPayableLink();
+}
+
+// Seção "Vincular ao lançamento de caixa" no formulário de uma conta a pagar JÁ
+// PAGA: lista movimentos de caixa com mesmo valor e mesma data para o usuário
+// escolher qual vincular (grava a referência cruzada e deduplica no histórico).
+function setupPayableCashLink() {
+  const formFields = qs("formFields");
+  if (!formFields || formFields.querySelector("#payableCashLink")) return;
+  const payable = byId("payable", editing.id);
+  if (!payable) return;
+  const alreadyLinked = payable.referencia_tipo === "CAIXA_MANUAL" && payable.referencia_id;
+  if (payable.status !== "Pago" || alreadyLinked) return;
+  const round2 = (v) => Math.round(Number(v || 0) * 100) / 100;
+  const val = round2(payable.amount);
+  const dates = [String(payable.paidDate || "").slice(0, 10), String(payable.dueDate || "").slice(0, 10)].filter(Boolean);
+  const candidates = (db.cashMoves || []).filter((m) => m.type === "Saída" && round2(m.amount) === val
+    && dates.includes(String(m.date || "").slice(0, 10)) && !(m.referencia_tipo === "CONTA_PAGAR" && m.referencia_id));
+  const list = candidates.length ? candidates.map((m) => `
+    <div class="pcl-row">
+      <span>${asDate(String(m.date || "").slice(0, 10)) || "—"} · ${asMoney(m.amount)} · ${svgText(m.history || m.originDocument || "Caixa")}${m.costCenterId ? ` · ${svgText(nameOf("costCenters", m.costCenterId) || "")}` : ""}</span>
+      <button type="button" class="secondary" data-pcl-link="${escapeHtml(m.id)}">Vincular</button>
+    </div>`).join("") : '<p class="muted">Nenhum movimento de caixa com mesmo valor e data encontrado.</p>';
+  const section = document.createElement("div");
+  section.id = "payableCashLink";
+  section.className = "full payable-cash-link";
+  section.innerHTML = `
+    <h4 class="pcl-title">🔗 Vincular ao lançamento de caixa</h4>
+    <p class="field-hint">Esta conta está paga. Se o pagamento também foi lançado manualmente no caixa, vincule-o para não contar o valor duas vezes no centro de custo.</p>
+    <div class="pcl-list">${list}</div>`;
+  formFields.appendChild(section);
+  section.querySelectorAll("[data-pcl-link]").forEach((btn) => btn.addEventListener("click", async () => {
+    if (!confirm("Vincular este lançamento de caixa a esta conta a pagar? O valor deixará de contar em dobro no centro de custo.")) return;
+    btn.disabled = true;
+    try {
+      await linkCashPayable(btn.dataset.pclLink, editing.id);
+      try { qs("recordDialog").close(); } catch { /* já fechado */ }
+      render();
+    } catch (error) {
+      alert(`Não foi possível vincular: ${error.message}`);
+      btn.disabled = false;
+    }
+  }));
 }
 
 // Preenchimento automático dos dados do cliente ao montar uma obra/projeto.

@@ -1805,6 +1805,27 @@ html[data-theme="dark"] .cc-dup td { background: rgba(245, 200, 60, 0.12); }
 
 .cash-link-field .field-hint { display: block; margin-top: 4px; }
 
+.payable-cash-link {
+  border-top: 1px dashed var(--line);
+  padding-top: 12px;
+  margin-top: 4px;
+}
+
+.payable-cash-link .pcl-title { margin: 0 0 4px; font-size: 14px; }
+.payable-cash-link .pcl-list { display: grid; gap: 6px; margin-top: 8px; }
+
+.payable-cash-link .pcl-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-2);
+  font-size: 13px;
+}
+
 .version-panel {
   display: grid;
   grid-template-columns: minmax(190px, 260px) 1fr;
