@@ -4712,8 +4712,11 @@ function save_fiscal_document(PDO $pdo, array $meta, array $config, ?int $id = n
     $data = clean_payload($meta, $payload);
     unset($data['pdfPath'], $data['xmlPath']);
 
-    if (empty($data['projectId']) || empty($data['documentNumber']) || empty($data['issueDate'])) {
-        fail('Obra/projeto, número da nota e data de emissão são obrigatórios.', 400);
+    // Obra/projeto é opcional (projectId é NULL no schema e o lote de NFS-e pode
+    // não ter obra). Exigir obra aqui impedia até a troca de status (ex.: marcar
+    // como "Conferida") de notas sem obra vinculada.
+    if (empty($data['documentNumber']) || empty($data['issueDate'])) {
+        fail('Número da nota e data de emissão são obrigatórios.', 400);
     }
 
     $uploadDir = rtrim($config['upload_dir'] ?? '/var/lib/financeiro/uploads', '/') . '/notas-fiscais';
