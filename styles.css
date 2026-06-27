@@ -2066,6 +2066,125 @@ html[data-theme="dark"] .exec-dash-alert {
 
 .exec-progress-bar.small { height: 9px; }
 
+/* Estrutura do orçamento de obra (etapas, visões, totalizadores) */
+.budget-header-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.budget-header-info { display: flex; gap: 18px; flex-wrap: wrap; font-size: 13px; }
+.budget-header-acts { display: flex; gap: 8px; flex-wrap: wrap; }
+.budget-view-switch { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+
+.budget-nova-etapa { margin-bottom: 10px; }
+
+.budget-etapa {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  margin-bottom: 14px;
+  overflow: hidden;
+}
+
+.budget-etapa-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--line);
+}
+
+.budget-etapa-head strong { font-size: 14px; }
+.budget-etapa-sub { color: var(--muted); font-size: 13px; }
+.budget-etapa-acts { margin-left: auto; display: flex; gap: 6px; }
+
+.budget-items-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.budget-items-table th, .budget-items-table td { border: 1px solid var(--line); padding: 5px 8px; }
+.budget-items-table th { background: var(--panel-2); text-align: left; }
+.budget-items-table .bt-num { text-align: right; white-space: nowrap; }
+.bt-tipo { font-size: 11px; color: var(--muted); }
+.budget-add-item { display: inline-block; margin: 8px 14px; }
+
+.budget-group {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin-bottom: 12px;
+  overflow: hidden;
+}
+.budget-group > header {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 14px;
+  background: var(--panel-2);
+  font-weight: 700;
+}
+.budget-group-sub td { font-weight: 700; background: var(--panel-2); }
+.budget-group-total {
+  text-align: right;
+  font-weight: 800;
+  font-size: 15px;
+  padding: 8px 4px;
+}
+
+.budget-tipo-view { display: grid; gap: 8px; }
+.budget-tipo-row {
+  display: grid;
+  grid-template-columns: 160px 120px 60px 1fr;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+}
+.budget-tipo-name { font-weight: 600; }
+.budget-tipo-val { text-align: right; }
+.budget-tipo-pct { color: var(--muted); text-align: right; }
+.budget-tipo-bar { height: 12px; border-radius: 999px; background: var(--panel-2); overflow: hidden; }
+.budget-tipo-bar span { display: block; height: 100%; background: var(--teal); }
+.budget-tipo-total { border-top: 1px solid var(--line); padding-top: 6px; font-weight: 800; }
+
+.budget-totais {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px 16px;
+  background: var(--panel);
+}
+.budget-totais h4 { margin: 0 0 8px; font-size: 13px; }
+.bt-row { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; font-size: 13px; }
+.bt-total { border-top: 2px solid var(--line); margin-top: 4px; padding-top: 8px; font-size: 16px; }
+.bt-total strong { color: var(--teal-2); }
+
+.budget-item-dialog { width: min(640px, calc(100vw - 24px)); }
+.budget-item-box { display: grid; gap: 12px; padding: 18px; }
+.budget-item-search { width: 100%; }
+.budget-item-results { display: grid; gap: 4px; max-height: 220px; overflow-y: auto; border: 1px solid var(--line); border-radius: 6px; padding: 6px; }
+.budget-item-result {
+  text-align: left;
+  border: 0;
+  background: none;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.budget-item-result:hover, .budget-item-result.picked { background: var(--panel-2); }
+.budget-item-common {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  align-items: end;
+}
+.budget-item-common label { display: grid; gap: 4px; font-size: 12px; }
+.budget-item-total { grid-column: 1 / -1; text-align: right; font-size: 14px; }
+
 /* Cabeçalho/rodapé padrão de documentos — só aparecem na impressão */
 .doc-print-only { display: none; }
 
@@ -4275,6 +4394,8 @@ menu {
   .payable-recurrence-fields,
   .settlement-fields,
   .lucro-caixa-cards,
+  .budget-totais,
+  .budget-item-common,
   .version-panel,
   .schedule-toolbar,
   .proposal-generator-grid,

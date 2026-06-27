@@ -1502,7 +1502,8 @@ function resource_map(): array
         'sinapiSettings' => r('sinapi_configuracoes', ['sinapi-configuracoes','configuracoes-sinapi'], ['defaultUf','defaultReferenceMonth','defaultReferenceYear','defaultReferenceType','defaultBdiPercent','defaultItemMode','showSinapiCodeInProposal','showAnalyticalInProposal','showUnitPriceInProposal','showGlobalOnlyInProposal','status'], ['defaultUf','defaultReferenceMonth','defaultReferenceYear','defaultReferenceType']),
         'ownCompositions' => r('composicoes_proprias', ['composicoes-proprias','composições-próprias'], ['code','description','unit','estimatedCost','laborCost','materialCost','equipmentCost','thirdPartyCost','marginPercent','suggestedPrice','status'], ['code']),
         'workBudgets' => r('orcamentos_obras', ['orcamentos-obras','orçamentos-obras'], ['projectId','clientId','name','version','budgetDate','sinapiReferenceId','priceType','status','bdiPercent','chargesPercent','discountPercent','directCost','totalCost','totalPrice','notes','createdByUserId','commercialUserId'], ['projectId','name','version']),
-        'workBudgetItems' => r('orcamento_obra_itens', ['itens-orcamentos-obras','itens-orçamentos-obras'], ['workBudgetId','projectId','origin','sinapiReferenceId','sinapiUf','sinapiReferenceType','code','description','unit','quantity','unitCost','totalCost','bdiPercent','unitPrice','totalPrice','stageName','costCenterId','categoryId','notes','quantidade_realizada'], ['workBudgetId','code','description']),
+        'workBudgetItems' => r('orcamento_obra_itens', ['itens-orcamentos-obras','itens-orçamentos-obras'], ['workBudgetId','projectId','origin','sinapiReferenceId','sinapiUf','sinapiReferenceType','code','description','unit','quantity','unitCost','totalCost','bdiPercent','unitPrice','totalPrice','stageName','costCenterId','categoryId','notes','quantidade_realizada','codigo','tipo','etapa_id','sinapi_id','composicao_propria_id','ordem'], ['workBudgetId','code','description']),
+        'orcamentoEtapas' => r('orcamento_etapas', ['orcamento-etapas','etapas-orcamento'], ['orcamento_id','obra_id','nome','codigo','ordem','bdi_especifico'], ['orcamento_id','nome']),
         'quotes' => r('cotacoes', ['cotacoes','cotações'], ['supplierId','description','unit','quantity','unitValue','totalValue','quoteDate','validityDate','attachmentPath','projectId','workBudgetId','notes','status'], ['supplierId','description','quoteDate']),
         'fiscalDocuments' => r('fiscal_documents', ['notas-fiscais','documentos-fiscais-obra'], ['projectId','supplierId','documentNumber','issueDate','amount','type','status','payableId','receivableId','saleId','costCenterId','categoryId','pdfPath','xmlPath','notes'], ['documentNumber'], ['pdfPath','xmlPath']),
         'projectSchedule' => r('obra_cronograma_etapas', ['cronograma-fisico-financeiro','cronograma-obras','cronograma'], ['projectId','stageName','description','sortOrder','plannedStartDate','plannedEndDate','actualStartDate','actualEndDate','plannedPhysicalPercent','actualPhysicalPercent','plannedFinancialAmount','actualFinancialAmount','workBudgetId','workBudgetItemId','predecessorIds','durationDays','status','responsible','isMilestone','milestoneName','milestoneMessage','visibleToClient','notes','servicoSiacId'], ['projectId','stageName']),
@@ -2006,6 +2007,11 @@ function bootstrap_data(PDO $pdo, array $resources, ?array $authUser = null, boo
         if (!resolve_existing_table($pdo, ['orcamento_item_execucao_log'], false)) {
             ensure_budget_execution_log($pdo);
         }
+        // Estrutura de etapas/tipos do orçamento de obra.
+        if (!resolve_existing_table($pdo, ['orcamento_etapas'], false)
+            || (resolve_existing_table($pdo, ['orcamento_obra_itens'], false) && !in_array('etapa_id', table_columns($pdo, 'orcamento_obra_itens'), true))) {
+            ensure_budget_structure($pdo);
+        }
         // Colunas de referência cruzada caixa ↔ conta a pagar (anti dupla contagem).
         if (resolve_existing_table($pdo, ['cash_bank_movements'], false)
             && !in_array('referencia_tipo', table_columns($pdo, 'cash_bank_movements'), true)) {
@@ -2192,6 +2198,33 @@ function ensure_budget_execution_log(PDO $pdo): void
     } catch (Throwable $error) {
         // segue
     }
+}
+
+// Estrutura profissional do orçamento: etapas + colunas (tipo, etapa, código…).
+function ensure_budget_structure(PDO $pdo): void
+{
+    $pdo->exec(
+        "ALTER TABLE orcamento_obra_itens
+            ADD COLUMN IF NOT EXISTS codigo VARCHAR(20) NULL,
+            ADD COLUMN IF NOT EXISTS tipo ENUM('material','mao_de_obra','equipamento','subempreiteiro','outros') DEFAULT 'material',
+            ADD COLUMN IF NOT EXISTS etapa_id BIGINT UNSIGNED NULL,
+            ADD COLUMN IF NOT EXISTS sinapi_id BIGINT UNSIGNED NULL,
+            ADD COLUMN IF NOT EXISTS composicao_propria_id BIGINT UNSIGNED NULL,
+            ADD COLUMN IF NOT EXISTS ordem INT DEFAULT 0"
+    );
+    $pdo->exec(
+        "CREATE TABLE IF NOT EXISTS orcamento_etapas (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            orcamento_id BIGINT UNSIGNED NOT NULL,
+            obra_id BIGINT UNSIGNED NOT NULL,
+            nome VARCHAR(200) NOT NULL,
+            codigo VARCHAR(10) NULL,
+            ordem INT DEFAULT 0,
+            bdi_especifico DECIMAL(5,2) NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_orcamento (orcamento_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+    );
 }
 
 function log_budget_execution(PDO $pdo, int $itemId, float $anterior, float $nova, string $origem, ?string $motivo, ?int $userId): void
@@ -5563,6 +5596,7 @@ function permission_module_key(string $key): string
         'proposalBudgetLinks' => 'proposals',
         'proposalVariables' => 'proposals',
         'workBudgetItems' => 'workBudgets',
+        'orcamentoEtapas' => 'workBudgets',
         'sinapiCompositionItems' => 'sinapiCompositions',
         'checklistItems' => 'checklists',
         'customFieldValues' => 'customFields',

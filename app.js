@@ -326,6 +326,7 @@ let dashboardProjectId = "";
 let lucroCaixaPeriod = "mesAtual"; // período do painel Lucro Gerencial vs Caixa Real
 let selectedWorkBudgetId = "";
 let workBudgetItemFilter = "all"; // filtro de execução: all|estouro|naoiniciado|andamento|concluido
+let workBudgetView = "etapa"; // visão do orçamento: etapa|centro|tipo|execucao
 let sinapiSearchTerm = "";
 let sinapiSourceFilter = "all";
 let sinapiUfFilter = "MS";
@@ -364,6 +365,7 @@ const apiResources = {
   projects: "obras",
   workBudgets: "orcamentos-obras",
   workBudgetItems: "itens-orcamentos-obras",
+  orcamentoEtapas: "orcamento-etapas",
   sinapiReferences: "sinapi-referencias",
   sinapiInputs: "sinapi-insumos",
   sinapiCompositions: "sinapi-composicoes",
@@ -599,7 +601,9 @@ const configs = {
       ["sinapiReferenceId", "Referência SINAPI", "sinapiReference"],
       ["sinapiUf", "UF SINAPI", "text"],
       ["sinapiReferenceType", "Tipo referência SINAPI", "text"],
-      ["code", "Código", "text"],
+      ["code", "Código SINAPI", "text"],
+      ["codigo", "Código hierárquico", "text"],
+      ["tipo", "Tipo de custo", "select", ["material", "mao_de_obra", "equipamento", "subempreiteiro", "outros"]],
       ["description", "Descrição", "textarea", true],
       ["unit", "Unidade", "text"],
       ["quantity", "Quantidade", "number"],
@@ -1514,6 +1518,7 @@ const seed = {
   workBudgets: [
     { id: "wb1", projectId: "ob1", clientId: "c1", name: "Orçamento base Residencial Primavera", version: "v1", budgetDate: "2026-06-07", sinapiReferenceId: "sr1", priceType: "Sem desoneração", status: "Rascunho", bdiPercent: 25, chargesPercent: 0, discountPercent: 0, directCost: 18750, totalCost: 18750, totalPrice: 23437.5, notes: "Orçamento exemplo integrado à obra.", createdByUserId: "u1", commercialUserId: "u1" },
   ],
+  orcamentoEtapas: [],
   workBudgetItems: [
     { id: "wbi1", workBudgetId: "wb1", projectId: "ob1", origin: "SINAPI", sinapiReferenceId: "sr1", sinapiUf: "MS", sinapiReferenceType: "Sem desoneração", code: "CP-SINAPI-001", description: "Instalação de eletroduto PVC embutido", unit: "m", quantity: 500, unitCost: 18.75, totalCost: 9375, bdiPercent: 25, unitPrice: 23.44, totalPrice: 11718.75, stageName: "Instalações", costCenterId: "cc2", categoryId: "cat3", notes: "" },
     { id: "wbi2", workBudgetId: "wb1", projectId: "ob1", origin: "Composição própria", code: "CP-001", description: "Projeto elétrico comercial", unit: "un", quantity: 1, unitCost: 1200, totalCost: 1200, bdiPercent: 45, unitPrice: 1740, totalPrice: 1740, stageName: "Projeto executivo", costCenterId: "cc2", categoryId: "cat2", notes: "" },
@@ -2215,7 +2220,7 @@ function canEdit() {
 
 function canEditModule(key = currentModule) {
   if (isAdmin()) return true;
-  const permissionKey = { agendaEvents: "agenda", kanbanBoards: "kanban", kanbanColumns: "kanban", kanbanCards: "kanban" }[key] || key;
+  const permissionKey = { agendaEvents: "agenda", kanbanBoards: "kanban", kanbanColumns: "kanban", kanbanCards: "kanban", orcamentoEtapas: "workBudgets" }[key] || key;
   const override = myPermissions[permissionKey];
   if (override) return !!override.edit;
   if (currentUser?.role === "visualizador") return false;
@@ -8161,6 +8166,387 @@ function openBudgetItemExecution(itemId) {
   }
 }
 
+// ─── Estrutura profissional do orçamento: etapas, tipos e visões ────────────
+const BUDGET_TIPOS = [
+  ["material", "Material"],
+  ["mao_de_obra", "Mão de obra"],
+  ["equipamento", "Equipamento"],
+  ["subempreiteiro", "Subempreiteiro"],
+  ["outros", "Outros"],
+];
+const BUDGET_TIPO_SHORT = { material: "Mat.", mao_de_obra: "M.O.", equipamento: "Equip.", subempreiteiro: "Subemp.", outros: "Outros" };
+function budgetTipoLabel(t) { const f = BUDGET_TIPOS.find(([v]) => v === t); return f ? f[1] : "Material"; }
+function budgetTipoShort(t) { return BUDGET_TIPO_SHORT[t] || "Mat."; }
+function budgetItemCost(it) { const t = Number(it.totalCost || 0); return t || Number(it.quantity || 0) * Number(it.unitCost || 0); }
+function budgetEtapas(orcamentoId) {
+  return (db.orcamentoEtapas || []).filter((e) => sameId(e.orcamento_id, orcamentoId))
+    .sort((a, b) => (Number(a.ordem || 0) - Number(b.ordem || 0)) || String(a.codigo || "").localeCompare(String(b.codigo || "")));
+}
+function budgetEtapaBdi(etapa, budget) {
+  const esp = etapa && etapa.bdi_especifico != null && etapa.bdi_especifico !== "" ? Number(etapa.bdi_especifico) : null;
+  return esp != null ? esp : Number(budget.bdiPercent || 0);
+}
+function budgetTipoTotals(items) {
+  const totals = {};
+  BUDGET_TIPOS.forEach(([v]) => (totals[v] = 0));
+  items.forEach((it) => { const k = it.tipo || "material"; totals[k] = (totals[k] || 0) + budgetItemCost(it); });
+  return totals;
+}
+function budgetTotals(budget, items) {
+  const etapas = budgetEtapas(budget.id);
+  let custoDireto = 0;
+  let bdiValor = 0;
+  const add = (grp, etapa) => {
+    const c = grp.reduce((s, it) => s + budgetItemCost(it), 0);
+    custoDireto += c;
+    bdiValor += c * (budgetEtapaBdi(etapa, budget) / 100);
+  };
+  etapas.forEach((et) => add(items.filter((it) => sameId(it.etapa_id, et.id)), et));
+  const semEtapa = items.filter((it) => !it.etapa_id);
+  if (semEtapa.length) add(semEtapa, null);
+  return { custoDireto, bdiValor, totalComBdi: custoDireto + bdiValor };
+}
+
+function budgetViewSwitcher() {
+  const views = [["etapa", "Por Etapa"], ["centro", "Por Centro de Custo"], ["tipo", "Por Tipo de Custo"], ["execucao", "Previsto vs Realizado"]];
+  return `<section class="budget-view-switch no-print">${views.map(([v, l]) => `<button type="button" class="exec-chip ${workBudgetView === v ? "active" : ""}" data-budget-view="${v}">${l}</button>`).join("")}</section>`;
+}
+
+function budgetTotalizadores(budget, items) {
+  const tt = budgetTipoTotals(items);
+  const tot = budgetTotals(budget, items);
+  const tipoRows = BUDGET_TIPOS.filter(([v]) => tt[v] > 0).map(([v, l]) => `<div class="bt-row"><span>${l}</span><strong>${asMoney(tt[v])}</strong></div>`).join("");
+  return `
+    <section class="budget-totais">
+      <div class="budget-totais-tipos">
+        <h4>Custo direto por tipo</h4>
+        ${tipoRows || '<div class="bt-row"><span>Sem itens</span><strong>R$ 0,00</strong></div>'}
+      </div>
+      <div class="budget-totais-final">
+        <div class="bt-row"><span>Custo direto (sem BDI)</span><strong>${asMoney(tot.custoDireto)}</strong></div>
+        <div class="bt-row"><span>BDI ${asPercent(budget.bdiPercent || 0)}</span><strong>${asMoney(tot.bdiValor)}</strong></div>
+        <div class="bt-row bt-total"><span>TOTAL COM BDI</span><strong>${asMoney(tot.totalComBdi)}</strong></div>
+      </div>
+    </section>`;
+}
+
+function renderBudgetEtapaView(budget, items, editable) {
+  const etapas = budgetEtapas(budget.id);
+  const semEtapa = items.filter((it) => !it.etapa_id);
+  const itemRow = (it) => `<tr>
+    <td>${svgText(it.codigo || it.code || "")}</td>
+    <td>${svgText(it.description || "")}</td>
+    <td><span class="bt-tipo">${budgetTipoShort(it.tipo)}</span></td>
+    <td>${svgText(it.unit || "")}</td>
+    <td>${fmtQty(it.quantity)}</td>
+    <td>${asMoney(it.unitCost)}</td>
+    <td>${asMoney(budgetItemCost(it))}</td>
+    ${editable ? `<td class="no-print"><div class="row-actions">
+      <button type="button" class="secondary" data-action-key="workBudgetItems" data-edit="${it.id}" title="Editar">✎</button>
+      <button type="button" class="danger" data-action-key="workBudgetItems" data-delete="${it.id}" title="Remover">✕</button>
+    </div></td>` : ""}
+  </tr>`;
+  const etapaBlock = (etapa, grp) => {
+    const subtotal = grp.reduce((s, it) => s + budgetItemCost(it), 0);
+    return `<section class="budget-etapa">
+      <header class="budget-etapa-head">
+        <strong>${etapa ? `${etapa.codigo ? etapa.codigo + " — " : ""}${svgText(etapa.nome)}` : "Itens sem etapa"}</strong>
+        <span class="budget-etapa-sub">Subtotal: ${asMoney(subtotal)}${etapa ? ` · BDI ${asPercent(budgetEtapaBdi(etapa, budget))}` : ""}</span>
+        ${editable && etapa ? `<span class="budget-etapa-acts no-print"><button type="button" class="secondary" data-etapa-edit="${etapa.id}">editar</button><button type="button" class="danger" data-etapa-remove="${etapa.id}">remover</button></span>` : ""}
+      </header>
+      <div class="table-wrap"><table class="budget-items-table">
+        <thead><tr><th>Cód.</th><th>Descrição</th><th>Tipo</th><th>Un</th><th>Qtd</th><th>V.Unit</th><th>Total</th>${editable ? '<th class="no-print"></th>' : ""}</tr></thead>
+        <tbody>${grp.length ? grp.map(itemRow).join("") : `<tr><td colspan="${editable ? 8 : 7}"><span class="muted">Sem itens nesta etapa.</span></td></tr>`}</tbody>
+      </table></div>
+      ${editable ? `<button type="button" class="link-button budget-add-item no-print" data-add-item-etapa="${etapa ? etapa.id : ""}">+ Adicionar item</button>` : ""}
+    </section>`;
+  };
+  return `
+    ${editable ? '<button type="button" class="secondary budget-nova-etapa no-print" id="budgetNovaEtapa">+ Nova etapa</button>' : ""}
+    ${etapas.map((et) => etapaBlock(et, items.filter((it) => sameId(it.etapa_id, et.id)))).join("")}
+    ${(semEtapa.length || !etapas.length) ? etapaBlock(null, semEtapa) : ""}`;
+}
+
+function renderBudgetCentroView(items) {
+  const groups = {};
+  items.forEach((it) => { const k = it.costCenterId || "__none"; (groups[k] = groups[k] || []).push(it); });
+  let totalGeral = 0;
+  const blocks = Object.entries(groups).map(([cc, grp]) => {
+    const sub = grp.reduce((s, it) => s + budgetItemCost(it), 0);
+    totalGeral += sub;
+    const name = cc === "__none" ? "Sem centro de custo" : (nameOf("costCenters", cc) || "Centro de custo");
+    return `<section class="budget-group">
+      <header><strong>${svgText(name)}</strong><span>${asMoney(sub)}</span></header>
+      <div class="table-wrap"><table class="budget-items-table"><tbody>
+        ${grp.map((it) => `<tr><td>${svgText(it.codigo || it.code || "")}</td><td>${svgText(it.description || "")}</td><td class="bt-num">${asMoney(budgetItemCost(it))}</td></tr>`).join("")}
+        <tr class="budget-group-sub"><td colspan="2">Subtotal</td><td class="bt-num">${asMoney(sub)}</td></tr>
+      </tbody></table></div>
+    </section>`;
+  }).join("");
+  return `${blocks || '<p class="muted">Sem itens.</p>'}<div class="budget-group-total">TOTAL GERAL: ${asMoney(totalGeral)}</div>`;
+}
+
+function renderBudgetTipoView(items) {
+  const tt = budgetTipoTotals(items);
+  const totalReal = Object.values(tt).reduce((s, v) => s + v, 0);
+  const total = totalReal || 1;
+  const rows = BUDGET_TIPOS.map(([v, l]) => ({ l, val: tt[v] || 0, pct: (tt[v] || 0) / total * 100 })).filter((r) => r.val > 0);
+  return `<section class="budget-tipo-view">
+    ${rows.length ? rows.map((r) => `<div class="budget-tipo-row">
+      <span class="budget-tipo-name">${r.l}</span>
+      <span class="budget-tipo-val">${asMoney(r.val)}</span>
+      <span class="budget-tipo-pct">${asPercent(r.pct)}</span>
+      <span class="budget-tipo-bar"><span style="width:${Math.round(r.pct)}%"></span></span>
+    </div>`).join("") : '<p class="muted">Sem itens.</p>'}
+    <div class="budget-tipo-row budget-tipo-total"><span class="budget-tipo-name">TOTAL</span><span class="budget-tipo-val">${asMoney(totalReal)}</span><span></span><span></span></div>
+  </section>`;
+}
+
+function renderWorkBudgetStructure(budget, items, editable) {
+  let view = "";
+  if (workBudgetView === "centro") view = renderBudgetCentroView(items);
+  else if (workBudgetView === "tipo") view = renderBudgetTipoView(items);
+  else if (workBudgetView === "execucao") view = renderWorkBudgetExecutionSection(budget, items, editable);
+  else view = renderBudgetEtapaView(budget, items, editable);
+  return `
+    <section class="budget-header-bar no-print">
+      <div class="budget-header-info">
+        <span>BDI geral: <strong>${asPercent(budget.bdiPercent || 0)}</strong></span>
+        <span>Status: <strong>${svgText(budget.status || "Rascunho")}</strong></span>
+      </div>
+      <div class="budget-header-acts">
+        <button type="button" class="secondary" id="budgetPrint">Imprimir</button>
+        <button type="button" class="secondary" id="budgetExportCsv">Exportar Excel</button>
+        ${editable ? '<button type="button" class="secondary" id="budgetEditHeader">Editar orçamento</button>' : ""}
+      </div>
+    </section>
+    ${budgetViewSwitcher()}
+    ${view}
+    ${budgetTotalizadores(budget, items)}`;
+}
+
+// Modal de cadastro de etapa do orçamento.
+function openBudgetEtapaForm(budget, etapa) {
+  if (!canEditModule("workBudgets")) return;
+  const dialog = document.createElement("dialog");
+  dialog.className = "agenda-detail-dialog";
+  dialog.innerHTML = `
+    <div class="modal-box exec-update-box">
+      <h3>${etapa ? "Editar" : "Nova"} etapa</h3>
+      <label>Nome da etapa<input id="etNome" value="${escapeHtml(etapa?.nome || "")}" placeholder="Ex.: Fundação"></label>
+      <label>Código (opcional)<input id="etCodigo" value="${escapeHtml(etapa?.codigo || "")}" placeholder="Ex.: 1"></label>
+      <label>BDI específico % (opcional — vazio usa o BDI geral)<input id="etBdi" inputmode="decimal" value="${etapa && etapa.bdi_especifico != null ? escapeHtml(String(etapa.bdi_especifico).replace(".", ",")) : ""}"></label>
+      <div class="agenda-detail-actions">
+        <button type="button" class="primary" id="etSalvar">Salvar</button>
+        <button type="button" class="secondary" data-close>Cancelar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(dialog);
+  const close = () => { try { dialog.close(); } catch { /* já fechado */ } dialog.remove(); };
+  dialog.querySelector("[data-close]")?.addEventListener("click", close);
+  dialog.addEventListener("cancel", (e) => { e.preventDefault(); close(); });
+  dialog.querySelector("#etSalvar").addEventListener("click", async () => {
+    const nome = dialog.querySelector("#etNome").value.trim();
+    if (!nome) { alert("Informe o nome da etapa."); return; }
+    const bdiRaw = dialog.querySelector("#etBdi").value.trim();
+    const data = {
+      orcamento_id: budget.id,
+      obra_id: budget.projectId || "",
+      nome,
+      codigo: dialog.querySelector("#etCodigo").value.trim(),
+      ordem: etapa?.ordem || (budgetEtapas(budget.id).length + 1),
+      bdi_especifico: bdiRaw !== "" ? parseMoneyInput(bdiRaw) : "",
+    };
+    try {
+      if (etapa) await updateIntegratedRecord("orcamentoEtapas", etapa.id, data);
+      else await createIntegratedRecord("orcamentoEtapas", data);
+      close();
+      if (serverMode) await refreshAndRender(); else render();
+    } catch (error) { alert(`Não foi possível salvar a etapa: ${error.message}`); }
+  });
+  dialog.showModal();
+}
+
+async function removeBudgetEtapa(etapaId) {
+  const etapa = byId("orcamentoEtapas", etapaId);
+  if (!etapa) return;
+  if (!confirm(`Remover a etapa "${etapa.nome}"? Os itens dela ficarão sem etapa (não serão excluídos).`)) return;
+  try {
+    // Solta os itens da etapa antes de removê-la.
+    const its = (db.workBudgetItems || []).filter((it) => sameId(it.etapa_id, etapaId));
+    for (const it of its) {
+      if (serverMode) await apiRequest(`${apiResources.workBudgetItems}/${it.id}`, { method: "PUT", body: JSON.stringify({ etapa_id: "" }) }).catch(() => {});
+      else { it.etapa_id = ""; }
+    }
+    await removeRecord("orcamentoEtapas", etapaId);
+  } catch (error) { alert(`Não foi possível remover a etapa: ${error.message}`); }
+}
+
+// Modal "Adicionar item" com 3 abas: SINAPI · Composição própria · Manual.
+function openBudgetItemModal(budget, etapaId) {
+  if (!canEditModule("workBudgets")) return;
+  let tab = "sinapi";
+  let picked = null;
+  const dialog = document.createElement("dialog");
+  dialog.className = "agenda-detail-dialog budget-item-dialog";
+  document.body.appendChild(dialog);
+  const close = () => { try { dialog.close(); } catch { /* já fechado */ } dialog.remove(); };
+  const tipoOptions = BUDGET_TIPOS.map(([v, l]) => `<option value="${v}">${l}</option>`).join("");
+  const ccOptions = '<option value="">Herda da obra</option>' + (db.costCenters || []).filter((c) => c.status !== "Inativo").map((c) => `<option value="${escapeHtml(c.id)}">${escapeHtml((c.code ? c.code + " - " : "") + (c.name || ""))}</option>`).join("");
+
+  const resultsHtml = (q) => {
+    const list = tab === "sinapi" ? (db.sinapiCompositions || []) : (db.ownCompositions || []);
+    const term = (q || "").toLowerCase();
+    const filtered = list.filter((r) => !term || String(r.code || "").toLowerCase().includes(term) || String(r.description || "").toLowerCase().includes(term)).slice(0, 40);
+    if (!filtered.length) return '<p class="muted">Nenhuma composição encontrada.</p>';
+    return filtered.map((r) => {
+      const valor = tab === "sinapi" ? Number(r.unitCost || 0) : Number(r.suggestedPrice || r.estimatedCost || 0);
+      return `<button type="button" class="budget-item-result" data-pick="${escapeHtml(r.id)}">${escapeHtml((r.code ? r.code + " - " : "") + (r.description || ""))} <span class="muted">${escapeHtml(r.unit || "")} · ${asMoney(valor)}</span></button>`;
+    }).join("");
+  };
+  const tabHtml = () => {
+    if (tab === "manual") return `
+      <div class="form-grid">
+        <label>Código<input id="biCodigo" placeholder="1.1.001"></label>
+        <label>Descrição<input id="biDesc" placeholder="Descrição do item"></label>
+        <label>Unidade<input id="biUnid" value="un"></label>
+      </div>`;
+    return `<input id="biSearch" class="budget-item-search" placeholder="Buscar por código ou descrição…"><div class="budget-item-results" id="biResults">${resultsHtml("")}</div>`;
+  };
+
+  const recompute = () => {
+    const qtd = parseMoneyInput(dialog.querySelector("#biQtd")?.value || "0");
+    const vu = parseMoneyInput(dialog.querySelector("#biVu")?.value || "0");
+    const totalEl = dialog.querySelector("#biTotal");
+    if (totalEl) totalEl.textContent = asMoney(qtd * vu);
+  };
+
+  const paint = () => {
+    dialog.innerHTML = `
+      <div class="modal-box budget-item-box">
+        <h3>Adicionar item ao orçamento</h3>
+        <nav class="cc-tabs">
+          <button type="button" class="${tab === "sinapi" ? "active" : ""}" data-bi-tab="sinapi">Buscar SINAPI</button>
+          <button type="button" class="${tab === "propria" ? "active" : ""}" data-bi-tab="propria">Composição Própria</button>
+          <button type="button" class="${tab === "manual" ? "active" : ""}" data-bi-tab="manual">Item Manual</button>
+        </nav>
+        <div class="budget-item-tab">${tabHtml()}</div>
+        <div class="budget-item-common">
+          <label>Tipo<select id="biTipo">${tipoOptions}</select></label>
+          <label>Centro de custo<select id="biCc">${ccOptions}</select></label>
+          <label>Quantidade<input id="biQtd" inputmode="decimal" value="1"></label>
+          <label>Valor unitário (R$)<input id="biVu" inputmode="decimal" value="0,00"></label>
+          <div class="budget-item-total">Total: <strong id="biTotal">${asMoney(0)}</strong></div>
+        </div>
+        <div class="agenda-detail-actions">
+          <button type="button" class="primary" id="biSalvar">Adicionar ao orçamento</button>
+          <button type="button" class="secondary" data-close>Cancelar</button>
+        </div>
+      </div>`;
+    dialog.querySelectorAll("[data-bi-tab]").forEach((b) => b.addEventListener("click", () => { tab = b.dataset.biTab; picked = null; paint(); }));
+    dialog.querySelector("[data-close]")?.addEventListener("click", close);
+    dialog.querySelector("#biSalvar")?.addEventListener("click", salvar);
+    dialog.querySelector("#biQtd")?.addEventListener("input", recompute);
+    dialog.querySelector("#biVu")?.addEventListener("input", recompute);
+    const search = dialog.querySelector("#biSearch");
+    if (search) search.addEventListener("input", () => { dialog.querySelector("#biResults").innerHTML = resultsHtml(search.value); wirePick(); });
+    wirePick();
+    recompute();
+  };
+  const wirePick = () => {
+    dialog.querySelectorAll("[data-pick]").forEach((btn) => btn.addEventListener("click", () => {
+      const list = tab === "sinapi" ? (db.sinapiCompositions || []) : (db.ownCompositions || []);
+      const r = list.find((x) => sameId(x.id, btn.dataset.pick));
+      if (!r) return;
+      picked = r;
+      const vu = tab === "sinapi" ? Number(r.unitCost || 0) : Number(r.suggestedPrice || r.estimatedCost || 0);
+      dialog.querySelector("#biVu").value = formatMoneyInput(vu);
+      dialog.querySelectorAll(".budget-item-result").forEach((el) => el.classList.remove("picked"));
+      btn.classList.add("picked");
+      recompute();
+    }));
+  };
+
+  const salvar = async () => {
+    const qtd = parseMoneyInput(dialog.querySelector("#biQtd").value);
+    const vu = parseMoneyInput(dialog.querySelector("#biVu").value);
+    let descricao = "";
+    let unidade = "un";
+    let codigo = "";
+    if (tab === "manual") {
+      descricao = dialog.querySelector("#biDesc").value.trim();
+      unidade = dialog.querySelector("#biUnid").value.trim() || "un";
+      codigo = dialog.querySelector("#biCodigo").value.trim();
+    } else {
+      if (!picked) { alert("Selecione uma composição na lista."); return; }
+      descricao = picked.description || "";
+      unidade = picked.unit || "un";
+      codigo = picked.code || "";
+    }
+    if (!descricao) { alert("Informe a descrição do item."); return; }
+    const data = {
+      workBudgetId: budget.id,
+      projectId: budget.projectId || "",
+      etapa_id: etapaId || "",
+      codigo,
+      code: codigo,
+      description: descricao,
+      unit: unidade,
+      quantity: qtd,
+      unitCost: vu,
+      totalCost: roundMoney(qtd * vu),
+      bdiPercent: Number(budget.bdiPercent || 0),
+      tipo: dialog.querySelector("#biTipo").value,
+      costCenterId: dialog.querySelector("#biCc").value || "",
+      origin: tab === "sinapi" ? "SINAPI" : (tab === "propria" ? "Própria" : "Manual"),
+      sinapi_id: tab === "sinapi" && picked ? picked.id : "",
+      composicao_propria_id: tab === "propria" && picked ? picked.id : "",
+      ordem: (db.workBudgetItems || []).filter((it) => sameId(it.etapa_id, etapaId)).length + 1,
+    };
+    try {
+      await createIntegratedRecord("workBudgetItems", data);
+      close();
+      if (serverMode) await refreshAndRender(); else render();
+    } catch (error) { alert(`Não foi possível adicionar o item: ${error.message}`); }
+  };
+
+  dialog.addEventListener("cancel", (e) => { e.preventDefault(); close(); });
+  paint();
+  dialog.showModal();
+}
+
+// Exporta o orçamento para CSV (uma linha por item + totalizadores).
+function exportWorkBudgetCsv(budget, items) {
+  if (!items.length) return alert("Sem itens para exportar.");
+  const etapaNome = (id) => { const e = byId("orcamentoEtapas", id); return e ? (e.codigo ? e.codigo + " - " : "") + e.nome : ""; };
+  const rows = items.map((it) => {
+    const cost = budgetItemCost(it);
+    const real = Number(it.quantidade_realizada || 0);
+    const totalReal = real * Number(it.unitCost || 0);
+    return {
+      Etapa: etapaNome(it.etapa_id),
+      "Código": it.codigo || it.code || "",
+      "Descrição": it.description || "",
+      Tipo: budgetTipoLabel(it.tipo),
+      Unidade: it.unit || "",
+      "Qtd Prevista": Number(it.quantity || 0),
+      "Valor Unit.": Number(it.unitCost || 0),
+      "Total Previsto": cost,
+      "Qtd Realizada": real,
+      "Total Realizado": totalReal,
+      Saldo: cost - totalReal,
+      "Centro de Custo": nameOf("costCenters", it.costCenterId) || "",
+    };
+  });
+  const tot = budgetTotals(budget, items);
+  const blank = Object.fromEntries(Object.keys(rows[0]).map((k) => [k, ""]));
+  rows.push({ ...blank, "Descrição": "CUSTO DIRETO", "Total Previsto": tot.custoDireto });
+  rows.push({ ...blank, "Descrição": `BDI (${Number(budget.bdiPercent || 0)}%)`, "Total Previsto": tot.bdiValor });
+  rows.push({ ...blank, "Descrição": "TOTAL COM BDI", "Total Previsto": tot.totalComBdi });
+  const obra = (nameOf("projects", budget.projectId) || budget.name || "obra").replace(/[^\w\-]+/g, "_");
+  exportRowsCsv(rows, `Orcamento_${obra}_${new Date().toISOString().slice(0, 10)}.csv`);
+}
+
 function renderWorkBudgets() {
   const editable = canEditModule("workBudgets");
   const rows = visibleRowsForModule("workBudgets", applyFilters(db.workBudgets || [])).map(enrichWorkBudget);
@@ -8203,12 +8589,20 @@ function renderWorkBudgets() {
       ${kpi("Classe A da Curva ABC", abc.filter((row) => row.abcClass === "A").length, false)}
     </section>
     ${table("Orçamentos de obras", rows, ["name", "projectId", "clientId", "budgetDate", "sinapiReferenceId", "priceType", "bdiPercent", "directCost", "totalCost", "totalPrice", "status"], editable, "workBudgets")}
-    ${selected ? renderWorkBudgetExecutionSection(selected, items, editable) : '<div class="empty">Sem dados para exibir</div>'}
+    ${selected ? renderWorkBudgetStructure(selected, items, editable) : '<div class="empty">Sem dados para exibir</div>'}
     ${generateDocumentFooter()}
   `;
   qs("content").querySelectorAll("[data-exec-filter]").forEach((btn) => btn.addEventListener("click", () => { workBudgetItemFilter = btn.dataset.execFilter; render(); }));
   qs("execEstouroBtn")?.addEventListener("click", () => { workBudgetItemFilter = "estouro"; render(); });
   qs("content").querySelectorAll("[data-exec-update]").forEach((btn) => btn.addEventListener("click", () => openBudgetItemExecution(btn.dataset.execUpdate)));
+  qs("content").querySelectorAll("[data-budget-view]").forEach((btn) => btn.addEventListener("click", () => { workBudgetView = btn.dataset.budgetView; render(); }));
+  qs("content").querySelectorAll("[data-add-item-etapa]").forEach((btn) => btn.addEventListener("click", () => { if (selected) openBudgetItemModal(selected, btn.dataset.addItemEtapa); }));
+  qs("content").querySelectorAll("[data-etapa-edit]").forEach((btn) => btn.addEventListener("click", () => { if (selected) openBudgetEtapaForm(selected, byId("orcamentoEtapas", btn.dataset.etapaEdit)); }));
+  qs("content").querySelectorAll("[data-etapa-remove]").forEach((btn) => btn.addEventListener("click", () => removeBudgetEtapa(btn.dataset.etapaRemove)));
+  qs("budgetNovaEtapa")?.addEventListener("click", () => { if (selected) openBudgetEtapaForm(selected); });
+  qs("budgetPrint")?.addEventListener("click", () => window.print());
+  qs("budgetExportCsv")?.addEventListener("click", () => { if (selected) exportWorkBudgetCsv(selected, items); });
+  qs("budgetEditHeader")?.addEventListener("click", () => { if (selected) openForm("workBudgets", selected.id); });
   qs("newRecord")?.addEventListener("click", () => openForm("workBudgets"));
   qs("newBudgetItem")?.addEventListener("click", () => openForm("workBudgetItems"));
   qs("workBudgetSelect")?.addEventListener("change", (event) => {
