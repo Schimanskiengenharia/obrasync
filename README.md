@@ -1,6 +1,6 @@
 # ObraSync
 
-> Versão `v1.12.1` · 2026-06-27
+> Versão `v1.13.0` · 2026-06-27
 
 ObraSync é uma aplicação web em HTML, CSS, JavaScript puro, PHP e MariaDB/MySQL para gestão integrada de obras, financeiro, comercial e contabilidade gerencial. O frontend fica em `/var/www/financeiro`, a URL pública é `https://schimanskiengenharia.com.br/financeiro`, os dados persistentes ficam no banco e os arquivos de dados ficam fora da pasta pública.
 

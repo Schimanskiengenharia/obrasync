@@ -19,7 +19,7 @@ if (APP_ENV === "production" && location.protocol === "http:") {
   location.replace(location.href.replace(/^http:/, "https:"));
 }
 const APP_NAME = "ObraSync";
-const APP_VERSION = "v1.12.1";
+const APP_VERSION = "v1.13.0";
 const APP_VERSION_DATE = "2026-06-27";
 const APP_CHANGELOG = [
   "Controle interno de versão e instruções de atualização segura.",
@@ -49,6 +49,7 @@ const APP_CHANGELOG = [
   "Correção do erro 500 na criação de contas a pagar recorrentes (auto-cura das colunas de recorrência) e na aprovação de marcos (colunas de referência em accounts_receivable) (v1.12.0).",
   "Varredura de segurança: correção de XSS armazenado em widgets, cards, selects e relatórios; rate limit na troca obrigatória de senha; bloqueio do diretório .git no Apache (v1.12.0).",
   "Auto-cura (ensure_*) de fiscal_documents, agenda/kanban e colunas email/blocked/mustChangePassword de usuários — evita erro 500 em servidor sem a migração; hardening de XXE no parse de XML, sanitização de logo SVG, filtros corrigidos e tela inicial à prova de falha (v1.12.1).",
+  "Novo tipo \"Fiscal / Tributário\" nos centros de custo: dropdown de cadastro, badge na listagem, sugestão automática de uso e exemplos de lançamentos (tributos, taxas e licenças); lista padrão completa com 25 centros (ADM-01..09, TEC-01..10, FIS-01..02, FIN-01..04) com exemplos pré-preenchidos (v1.13.0).",
 ];
 
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
@@ -4927,6 +4928,7 @@ const COST_CENTER_TIPOS = [
   ["administrativo", "Administrativo"],
   ["tecnico", "Técnico"],
   ["financeiro", "Financeiro"],
+  ["fiscal_tributario", "Fiscal / Tributário"],
 ];
 
 const COST_CENTER_SUGESTOES = {
@@ -4934,6 +4936,7 @@ const COST_CENTER_SUGESTOES = {
   tecnico: "Lançar aqui todos os custos diretamente relacionados à execução dos serviços técnicos: materiais de obra, mão de obra técnica, subempreiteiros, ART/RRT, EPIs.",
   operacional: "Lançar aqui todos os custos diretamente relacionados à execução dos serviços técnicos: materiais de obra, mão de obra técnica, subempreiteiros, ART/RRT, EPIs.",
   financeiro: "Lançar aqui custos financeiros: juros bancários, tarifas, IOF, multas fiscais, encargos de parcelamentos.",
+  fiscal_tributario: "Lançar aqui todos os tributos, impostos e taxas obrigatórias da empresa: ISS, PIS, COFINS, IRPJ, CSLL, Simples Nacional, INSS, alvarás, licenças municipais, taxas de bombeiros, vigilância sanitária e demais obrigações fiscais.",
 };
 const COST_CENTER_SUGESTAO_PESSOAL = "Lançar aqui todos os custos com pessoas: salários, pró-labore, encargos sociais (INSS, FGTS), benefícios (VT, VR, plano de saúde), rescisões e férias.";
 
@@ -4945,6 +4948,7 @@ const COST_CENTER_EXEMPLOS = [
   ["Impostos e Taxas", ["ISS (Imposto Sobre Serviços)", "PIS e COFINS", "IRPJ e CSLL", "Alvará e licenças", "Taxas municipais"]],
   ["Obras Civis / Técnico", ["Materiais de construção", "Mão de obra pedreiro/servente", "Subempreiteiros", "ART ou RRT", "EPIs (capacete, bota, luva)", "Locação de andaimes"]],
   ["Instalações Elétricas", ["Fios, cabos e conduítes", "Quadros elétricos e disjuntores", "Iluminação", "Mão de obra eletricista", "ART elétrica", "Medidores e equipamentos"]],
+  ["Fiscal / Tributário", ["ISS mensal (Imposto Sobre Serviços)", "PIS mensal", "COFINS mensal", "IRPJ trimestral", "CSLL trimestral", "Simples Nacional mensal", "Alvará de funcionamento", "Licença ambiental", "Taxa de bombeiros", "Taxa de vigilância sanitária", "IPTU do escritório", "ART e RRT (Anotações de Responsabilidade Técnica)", "Taxa CREA anuidade", "Taxa CAU anuidade"]],
 ];
 
 function costCenterTipoLabel(tipo) {

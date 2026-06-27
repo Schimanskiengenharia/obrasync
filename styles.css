@@ -1679,6 +1679,9 @@ html[data-theme="dark"] .alert-warning {
 .cc-badge-administrativo { background: #607d8b; }
 .cc-badge-tecnico { background: #f57c00; }
 .cc-badge-financeiro { background: #2e7d32; }
+/* Fiscal/Tributário: pílula clara com texto verde escuro — destaca-se dos
+   demais badges (sólidos) para identificação rápida na listagem. */
+.cc-badge-fiscal_tributario { background: #e8f5e9; color: #2e7d32; }
 
 .cc-info {
   display: inline-flex;

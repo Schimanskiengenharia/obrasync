@@ -2182,6 +2182,7 @@ function bootstrap_data(PDO $pdo, array $resources, ?array $authUser = null, boo
             if (!in_array('tipo', table_columns($pdo, 'cost_centers'), true)) {
                 ensure_cost_center_columns($pdo);
             }
+            ensure_cost_center_tipo_enum($pdo);
             ensure_default_cost_centers($pdo);
         }
         // Endereço estruturado no cadastro de clientes (cidade/estado p/ snapshot).
@@ -2573,10 +2574,30 @@ function ensure_cost_center_columns(PDO $pdo): void
 {
     $pdo->exec(
         "ALTER TABLE cost_centers
-            ADD COLUMN IF NOT EXISTS tipo ENUM('operacional','administrativo','tecnico','financeiro') NOT NULL DEFAULT 'administrativo' AFTER name,
+            ADD COLUMN IF NOT EXISTS tipo ENUM('operacional','administrativo','tecnico','financeiro','fiscal_tributario') NOT NULL DEFAULT 'administrativo' AFTER name,
             ADD COLUMN IF NOT EXISTS descricao_uso TEXT NULL AFTER tipo,
             ADD COLUMN IF NOT EXISTS exemplos TEXT NULL AFTER descricao_uso"
     );
+}
+
+// Amplia o ENUM do campo `tipo` para incluir 'fiscal_tributario' em instalações
+// que já tinham a coluna criada antes desse valor existir (auto-cura idempotente:
+// só executa o MODIFY quando o valor ainda não está no ENUM).
+function ensure_cost_center_tipo_enum(PDO $pdo): void
+{
+    try {
+        $col = $pdo->query("SHOW COLUMNS FROM cost_centers LIKE 'tipo'")->fetch(PDO::FETCH_ASSOC);
+        if ($col && stripos((string) ($col['Type'] ?? ''), 'fiscal_tributario') === false) {
+            $pdo->exec(
+                "ALTER TABLE cost_centers
+                    MODIFY COLUMN tipo
+                    ENUM('operacional','administrativo','tecnico','financeiro','fiscal_tributario')
+                    NOT NULL DEFAULT 'administrativo'"
+            );
+        }
+    } catch (Throwable $e) {
+        error_log('[ObraSync ensure_cost_center_tipo_enum] ' . $e->getMessage());
+    }
 }
 
 // Insere os centros de custo padrão apenas quando a tabela está vazia, para não
@@ -2586,29 +2607,37 @@ function ensure_default_cost_centers(PDO $pdo): void
     if ((int) $pdo->query('SELECT COUNT(*) FROM cost_centers')->fetchColumn() > 0) {
         return;
     }
+    // Lista canônica dos 25 centros padrão (Administrativo ADM-01..09, Técnico
+    // TEC-01..10, Fiscal/Tributário FIS-01..02, Financeiro FIN-01..04).
+    // Formato: [code, name, tipo, descricao_uso, exemplos].
     $defaults = [
-        ['ADM-01', 'Administrativo Geral', 'administrativo', 'Despesas do escritório: aluguel, energia, água, internet, material de escritório'],
-        ['ADM-02', 'Pessoal e RH', 'administrativo', 'Salários, pró-labore, INSS, FGTS, benefícios, rescisões'],
-        ['ADM-03', 'Veículos e Transporte', 'administrativo', 'Combustível, manutenção, IPVA, seguro veicular, pedágios'],
-        ['ADM-04', 'Equipamentos e Ferramentas', 'administrativo', 'Compra, aluguel e manutenção de equipamentos e ferramentas'],
-        ['ADM-05', 'Marketing e Comercial', 'administrativo', 'Site, publicidade, materiais de divulgação, eventos'],
-        ['ADM-06', 'Impostos e Taxas', 'financeiro', 'ISS, PIS, COFINS, IRPJ, CSLL, alvarás e licenças'],
-        ['ADM-07', 'Contabilidade e Jurídico', 'administrativo', 'Honorários de contador, advogado e outros consultores'],
-        ['ADM-08', 'TI e Sistemas', 'administrativo', 'ObraSync, softwares, domínio, hospedagem, suporte'],
-        ['ADM-09', 'Capacitação e Treinamento', 'administrativo', 'Cursos, certificações, NRs, treinamentos da equipe'],
-        ['ADM-10', 'Seguros', 'administrativo', 'Seguro obra, seguro empresa, ART/RRT'],
-        ['TEC-01', 'Obras Civis', 'tecnico', 'Materiais e mão de obra de obras civis, subempreiteiros'],
-        ['TEC-02', 'Instalações Elétricas', 'tecnico', 'Materiais elétricos, mão de obra eletricista, ART elétrica'],
-        ['TEC-03', 'Instalações Hidráulicas', 'tecnico', 'Materiais hidráulicos, mão de obra encanador'],
-        ['TEC-04', 'Cobertura e Telhado', 'tecnico', 'Telhas, estrutura metálica, mão de obra telhadista'],
-        ['TEC-05', 'Ar Condicionado e Climatização', 'tecnico', 'Equipamentos, instalação e manutenção de ar condicionado'],
-        ['TEC-06', 'Projetos e Consultoria', 'tecnico', 'Projetos arquitetônicos, estruturais, elétricos, hidráulicos'],
-        ['TEC-07', 'Manutenção Predial', 'tecnico', 'Serviços de manutenção corretiva e preventiva'],
-        ['FIN-01', 'Reserva de Capital', 'financeiro', 'Provisões, reservas, capital de giro'],
-        ['FIN-02', 'Investimentos', 'financeiro', 'Compra de equipamentos de grande valor, veículos'],
-        ['FIN-03', 'Encargos Financeiros', 'financeiro', 'Juros, tarifas bancárias, IOF, multas'],
+        ['ADM-01', 'Administrativo Geral', 'administrativo', 'Despesas do escritório: aluguel, energia, água, internet, material de escritório', ''],
+        ['ADM-02', 'Pessoal e RH', 'administrativo', 'Salários, pró-labore, INSS, FGTS, benefícios, rescisões', ''],
+        ['ADM-03', 'Veículos e Transporte', 'administrativo', 'Combustível, manutenção, IPVA, seguro veicular, pedágios', ''],
+        ['ADM-04', 'Equipamentos e Ferramentas', 'administrativo', 'Compra, aluguel e manutenção de equipamentos e ferramentas', ''],
+        ['ADM-05', 'Marketing e Comercial', 'administrativo', 'Site, publicidade, materiais de divulgação, eventos', ''],
+        ['ADM-06', 'Contabilidade e Jurídico', 'administrativo', 'Honorários de contador, advogado e outros consultores', ''],
+        ['ADM-07', 'TI e Sistemas', 'administrativo', 'ObraSync, softwares, domínio, hospedagem, suporte', ''],
+        ['ADM-08', 'Capacitação e Treinamento', 'administrativo', 'Cursos, certificações, NRs, treinamentos da equipe', ''],
+        ['ADM-09', 'Seguros', 'administrativo', 'Apólices de seguro da empresa', "- Seguro de obra\n- Seguro de responsabilidade civil\n- Seguro de vida em grupo\n- Seguro do escritório\n- Seguro de equipamentos\n- Seguro de veículos"],
+        ['TEC-01', 'Obras Civis', 'tecnico', 'Materiais e mão de obra de obras civis, subempreiteiros', ''],
+        ['TEC-02', 'Instalações Elétricas', 'tecnico', 'Materiais elétricos, mão de obra eletricista, ART elétrica', ''],
+        ['TEC-03', 'Instalações Hidráulicas', 'tecnico', 'Materiais hidráulicos, mão de obra encanador', ''],
+        ['TEC-04', 'Cobertura e Telhado', 'tecnico', 'Telhas, estrutura metálica, mão de obra telhadista', ''],
+        ['TEC-05', 'Ar Condicionado e Climatização', 'tecnico', 'Equipamentos, instalação e manutenção de ar condicionado', ''],
+        ['TEC-06', 'Projetos e Consultoria', 'tecnico', 'Projetos arquitetônicos, estruturais, elétricos, hidráulicos', ''],
+        ['TEC-07', 'Manutenção Predial', 'tecnico', 'Serviços de manutenção corretiva e preventiva', ''],
+        ['TEC-08', 'Análise e Laudos Técnicos', 'tecnico', 'Análises, laudos e pareceres técnicos', "- Laudo de vistoria estrutural\n- Análise de solo (sondagem SPT)\n- Ensaio de concreto\n- Laudo de infiltração\n- Parecer técnico de patologia\n- Laudo para seguro de obra\n- Vistoria cautelar de imóvel\n- Análise de conformidade NR"],
+        ['TEC-09', 'Segurança do Trabalho', 'tecnico', 'Equipamentos e serviços de segurança do trabalho', "- Capacete, bota, luva\n- Cinto e talabarte\n- Óculos de proteção\n- Protetor auricular\n- Máscara respiratória\n- Colete refletivo\n- Sinalização de obra\n- PCMSO e PPRA\n- Treinamento NR-35, NR-18, NR-10\n- Técnico de segurança terceirizado"],
+        ['TEC-10', 'Locação de Equipamentos', 'tecnico', 'Aluguel de equipamentos pesados e especiais', "- Andaime tubular\n- Retroescavadeira\n- Miniescavadeira\n- Caminhão basculante\n- Caçamba de entulho\n- Guindaste\n- Compactador de solo\n- Betoneira\n- Gerador de energia\n- Balancim"],
+        ['FIS-01', 'Tributos e Impostos', 'fiscal_tributario', 'Impostos e tributos obrigatórios da empresa', "- ISS mensal\n- PIS mensal\n- COFINS mensal\n- IRPJ trimestral\n- CSLL trimestral\n- Simples Nacional mensal\n- IPTU do escritório\n- Imposto de renda pessoa jurídica"],
+        ['FIS-02', 'Taxas, Licenças e Anuidades', 'fiscal_tributario', 'Taxas obrigatórias, licenças e anuidades', "- Alvará de funcionamento\n- Licença ambiental\n- Taxa de bombeiros\n- Taxa de vigilância sanitária\n- ART e RRT\n- Taxa CREA anuidade\n- Taxa CAU anuidade\n- Certidões e documentos"],
+        ['FIN-01', 'Reserva de Capital', 'financeiro', 'Provisões, reservas, capital de giro', ''],
+        ['FIN-02', 'Investimentos', 'financeiro', 'Compra de equipamentos de grande valor, veículos', ''],
+        ['FIN-03', 'Encargos Financeiros', 'financeiro', 'Juros, tarifas bancárias, IOF, multas', ''],
+        ['FIN-04', 'Empréstimos e Financiamentos', 'financeiro', 'Parcelas de dívidas e financiamentos bancários', "- Parcela de empréstimo capital de giro\n- Financiamento de veículo\n- Financiamento de equipamento\n- Cartão de crédito empresarial\n- Cheque especial\n- BNDES e Pronampe\n- Financiamento imobiliário"],
     ];
-    $stmt = $pdo->prepare('INSERT INTO cost_centers (code, name, tipo, descricao_uso, status) VALUES (?, ?, ?, ?, \'Ativo\')');
+    $stmt = $pdo->prepare('INSERT INTO cost_centers (code, name, tipo, descricao_uso, exemplos, status) VALUES (?, ?, ?, ?, ?, \'Ativo\')');
     foreach ($defaults as $row) {
         $stmt->execute($row);
     }

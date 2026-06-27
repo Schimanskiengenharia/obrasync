@@ -1,6 +1,6 @@
 # CLAUDE.md — Guia para agentes de IA no projeto ObraSync
 
-> **Versão atual:** `v1.12.1` · 2026-06-27
+> **Versão atual:** `v1.13.0` · 2026-06-27
 > **Última varredura de código:** 2026-06-27 (3ª rodada — segurança, bugs, performance, qualidade, UX; itens MÉDIO/BAIXO fechados na v1.12.1)
 
 Este arquivo orienta qualquer agente (ou pessoa) que continue o desenvolvimento.
