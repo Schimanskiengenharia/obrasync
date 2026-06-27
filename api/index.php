@@ -58,6 +58,14 @@ try {
         handle_forced_change_password($pdo, read_json());
     }
 
+    // Logo da empresa: rota pública (a logo não é sensível e precisa carregar em
+    // <img src> de propostas/preview, que não enviam o header de autenticação).
+    if (strtolower((string) ($_GET['module'] ?? '')) === 'companysettings'
+        && strtolower((string) ($_GET['action'] ?? '')) === 'getlogo') {
+        require_method($method, ['GET']);
+        handle_company_logo_get($pdo, $config);
+    }
+
     // Toda rota além das acima exige sessão válida emitida pelo próprio login.
     $authUser = authenticate_request($pdo, $config);
 
@@ -104,6 +112,12 @@ try {
     if (in_array($module, ['cashmoves', 'cash_bank_movements', 'movimentacoes-caixa', 'caixa'], true)) {
         authorize_request($pdo, $authUser, 'cashMoves', action_for_method($method));
         handle_cash_moves_module($pdo, $method, $_GET, $authUser);
+    }
+
+    // Logo da empresa: upload/remoção (o getLogo público já foi tratado acima).
+    if (in_array($module, ['companysettings', 'company_settings', 'dados-empresa'], true)) {
+        authorize_request($pdo, $authUser, 'companySettings', 'edit');
+        handle_company_settings_module($pdo, $method, $_GET, $config, $authUser);
     }
 
     if ($resource === '' || $resource === 'bootstrap') {
@@ -1516,7 +1530,7 @@ function resource_map(): array
         'journalEntries' => r('journal_entries', ['lancamentos-contabeis','lançamentos-contábeis'], ['entryDate','competenceDate','debitAccountId','creditAccountId','history','amount','projectId','costCenterId','originDocument'], ['originDocument']),
         'taxDocuments' => r('tax_documents', ['documentos-fiscais'], ['document','date','type','clientId','supplierId','projectId','amount','status'], ['document']),
         'taxes' => r('taxes', ['impostos'], ['name','competenceDate','baseAmount','rate','amount','projectId','status'], ['name','competenceDate']),
-        'companySettings' => r('company_settings', ['dados-empresa'], ['name','document','zipCode','address','numero','complemento','bairro','city','estado','email','phone','status'], ['document','name']),
+        'companySettings' => r('company_settings', ['dados-empresa'], ['name','document','zipCode','address','numero','complemento','bairro','city','estado','email','phone','website','instagram','whatsapp','logo_url','status'], ['document','name']),
         'users' => r('system_users', ['usuarios','usuários'], ['username','fullName','email','password','role','status','blocked','mustChangePassword','cpf','data_nascimento','celular'], ['username'], ['password']),
         'permissions' => r('role_permissions', ['permissoes','permissões'], ['role','module','canView','canCreate','canEdit','canDelete','canExport','canApprove','canAttach','status'], ['role','module']),
         'systemVersion' => r('sistema_versoes', ['sistema-versoes','versoes-sistema'], ['versao','data_versao','descricao','alteracoes'], ['versao']),
@@ -1959,6 +1973,10 @@ function bootstrap_data(PDO $pdo, array $resources, ?array $authUser = null, boo
             && !in_array('estado', table_columns($pdo, 'company_settings'), true)) {
             ensure_company_address_columns($pdo);
         }
+        if (resolve_existing_table($pdo, ['company_settings'], false)
+            && !in_array('logo_url', table_columns($pdo, 'company_settings'), true)) {
+            ensure_company_logo_columns($pdo);
+        }
         // Colunas de referência cruzada caixa ↔ conta a pagar (anti dupla contagem).
         if (resolve_existing_table($pdo, ['cash_bank_movements'], false)
             && !in_array('referencia_tipo', table_columns($pdo, 'cash_bank_movements'), true)) {
@@ -2078,6 +2096,18 @@ function ensure_company_address_columns(PDO $pdo): void
             ADD COLUMN IF NOT EXISTS complemento VARCHAR(100) NULL,
             ADD COLUMN IF NOT EXISTS bairro VARCHAR(100) NULL,
             ADD COLUMN IF NOT EXISTS estado VARCHAR(2) NULL"
+    );
+}
+
+// Logo, site, instagram e whatsapp da empresa (cabeçalho de propostas).
+function ensure_company_logo_columns(PDO $pdo): void
+{
+    $pdo->exec(
+        "ALTER TABLE company_settings
+            ADD COLUMN IF NOT EXISTS logo_url VARCHAR(500) NULL,
+            ADD COLUMN IF NOT EXISTS website VARCHAR(200) NULL,
+            ADD COLUMN IF NOT EXISTS instagram VARCHAR(200) NULL,
+            ADD COLUMN IF NOT EXISTS whatsapp VARCHAR(20) NULL"
     );
 }
 
@@ -2449,6 +2479,132 @@ function cash_move_link(PDO $pdo, array $payload, array $authUser): array
     log_automation_event($pdo, 'CAIXA_VINCULADO_CONTA_PAGAR', 'cash_bank_movements', $cashId, 'accounts_payable', $payableId, 'OK', 'Vínculo confirmado manualmente pelo usuário.', payable_user_id($authUser));
     server_audit($pdo, $authUser, 'update', 'cashMoves', $cashId, 'Vínculo caixa ↔ conta a pagar #' . $payableId);
     return ['cashMoveId' => $cashId, 'payableId' => $payableId];
+}
+
+// ─── Logo / identidade visual da empresa ────────────────────────────────────
+function company_settings_respond(bool $success, mixed $data = [], string $message = '', int $status = 200): never
+{
+    http_response_code($status);
+    echo json_encode(['success' => $success, 'data' => $data, 'message' => $message], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
+function company_logo_dir(array $config): string
+{
+    return rtrim($config['upload_dir'] ?? '/var/lib/financeiro/uploads', '/') . '/empresa';
+}
+
+function handle_company_settings_module(PDO $pdo, string $method, array $query, array $config, array $authUser): never
+{
+    $action = strtolower(trim((string) ($query['action'] ?? '')));
+    try {
+        if ($action === 'uploadlogo') {
+            require_method($method, ['POST']);
+            handle_company_logo_upload($pdo, $config, $authUser);
+        }
+        if ($action === 'removelogo') {
+            require_method($method, ['POST', 'DELETE']);
+            handle_company_logo_remove($pdo, $config, $authUser);
+        }
+        company_settings_respond(false, [], 'Ação de dados da empresa inválida.', 400);
+    } catch (Throwable $e) {
+        error_log('[ObraSync companySettings] ' . $e->getMessage() . ' em ' . $e->getFile() . ':' . $e->getLine());
+        company_settings_respond(false, [], 'Erro ao processar a logo da empresa.', 500);
+    }
+}
+
+function handle_company_logo_upload(PDO $pdo, array $config, array $authUser): never
+{
+    $file = $_FILES['logo'] ?? null;
+    if (!$file || ($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK || empty($file['tmp_name'])) {
+        company_settings_respond(false, [], 'Arquivo da logo não informado.', 400);
+    }
+    if ((int) ($file['size'] ?? 0) > 2 * 1024 * 1024) {
+        company_settings_respond(false, [], 'Arquivo acima de 2MB. Reduza o tamanho da logo.', 413);
+    }
+    $ext = strtolower(pathinfo((string) ($file['name'] ?? ''), PATHINFO_EXTENSION));
+    if ($ext === 'jpeg') {
+        $ext = 'jpg';
+    }
+    if (!in_array($ext, ['png', 'jpg', 'svg'], true)) {
+        company_settings_respond(false, [], 'Tipo não permitido. Envie PNG, JPG ou SVG.', 415);
+    }
+    // Conteúdo conferido (png/jpg pelo mime; svg é XML/texto, validação leve).
+    $mime = function_exists('mime_content_type') ? (mime_content_type($file['tmp_name']) ?: '') : '';
+    if ($ext === 'png' && $mime !== '' && $mime !== 'image/png') {
+        company_settings_respond(false, [], 'Conteúdo do arquivo não corresponde a um PNG.', 415);
+    }
+    if ($ext === 'jpg' && $mime !== '' && $mime !== 'image/jpeg') {
+        company_settings_respond(false, [], 'Conteúdo do arquivo não corresponde a um JPG.', 415);
+    }
+
+    $dir = company_logo_dir($config);
+    if (!is_dir($dir) && !mkdir($dir, 0755, true) && !is_dir($dir)) {
+        company_settings_respond(false, [], 'Não foi possível criar a pasta de upload.', 500);
+    }
+    // Substitui a logo anterior (qualquer extensão).
+    foreach (['png', 'jpg', 'jpeg', 'svg'] as $old) {
+        $previous = $dir . '/logo.' . $old;
+        if (is_file($previous)) {
+            @unlink($previous);
+        }
+    }
+    $filename = 'logo.' . $ext;
+    $target = $dir . '/' . $filename;
+    if (!move_uploaded_file($file['tmp_name'], $target)) {
+        company_settings_respond(false, [], 'Não foi possível salvar a logo.', 500);
+    }
+    @chmod($target, 0644);
+
+    $id = (int) ($pdo->query('SELECT id FROM company_settings ORDER BY id ASC LIMIT 1')->fetchColumn() ?: 0);
+    if ($id > 0) {
+        update_dynamic($pdo, 'company_settings', $id, ['logo_url' => $filename]);
+    }
+    server_audit($pdo, $authUser, 'update', 'companySettings', $id ?: null, 'Logo da empresa atualizada (' . $filename . ')');
+    company_settings_respond(true, ['logo_url' => $filename], 'Logo enviada com sucesso.');
+}
+
+function handle_company_logo_remove(PDO $pdo, array $config, array $authUser): never
+{
+    $dir = company_logo_dir($config);
+    foreach (['png', 'jpg', 'jpeg', 'svg'] as $old) {
+        $previous = $dir . '/logo.' . $old;
+        if (is_file($previous)) {
+            @unlink($previous);
+        }
+    }
+    $id = (int) ($pdo->query('SELECT id FROM company_settings ORDER BY id ASC LIMIT 1')->fetchColumn() ?: 0);
+    if ($id > 0) {
+        update_dynamic($pdo, 'company_settings', $id, ['logo_url' => null]);
+    }
+    server_audit($pdo, $authUser, 'update', 'companySettings', $id ?: null, 'Logo da empresa removida');
+    company_settings_respond(true, [], 'Logo removida.');
+}
+
+// Pública: serve o arquivo da logo (binário) sem exigir autenticação.
+function handle_company_logo_get(PDO $pdo, array $config): never
+{
+    $logo = '';
+    try {
+        $logo = (string) ($pdo->query("SELECT logo_url FROM company_settings WHERE logo_url IS NOT NULL AND logo_url <> '' ORDER BY id ASC LIMIT 1")->fetchColumn() ?: '');
+    } catch (Throwable $e) {
+        $logo = '';
+    }
+    $file = $logo !== '' ? company_logo_dir($config) . '/' . basename($logo) : '';
+    if ($file === '' || !is_file($file)) {
+        http_response_code(404);
+        header('Content-Type: text/plain; charset=utf-8');
+        echo 'Logo não encontrada.';
+        exit;
+    }
+    $ext = strtolower(pathinfo($file, PATHINFO_EXTENSION));
+    $types = ['png' => 'image/png', 'jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'svg' => 'image/svg+xml'];
+    header_remove('Content-Type');
+    header('Content-Type: ' . ($types[$ext] ?? 'application/octet-stream'));
+    header('Cache-Control: no-cache, max-age=0, must-revalidate');
+    header('Content-Length: ' . filesize($file));
+    readfile($file);
+    exit;
 }
 
 function ensure_api_sessions_table(PDO $pdo): void

@@ -1194,6 +1194,9 @@ const configs = {
       ["bairro", "Bairro", "text"],
       ["city", "Cidade", "text"],
       ["estado", "Estado (UF)", "select", ["", "AC", "AL", "AM", "AP", "BA", "CE", "DF", "ES", "GO", "MA", "MG", "MS", "MT", "PA", "PB", "PE", "PI", "PR", "RJ", "RN", "RO", "RR", "RS", "SC", "SE", "SP", "TO"]],
+      ["website", "Site", "text"],
+      ["instagram", "Instagram", "text"],
+      ["whatsapp", "WhatsApp (só números)", "text"],
       ["status", "Status", "select", ["Ativo", "Inativo"]],
     ],
   },
@@ -2013,6 +2016,9 @@ function placeholderFor(field, label = "", key = "") {
   if (field === "document" && ["clients", "suppliers", "companySettings"].includes(key)) return "123.456.789-12 ou 12.345.678/0001-99";
   if (field === "document") return "NF-1001, BOL-450 ou recibo";
   if (["zipCode", "postalCode", "cep"].includes(field)) return "79000-000";
+  if (field === "website") return "www.schimanskiengenharia.com.br";
+  if (field === "instagram") return "@schimanskiengenharia";
+  if (field === "whatsapp") return "67999999999";
   if (field === "name" && key === "bankAccounts") return "Banco do Brasil — Conta Principal";
   if (field === "bank") return "Banco do Brasil, Sicoob, Itaú";
   if (field === "agency") return "1234-5 (opcional)";
@@ -5512,6 +5518,7 @@ function applyFormEnhancements() {
   const clientSelect = qs("formFields").querySelector('select[name="clientId"], select[name="cliente_id"]');
   if (clientSelect) setupClientAutofill(qs("formFields"), clientSelect);
   if (["clients", "suppliers", "companySettings"].includes(editing?.key)) setupAddressCep();
+  if (editing?.key === "companySettings") setupCompanyLogoUpload();
   if (editing?.key === "payable" && !editing.id) setupPayableRecurrence();
   if (editing?.key === "payable" && editing.id) setupPayableCashLink();
   if (editing?.key === "cashMoves" && !editing.id) setupCashPayableLink();
@@ -9873,7 +9880,7 @@ function proposalDocumentHtml({ budget, project, client, items, model, input, va
   const proposalNumber = vars.numero_proposta;
   const company = (db.companySettings || [])[0] || {};
   const addr = companyAddressLines(company);
-  const companyLogo = company.logo || company.logoUrl || "";
+  const companyLogo = companyLogoSrc(company);
   return `
     <article class="proposal-page">
       <header class="proposal-header">
@@ -9884,9 +9891,8 @@ function proposalDocumentHtml({ budget, project, client, items, model, input, va
             ${vars.cnpj_empresa ? `<p>CNPJ: ${svgText(vars.cnpj_empresa)}</p>` : ""}
             ${addr.street ? `<p>${svgText(addr.street)}</p>` : ""}
             ${addr.cityCep ? `<p>${svgText(addr.cityCep)}</p>` : ""}
-            ${vars.telefone_empresa ? `<p>Tel/WhatsApp: ${svgText(vars.telefone_empresa)}</p>` : ""}
-            ${vars.email_empresa ? `<p>${svgText(vars.email_empresa)}</p>` : ""}
-            ${vars.site_empresa ? `<p>${svgText(vars.site_empresa)}</p>` : ""}
+            ${proposalCompanyContactLine(vars)}
+            ${vars.instagram_empresa ? `<p>📷 ${svgText(vars.instagram_empresa)}</p>` : ""}
           </div>
         </div>
         <div class="proposal-header-doc">
@@ -9927,7 +9933,7 @@ function proposalDocumentHtml({ budget, project, client, items, model, input, va
         <div><h2>Aceite da proposta</h2><p>${textToHtml(value("acceptanceText"))}</p><span>Assinatura do cliente</span></div>
         <div><h2>Assinatura da empresa</h2><p>${textToHtml(value("signatureText"))}</p><span>${svgText(vars.nome_empresa)}</span></div>
       </section>
-      <footer class="proposal-footer">${svgText([vars.nome_empresa, vars.cnpj_empresa ? `CNPJ ${vars.cnpj_empresa}` : "", vars.telefone_empresa, vars.email_empresa].filter(Boolean).join(" · "))}</footer>
+      <footer class="proposal-footer">${svgText([vars.nome_empresa, vars.cnpj_empresa ? `CNPJ ${vars.cnpj_empresa}` : "", vars.whatsapp_empresa || vars.telefone_empresa, vars.email_empresa].filter(Boolean).join(" · "))}</footer>
     </article>
   `;
 }
@@ -10003,7 +10009,9 @@ function proposalVariablesFor({ budget, project, client, items, model, input = {
     endereco_empresa: composeCompanyAddress(company),
     cidade_uf_empresa: [company.city || company.cidade, company.estado].filter(Boolean).join(" - "),
     cep_empresa: company.zipCode ? maskCep(company.zipCode) : "",
-    site_empresa: company.site || company.website || "",
+    site_empresa: company.website || company.site || "",
+    whatsapp_empresa: company.whatsapp || company.phone || "",
+    instagram_empresa: company.instagram || "",
     valor_total: asMoney(totalPrice),
     valor_total_extenso: moneyToWords(totalPrice),
     condicao_pagamento: input.paymentCondition || model.paymentTerms || "",
@@ -10112,6 +10120,86 @@ function companyAddressLines(company) {
 function composeCompanyAddress(company) {
   const { street, cityCep } = companyAddressLines(company);
   return [street, cityCep].filter(Boolean).join(" · ");
+}
+
+// URL pública da logo da empresa (servida pelo endpoint getLogo, sem auth).
+function companyLogoSrc(company, bust) {
+  const c = company || (db.companySettings || [])[0] || {};
+  if (!c.logo_url) return "";
+  return `${API_BASE}/?module=companySettings&action=getLogo&v=${encodeURIComponent(bust || c.logo_url)}`;
+}
+
+// Linha de contato do cabeçalho: 📱 WhatsApp · 📧 E-mail · 🌐 Site (ignora vazios).
+function proposalCompanyContactLine(vars) {
+  const parts = [
+    vars.whatsapp_empresa ? `📱 ${vars.whatsapp_empresa}` : "",
+    vars.email_empresa ? `📧 ${vars.email_empresa}` : "",
+    vars.site_empresa ? `🌐 ${vars.site_empresa}` : "",
+  ].filter(Boolean);
+  return parts.length ? `<p>${svgText(parts.join(" · "))}</p>` : "";
+}
+
+// Upload/remoção da logo da empresa em Configurações → Dados da empresa.
+function setupCompanyLogoUpload() {
+  const formFields = qs("formFields");
+  if (!formFields || formFields.querySelector("#companyLogoBox")) return;
+  const box = document.createElement("div");
+  box.id = "companyLogoBox";
+  box.className = "full company-logo-box";
+
+  const renderInner = () => {
+    const c = (db.companySettings || [])[0] || {};
+    const hasLogo = Boolean(c.logo_url);
+    box.innerHTML = `
+      <h4 class="company-logo-title">Logo da empresa</h4>
+      <div class="company-logo-row">
+        <div class="company-logo-preview">${hasLogo ? `<img src="${companyLogoSrc(c, Date.now())}" alt="Logo atual">` : '<span class="muted">Sem logo cadastrada</span>'}</div>
+        <div class="company-logo-actions">
+          <input type="file" id="companyLogoFile" accept="image/png,image/jpeg,image/svg+xml,.png,.jpg,.jpeg,.svg">
+          <button type="button" class="secondary" id="companyLogoUpload">Enviar logo</button>
+          ${hasLogo ? '<button type="button" class="danger" id="companyLogoRemove">Remover logo</button>' : ""}
+        </div>
+      </div>
+      <p class="field-hint">Envie sua logo em PNG ou JPG (máx. 2MB). Recomendado: fundo transparente (PNG), largura mínima de 400px (ideal 400×200px).</p>`;
+    box.querySelector("#companyLogoUpload")?.addEventListener("click", uploadLogo);
+    box.querySelector("#companyLogoRemove")?.addEventListener("click", removeLogo);
+  };
+
+  const uploadLogo = async () => {
+    const file = box.querySelector("#companyLogoFile")?.files?.[0];
+    if (!file) { alert("Selecione um arquivo de logo (PNG, JPG ou SVG)."); return; }
+    if (file.size > 2 * 1024 * 1024) { alert("Arquivo acima de 2MB. Reduza o tamanho da logo."); return; }
+    const fd = new FormData();
+    fd.append("logo", file);
+    const btn = box.querySelector("#companyLogoUpload");
+    if (btn) btn.disabled = true;
+    try {
+      const result = await fetchForm("?module=companySettings&action=uploadLogo", fd);
+      const c = (db.companySettings || [])[0];
+      if (c) c.logo_url = result?.data?.logo_url || result?.logo_url || "logo.png";
+      if (typeof showToast === "function") showToast("Logo enviada com sucesso!");
+      renderInner();
+    } catch (error) {
+      alert(`Não foi possível enviar a logo: ${error.message}`);
+      if (btn) btn.disabled = false;
+    }
+  };
+
+  const removeLogo = async () => {
+    if (!confirm("Remover a logo da empresa?")) return;
+    try {
+      await apiModuleRequest("?module=companySettings&action=removeLogo", { method: "POST" });
+      const c = (db.companySettings || [])[0];
+      if (c) c.logo_url = "";
+      if (typeof showToast === "function") showToast("Logo removida.");
+      renderInner();
+    } catch (error) {
+      alert(`Não foi possível remover a logo: ${error.message}`);
+    }
+  };
+
+  formFields.appendChild(box);
+  renderInner();
 }
 
 function moneyToWords(value) {

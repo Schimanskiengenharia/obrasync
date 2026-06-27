@@ -1826,6 +1826,47 @@ html[data-theme="dark"] .cc-dup td { background: rgba(245, 200, 60, 0.12); }
   font-size: 13px;
 }
 
+/* Upload da logo da empresa */
+.company-logo-box {
+  border-top: 1px dashed var(--line);
+  padding-top: 12px;
+  margin-top: 4px;
+}
+
+.company-logo-title { margin: 0 0 8px; font-size: 14px; }
+
+.company-logo-row {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.company-logo-preview {
+  min-width: 160px;
+  min-height: 80px;
+  max-width: 220px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+
+.company-logo-preview img {
+  max-height: 80px;
+  max-width: 200px;
+  object-fit: contain;
+}
+
+.company-logo-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .version-panel {
   display: grid;
   grid-template-columns: minmax(190px, 260px) 1fr;
