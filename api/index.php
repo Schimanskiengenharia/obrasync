@@ -1435,7 +1435,7 @@ function resource_map(): array
         'clients' => r('clients', ['clientes'], ['name','document','zipCode','address','email','phone','status'], ['document','name']),
         'suppliers' => r('suppliers', ['fornecedores'], ['name','document','zipCode','address','email','phone','status'], ['document','name']),
         'categories' => r('financial_categories', ['categorias'], ['name','type','chartAccountId','status'], ['name']),
-        'costCenters' => r('cost_centers', ['centros-custo','centros_de_custo'], ['code','name','manager','status'], ['code','name']),
+        'costCenters' => r('cost_centers', ['centros-custo','centros_de_custo'], ['code','name','manager','status','tipo','descricao_uso','exemplos'], ['code','name']),
         'bankAccounts' => r('bank_accounts', ['contas-bancarias','contas_bancarias'], ['name','bank','agency','accountNumber','openingBalance','status'], ['name']),
         'projects' => r('projects', ['obras','projetos','obras-projetos'], ['name','clientId','address','zipCode','responsible','technicalResponsible','projectManagerId','commercialUserId','financialUserId','startDate','endForecast','completionDate','status','budgetForecast','revenueContracted','costForecast','realizedCost','notes'], ['name']),
         'workTypes' => r('obra_tipos', ['tipos-obras','tipos-de-obras'], ['name','description','status','sortOrder'], ['name']),
@@ -1915,6 +1915,19 @@ function bootstrap_data(PDO $pdo, array $resources, ?array $authUser = null, boo
     } catch (PDOException $error) {
         // Sem permissão de DDL: listas voltam vazias até as tabelas existirem.
     }
+    try {
+        // Colunas novas dos centros de custo (tipo/descricao_uso/exemplos) e o
+        // seed dos centros padrão quando a tabela está vazia. Guardado por uma
+        // checagem leve para não rodar DDL a cada bootstrap.
+        if (resolve_existing_table($pdo, ['cost_centers'], false)) {
+            if (!in_array('tipo', table_columns($pdo, 'cost_centers'), true)) {
+                ensure_cost_center_columns($pdo);
+            }
+            ensure_default_cost_centers($pdo);
+        }
+    } catch (PDOException $error) {
+        // Sem permissão de DDL/escrita: o bootstrap segue normalmente.
+    }
     $data = [];
     foreach ($resources as $key => $meta) {
         if (!role_can($pdo, $role, permission_module_key($key), 'view')) {
@@ -1964,6 +1977,53 @@ function sanitize_record(array $meta, array $record): array
         unset($record[$field]);
     }
     return $record;
+}
+
+// Colunas novas dos centros de custo (idempotente). Mantém code/name/status,
+// que já existem, e só acrescenta tipo/descricao_uso/exemplos.
+function ensure_cost_center_columns(PDO $pdo): void
+{
+    $pdo->exec(
+        "ALTER TABLE cost_centers
+            ADD COLUMN IF NOT EXISTS tipo ENUM('operacional','administrativo','tecnico','financeiro') NOT NULL DEFAULT 'administrativo' AFTER name,
+            ADD COLUMN IF NOT EXISTS descricao_uso TEXT NULL AFTER tipo,
+            ADD COLUMN IF NOT EXISTS exemplos TEXT NULL AFTER descricao_uso"
+    );
+}
+
+// Insere os centros de custo padrão apenas quando a tabela está vazia, para não
+// duplicar nem sobrescrever dados de instalações existentes.
+function ensure_default_cost_centers(PDO $pdo): void
+{
+    if ((int) $pdo->query('SELECT COUNT(*) FROM cost_centers')->fetchColumn() > 0) {
+        return;
+    }
+    $defaults = [
+        ['ADM-01', 'Administrativo Geral', 'administrativo', 'Despesas do escritório: aluguel, energia, água, internet, material de escritório'],
+        ['ADM-02', 'Pessoal e RH', 'administrativo', 'Salários, pró-labore, INSS, FGTS, benefícios, rescisões'],
+        ['ADM-03', 'Veículos e Transporte', 'administrativo', 'Combustível, manutenção, IPVA, seguro veicular, pedágios'],
+        ['ADM-04', 'Equipamentos e Ferramentas', 'administrativo', 'Compra, aluguel e manutenção de equipamentos e ferramentas'],
+        ['ADM-05', 'Marketing e Comercial', 'administrativo', 'Site, publicidade, materiais de divulgação, eventos'],
+        ['ADM-06', 'Impostos e Taxas', 'financeiro', 'ISS, PIS, COFINS, IRPJ, CSLL, alvarás e licenças'],
+        ['ADM-07', 'Contabilidade e Jurídico', 'administrativo', 'Honorários de contador, advogado e outros consultores'],
+        ['ADM-08', 'TI e Sistemas', 'administrativo', 'ObraSync, softwares, domínio, hospedagem, suporte'],
+        ['ADM-09', 'Capacitação e Treinamento', 'administrativo', 'Cursos, certificações, NRs, treinamentos da equipe'],
+        ['ADM-10', 'Seguros', 'administrativo', 'Seguro obra, seguro empresa, ART/RRT'],
+        ['TEC-01', 'Obras Civis', 'tecnico', 'Materiais e mão de obra de obras civis, subempreiteiros'],
+        ['TEC-02', 'Instalações Elétricas', 'tecnico', 'Materiais elétricos, mão de obra eletricista, ART elétrica'],
+        ['TEC-03', 'Instalações Hidráulicas', 'tecnico', 'Materiais hidráulicos, mão de obra encanador'],
+        ['TEC-04', 'Cobertura e Telhado', 'tecnico', 'Telhas, estrutura metálica, mão de obra telhadista'],
+        ['TEC-05', 'Ar Condicionado e Climatização', 'tecnico', 'Equipamentos, instalação e manutenção de ar condicionado'],
+        ['TEC-06', 'Projetos e Consultoria', 'tecnico', 'Projetos arquitetônicos, estruturais, elétricos, hidráulicos'],
+        ['TEC-07', 'Manutenção Predial', 'tecnico', 'Serviços de manutenção corretiva e preventiva'],
+        ['FIN-01', 'Reserva de Capital', 'financeiro', 'Provisões, reservas, capital de giro'],
+        ['FIN-02', 'Investimentos', 'financeiro', 'Compra de equipamentos de grande valor, veículos'],
+        ['FIN-03', 'Encargos Financeiros', 'financeiro', 'Juros, tarifas bancárias, IOF, multas'],
+    ];
+    $stmt = $pdo->prepare('INSERT INTO cost_centers (code, name, tipo, descricao_uso, status) VALUES (?, ?, ?, ?, \'Ativo\')');
+    foreach ($defaults as $row) {
+        $stmt->execute($row);
+    }
 }
 
 function ensure_api_sessions_table(PDO $pdo): void

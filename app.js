@@ -2612,6 +2612,7 @@ function render() {
   if (currentModule === "myProfile") return renderMyProfile();
   if (currentModule === "projectReport") return renderProjectReport();
   if (currentModule === "cashFlow") return renderCashFlow();
+  if (currentModule === "costCenters") return renderCostCenters();
   if (currentModule === "reconciliation") return renderReconciliation();
   if (currentModule === "dre") return renderDre();
   if (currentModule.startsWith("report") || currentModule === "reports") return renderReports(currentModule);
@@ -4603,6 +4604,266 @@ function setupViabilityFormPreview() {
   });
   fields.querySelector('[name="verdict"]')?.addEventListener("change", update);
   update();
+}
+
+// ─── Centros de Custo: tipo, orientação de uso, exemplos e histórico ────────
+const COST_CENTER_TIPOS = [
+  ["operacional", "Operacional"],
+  ["administrativo", "Administrativo"],
+  ["tecnico", "Técnico"],
+  ["financeiro", "Financeiro"],
+];
+
+const COST_CENTER_SUGESTOES = {
+  administrativo: "Lançar aqui todas as despesas administrativas relacionadas ao funcionamento do escritório e da empresa, como: aluguel, contas de consumo (água, luz, internet), material de escritório, serviços gerais.",
+  tecnico: "Lançar aqui todos os custos diretamente relacionados à execução dos serviços técnicos: materiais de obra, mão de obra técnica, subempreiteiros, ART/RRT, EPIs.",
+  operacional: "Lançar aqui todos os custos diretamente relacionados à execução dos serviços técnicos: materiais de obra, mão de obra técnica, subempreiteiros, ART/RRT, EPIs.",
+  financeiro: "Lançar aqui custos financeiros: juros bancários, tarifas, IOF, multas fiscais, encargos de parcelamentos.",
+};
+const COST_CENTER_SUGESTAO_PESSOAL = "Lançar aqui todos os custos com pessoas: salários, pró-labore, encargos sociais (INSS, FGTS), benefícios (VT, VR, plano de saúde), rescisões e férias.";
+
+const COST_CENTER_EXEMPLOS = [
+  ["Administrativo Geral", ["Aluguel do escritório", "Conta de energia elétrica", "Conta de água e esgoto", "Internet e telefone", "Material de escritório", "Limpeza e conservação", "Segurança patrimonial"]],
+  ["Pessoal e RH", ["Salários dos funcionários", "Pró-labore dos sócios", "INSS patronal", "FGTS", "Vale transporte", "Vale refeição", "Plano de saúde", "13º salário e férias"]],
+  ["Veículos e Transporte", ["Combustível", "Manutenção e revisão", "IPVA e licenciamento", "Seguro veicular", "Pedágios e estacionamentos"]],
+  ["Equipamentos e Ferramentas", ["Compra de ferramentas", "Aluguel de equipamentos", "Manutenção de equipamentos", "Calibração e certificação"]],
+  ["Impostos e Taxas", ["ISS (Imposto Sobre Serviços)", "PIS e COFINS", "IRPJ e CSLL", "Alvará e licenças", "Taxas municipais"]],
+  ["Obras Civis / Técnico", ["Materiais de construção", "Mão de obra pedreiro/servente", "Subempreiteiros", "ART ou RRT", "EPIs (capacete, bota, luva)", "Locação de andaimes"]],
+  ["Instalações Elétricas", ["Fios, cabos e conduítes", "Quadros elétricos e disjuntores", "Iluminação", "Mão de obra eletricista", "ART elétrica", "Medidores e equipamentos"]],
+];
+
+function costCenterTipoLabel(tipo) {
+  const found = COST_CENTER_TIPOS.find(([value]) => value === tipo);
+  return found ? found[1] : "Administrativo";
+}
+
+function costCenterSuggestion(tipo) {
+  return COST_CENTER_SUGESTOES[tipo] || COST_CENTER_SUGESTOES.administrativo;
+}
+
+// Lançamentos vinculados a um centro de custo (contas a receber/pagar + caixa),
+// normalizados e ordenados do mais recente para o mais antigo.
+function costCenterMovements(ccId, start, end) {
+  const inRange = (value) => { const d = String(value || "").slice(0, 10); return d && (!start || d >= start) && (!end || d <= end); };
+  const moves = [];
+  (db.receivable || []).filter((r) => sameId(r.costCenterId, ccId)).forEach((r) => {
+    const date = String(r.receivedDate || r.dueDate || "").slice(0, 10);
+    if (!inRange(date)) return;
+    moves.push({ date, desc: r.document || "Conta a receber", value: Number(r.amount || 0), kind: "entrada", origin: "Conta a receber", module: "receivable", id: r.id });
+  });
+  (db.payable || []).filter((p) => sameId(p.costCenterId, ccId)).forEach((p) => {
+    const date = String(p.paidDate || p.dueDate || "").slice(0, 10);
+    if (!inRange(date)) return;
+    moves.push({ date, desc: p.document || "Conta a pagar", value: Number(p.amount || 0), kind: "saida", origin: "Conta a pagar", module: "payable", id: p.id });
+  });
+  (db.cashMoves || []).filter((m) => sameId(m.costCenterId, ccId)).forEach((m) => {
+    const date = String(m.date || "").slice(0, 10);
+    if (!inRange(date)) return;
+    const kind = m.type === "Entrada" ? "entrada" : m.type === "Saída" ? "saida" : "neutro";
+    moves.push({ date, desc: m.history || m.originDocument || "Movimento de caixa", value: Number(m.amount || 0), kind, origin: "Manual (caixa)", module: "cashMoves", id: m.id });
+  });
+  return moves.sort((a, b) => String(b.date).localeCompare(String(a.date)));
+}
+
+function renderCostCenters() {
+  const editable = canEditModule("costCenters");
+  const removable = canDeleteRecord("costCenters");
+  const { start, end } = lucroCaixaPeriodRange("mesAtual");
+  const centers = (db.costCenters || []).slice().sort((a, b) => String(a.code || "").localeCompare(String(b.code || "")) || String(a.name || "").localeCompare(String(b.name || "")));
+  const rowsHtml = centers.length ? centers.map((cc) => {
+    const moves = costCenterMovements(cc.id, start, end);
+    const entradas = moves.filter((m) => m.kind === "entrada").reduce((s, m) => s + m.value, 0);
+    const saidas = moves.filter((m) => m.kind === "saida").reduce((s, m) => s + m.value, 0);
+    const saldo = entradas - saidas;
+    const tipo = cc.tipo || "administrativo";
+    const ativo = (cc.status || "Ativo") === "Ativo";
+    return `<tr>
+      <td>
+        <strong>${cc.code ? svgText(cc.code) + " · " : ""}</strong>${svgText(cc.name || "")}
+        ${cc.descricao_uso ? `<span class="cc-info" tabindex="0" title="${escapeHtml(cc.descricao_uso)}">ℹ</span>` : ""}
+      </td>
+      <td><span class="cc-badge cc-badge-${tipo}">${costCenterTipoLabel(tipo)}</span></td>
+      <td class="cc-saldo ${saldo < 0 ? "cc-neg" : saldo > 0 ? "cc-pos" : ""}">${asMoney(saldo)}</td>
+      <td><span class="status ${ativo ? "success" : ""}">${ativo ? "Ativo" : "Inativo"}</span></td>
+      <td><div class="row-actions">
+        ${editable ? `<button class="secondary" type="button" data-cc-edit="${cc.id}">Editar</button>` : ""}
+        ${removable ? `<button class="danger" type="button" data-cc-delete="${cc.id}">Excluir</button>` : ""}
+        ${!editable && !removable ? '<span class="muted">Somente leitura</span>' : ""}
+      </div></td>
+    </tr>`;
+  }).join("") : `<tr><td colspan="5"><div class="empty">Nenhum centro de custo cadastrado.</div></td></tr>`;
+  qs("content").innerHTML = `
+    <section class="module-head">
+      <div>
+        <h2>Centros de Custo</h2>
+        <p>Estrutura gerencial com tipo, orientação de uso, exemplos e histórico de lançamentos. Saldo calculado no mês atual.</p>
+      </div>
+      ${editable ? '<button class="primary" type="button" id="newCostCenter">Novo</button>' : ""}
+    </section>
+    <section class="table-wrap" data-export-title="Centros de Custo">
+      <table>
+        <thead><tr><th>Código / Nome</th><th>Tipo</th><th>Saldo do mês</th><th>Status</th><th>Ações</th></tr></thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+    </section>
+  `;
+  qs("newCostCenter")?.addEventListener("click", () => openCostCenterForm(null));
+  qs("content").querySelectorAll("[data-cc-edit]").forEach((btn) => btn.addEventListener("click", () => openCostCenterForm(btn.dataset.ccEdit)));
+  qs("content").querySelectorAll("[data-cc-delete]").forEach((btn) => btn.addEventListener("click", () => removeRecord("costCenters", btn.dataset.ccDelete)));
+}
+
+function costCenterHistoryPaneHtml(ccId, periodKey) {
+  const { start, end } = lucroCaixaPeriodRange(periodKey);
+  const all = costCenterMovements(ccId, start, end);
+  const entradas = all.filter((m) => m.kind === "entrada").reduce((s, m) => s + m.value, 0);
+  const saidas = all.filter((m) => m.kind === "saida").reduce((s, m) => s + m.value, 0);
+  const moves = all.slice(0, 20);
+  const periodOptions = LUCRO_CAIXA_PERIODS.map(([v, l]) => `<option value="${v}" ${v === periodKey ? "selected" : ""}>${l}</option>`).join("");
+  const rows = moves.length ? moves.map((m) => `
+    <tr>
+      <td>${m.date ? asDate(m.date) : "—"}</td>
+      <td>${svgText(m.desc)}</td>
+      <td class="${m.kind === "entrada" ? "cc-pos" : m.kind === "saida" ? "cc-neg" : ""}">${m.kind === "entrada" ? "+" : m.kind === "saida" ? "−" : ""}${asMoney(m.value)}</td>
+      <td>${m.kind === "entrada" ? "Entrada" : m.kind === "saida" ? "Saída" : "—"}</td>
+      <td>${svgText(m.origin)}</td>
+      <td><button type="button" class="secondary cc-link" data-cc-open="${m.module}:${escapeHtml(m.id)}">Abrir</button></td>
+    </tr>`).join("") : `<tr><td colspan="6"><div class="empty">Sem lançamentos no período.</div></td></tr>`;
+  return `
+    <div class="cc-hist-head">
+      <label>Período<select id="ccHistPeriod">${periodOptions}</select></label>
+      <div class="cc-hist-totais">
+        <span class="cc-pos">Entradas: ${asMoney(entradas)}</span>
+        <span class="cc-neg">Saídas: ${asMoney(saidas)}</span>
+        <span class="${entradas - saidas < 0 ? "cc-neg" : "cc-pos"}"><strong>Saldo: ${asMoney(entradas - saidas)}</strong></span>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Data</th><th>Descrição</th><th>Valor</th><th>Tipo</th><th>Origem</th><th>Original</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <p class="muted cc-hist-nota">Exibindo os ${moves.length} lançamento(s) mais recentes do período. Os totais consideram todos os lançamentos vinculados no período.</p>`;
+}
+
+function openCostCenterForm(id) {
+  if (!canEditModule("costCenters")) return;
+  const cc = id ? byId("costCenters", id) : {};
+  const tipoOptions = COST_CENTER_TIPOS.map(([v, l]) => `<option value="${v}" ${(cc.tipo || "administrativo") === v ? "selected" : ""}>${l}</option>`).join("");
+  const statusOptions = ["Ativo", "Inativo"].map((s) => `<option ${(cc.status || "Ativo") === s ? "selected" : ""}>${s}</option>`).join("");
+  const exemploBtns = COST_CENTER_EXEMPLOS.map(([cat], i) => `<button type="button" class="secondary cc-ex-btn" data-ex="${i}">+ ${escapeHtml(cat)}</button>`).join("");
+  const dialog = document.createElement("dialog");
+  dialog.className = "cc-dialog";
+  dialog.innerHTML = `
+    <div class="cc-modal">
+      <header class="cc-head">
+        <h3>${id ? "Editar" : "Novo"} centro de custo</h3>
+        <button type="button" class="cc-x" data-close aria-label="Fechar">✕</button>
+      </header>
+      <nav class="cc-tabs">
+        <button type="button" class="active" data-tab="geral">Dados Gerais</button>
+        <button type="button" data-tab="uso">O que entra aqui</button>
+        <button type="button" data-tab="exemplos">Exemplos de Lançamentos</button>
+        <button type="button" data-tab="historico">Histórico de Lançamentos</button>
+      </nav>
+      <div class="cc-panes">
+        <section class="cc-pane active" data-pane="geral">
+          <div class="form-grid">
+            <label>Código (ex: ADM-01)<input name="code" value="${escapeHtml(cc.code || "")}" placeholder="ADM-01"></label>
+            <label>Nome do centro de custo<input name="name" value="${escapeHtml(cc.name || "")}" placeholder="Administrativo Geral"></label>
+            <label>Tipo<select name="tipo">${tipoOptions}</select></label>
+            <label>Responsável<input name="manager" value="${escapeHtml(cc.manager || "")}"></label>
+            <label>Status<select name="status">${statusOptions}</select></label>
+          </div>
+        </section>
+        <section class="cc-pane" data-pane="uso">
+          <p class="muted">Descreva o que deve ser lançado neste centro de custo. Use a sugestão automática pelo tipo se quiser.</p>
+          <div class="cc-uso-actions">
+            <button type="button" class="secondary" data-suggest>Sugerir texto pelo tipo</button>
+            <button type="button" class="secondary" data-suggest-pessoal>Modelo: Pessoal e RH</button>
+          </div>
+          <textarea name="descricao_uso" rows="7" placeholder="Ex.: Lançar aqui todas as despesas administrativas...">${escapeHtml(cc.descricao_uso || "")}</textarea>
+        </section>
+        <section class="cc-pane" data-pane="exemplos">
+          <p class="muted">Liste exemplos de lançamentos típicos. Clique nos modelos para inserir listas prontas (edite à vontade).</p>
+          <div class="cc-ex-buttons">${exemploBtns}</div>
+          <textarea name="exemplos" rows="9" placeholder="- Aluguel do escritório&#10;- Conta de energia elétrica">${escapeHtml(cc.exemplos || "")}</textarea>
+        </section>
+        <section class="cc-pane" data-pane="historico" id="ccHistoricoPane">
+          ${id ? costCenterHistoryPaneHtml(id, "mesAtual") : '<div class="empty">Salve o centro de custo para ver o histórico de lançamentos vinculados.</div>'}
+        </section>
+      </div>
+      <footer class="cc-foot">
+        <button type="button" class="secondary" data-close>Cancelar</button>
+        <button type="button" class="primary" data-save>Salvar</button>
+      </footer>
+    </div>`;
+  document.body.appendChild(dialog);
+  const q = (sel) => dialog.querySelector(sel);
+  const close = () => { try { dialog.close(); } catch { /* já fechado */ } dialog.remove(); };
+
+  dialog.querySelectorAll("[data-tab]").forEach((btn) => btn.addEventListener("click", () => {
+    dialog.querySelectorAll("[data-tab]").forEach((b) => b.classList.toggle("active", b === btn));
+    dialog.querySelectorAll("[data-pane]").forEach((p) => p.classList.toggle("active", p.dataset.pane === btn.dataset.tab));
+  }));
+
+  const tipoSel = q('[name="tipo"]');
+  const usoTa = q('[name="descricao_uso"]');
+  q("[data-suggest]").addEventListener("click", () => { usoTa.value = costCenterSuggestion(tipoSel.value); });
+  q("[data-suggest-pessoal]").addEventListener("click", () => { usoTa.value = COST_CENTER_SUGESTAO_PESSOAL; });
+  tipoSel.addEventListener("change", () => { if (!usoTa.value.trim()) usoTa.value = costCenterSuggestion(tipoSel.value); });
+
+  dialog.querySelectorAll(".cc-ex-btn").forEach((btn) => btn.addEventListener("click", () => {
+    const items = COST_CENTER_EXEMPLOS[Number(btn.dataset.ex)][1];
+    const exTa = q('[name="exemplos"]');
+    const lines = items.map((it) => `- ${it}`).join("\n");
+    exTa.value = exTa.value.trim() ? `${exTa.value.trim()}\n${lines}` : lines;
+  }));
+
+  const wireHistoryLinks = () => {
+    dialog.querySelectorAll("[data-cc-open]").forEach((btn) => btn.addEventListener("click", () => {
+      const [module, recId] = String(btn.dataset.ccOpen).split(":");
+      close();
+      if (canAccessModule(module)) { currentModule = module; render(); if (canEditModule(module)) openForm(module, recId); }
+    }));
+  };
+  const wireHistoryPeriod = () => {
+    q("#ccHistPeriod")?.addEventListener("change", (event) => {
+      q("#ccHistoricoPane").innerHTML = costCenterHistoryPaneHtml(id, event.target.value);
+      wireHistoryPeriod();
+      wireHistoryLinks();
+    });
+  };
+  if (id) { wireHistoryPeriod(); wireHistoryLinks(); }
+
+  dialog.querySelectorAll("[data-close]").forEach((btn) => btn.addEventListener("click", close));
+  dialog.addEventListener("cancel", (event) => { event.preventDefault(); close(); });
+  q("[data-save]").addEventListener("click", () => saveCostCenter(dialog, id, close));
+  dialog.showModal();
+}
+
+async function saveCostCenter(dialog, id, close) {
+  const q = (sel) => dialog.querySelector(sel);
+  const data = {
+    code: q('[name="code"]').value.trim(),
+    name: q('[name="name"]').value.trim(),
+    tipo: q('[name="tipo"]').value,
+    manager: q('[name="manager"]').value.trim(),
+    status: q('[name="status"]').value,
+    descricao_uso: q('[name="descricao_uso"]').value.trim(),
+    exemplos: q('[name="exemplos"]').value.trim(),
+  };
+  if (!data.name) { alert("Informe o nome do centro de custo."); return; }
+  try {
+    if (id) await updateIntegratedRecord("costCenters", id, data);
+    else await createIntegratedRecord("costCenters", data);
+  } catch (error) {
+    alert(`Não foi possível salvar: ${error.message}`);
+    return;
+  }
+  logAudit(id ? "edit" : "create", "costCenters", data.name);
+  close();
+  render();
 }
 
 function renderCrud(key) {

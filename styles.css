@@ -1665,6 +1665,135 @@ html[data-theme="dark"] .alert-warning {
 .lucro-caixa-chart { margin-top: 2px; }
 .lucro-caixa-chart .chart-card { width: 100%; }
 
+/* ── Centros de Custo: badges, tooltip, abas e histórico ── */
+.cc-badge {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.cc-badge-operacional { background: #1a73e8; }
+.cc-badge-administrativo { background: #607d8b; }
+.cc-badge-tecnico { background: #f57c00; }
+.cc-badge-financeiro { background: #2e7d32; }
+
+.cc-info {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--line);
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: help;
+}
+
+.cc-pos { color: var(--green); }
+.cc-neg { color: var(--red); }
+.cc-saldo { font-weight: 700; }
+
+.cc-dialog { width: min(900px, calc(100vw - 24px)); }
+.cc-modal { display: flex; flex-direction: column; max-height: 86vh; }
+
+.cc-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.cc-head h3 { margin: 0; }
+
+.cc-x {
+  border: 0;
+  background: none;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  color: var(--muted);
+}
+
+.cc-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+}
+
+.cc-tabs button {
+  border: 0;
+  background: none;
+  padding: 12px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  border-bottom: 3px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.cc-tabs button.active {
+  color: var(--teal);
+  border-bottom-color: var(--teal);
+}
+
+.cc-panes { padding: 18px; overflow-y: auto; }
+.cc-pane { display: none; }
+.cc-pane.active { display: block; }
+.cc-pane textarea { width: 100%; resize: vertical; }
+
+.cc-uso-actions,
+.cc-ex-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.cc-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 18px;
+  border-top: 1px solid var(--line);
+}
+
+.cc-hist-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.cc-hist-head label {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.cc-hist-totais {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  font-size: 13px;
+}
+
+.cc-hist-nota { margin-top: 8px; font-size: 11px; }
+.cc-link { padding: 4px 10px; font-size: 12px; }
+
 .version-panel {
   display: grid;
   grid-template-columns: minmax(190px, 260px) 1fr;
