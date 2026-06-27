@@ -3993,6 +3993,7 @@ function renderDashboard() {
       ${dashboardCards.map((card) => kpi(card[0], card[1], card[2] ?? true)).join("")}
     </section>
     ${dashboardAlerts(metrics)}
+    ${dashboardExecutionSection()}
     ${dashboardAgendaKanbanWidgets()}
     <section class="chart-grid">
       ${charts}
@@ -4012,6 +4013,95 @@ function renderDashboard() {
     lucroCaixaPeriod = event.target.value;
     render();
   });
+  qs("content").querySelectorAll("[data-exec-go]").forEach((btn) => btn.addEventListener("click", () => goToProjectBudget(btn.dataset.execGo)));
+  qs("content").querySelectorAll("[data-exec-detail]").forEach((btn) => btn.addEventListener("click", () => { workBudgetItemFilter = "estouro"; goToProjectBudget(btn.dataset.execDetail); }));
+  qs("content").querySelector("[data-exec-all]")?.addEventListener("click", () => { currentModule = "workBudgets"; render(); });
+}
+
+// Execução (realizado vs orçado) das obras ativas, agregada por projeto.
+function activeProjectsExecution() {
+  const items = db.workBudgetItems || [];
+  return (db.projects || []).filter((p) => p.status === "Em andamento").map((project) => {
+    const projItems = items.filter((it) => sameId(it.projectId, project.id));
+    let totalPrev = 0;
+    let totalReal = 0;
+    let temItem90 = false;
+    const estouroItems = [];
+    projItems.forEach((it) => {
+      const ex = budgetItemExecution(it);
+      totalPrev += ex.totalPrev;
+      totalReal += ex.totalReal;
+      if (ex.estouro || ex.pct > 100) estouroItems.push({ item: it, ex });
+      else if (ex.pct >= 90 && ex.pct <= 100) temItem90 = true;
+    });
+    const badge = estouroItems.length ? "vermelho" : (temItem90 ? "amarelo" : "verde");
+    const pct = totalPrev > 0 ? (totalReal / totalPrev) * 100 : 0;
+    return { project, totalPrev, totalReal, pct, estouroItems, estouroCount: estouroItems.length, badge, hasItems: projItems.length > 0 };
+  }).filter((r) => r.hasItems);
+}
+
+function goToProjectBudget(projectId) {
+  const budget = (db.workBudgets || []).find((b) => sameId(b.projectId, projectId));
+  if (budget) selectedWorkBudgetId = budget.id;
+  currentModule = "workBudgets";
+  render();
+}
+
+function dashboardExecutionSection() {
+  const all = activeProjectsExecution();
+  if (!all.length) return "";
+  const badgeClass = (b) => (b === "vermelho" ? "exec-estouro" : b === "amarelo" ? "exec-parcial" : "exec-concluido");
+  const barClass = (b) => (b === "vermelho" ? "exec-bar-red" : b === "amarelo" ? "exec-bar-yellow" : "exec-bar-green");
+  const obrasComEstouro = all.filter((r) => r.estouroCount > 0);
+  const totalEstouroItems = all.reduce((s, r) => s + r.estouroCount, 0);
+
+  // Widget 3 — alerta de estouro.
+  const estouroAlert = totalEstouroItems ? `
+    <section class="exec-dash-alert">
+      <div class="exec-dash-alert-head">⚠️ ${totalEstouroItems} item(ns) com estouro em ${obrasComEstouro.length} obra(s)</div>
+      <ul class="exec-dash-alert-list">
+        ${obrasComEstouro.flatMap((r) => r.estouroItems.slice(0, 3).map((e) => `<li><strong>${svgText(r.project.name)}</strong> · ${svgText(e.item.description || e.item.code || "Item")} · ${asPercent(e.ex.pct)}</li>`)).join("")}
+      </ul>
+      <button type="button" class="secondary" data-exec-detail="${escapeHtml(obrasComEstouro[0].project.id)}">Ver detalhes</button>
+    </section>` : "";
+
+  // Widget 1 — execução das obras (máx. 5).
+  const obrasCard = `
+    <div class="panel exec-dash-card">
+      <h3>Execução das Obras</h3>
+      <div class="exec-dash-list">
+        ${all.slice(0, 5).map((r) => `
+          <button type="button" class="exec-dash-item" data-exec-go="${escapeHtml(r.project.id)}" title="Abrir o orçamento desta obra">
+            <div class="exec-dash-item-head">
+              <strong>${svgText(r.project.name)}</strong>
+              <span class="exec-badge ${badgeClass(r.badge)}">${asPercent(r.pct)}</span>
+            </div>
+            <div class="exec-progress-bar small"><span class="${barClass(r.badge)}" style="width:${Math.min(100, Math.round(r.pct))}%"></span></div>
+            <span class="muted">${asMoney(r.totalReal)} realizado de ${asMoney(r.totalPrev)} previsto</span>
+          </button>`).join("")}
+      </div>
+      ${all.length > 5 ? `<button type="button" class="link-button" data-exec-all>Ver todas (${all.length})</button>` : ""}
+    </div>`;
+
+  // Widget 2 — gráfico previsto vs realizado vs estouro.
+  const rows = all.map((r) => ({
+    label: r.project.name,
+    Previsto: r.totalPrev,
+    Realizado: r.totalReal,
+    Estouro: Math.max(0, r.totalReal - r.totalPrev),
+  }));
+  const chart = chartPanel("Previsto vs Realizado por obra", "Valor orçado, realizado e estouro por obra ativa", groupedBarChart(rows, [
+    { key: "Previsto", color: "#2563eb" },
+    { key: "Realizado", color: "#2e7d32" },
+    { key: "Estouro", color: "#c62828" },
+  ]));
+
+  return `
+    ${estouroAlert}
+    <section class="split dashboard-execution">
+      ${obrasCard}
+      ${chart}
+    </section>`;
 }
 
 function dashboardAlerts(metrics) {

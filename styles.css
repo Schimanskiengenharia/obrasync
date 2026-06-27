@@ -2018,6 +2018,54 @@ html[data-theme="dark"] .exec-row-estouro td { background: rgba(198, 40, 40, 0.1
   border-bottom: 1px solid var(--line);
 }
 
+/* Execução das obras no Dashboard */
+.exec-dash-alert {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #ffd0c5;
+  background: #fff5f1;
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+}
+
+html[data-theme="dark"] .exec-dash-alert {
+  background: rgba(198, 40, 40, 0.12);
+  border-color: rgba(198, 40, 40, 0.4);
+}
+
+.exec-dash-alert-head { font-weight: 800; color: var(--red); }
+.exec-dash-alert-list { margin: 0; padding-left: 18px; font-size: 13px; display: grid; gap: 3px; }
+.exec-dash-alert button { justify-self: start; }
+
+.dashboard-execution { margin-bottom: 16px; align-items: start; }
+.exec-dash-card { display: grid; gap: 12px; }
+.exec-dash-card h3 { margin: 0; }
+.exec-dash-list { display: grid; gap: 12px; }
+
+.exec-dash-item {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.exec-dash-item:hover { border-color: var(--teal); }
+
+.exec-dash-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.exec-progress-bar.small { height: 9px; }
+
 /* Cabeçalho/rodapé padrão de documentos — só aparecem na impressão */
 .doc-print-only { display: none; }
 

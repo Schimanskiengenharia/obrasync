@@ -132,6 +132,12 @@ try {
         handle_work_budget_execution_module($pdo, $method, $_GET, $authUser);
     }
 
+    // Resumo de execução das obras para o Dashboard (previsto vs realizado).
+    if (in_array($module, ['dashboardexecution', 'execucao-dashboard'], true)) {
+        authorize_request($pdo, $authUser, 'dashboard', action_for_method($method));
+        handle_dashboard_execution_module($pdo, $method, $_GET);
+    }
+
     if ($resource === '' || $resource === 'bootstrap') {
         require_method($method, ['GET']);
         respond(['ok' => true, 'data' => bootstrap_data($pdo, $resources, $authUser)]);
@@ -2982,6 +2988,79 @@ function wbe_respond(bool $success, mixed $data = [], string $message = '', int 
     http_response_code($status);
     echo json_encode(['success' => $success, 'data' => $data, 'message' => $message], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit;
+}
+
+// Resumo de execução das obras ativas para o Dashboard.
+function handle_dashboard_execution_module(PDO $pdo, string $method, array $query): never
+{
+    require_method($method, ['GET']);
+    try {
+        $obras = [];
+        $estouros = [];
+        $totPrev = 0.0;
+        $totReal = 0.0;
+        $ready = resolve_existing_table($pdo, ['orcamento_obra_itens'], false)
+            && in_array('quantidade_realizada', table_columns($pdo, 'orcamento_obra_itens'), true);
+        if ($ready) {
+            $sql = "SELECT p.id, p.name,
+                        COALESCE(SUM(i.totalPrice),0) AS previsto,
+                        COALESCE(SUM(i.quantidade_realizada * i.unitPrice),0) AS realizado,
+                        COALESCE(SUM(CASE WHEN i.quantidade_realizada > i.quantity THEN 1 ELSE 0 END),0) AS itens_estouro
+                    FROM projects p
+                    JOIN orcamento_obra_itens i ON i.projectId = p.id
+                    WHERE p.status = 'Em andamento'
+                    GROUP BY p.id, p.name
+                    ORDER BY p.name";
+            foreach ($pdo->query($sql)->fetchAll() as $row) {
+                $prev = (float) $row['previsto'];
+                $real = (float) $row['realizado'];
+                $totPrev += $prev;
+                $totReal += $real;
+                $obras[] = [
+                    'id' => (int) $row['id'],
+                    'name' => (string) $row['name'],
+                    'previsto' => round($prev, 2),
+                    'realizado' => round($real, 2),
+                    'percentual' => $prev > 0 ? round($real / $prev * 100, 2) : 0,
+                    'estouro' => round(max(0, $real - $prev), 2),
+                    'itens_estouro' => (int) $row['itens_estouro'],
+                ];
+            }
+
+            $estSql = "SELECT i.id, i.projectId, p.name AS obra, i.description, i.quantity, i.quantidade_realizada,
+                          (i.quantidade_realizada / NULLIF(i.quantity,0)) * 100 AS percentual
+                       FROM orcamento_obra_itens i
+                       JOIN projects p ON p.id = i.projectId
+                       WHERE p.status = 'Em andamento' AND i.quantidade_realizada > i.quantity
+                       ORDER BY percentual DESC
+                       LIMIT 200";
+            foreach ($pdo->query($estSql)->fetchAll() as $row) {
+                $estouros[] = [
+                    'id' => (int) $row['id'],
+                    'projectId' => (int) $row['projectId'],
+                    'obra' => (string) $row['obra'],
+                    'item' => (string) $row['description'],
+                    'quantity' => (float) $row['quantity'],
+                    'quantidade_realizada' => (float) $row['quantidade_realizada'],
+                    'percentual' => round((float) $row['percentual'], 2),
+                ];
+            }
+        }
+        wbe_respond(true, [
+            'obras' => $obras,
+            'estouros' => $estouros,
+            'totais' => [
+                'previsto' => round($totPrev, 2),
+                'realizado' => round($totReal, 2),
+                'saldo' => round($totPrev - $totReal, 2),
+                'percentual' => $totPrev > 0 ? round($totReal / $totPrev * 100, 2) : 0,
+                'itens_estouro' => count($estouros),
+            ],
+        ]);
+    } catch (Throwable $e) {
+        error_log('[ObraSync dashboardExecution] ' . $e->getMessage());
+        wbe_respond(false, [], 'Erro ao calcular a execução das obras.', 500);
+    }
 }
 
 function ensure_api_sessions_table(PDO $pdo): void
