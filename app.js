@@ -4018,9 +4018,7 @@ function renderDashboard() {
     lucroCaixaPeriod = event.target.value;
     render();
   });
-  qs("content").querySelectorAll("[data-exec-go]").forEach((btn) => btn.addEventListener("click", () => goToProjectBudget(btn.dataset.execGo)));
-  qs("content").querySelectorAll("[data-exec-detail]").forEach((btn) => btn.addEventListener("click", () => { workBudgetItemFilter = "estouro"; goToProjectBudget(btn.dataset.execDetail); }));
-  qs("content").querySelector("[data-exec-all]")?.addEventListener("click", () => { currentModule = "workBudgets"; render(); });
+  loadDashboardExecution();
 }
 
 // Execução (realizado vs orçado) das obras ativas, agregada por projeto.
@@ -4052,54 +4050,113 @@ function goToProjectBudget(projectId) {
   render();
 }
 
+// Os 3 widgets de execução buscam o resumo do servidor (?module=dashboardExecution
+// &action=summary), com spinner, erro+retry e auto-refresh a cada 5 min.
+let dashboardExecState = { data: null, loading: false, error: false };
+let dashboardExecTimer = null;
+
 function dashboardExecutionSection() {
+  return `<div id="dashExecContainer">${dashboardExecutionContent()}</div>`;
+}
+
+function dashboardExecutionContent() {
+  const s = dashboardExecState;
+  if (s.loading && !s.data) {
+    return '<section class="exec-loading"><span class="exec-spinner"></span> Carregando dados de execução das obras…</section>';
+  }
+  if (s.error && !s.data) {
+    return '<section class="exec-error"><span>Não foi possível carregar os dados de execução.</span> <button type="button" class="secondary" id="dashExecRetry">Tentar novamente</button></section>';
+  }
+  if (!s.data || !(s.data.obras || []).length) return "";
+  return dashboardExecutionWidgets(s.data);
+}
+
+// Fallback de modo local: monta o mesmo formato a partir do db carregado.
+function computeExecutionSummaryLocal() {
   const all = activeProjectsExecution();
-  if (!all.length) return "";
+  return {
+    obras: all.map((r) => ({ id: r.project.id, name: r.project.name, previsto: r.totalPrev, realizado: r.totalReal, percentual: r.pct, estouro: Math.max(0, r.totalReal - r.totalPrev), itens_estouro: r.estouroCount })),
+    estouros: all.flatMap((r) => r.estouroItems.map((e) => ({ id: e.item.id, projectId: r.project.id, obra: r.project.name, item: e.item.description || e.item.code || "Item", percentual: e.ex.pct }))),
+    totais: { itens_estouro: all.reduce((s, r) => s + r.estouroCount, 0) },
+  };
+}
+
+async function loadDashboardExecution(force = false) {
+  if (!serverMode) {
+    dashboardExecState = { data: computeExecutionSummaryLocal(), loading: false, error: false };
+    repaintDashboardExecution();
+    return;
+  }
+  if (dashboardExecState.data && !force) {
+    repaintDashboardExecution();
+    scheduleDashboardExecRefresh();
+    return;
+  }
+  dashboardExecState = { ...dashboardExecState, loading: true, error: false };
+  repaintDashboardExecution();
+  try {
+    const data = await apiModuleRequest("?module=dashboardExecution&action=summary");
+    dashboardExecState = { data: data || { obras: [], estouros: [], totais: {} }, loading: false, error: false };
+  } catch {
+    dashboardExecState = { ...dashboardExecState, loading: false, error: true };
+  }
+  repaintDashboardExecution();
+  scheduleDashboardExecRefresh();
+}
+
+function repaintDashboardExecution() {
+  const c = qs("dashExecContainer");
+  if (!c) return;
+  c.innerHTML = dashboardExecutionContent();
+  wireDashboardExecution();
+}
+
+function scheduleDashboardExecRefresh() {
+  if (dashboardExecTimer) clearTimeout(dashboardExecTimer);
+  dashboardExecTimer = setTimeout(() => { if (currentModule === "dashboard") loadDashboardExecution(true); }, 5 * 60 * 1000);
+}
+
+function dashboardExecutionWidgets(data) {
+  const obras = data.obras || [];
+  const estouros = data.estouros || [];
+  const totalEstouro = (data.totais && data.totais.itens_estouro) || estouros.length;
+  const badgeOf = (o) => (o.itens_estouro > 0 ? "vermelho" : (o.percentual >= 90 ? "amarelo" : "verde"));
   const badgeClass = (b) => (b === "vermelho" ? "exec-estouro" : b === "amarelo" ? "exec-parcial" : "exec-concluido");
   const barClass = (b) => (b === "vermelho" ? "exec-bar-red" : b === "amarelo" ? "exec-bar-yellow" : "exec-bar-green");
-  const obrasComEstouro = all.filter((r) => r.estouroCount > 0);
-  const totalEstouroItems = all.reduce((s, r) => s + r.estouroCount, 0);
 
-  // Widget 3 — alerta de estouro.
-  const estouroAlert = totalEstouroItems ? `
+  const obrasComEstouro = [...new Set(estouros.map((e) => e.projectId))];
+  const estouroAlert = totalEstouro ? `
     <section class="exec-dash-alert">
-      <div class="exec-dash-alert-head">⚠️ ${totalEstouroItems} item(ns) com estouro em ${obrasComEstouro.length} obra(s)</div>
+      <div class="exec-dash-alert-head">⚠️ ${totalEstouro} item(ns) com estouro em ${obrasComEstouro.length} obra(s)</div>
       <ul class="exec-dash-alert-list">
-        ${obrasComEstouro.flatMap((r) => r.estouroItems.slice(0, 3).map((e) => `<li><strong>${svgText(r.project.name)}</strong> · ${svgText(e.item.description || e.item.code || "Item")} · ${asPercent(e.ex.pct)}</li>`)).join("")}
+        ${estouros.slice(0, 6).map((e) => `<li><strong>${svgText(e.obra)}</strong> · ${svgText(e.item || "Item")} · ${asPercent(e.percentual)}</li>`).join("")}
       </ul>
-      <button type="button" class="secondary" data-exec-detail="${escapeHtml(obrasComEstouro[0].project.id)}">Ver detalhes</button>
+      ${obrasComEstouro.length ? `<button type="button" class="secondary" data-exec-detail="${escapeHtml(obrasComEstouro[0])}">Ver detalhes</button>` : ""}
     </section>` : "";
 
-  // Widget 1 — execução das obras (máx. 5).
   const obrasCard = `
     <div class="panel exec-dash-card">
-      <h3>Execução das Obras</h3>
-      <div class="exec-dash-list">
-        ${all.slice(0, 5).map((r) => `
-          <button type="button" class="exec-dash-item" data-exec-go="${escapeHtml(r.project.id)}" title="Abrir o orçamento desta obra">
-            <div class="exec-dash-item-head">
-              <strong>${svgText(r.project.name)}</strong>
-              <span class="exec-badge ${badgeClass(r.badge)}">${asPercent(r.pct)}</span>
-            </div>
-            <div class="exec-progress-bar small"><span class="${barClass(r.badge)}" style="width:${Math.min(100, Math.round(r.pct))}%"></span></div>
-            <span class="muted">${asMoney(r.totalReal)} realizado de ${asMoney(r.totalPrev)} previsto</span>
-          </button>`).join("")}
+      <div class="exec-dash-card-head">
+        <h3>Execução das Obras</h3>
+        <button type="button" class="link-button" id="dashExecRefresh" title="Atualizar agora">↻ Atualizar</button>
       </div>
-      ${all.length > 5 ? `<button type="button" class="link-button" data-exec-all>Ver todas (${all.length})</button>` : ""}
+      <div class="exec-dash-list">
+        ${obras.slice(0, 5).map((o) => {
+          const b = badgeOf(o);
+          return `<button type="button" class="exec-dash-item" data-exec-go="${escapeHtml(o.id)}" title="Abrir o orçamento desta obra">
+            <div class="exec-dash-item-head">
+              <strong>${svgText(o.name)}</strong>
+              <span class="exec-badge ${badgeClass(b)}">${asPercent(o.percentual)}</span>
+            </div>
+            <div class="exec-progress-bar small"><span class="${barClass(b)}" style="width:${Math.min(100, Math.round(o.percentual || 0))}%"></span></div>
+            <span class="muted">${asMoney(o.realizado)} realizado de ${asMoney(o.previsto)} previsto</span>
+          </button>`;
+        }).join("")}
+      </div>
+      ${obras.length > 5 ? `<button type="button" class="link-button" data-exec-all>Ver todas (${obras.length})</button>` : ""}
     </div>`;
 
-  // Widget 2 — gráfico previsto vs realizado vs estouro.
-  const rows = all.map((r) => ({
-    label: r.project.name,
-    Previsto: r.totalPrev,
-    Realizado: r.totalReal,
-    Estouro: Math.max(0, r.totalReal - r.totalPrev),
-  }));
-  const chart = chartPanel("Previsto vs Realizado por obra", "Valor orçado, realizado e estouro por obra ativa", groupedBarChart(rows, [
-    { key: "Previsto", color: "#2563eb" },
-    { key: "Realizado", color: "#2e7d32" },
-    { key: "Estouro", color: "#c62828" },
-  ]));
+  const chart = chartPanel("Previsto vs Realizado por obra", "Valor orçado, realizado e estouro por obra ativa", executionGroupedChart(obras));
 
   return `
     ${estouroAlert}
@@ -4107,6 +4164,121 @@ function dashboardExecutionSection() {
       ${obrasCard}
       ${chart}
     </section>`;
+}
+
+// Gráfico SVG (padrão do projeto) com tooltip combinado por obra (não o <title>).
+function executionGroupedChart(obras) {
+  const series = [{ key: "Previsto", color: "#2563eb" }, { key: "Realizado", color: "#2e7d32" }, { key: "Estouro", color: "#c62828" }];
+  const rows = obras.map((o) => ({
+    label: o.name,
+    Previsto: Number(o.previsto || 0),
+    Realizado: Number(o.realizado || 0),
+    Estouro: Number(o.estouro != null ? o.estouro : Math.max(0, (o.realizado || 0) - (o.previsto || 0))),
+    _o: o,
+  }));
+  const values = rows.flatMap((r) => series.map((s) => Number(r[s.key] || 0)));
+  if (!rows.length || !hasValues(values)) return emptyChart();
+  const width = 760;
+  const height = 300;
+  const pad = { top: 22, right: 24, bottom: 54, left: 72 };
+  const min = Math.min(0, ...values);
+  const max = Math.max(1, ...values);
+  const range = max - min || 1;
+  const zeroY = pad.top + (1 - ((0 - min) / range)) * (height - pad.top - pad.bottom);
+  const groupWidth = (width - pad.left - pad.right) / rows.length;
+  const barWidth = Math.max(8, Math.min(26, (groupWidth - 14) / series.length));
+  const y = (value) => pad.top + (1 - ((value - min) / range)) * (height - pad.top - pad.bottom);
+  const bars = rows.map((row, ri) => {
+    const o = row._o;
+    const tt = encodeURIComponent(JSON.stringify({
+      nome: o.name,
+      previsto: Number(o.previsto || 0),
+      realizado: Number(o.realizado || 0),
+      saldo: Number(o.previsto || 0) - Number(o.realizado || 0),
+      pct: Number(o.percentual || 0),
+      estouro: Number(row.Estouro || 0),
+      itens: Number(o.itens_estouro || 0),
+    }));
+    const rects = series.map((s, si) => {
+      const value = Number(row[s.key] || 0);
+      const bx = pad.left + ri * groupWidth + 7 + si * barWidth;
+      const by = value >= 0 ? y(value) : zeroY;
+      const bh = Math.max(2, Math.abs(zeroY - y(value)));
+      return `<rect x="${bx}" y="${by}" width="${barWidth - 2}" height="${bh}" rx="3" fill="${s.color}"></rect>`;
+    }).join("");
+    const hit = `<rect x="${pad.left + ri * groupWidth}" y="${pad.top}" width="${groupWidth}" height="${height - pad.top - pad.bottom}" fill="transparent"></rect>`;
+    return `<g class="exec-bar-group" data-tt="${tt}">${rects}${hit}</g>`;
+  }).join("");
+  const labels = rows.map((row, i) => `<text x="${pad.left + i * groupWidth + groupWidth / 2}" y="${height - 16}" text-anchor="middle" class="chart-axis">${svgText(row.label)}</text>`).join("");
+  return `<div class="chart-wrap"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Previsto vs Realizado por obra">${bars}${labels}</svg></div>`;
+}
+
+function wireDashboardExecution() {
+  const c = qs("dashExecContainer");
+  if (!c) return;
+  c.querySelectorAll("[data-exec-go]").forEach((b) => b.addEventListener("click", () => goToProjectBudget(b.dataset.execGo)));
+  c.querySelectorAll("[data-exec-detail]").forEach((b) => b.addEventListener("click", () => { workBudgetItemFilter = "estouro"; goToProjectBudget(b.dataset.execDetail); }));
+  c.querySelector("[data-exec-all]")?.addEventListener("click", () => { currentModule = "workBudgets"; render(); });
+  qs("dashExecRetry")?.addEventListener("click", () => loadDashboardExecution(true));
+  qs("dashExecRefresh")?.addEventListener("click", () => loadDashboardExecution(true));
+  wireExecChartTooltip();
+}
+
+function execChartTooltipEl() {
+  let tip = qs("execChartTooltip");
+  if (!tip) {
+    tip = document.createElement("div");
+    tip.id = "execChartTooltip";
+    tip.className = "exec-chart-tooltip";
+    document.body.appendChild(tip);
+  }
+  return tip;
+}
+
+function positionExecTooltip(tip, event) {
+  const offset = 14;
+  const rect = tip.getBoundingClientRect();
+  let x = event.clientX + offset;
+  let y = event.clientY + offset;
+  if (x + rect.width > window.innerWidth - 8) x = event.clientX - rect.width - offset;
+  if (y + rect.height > window.innerHeight - 8) y = event.clientY - rect.height - offset;
+  tip.style.left = `${Math.max(8, x)}px`;
+  tip.style.top = `${Math.max(8, y)}px`;
+}
+
+function execTooltipHtml(d) {
+  const head = `<div class="exec-tt-title">🏗 ${svgText(d.nome)}</div>`;
+  const row = (label, value, cls = "") => `<div class="exec-tt-row ${cls}"><span>${label}</span><strong>${value}</strong></div>`;
+  if (d.estouro > 0 || d.pct > 100) {
+    return head
+      + row("Previsto:", asMoney(d.previsto))
+      + row("Realizado:", asMoney(d.realizado))
+      + row("Estouro:", `${asMoney(d.estouro)} ⚠️`, "exec-tt-bad")
+      + row("Execução:", asPercent(d.pct))
+      + row("Itens:", `${d.itens} ${d.itens === 1 ? "item" : "itens"} com estouro`);
+  }
+  return head
+    + row("Previsto:", asMoney(d.previsto))
+    + row("Realizado:", asMoney(d.realizado))
+    + row("Saldo:", `${asMoney(d.saldo)} ✓`, "exec-tt-ok")
+    + row("Execução:", asPercent(d.pct))
+    + row("Estouro:", "— (nenhum)");
+}
+
+function wireExecChartTooltip() {
+  const groups = qs("dashExecContainer")?.querySelectorAll(".exec-bar-group");
+  if (!groups || !groups.length) return;
+  const tip = execChartTooltipEl();
+  groups.forEach((g) => {
+    const show = (event) => {
+      try { tip.innerHTML = execTooltipHtml(JSON.parse(decodeURIComponent(g.dataset.tt))); } catch { return; }
+      tip.style.display = "block";
+      positionExecTooltip(tip, event);
+    };
+    g.addEventListener("mouseenter", show);
+    g.addEventListener("mousemove", (event) => positionExecTooltip(tip, event));
+    g.addEventListener("mouseleave", () => { tip.style.display = "none"; });
+  });
 }
 
 function dashboardAlerts(metrics) {

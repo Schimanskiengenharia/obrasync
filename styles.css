@@ -2185,6 +2185,64 @@ html[data-theme="dark"] .exec-dash-alert {
 .budget-item-common label { display: grid; gap: 4px; font-size: 12px; }
 .budget-item-total { grid-column: 1 / -1; text-align: right; font-size: 14px; }
 
+/* Widgets de execução do Dashboard: loading, erro e tooltip combinado */
+.exec-loading,
+.exec-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  margin-bottom: 16px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.exec-spinner {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid var(--line);
+  border-top-color: var(--teal);
+  animation: execSpin 0.8s linear infinite;
+}
+
+@keyframes execSpin { to { transform: rotate(360deg); } }
+
+.exec-dash-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.exec-dash-card-head h3 { margin: 0; }
+.exec-bar-group { cursor: pointer; }
+
+.exec-chart-tooltip {
+  position: fixed;
+  z-index: 9999;
+  display: none;
+  min-width: 210px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #14211f;
+  color: #fff;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+  font-size: 12px;
+  pointer-events: none;
+}
+
+.exec-tt-title { font-weight: 800; margin-bottom: 6px; }
+.exec-tt-row { display: flex; justify-content: space-between; gap: 16px; padding: 1px 0; }
+.exec-tt-row span { color: #b9c7c3; }
+.exec-tt-ok strong { color: #86efac; }
+.exec-tt-bad strong { color: #ff9d92; }
+
 /* Cabeçalho/rodapé padrão de documentos — só aparecem na impressão */
 .doc-print-only { display: none; }
 
