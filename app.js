@@ -5168,6 +5168,7 @@ function renderCrud(key) {
   qs("content").querySelectorAll("[data-preview-proposal]").forEach((button) => button.addEventListener("click", () => openSavedProposalPreview(button.dataset.previewProposal)));
   qs("content").querySelectorAll("[data-create-proposal-receivables]").forEach((button) => button.addEventListener("click", () => createReceivablesFromProposal(button.dataset.createProposalReceivables)));
   qs("content").querySelectorAll("[data-create-receivable]").forEach((button) => button.addEventListener("click", () => createReceivableFromSale(button.dataset.createReceivable)));
+  qs("content").querySelectorAll("[data-print-po]").forEach((button) => button.addEventListener("click", () => openPurchaseOrderPrint(button.dataset.printPo)));
   qs("content").querySelectorAll("[data-generate-proposal]").forEach((button) => button.addEventListener("click", () => openProposalGenerator(button.dataset.generateProposal)));
   qs("content").querySelectorAll("[data-add-budget-item]").forEach((button) => button.addEventListener("click", () => {
     const [sourceKey, id] = button.dataset.addBudgetItem.split(":");
@@ -5225,6 +5226,9 @@ function extraRowActions(actionKey, row) {
   if (actionKey === "sales" && row.status !== "Cancelado") {
     const exists = (db.receivable || []).some((item) => (row.proposalId && sameId(item.proposalId, row.proposalId)) || (row.number && item.document === row.number));
     return exists ? "" : `<button class="secondary" type="button" data-create-receivable="${row.id}">Gerar conta</button>`;
+  }
+  if (actionKey === "purchaseOrders") {
+    return `<button class="secondary" type="button" data-print-po="${row.id}">Imprimir / Gerar PDF</button>`;
   }
   return "";
 }
@@ -10185,6 +10189,82 @@ function generateDocumentFooter() {
       <span>${svgText(info)}</span>
       <span>Gerado em ${svgText(stamp)}</span>
     </footer>`;
+}
+
+// Imprime um documento isolado (container dedicado #docPrint, padrão do RDO):
+// abre o preview/PDF do navegador mostrando só o documento.
+function printStandaloneDocument(innerHtml) {
+  let box = qs("docPrint");
+  if (!box) {
+    box = document.createElement("div");
+    box.id = "docPrint";
+    document.body.appendChild(box);
+  }
+  box.innerHTML = innerHtml;
+  document.body.classList.add("doc-printing");
+  const cleanup = () => {
+    document.body.classList.remove("doc-printing");
+    window.removeEventListener("afterprint", cleanup);
+  };
+  window.addEventListener("afterprint", cleanup);
+  window.print();
+}
+
+// Pedido de compra individual imprimível (cabeçalho/rodapé da empresa).
+function openPurchaseOrderPrint(id) {
+  const po = byId("purchaseOrders", id);
+  if (!po) { alert("Pedido de compra não encontrado."); return; }
+  const supplier = byId("suppliers", po.supplierId) || {};
+  const amount = Number(po.amount || 0);
+  const supplierAddr = [
+    clientFullAddress(supplier),
+    [supplier.cidade, supplier.estado].filter(Boolean).join(" - "),
+    supplier.zipCode ? `CEP ${maskCep(supplier.zipCode)}` : "",
+  ].filter(Boolean).join(" · ");
+  const descricao = nameOf("categories", po.categoryId) || (po.number ? `Pedido ${po.number}` : "Itens do pedido");
+  const linha = (label, valor) => `<p><span class="doc-kv-label">${label}:</span> ${svgText(valor || "—")}</p>`;
+  const html = `
+    <article class="doc-sheet">
+      ${generateDocumentHeader("Pedido de Compra", [po.number ? `Nº ${po.number}` : "", asDate(po.date), po.status].filter(Boolean).join(" · "))}
+      <div class="doc-blocks">
+        <section class="doc-block">
+          <h3>Fornecedor</h3>
+          <p><strong>${svgText(supplier.name || nameOf("suppliers", po.supplierId) || "—")}</strong></p>
+          ${supplier.document ? `<p>${svgText(supplier.document)}</p>` : ""}
+          ${supplierAddr ? `<p>${svgText(supplierAddr)}</p>` : ""}
+          ${(supplier.phone || supplier.email) ? `<p>${svgText([supplier.phone, supplier.email].filter(Boolean).join(" · "))}</p>` : ""}
+        </section>
+        <section class="doc-block">
+          <h3>Pedido</h3>
+          ${linha("Número", po.number)}
+          ${linha("Emissão", asDate(po.date))}
+          ${linha("Entrega prevista", asDate(po.expectedDate))}
+          ${linha("Obra vinculada", nameOf("projects", po.projectId))}
+          ${linha("Centro de custo", nameOf("costCenters", po.costCenterId))}
+          ${linha("Status", po.status)}
+        </section>
+      </div>
+      <section class="doc-section">
+        <h3>Itens</h3>
+        <table class="doc-table">
+          <thead><tr><th>Item</th><th>Descrição</th><th>Unid.</th><th>Qtd.</th><th>Valor Unit.</th><th>Total</th></tr></thead>
+          <tbody>
+            <tr><td>1</td><td>${svgText(descricao)}</td><td>vb</td><td>1</td><td>${asMoney(amount)}</td><td>${asMoney(amount)}</td></tr>
+          </tbody>
+          <tfoot>
+            <tr><td colspan="5" class="doc-total-label">Subtotal</td><td>${asMoney(amount)}</td></tr>
+            <tr class="doc-total-row"><td colspan="5" class="doc-total-label">Total geral</td><td>${asMoney(amount)}</td></tr>
+          </tfoot>
+        </table>
+      </section>
+      ${po.notes ? `<section class="doc-section"><h3>Observações</h3><p>${textToHtml(po.notes)}</p></section>` : ""}
+      <section class="doc-signatures">
+        <div><span class="doc-sign-line"></span><span>Solicitante</span><span class="doc-sign-date">Data: ____/____/______</span></div>
+        <div><span class="doc-sign-line"></span><span>Aprovado por</span><span class="doc-sign-date">Data: ____/____/______</span></div>
+      </section>
+      ${generateDocumentFooter()}
+    </article>`;
+  printStandaloneDocument(html);
 }
 
 // Linha de contato do cabeçalho: 📱 WhatsApp · 📧 E-mail · 🌐 Site (ignora vazios).
