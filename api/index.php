@@ -126,6 +126,12 @@ try {
         handle_purchase_order_items_module($pdo, $method, $_GET, $authUser);
     }
 
+    // Execução (realizado vs orçado) dos itens do orçamento de obra.
+    if (in_array($module, ['workbudgetexecution', 'execucao-orcamento'], true)) {
+        authorize_request($pdo, $authUser, 'workBudgets', action_for_method($method));
+        handle_work_budget_execution_module($pdo, $method, $_GET, $authUser);
+    }
+
     if ($resource === '' || $resource === 'bootstrap') {
         require_method($method, ['GET']);
         respond(['ok' => true, 'data' => bootstrap_data($pdo, $resources, $authUser)]);
@@ -1991,6 +1997,9 @@ function bootstrap_data(PDO $pdo, array $resources, ?array $authUser = null, boo
             || (resolve_existing_table($pdo, ['purchase_orders'], false) && !in_array('condicoes_pagamento', table_columns($pdo, 'purchase_orders'), true))) {
             ensure_purchase_order_items($pdo);
         }
+        if (!resolve_existing_table($pdo, ['orcamento_item_execucao_log'], false)) {
+            ensure_budget_execution_log($pdo);
+        }
         // Colunas de referência cruzada caixa ↔ conta a pagar (anti dupla contagem).
         if (resolve_existing_table($pdo, ['cash_bank_movements'], false)
             && !in_array('referencia_tipo', table_columns($pdo, 'cash_bank_movements'), true)) {
@@ -2153,6 +2162,48 @@ function ensure_purchase_order_items(PDO $pdo): void
         $pdo->exec("ALTER TABLE orcamento_obra_itens ADD COLUMN IF NOT EXISTS quantidade_realizada DECIMAL(18,4) NOT NULL DEFAULT 0");
     } catch (Throwable $error) {
         // Tabela de itens do orçamento pode não existir nesta instalação.
+    }
+}
+
+// Histórico de alterações da quantidade realizada por item do orçamento.
+function ensure_budget_execution_log(PDO $pdo): void
+{
+    $pdo->exec(
+        "CREATE TABLE IF NOT EXISTS orcamento_item_execucao_log (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            item_id BIGINT UNSIGNED NOT NULL,
+            quantidade_anterior DECIMAL(18,4) NOT NULL DEFAULT 0,
+            quantidade_nova DECIMAL(18,4) NOT NULL DEFAULT 0,
+            origem VARCHAR(30) DEFAULT 'manual',
+            motivo VARCHAR(255) NULL,
+            usuario_id BIGINT UNSIGNED NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_exec_item (item_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+    );
+    try {
+        $pdo->exec("ALTER TABLE orcamento_obra_itens ADD COLUMN IF NOT EXISTS quantidade_realizada DECIMAL(18,4) NOT NULL DEFAULT 0");
+    } catch (Throwable $error) {
+        // segue
+    }
+}
+
+function log_budget_execution(PDO $pdo, int $itemId, float $anterior, float $nova, string $origem, ?string $motivo, ?int $userId): void
+{
+    try {
+        if (!resolve_existing_table($pdo, ['orcamento_item_execucao_log'], false)) {
+            return;
+        }
+        insert_dynamic($pdo, 'orcamento_item_execucao_log', [
+            'item_id' => $itemId,
+            'quantidade_anterior' => round($anterior, 4),
+            'quantidade_nova' => round($nova, 4),
+            'origem' => $origem,
+            'motivo' => $motivo,
+            'usuario_id' => $userId,
+        ]);
+    } catch (Throwable $error) {
+        // log de histórico é best-effort
     }
 }
 
@@ -2863,17 +2914,74 @@ function automate_received_purchase_order(PDO $pdo, int $poId): array
     $stmt->execute([$poId]);
     $rows = $stmt->fetchAll();
     $updated = 0;
+    $sel = $pdo->prepare('SELECT quantidade_realizada FROM orcamento_obra_itens WHERE id = ? LIMIT 1');
     $upd = $pdo->prepare('UPDATE orcamento_obra_itens SET quantidade_realizada = COALESCE(quantidade_realizada,0) + ? WHERE id = ?');
     foreach ($rows as $row) {
         $biId = (int) ($row['work_budget_item_id'] ?? 0);
         if ($biId <= 0) {
             continue;
         }
-        $upd->execute([(float) $row['quantidade'], $biId]);
+        $sel->execute([$biId]);
+        $anterior = (float) ($sel->fetchColumn() ?: 0);
+        $qtd = (float) $row['quantidade'];
+        $upd->execute([$qtd, $biId]);
+        log_budget_execution($pdo, $biId, $anterior, $anterior + $qtd, 'pedido_compra', 'Recebimento do pedido #' . $poId, null);
         $updated++;
     }
     log_automation_event($pdo, 'PEDIDO_RECEBIDO', 'purchase_orders', $poId, 'orcamento_obra_itens', null, 'OK', $updated . ' item(ns) do orçamento atualizados.', null);
     return ['updated' => $updated];
+}
+
+function handle_work_budget_execution_module(PDO $pdo, string $method, array $query, array $authUser): never
+{
+    if (!resolve_existing_table($pdo, ['orcamento_item_execucao_log'], false)) {
+        ensure_budget_execution_log($pdo);
+    }
+    $action = strtolower(trim((string) ($query['action'] ?? '')));
+    try {
+        if ($action === 'history') {
+            require_method($method, ['GET']);
+            $itemId = (int) ($query['itemId'] ?? $query['item_id'] ?? 0);
+            if ($itemId <= 0) {
+                wbe_respond(true, []);
+            }
+            $stmt = $pdo->prepare('SELECT * FROM orcamento_item_execucao_log WHERE item_id = ? ORDER BY id DESC LIMIT 50');
+            $stmt->execute([$itemId]);
+            wbe_respond(true, $stmt->fetchAll());
+        }
+        if ($action === 'update') {
+            require_method($method, ['POST', 'PUT', 'PATCH']);
+            $payload = read_json();
+            $itemId = (int) ($payload['itemId'] ?? $payload['item_id'] ?? $query['id'] ?? 0);
+            if ($itemId <= 0) {
+                wbe_respond(false, [], 'Informe o item do orçamento.', 400);
+            }
+            $nova = max(0, round((float) ($payload['quantidade_realizada'] ?? 0), 4));
+            $motivo = mb_substr(trim((string) ($payload['motivo'] ?? '')), 0, 255);
+            $stmt = $pdo->prepare('SELECT quantidade_realizada FROM orcamento_obra_itens WHERE id = ? LIMIT 1');
+            $stmt->execute([$itemId]);
+            $current = $stmt->fetch();
+            if (!$current) {
+                wbe_respond(false, [], 'Item do orçamento não encontrado.', 404);
+            }
+            $anterior = (float) ($current['quantidade_realizada'] ?? 0);
+            update_dynamic($pdo, 'orcamento_obra_itens', $itemId, ['quantidade_realizada' => $nova]);
+            log_budget_execution($pdo, $itemId, $anterior, $nova, 'manual', $motivo !== '' ? $motivo : null, payable_user_id($authUser));
+            server_audit($pdo, $authUser, 'update', 'workBudgetItems', $itemId, 'Qtd. realizada: ' . $anterior . ' → ' . $nova);
+            wbe_respond(true, ['itemId' => $itemId, 'quantidade_realizada' => $nova], 'Execução atualizada.');
+        }
+        wbe_respond(false, [], 'Ação de execução inválida.', 400);
+    } catch (Throwable $e) {
+        error_log('[ObraSync execucao] ' . $e->getMessage() . ' em ' . $e->getFile() . ':' . $e->getLine());
+        wbe_respond(false, [], 'Erro ao atualizar a execução do orçamento.', 500);
+    }
+}
+
+function wbe_respond(bool $success, mixed $data = [], string $message = '', int $status = 200): never
+{
+    http_response_code($status);
+    echo json_encode(['success' => $success, 'data' => $data, 'message' => $message], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
 }
 
 function ensure_api_sessions_table(PDO $pdo): void

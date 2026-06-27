@@ -1921,6 +1921,103 @@ html[data-theme="dark"] .cc-dup td { background: rgba(245, 200, 60, 0.12); }
 
 .po-total-geral strong { font-size: 15px; }
 
+/* Realizado vs Orçado (execução do orçamento de obra) */
+.exec-progress-panel {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  padding: 14px 16px;
+  margin-bottom: 12px;
+}
+
+.exec-progress-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.exec-progress-head strong { font-size: 15px; }
+
+.exec-progress-bar {
+  height: 12px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.exec-progress-bar span { display: block; height: 100%; transition: width 0.3s ease; }
+.exec-bar-green { background: #2e7d32; }
+.exec-bar-yellow { background: #f5b301; }
+.exec-bar-red { background: #c62828; width: 100% !important; }
+
+.exec-estouro-alert {
+  border: 1px solid #ffd7ca;
+  background: #fff5f1;
+  color: var(--red);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+}
+
+.exec-filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+
+.exec-chip {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.exec-chip.active { background: var(--teal); color: #fff; border-color: var(--teal); }
+
+.exec-table { font-size: 12px; }
+.exec-table th, .exec-table td { white-space: nowrap; }
+.exec-row-estouro td { background: #fff1ee; }
+html[data-theme="dark"] .exec-row-estouro td { background: rgba(198, 40, 40, 0.18); }
+.exec-totals td { font-weight: 700; background: var(--panel-2); }
+
+.exec-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.exec-naoiniciado { background: #607d8b; color: #fff; }
+.exec-andamento { background: #1a73e8; color: #fff; }
+.exec-parcial { background: #f5b301; color: #333; }
+.exec-concluido { background: #2e7d32; color: #fff; }
+.exec-estouro { background: #c62828; color: #fff; }
+
+.exec-update-box { display: grid; gap: 12px; padding: 20px; }
+.exec-update-box label { display: grid; gap: 4px; font-size: 13px; }
+.exec-update-info { display: flex; gap: 16px; flex-wrap: wrap; font-size: 13px; }
+.exec-hist-title { margin: 8px 0 0; font-size: 13px; }
+.exec-hist { display: grid; gap: 4px; max-height: 180px; overflow-y: auto; }
+
+.exec-hist-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--line);
+}
+
 /* Cabeçalho/rodapé padrão de documentos — só aparecem na impressão */
 .doc-print-only { display: none; }
 

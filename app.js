@@ -325,6 +325,7 @@ let dashboardViewMode = "general";
 let dashboardProjectId = "";
 let lucroCaixaPeriod = "mesAtual"; // período do painel Lucro Gerencial vs Caixa Real
 let selectedWorkBudgetId = "";
+let workBudgetItemFilter = "all"; // filtro de execução: all|estouro|naoiniciado|andamento|concluido
 let sinapiSearchTerm = "";
 let sinapiSourceFilter = "all";
 let sinapiUfFilter = "MS";
@@ -7896,6 +7897,180 @@ function whatsappPhone(value) {
   return digits.startsWith("55") ? digits : `55${digits}`;
 }
 
+// ─── Realizado vs Orçado (execução dos itens do orçamento de obra) ──────────
+function fmtQty(value) {
+  return Number(value || 0).toLocaleString("pt-BR", { maximumFractionDigits: 3 });
+}
+
+function budgetItemExecution(item) {
+  const qtd = Number(item.quantity || 0);
+  const real = Number(item.quantidade_realizada || 0);
+  const vu = Number(item.unitPrice || 0);
+  const totalPrev = Number(item.totalPrice || qtd * vu);
+  const totalReal = real * vu;
+  const pct = qtd > 0 ? (real / qtd) * 100 : (real > 0 ? 100 : 0);
+  return { qtd, real, vu, totalPrev, totalReal, pct, saldo: totalPrev - totalReal, estouro: qtd > 0 && real > qtd };
+}
+
+function budgetItemStatusBadge(pct, estouro) {
+  if (estouro || pct > 100) return '<span class="exec-badge exec-estouro">⚠️ Estouro</span>';
+  if (pct >= 100) return '<span class="exec-badge exec-concluido">Concluído</span>';
+  if (pct >= 50) return '<span class="exec-badge exec-parcial">Parcial</span>';
+  if (pct >= 1) return '<span class="exec-badge exec-andamento">Em andamento</span>';
+  return '<span class="exec-badge exec-naoiniciado">Não iniciado</span>';
+}
+
+function budgetItemMatchesFilter(ex, filter) {
+  if (filter === "estouro") return ex.estouro || ex.pct > 100;
+  if (filter === "naoiniciado") return ex.pct === 0;
+  if (filter === "andamento") return ex.pct >= 1 && ex.pct < 100;
+  if (filter === "concluido") return ex.pct >= 100 && !ex.estouro;
+  return true;
+}
+
+function renderWorkBudgetExecutionSection(budget, items, editable) {
+  const execs = items.map((item) => ({ item, ex: budgetItemExecution(item) }));
+  const totalPrev = execs.reduce((s, e) => s + e.ex.totalPrev, 0);
+  const totalReal = execs.reduce((s, e) => s + e.ex.totalReal, 0);
+  const saldoTotal = totalPrev - totalReal;
+  const pctGeral = totalPrev > 0 ? (totalReal / totalPrev) * 100 : 0;
+  const estouroCount = execs.filter((e) => e.ex.estouro || e.ex.pct > 100).length;
+  const filtered = execs.filter((e) => budgetItemMatchesFilter(e.ex, workBudgetItemFilter));
+  const barClass = pctGeral > 100 ? "exec-bar-red" : pctGeral >= 80 ? "exec-bar-yellow" : "exec-bar-green";
+  const filtros = [["all", "Todos"], ["estouro", "Estouro"], ["naoiniciado", "Não iniciados"], ["andamento", "Em andamento"], ["concluido", "Concluídos"]];
+  const colspan = editable ? 12 : 11;
+  return `
+    <section class="exec-progress-panel">
+      <div class="exec-progress-head">
+        <strong>Execução geral da obra: ${asPercent(pctGeral)}</strong>
+        <span class="muted">${asMoney(totalReal)} realizado de ${asMoney(totalPrev)} previsto</span>
+      </div>
+      <div class="exec-progress-bar"><span class="${barClass}" style="width:${Math.min(100, Math.round(pctGeral))}%"></span></div>
+      ${estouroCount ? `<button type="button" class="exec-estouro-alert" id="execEstouroBtn">⚠️ ${estouroCount} item(ns) com estouro de quantidade — clique para ver</button>` : ""}
+    </section>
+    <section class="exec-filters">
+      ${filtros.map(([v, l]) => `<button type="button" class="exec-chip ${workBudgetItemFilter === v ? "active" : ""}" data-exec-filter="${v}">${l}</button>`).join("")}
+    </section>
+    <section class="table-wrap" data-export-title="Realizado vs Orçado">
+      <table class="exec-table">
+        <thead><tr>
+          <th>Código</th><th>Descrição</th><th>Unid.</th><th>Qtd. prev.</th><th>Valor Unit.</th><th>Total prev.</th>
+          <th>Qtd. real.</th><th>% Exec.</th><th>Total real.</th><th>Saldo</th><th>Status</th>${editable ? "<th>Ações</th>" : ""}
+        </tr></thead>
+        <tbody>
+          ${filtered.length ? filtered.map(({ item, ex }) => `
+            <tr class="${ex.estouro ? "exec-row-estouro" : ""}">
+              <td>${ex.estouro ? "⚠️ " : ""}${svgText(item.code || "")}</td>
+              <td>${svgText(item.description || "")}</td>
+              <td>${svgText(item.unit || "")}</td>
+              <td>${fmtQty(ex.qtd)}</td>
+              <td>${asMoney(ex.vu)}</td>
+              <td>${asMoney(ex.totalPrev)}</td>
+              <td><strong>${fmtQty(ex.real)}</strong></td>
+              <td>${asPercent(ex.pct)}</td>
+              <td>${asMoney(ex.totalReal)}</td>
+              <td class="${ex.saldo < 0 ? "cc-neg" : ""}">${asMoney(ex.saldo)}</td>
+              <td>${budgetItemStatusBadge(ex.pct, ex.estouro)}</td>
+              ${editable ? `<td><div class="row-actions">
+                <button type="button" class="secondary" data-exec-update="${item.id}">Atualizar</button>
+                <button type="button" class="secondary" data-action-key="workBudgetItems" data-edit="${item.id}">Editar</button>
+              </div></td>` : ""}
+            </tr>`).join("") : `<tr><td colspan="${colspan}"><div class="empty">Nenhum item neste filtro.</div></td></tr>`}
+        </tbody>
+        <tfoot>
+          <tr class="exec-totals">
+            <td colspan="5">Totais</td>
+            <td>${asMoney(totalPrev)}</td>
+            <td colspan="2">${asPercent(pctGeral)}</td>
+            <td>${asMoney(totalReal)}</td>
+            <td class="${saldoTotal < 0 ? "cc-neg" : ""}">${asMoney(saldoTotal)}</td>
+            <td colspan="${editable ? 2 : 1}"></td>
+          </tr>
+        </tfoot>
+      </table>
+    </section>`;
+}
+
+// Modal de atualização manual da quantidade realizada + histórico de alterações.
+function openBudgetItemExecution(itemId) {
+  const item = byId("workBudgetItems", itemId);
+  if (!item) { alert("Item do orçamento não encontrado."); return; }
+  const dialog = document.createElement("dialog");
+  dialog.className = "agenda-detail-dialog exec-update-dialog";
+  document.body.appendChild(dialog);
+  const close = () => { try { dialog.close(); } catch { /* já fechado */ } dialog.remove(); };
+
+  const historyHtml = (history) => {
+    if (history === null) return '<p class="muted">Carregando histórico…</p>';
+    if (!history.length) return '<p class="muted">Sem alterações registradas.</p>';
+    return history.map((h) => `<div class="exec-hist-row">
+      <span>${h.created_at ? asDate(String(h.created_at).slice(0, 10)) : "—"}</span>
+      <span>${fmtQty(h.quantidade_anterior)} → <strong>${fmtQty(h.quantidade_nova)}</strong></span>
+      <span class="muted">${svgText(nameOf("users", h.usuario_id) || (h.origem === "pedido_compra" ? "Pedido de compra" : "Manual"))}</span>
+      ${h.motivo ? `<span class="muted">${svgText(h.motivo)}</span>` : ""}
+    </div>`).join("");
+  };
+
+  const paint = (history) => {
+    const cur = byId("workBudgetItems", itemId) || item;
+    const ex = budgetItemExecution(cur);
+    dialog.innerHTML = `
+      <div class="modal-box exec-update-box">
+        <h3>Atualizar execução do item</h3>
+        <p class="muted">${svgText(cur.description || cur.code || "")}</p>
+        <div class="exec-update-info">
+          <span>Qtd. prevista: <strong>${fmtQty(ex.qtd)} ${svgText(cur.unit || "")}</strong></span>
+          <span>Realizada atual: <strong>${fmtQty(ex.real)}</strong></span>
+          <span>% Executado: <strong>${asPercent(ex.pct)}</strong></span>
+        </div>
+        <label>Nova quantidade realizada<input id="execNovaQtd" inputmode="decimal" value="${escapeHtml(String(ex.real).replace(".", ","))}"></label>
+        <label>Motivo (opcional)<input id="execMotivo" placeholder="Ex.: medição em campo, ajuste de quantidade"></label>
+        <div class="agenda-detail-actions">
+          <button type="button" class="primary" id="execSalvar">Salvar</button>
+          <button type="button" class="secondary" data-close>Fechar</button>
+        </div>
+        <h4 class="exec-hist-title">Histórico de alterações</h4>
+        <div class="exec-hist">${historyHtml(history)}</div>
+      </div>`;
+    dialog.querySelector("[data-close]")?.addEventListener("click", close);
+    dialog.querySelector("#execSalvar")?.addEventListener("click", salvar);
+  };
+
+  const salvar = async () => {
+    const nova = parseMoneyInput(dialog.querySelector("#execNovaQtd").value);
+    const motivo = dialog.querySelector("#execMotivo").value.trim();
+    if (!(nova >= 0)) { alert("Informe uma quantidade válida."); return; }
+    const btn = dialog.querySelector("#execSalvar");
+    if (btn) btn.disabled = true;
+    try {
+      if (serverMode) {
+        await apiModuleRequest("?module=workBudgetExecution&action=update", { method: "POST", body: JSON.stringify({ itemId, quantidade_realizada: nova, motivo }) });
+        await refreshData();
+      } else {
+        const it = byId("workBudgetItems", itemId);
+        if (it) it.quantidade_realizada = nova;
+        saveDb();
+      }
+      close();
+      render();
+    } catch (error) {
+      alert(`Não foi possível salvar: ${error.message}`);
+      if (btn) btn.disabled = false;
+    }
+  };
+
+  dialog.addEventListener("cancel", (event) => { event.preventDefault(); close(); });
+  paint(null);
+  dialog.showModal();
+  if (serverMode) {
+    apiModuleRequest(`?module=workBudgetExecution&action=history&itemId=${encodeURIComponent(itemId)}`)
+      .then((h) => paint(h || []))
+      .catch(() => paint([]));
+  } else {
+    paint([]);
+  }
+}
+
 function renderWorkBudgets() {
   const editable = canEditModule("workBudgets");
   const rows = visibleRowsForModule("workBudgets", applyFilters(db.workBudgets || [])).map(enrichWorkBudget);
@@ -7938,9 +8113,12 @@ function renderWorkBudgets() {
       ${kpi("Classe A da Curva ABC", abc.filter((row) => row.abcClass === "A").length, false)}
     </section>
     ${table("Orçamentos de obras", rows, ["name", "projectId", "clientId", "budgetDate", "sinapiReferenceId", "priceType", "bdiPercent", "directCost", "totalCost", "totalPrice", "status"], editable, "workBudgets")}
-    ${selected ? table(`Itens do orçamento: ${selected.name}`, items, ["origin", "code", "description", "unit", "quantity", "unitCost", "totalCost", "bdiPercent", "unitPrice", "totalPrice", "stageName", "costCenterId", "categoryId"], editable, "workBudgetItems") : '<div class="empty">Sem dados para exibir</div>'}
+    ${selected ? renderWorkBudgetExecutionSection(selected, items, editable) : '<div class="empty">Sem dados para exibir</div>'}
     ${generateDocumentFooter()}
   `;
+  qs("content").querySelectorAll("[data-exec-filter]").forEach((btn) => btn.addEventListener("click", () => { workBudgetItemFilter = btn.dataset.execFilter; render(); }));
+  qs("execEstouroBtn")?.addEventListener("click", () => { workBudgetItemFilter = "estouro"; render(); });
+  qs("content").querySelectorAll("[data-exec-update]").forEach((btn) => btn.addEventListener("click", () => openBudgetItemExecution(btn.dataset.execUpdate)));
   qs("newRecord")?.addEventListener("click", () => openForm("workBudgets"));
   qs("newBudgetItem")?.addEventListener("click", () => openForm("workBudgetItems"));
   qs("workBudgetSelect")?.addEventListener("change", (event) => {
