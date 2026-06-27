@@ -323,6 +323,7 @@ let serverStatus = "Conectando ao servidor";
 let authToken = null;
 let dashboardViewMode = "general";
 let dashboardProjectId = "";
+let lucroCaixaPeriod = "mesAtual"; // período do painel Lucro Gerencial vs Caixa Real
 let selectedWorkBudgetId = "";
 let sinapiSearchTerm = "";
 let sinapiSourceFilter = "all";
@@ -3620,6 +3621,152 @@ function dashboardCostCenterRows() {
   }).sort((a, b) => b.value - a.value);
 }
 
+// ─── Lucro Gerencial (competência) vs Caixa Real ────────────────────────────
+// Indicadores calculados a partir do db já carregado (contas a receber/pagar).
+// Colunas reais usadas: accounts_receivable(status,dueDate,receivedDate,amount)
+// e accounts_payable(status,dueDate,paidDate,amount). "Em aberto" segue a mesma
+// convenção do restante do dashboard: status ≠ Recebido/Pago e ≠ Cancelado
+// (inclui Vencido e Parcial), não apenas o literal "Aberto".
+const LUCRO_CAIXA_PERIODS = [
+  ["mesAtual", "Mês atual"],
+  ["ultimoMes", "Último mês"],
+  ["ultimos3Meses", "Últimos 3 meses"],
+  ["ultimos6Meses", "Últimos 6 meses"],
+  ["anoAtual", "Ano atual"],
+];
+
+function lucroCaixaFmtDate(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+// Intervalo [start, end] inclusivo (YYYY-MM-DD) por chave de período.
+function lucroCaixaPeriodRange(key) {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = now.getMonth();
+  const firstOf = (yy, mm) => new Date(yy, mm, 1);       // mm negativo recua o ano corretamente
+  const lastOf = (yy, mm) => new Date(yy, mm + 1, 0);
+  switch (key) {
+    case "ultimoMes": return { start: lucroCaixaFmtDate(firstOf(y, m - 1)), end: lucroCaixaFmtDate(lastOf(y, m - 1)) };
+    case "ultimos3Meses": return { start: lucroCaixaFmtDate(firstOf(y, m - 2)), end: lucroCaixaFmtDate(lastOf(y, m)) };
+    case "ultimos6Meses": return { start: lucroCaixaFmtDate(firstOf(y, m - 5)), end: lucroCaixaFmtDate(lastOf(y, m)) };
+    case "anoAtual": return { start: `${y}-01-01`, end: `${y}-12-31` };
+    case "mesAtual":
+    default: return { start: lucroCaixaFmtDate(firstOf(y, m)), end: lucroCaixaFmtDate(lastOf(y, m)) };
+  }
+}
+
+function lucroCaixaIndicators(periodKey) {
+  const { start, end } = lucroCaixaPeriodRange(periodKey);
+  const inRange = (value) => { const d = String(value || "").slice(0, 10); return d && d >= start && d <= end; };
+  const total = (rows) => rows.reduce((acc, row) => acc + Number(row.amount || 0), 0);
+  const receivable = db.receivable || [];
+  const payable = db.payable || [];
+  const abertaR = (r) => r.status !== "Recebido" && r.status !== "Cancelado";
+  const abertaP = (p) => p.status !== "Pago" && p.status !== "Cancelado";
+
+  // Caixa real: recebido/pago pela data efetiva (receivedDate/paidDate).
+  const recebidas = total(receivable.filter((r) => r.status === "Recebido" && inRange(r.receivedDate || r.dueDate)));
+  const pagas = total(payable.filter((p) => p.status === "Pago" && inRange(p.paidDate || p.dueDate)));
+  // Em aberto pela competência (vencimento no período).
+  const abertasReceber = total(receivable.filter((r) => abertaR(r) && inRange(r.dueDate)));
+  const abertasPagar = total(payable.filter((p) => abertaP(p) && inRange(p.dueDate)));
+
+  const receitasTotais = recebidas + abertasReceber;
+  const custosTotais = pagas + abertasPagar;
+  return {
+    start, end, recebidas, pagas, abertasReceber, abertasPagar, receitasTotais, custosTotais,
+    lucroGerencial: receitasTotais - custosTotais,
+    resultadoCaixa: recebidas - pagas,
+    aReceberLiquido: abertasReceber - abertasPagar, // = lucroGerencial - resultadoCaixa
+  };
+}
+
+// Contas (a receber + a pagar) em aberto vencidas há mais de 30 dias — global,
+// independente do período selecionado (risco corrente).
+function lucroCaixaOverdue30() {
+  const cutoff = lucroCaixaFmtDate(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000));
+  const overdue = (row) => { const d = String(row.dueDate || "").slice(0, 10); return d && d < cutoff; };
+  const total = (rows) => rows.reduce((acc, row) => acc + Number(row.amount || 0), 0);
+  const receber = total((db.receivable || []).filter((r) => r.status !== "Recebido" && r.status !== "Cancelado" && overdue(r)));
+  const pagar = total((db.payable || []).filter((p) => p.status !== "Pago" && p.status !== "Cancelado" && overdue(p)));
+  return { receber, pagar, total: receber + pagar };
+}
+
+function lucroCaixaPeriodSelect(id, selected) {
+  const options = LUCRO_CAIXA_PERIODS.map(([value, label]) => `<option value="${value}" ${value === selected ? "selected" : ""}>${label}</option>`).join("");
+  return `<label class="lucro-caixa-period">Período<select id="${id}">${options}</select></label>`;
+}
+
+function lucroCaixaAlerts(ind, over) {
+  const alerts = [];
+  const pctNaoRecebido = ind.lucroGerencial > 0 ? (ind.aReceberLiquido / ind.lucroGerencial) * 100 : 0;
+  if (ind.lucroGerencial > 0 && ind.aReceberLiquido > 0 && pctNaoRecebido > 30) {
+    alerts.push(`<div class="alert alert-warning">Atenção: ${Math.round(pctNaoRecebido)}% do lucro ainda não entrou no caixa. Verifique contas a receber em aberto.</div>`);
+  }
+  if (over.total > 0) {
+    alerts.push(`<div class="alert alert-danger">${asMoney(over.total)} em contas vencidas há mais de 30 dias.</div>`);
+  }
+  return alerts;
+}
+
+// Painel de 3 cards (Dashboard) com seletor de período e alertas automáticos.
+function lucroCaixaPanel(periodKey) {
+  const ind = lucroCaixaIndicators(periodKey);
+  const alerts = lucroCaixaAlerts(ind, lucroCaixaOverdue30());
+  const tone = (value) => (value < 0 ? "negative" : value > 0 ? "positive" : "");
+  return `
+    <section class="lucro-caixa-panel">
+      <div class="lucro-caixa-head">
+        <div>
+          <h3>Lucro Gerencial vs Caixa Real</h3>
+          <p class="muted">Competência x dinheiro efetivamente movimentado no período.</p>
+        </div>
+        ${lucroCaixaPeriodSelect("dashLucroCaixaPeriod", periodKey)}
+      </div>
+      <div class="lucro-caixa-cards">
+        <article class="lc-card ${tone(ind.lucroGerencial)}">
+          <span class="lc-label">Lucro gerencial</span>
+          <strong class="lc-value">${asMoney(ind.lucroGerencial)}</strong>
+          <span class="lc-sub">Receitas − Custos (competência)</span>
+        </article>
+        <article class="lc-card ${tone(ind.resultadoCaixa)}">
+          <span class="lc-label">Saldo em caixa</span>
+          <strong class="lc-value">${asMoney(ind.resultadoCaixa)}</strong>
+          <span class="lc-sub">Dinheiro efetivamente recebido</span>
+        </article>
+        <article class="lc-card ${tone(ind.aReceberLiquido)}">
+          <span class="lc-label">A receber líquido <span class="lc-info" tabindex="0" title="Este valor está no lucro mas ainda não entrou no caixa — são contas a receber em aberto menos contas a pagar em aberto">ⓘ</span></span>
+          <strong class="lc-value">${asMoney(ind.aReceberLiquido)}</strong>
+          <span class="lc-sub">Lucro gerencial ainda não recebido</span>
+        </article>
+      </div>
+      ${alerts.length ? `<div class="lucro-caixa-alerts">${alerts.join("")}</div>` : ""}
+    </section>`;
+}
+
+// Seção "Reconciliação Lucro x Caixa" para o relatório DRE Gerencial.
+function lucroCaixaReconcSection(periodKey) {
+  const ind = lucroCaixaIndicators(periodKey);
+  const alerts = lucroCaixaAlerts(ind, lucroCaixaOverdue30());
+  return `
+    <section class="dre-bloco lucro-caixa-reconc">
+      <div class="lucro-caixa-head">
+        <h3>Reconciliação Lucro x Caixa</h3>
+        ${lucroCaixaPeriodSelect("dreLucroCaixaPeriod", periodKey)}
+      </div>
+      <p class="muted">Por que o lucro de competência difere do dinheiro em caixa no período (${asDate(ind.start)} a ${asDate(ind.end)}).</p>
+      ${table("Reconciliação Lucro x Caixa", [
+        { line: "Lucro gerencial do período", amount: ind.lucroGerencial },
+        { line: "(−) Receitas não recebidas", amount: -ind.abertasReceber },
+        { line: "(+) Despesas não pagas", amount: ind.abertasPagar },
+        { line: "(=) Resultado de caixa", amount: ind.resultadoCaixa },
+        { line: "Diferença explicada (a receber líquido)", amount: ind.aReceberLiquido },
+      ], ["line", "amount"])}
+      ${alerts.length ? `<div class="lucro-caixa-alerts">${alerts.join("")}</div>` : ""}
+    </section>`;
+}
+
 function renderDashboard() {
   const metrics = dashboardMetrics();
   const cashFlow = monthlyCashFlowRows();
@@ -3756,6 +3903,7 @@ function renderDashboard() {
         </label>
       </div>
     </section>
+    ${lucroCaixaPanel(lucroCaixaPeriod)}
     <section class="kpi-grid dashboard-kpis">
       ${dashboardCards.map((card) => kpi(card[0], card[1], card[2] ?? true)).join("")}
     </section>
@@ -3773,6 +3921,10 @@ function renderDashboard() {
   });
   qs("dashboardProject")?.addEventListener("change", (event) => {
     dashboardProjectId = event.target.value;
+    render();
+  });
+  qs("dashLucroCaixaPeriod")?.addEventListener("change", (event) => {
+    lucroCaixaPeriod = event.target.value;
     render();
   });
 }
@@ -10442,10 +10594,15 @@ function renderDre() {
         { line: "A pagar (ainda não saiu)", amount: aPagar },
       ], ["line", "amount"])}
     </section>
+    ${lucroCaixaReconcSection(lucroCaixaPeriod)}
     ${repasseSection}
   `;
   qs("dreToggleRepasse")?.addEventListener("change", (event) => {
     dreMostrarRepasse = event.target.checked;
+    renderDre();
+  });
+  qs("dreLucroCaixaPeriod")?.addEventListener("change", (event) => {
+    lucroCaixaPeriod = event.target.value;
     renderDre();
   });
 }

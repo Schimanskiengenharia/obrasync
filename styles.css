@@ -1555,6 +1555,114 @@ button.danger:hover { background: #9b1d14; }
   font-weight: 800;
 }
 
+.alert-warning {
+  border-color: #f5d27a;
+  background: #fff8e6;
+  color: #8a6100;
+}
+
+html[data-theme="dark"] .alert-warning {
+  background: rgba(245, 200, 60, 0.12);
+  border-color: rgba(245, 200, 60, 0.4);
+  color: #f6d77a;
+}
+
+.alert-danger {
+  border-color: #ffd7ca;
+  background: #fff5f1;
+  color: var(--red);
+}
+
+/* ── Painel Lucro Gerencial vs Caixa Real ── */
+.lucro-caixa-panel {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  padding: 16px;
+  margin-bottom: 18px;
+  display: grid;
+  gap: 14px;
+}
+
+.lucro-caixa-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.lucro-caixa-head h3 { margin: 0; }
+.lucro-caixa-head .muted { margin: 2px 0 0; font-size: 12px; }
+
+.lucro-caixa-period {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.lucro-caixa-period select { min-width: 160px; }
+
+.lucro-caixa-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.lc-card {
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--muted);
+  border-radius: 8px;
+  background: var(--panel-2);
+  padding: 14px 16px;
+  display: grid;
+  gap: 6px;
+}
+
+.lc-card.positive { border-left-color: var(--green); }
+.lc-card.negative { border-left-color: var(--red); }
+
+.lc-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.lc-value {
+  font-size: 26px;
+  font-weight: 800;
+  color: var(--ink);
+}
+
+.lc-card.positive .lc-value { color: var(--green); }
+.lc-card.negative .lc-value { color: var(--red); }
+
+.lc-sub { font-size: 12px; color: var(--muted); }
+
+.lc-info {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--line);
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: help;
+}
+
+.lucro-caixa-alerts { display: grid; gap: 8px; }
+.lucro-caixa-reconc .lucro-caixa-head { margin-bottom: 8px; }
+
 .version-panel {
   display: grid;
   grid-template-columns: minmax(190px, 260px) 1fr;
@@ -3512,6 +3620,7 @@ menu {
   .client-autofill-grid,
   .payable-recurrence-fields,
   .settlement-fields,
+  .lucro-caixa-cards,
   .version-panel,
   .schedule-toolbar,
   .proposal-generator-grid,
