@@ -9780,6 +9780,11 @@ function renderProposalGeneratorFields(model = {}) {
     field.addEventListener("input", updateProposalPreview);
     field.addEventListener("change", updateProposalPreview);
   });
+  // Preenchimento automático de dados do cliente também no gerador de propostas
+  // (mesmo padrão global: indicador 🔄, painel de referência e "Ver cadastro").
+  const genContainer = qs("proposalGeneratorFields");
+  const genClientSelect = genContainer?.querySelector('select[name="clientId"]');
+  if (genContainer && genClientSelect) setupClientAutofill(genContainer, genClientSelect);
 }
 
 function collectProposalGeneratorInput() {
