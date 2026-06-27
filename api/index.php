@@ -90,6 +90,14 @@ try {
         handle_payable_module($pdo, $method, $_GET, $authUser);
     }
 
+    // Centros de custo via módulo explícito com ações list/get/create/update/delete.
+    // O CRUD genérico (/centros-custo) continua funcionando; este endpoint expõe
+    // as mesmas operações no padrão ?module=costCenters&action=...
+    if (in_array($module, ['costcenters', 'cost_centers', 'centros-custo', 'centros_custo'], true)) {
+        authorize_request($pdo, $authUser, 'costCenters', action_for_method($method));
+        handle_cost_centers_module($pdo, $method, $_GET, $resources['costCenters'], $authUser);
+    }
+
     if ($resource === '' || $resource === 'bootstrap') {
         require_method($method, ['GET']);
         respond(['ok' => true, 'data' => bootstrap_data($pdo, $resources, $authUser)]);
@@ -2024,6 +2032,90 @@ function ensure_default_cost_centers(PDO $pdo): void
     foreach ($defaults as $row) {
         $stmt->execute($row);
     }
+}
+
+// Endpoint explícito de centros de custo (?module=costCenters&action=...).
+// Reaproveita os helpers genéricos (list/create/update/delete) e acrescenta o
+// get por id. Padrão de resposta { success, data, message }.
+function handle_cost_centers_module(PDO $pdo, string $method, array $query, array $meta, array $authUser): never
+{
+    $action = strtolower(trim((string) ($query['action'] ?? '')));
+    if ($action === '') {
+        if ($method === 'GET') {
+            $action = isset($query['id']) && $query['id'] !== '' ? 'get' : 'list';
+        } elseif ($method === 'POST') {
+            $action = 'create';
+        } elseif ($method === 'PUT' || $method === 'PATCH') {
+            $action = 'update';
+        } elseif ($method === 'DELETE') {
+            $action = 'delete';
+        }
+    }
+
+    try {
+        if ($action === 'list') {
+            require_method($method, ['GET']);
+            cost_centers_respond(true, list_records($pdo, $meta));
+        }
+
+        if ($action === 'get') {
+            require_method($method, ['GET']);
+            $id = (int) ($query['id'] ?? 0);
+            if ($id <= 0) {
+                cost_centers_respond(false, [], 'Informe o id do centro de custo.', 400);
+            }
+            cost_centers_respond(true, get_record($pdo, $meta, $id));
+        }
+
+        if ($action === 'create') {
+            require_method($method, ['POST']);
+            $record = create_record($pdo, $meta, read_json());
+            server_audit($pdo, $authUser, 'create', 'costCenters', (int) ($record['id'] ?? 0), (string) ($record['name'] ?? ''));
+            cost_centers_respond(true, $record, 'Centro de custo criado com sucesso.', 201);
+        }
+
+        if ($action === 'update') {
+            require_method($method, ['PUT', 'PATCH', 'POST']);
+            $payload = read_json();
+            $id = (int) ($query['id'] ?? 0);
+            if ($id <= 0) {
+                $id = (int) ($payload['id'] ?? 0);
+            }
+            if ($id <= 0) {
+                cost_centers_respond(false, [], 'Informe o id do centro de custo.', 400);
+            }
+            $record = update_record($pdo, $meta, $id, $payload);
+            server_audit($pdo, $authUser, 'update', 'costCenters', $id, (string) ($record['name'] ?? ''));
+            cost_centers_respond(true, $record, 'Centro de custo atualizado com sucesso.');
+        }
+
+        if ($action === 'delete') {
+            require_method($method, ['DELETE', 'POST']);
+            $id = (int) ($query['id'] ?? 0);
+            if ($id <= 0) {
+                cost_centers_respond(false, [], 'Informe o id do centro de custo.', 400);
+            }
+            delete_record($pdo, $meta, $id);
+            server_audit($pdo, $authUser, 'delete', 'costCenters', $id, '');
+            cost_centers_respond(true, [], 'Centro de custo excluído com sucesso.');
+        }
+
+        cost_centers_respond(false, [], 'Ação de centro de custo inválida.', 400);
+    } catch (Throwable $e) {
+        error_log('[ObraSync costCenters] ' . $e->getMessage() . ' em ' . $e->getFile() . ':' . $e->getLine());
+        cost_centers_respond(false, [], 'Erro interno ao processar o centro de custo.', 500);
+    }
+}
+
+function cost_centers_respond(bool $success, mixed $data = [], string $message = '', int $status = 200): never
+{
+    http_response_code($status);
+    echo json_encode([
+        'success' => $success,
+        'data' => $data,
+        'message' => $message,
+    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
 }
 
 function ensure_api_sessions_table(PDO $pdo): void
