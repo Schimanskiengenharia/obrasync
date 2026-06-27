@@ -98,6 +98,14 @@ try {
         handle_cost_centers_module($pdo, $method, $_GET, $resources['costCenters'], $authUser);
     }
 
+    // Movimentações de caixa vinculadas a contas a pagar (evita dupla contagem).
+    //   POST ?module=cashMoves&action=create  (cria o caixa e baixa a conta a pagar)
+    //   POST ?module=cashMoves&action=link    (vincula caixa e conta a pagar já existentes)
+    if (in_array($module, ['cashmoves', 'cash_bank_movements', 'movimentacoes-caixa', 'caixa'], true)) {
+        authorize_request($pdo, $authUser, 'cashMoves', action_for_method($method));
+        handle_cash_moves_module($pdo, $method, $_GET, $authUser);
+    }
+
     if ($resource === '' || $resource === 'bootstrap') {
         require_method($method, ['GET']);
         respond(['ok' => true, 'data' => bootstrap_data($pdo, $resources, $authUser)]);
@@ -1502,8 +1510,8 @@ function resource_map(): array
         'viabilityAnalyses' => r('viability_analyses', ['analises-viabilidade','análises-viabilidade'], ['projectId','proposalId','contractValue','estimatedCost','executionMonths','tmaPercent','grossMargin','marginPercent','estimatedProfit','paybackMonths','npv','irrPercent','autoVerdict','verdict','finalVerdict','verdictJustification','verdictHistory','risks','notes','analysisDate','responsibleUserId','status'], []),
         'plugins' => r('system_plugins', ['plugins'], ['name','url','icon','description','roles','sortOrder','status'], ['name']),
         'receivable' => r('accounts_receivable', ['contas-receber','contas_a_receber'], ['document','issueDate','dueDate','receivedDate','clientId','projectId','proposalId','categoryId','costCenterId','bankAccount','amount','status'], ['document']),
-        'payable' => r('accounts_payable', ['contas-pagar','contas_a_pagar'], ['document','issueDate','dueDate','paidDate','supplierId','projectId','categoryId','costCenterId','bankAccount','amount','status','recorrencia_id','parcela_numero','parcela_total','recorrencia_tipo','juros_aplicado','valor_original'], ['document']),
-        'cashMoves' => r('cash_bank_movements', ['movimentacoes-caixa','movimentacoes','movimentações'], ['date','bankAccount','type','categoryId','projectId','costCenterId','history','amount','originDocument','status'], ['originDocument']),
+        'payable' => r('accounts_payable', ['contas-pagar','contas_a_pagar'], ['document','issueDate','dueDate','paidDate','supplierId','projectId','categoryId','costCenterId','bankAccount','amount','status','recorrencia_id','parcela_numero','parcela_total','recorrencia_tipo','juros_aplicado','valor_original','referencia_tipo','referencia_id'], ['document']),
+        'cashMoves' => r('cash_bank_movements', ['movimentacoes-caixa','movimentacoes','movimentações'], ['date','bankAccount','type','categoryId','projectId','costCenterId','history','amount','originDocument','status','referencia_tipo','referencia_id'], ['originDocument']),
         'chartAccounts' => r('chart_accounts', ['plano-contas'], ['code','name','type','parentId','acceptsEntries','status'], ['code']),
         'journalEntries' => r('journal_entries', ['lancamentos-contabeis','lançamentos-contábeis'], ['entryDate','competenceDate','debitAccountId','creditAccountId','history','amount','projectId','costCenterId','originDocument'], ['originDocument']),
         'taxDocuments' => r('tax_documents', ['documentos-fiscais'], ['document','date','type','clientId','supplierId','projectId','amount','status'], ['document']),
@@ -1933,6 +1941,11 @@ function bootstrap_data(PDO $pdo, array $resources, ?array $authUser = null, boo
             }
             ensure_default_cost_centers($pdo);
         }
+        // Colunas de referência cruzada caixa ↔ conta a pagar (anti dupla contagem).
+        if (resolve_existing_table($pdo, ['cash_bank_movements'], false)
+            && !in_array('referencia_tipo', table_columns($pdo, 'cash_bank_movements'), true)) {
+            ensure_referencia_columns($pdo);
+        }
     } catch (PDOException $error) {
         // Sem permissão de DDL/escrita: o bootstrap segue normalmente.
     }
@@ -2116,6 +2129,152 @@ function cost_centers_respond(bool $success, mixed $data = [], string $message =
         'message' => $message,
     ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit;
+}
+
+// ─── Vínculo caixa ↔ conta a pagar (anti dupla contagem) ────────────────────
+function ensure_referencia_columns(PDO $pdo): void
+{
+    $pdo->exec(
+        "ALTER TABLE cash_bank_movements
+            ADD COLUMN IF NOT EXISTS referencia_tipo VARCHAR(30) NULL AFTER status,
+            ADD COLUMN IF NOT EXISTS referencia_id BIGINT UNSIGNED NULL AFTER referencia_tipo"
+    );
+    $pdo->exec(
+        "ALTER TABLE accounts_payable
+            ADD COLUMN IF NOT EXISTS referencia_tipo VARCHAR(30) NULL AFTER status,
+            ADD COLUMN IF NOT EXISTS referencia_id BIGINT UNSIGNED NULL AFTER referencia_tipo"
+    );
+}
+
+function handle_cash_moves_module(PDO $pdo, string $method, array $query, array $authUser): never
+{
+    $action = strtolower(trim((string) ($query['action'] ?? '')));
+    try {
+        if ($action === 'create') {
+            require_method($method, ['POST']);
+            cash_moves_respond(true, cash_move_create_linked($pdo, read_json(), $authUser), 'Movimento de caixa registrado.', 201);
+        }
+        if ($action === 'link') {
+            require_method($method, ['POST']);
+            cash_moves_respond(true, cash_move_link($pdo, read_json(), $authUser), 'Lançamentos vinculados com sucesso.');
+        }
+        cash_moves_respond(false, [], 'Ação de caixa inválida.', 400);
+    } catch (Throwable $e) {
+        error_log('[ObraSync cashMoves] ' . $e->getMessage() . ' em ' . $e->getFile() . ':' . $e->getLine());
+        cash_moves_respond(false, [], 'Erro interno ao processar o movimento de caixa. Nada foi gravado.', 500);
+    }
+}
+
+function cash_moves_respond(bool $success, mixed $data = [], string $message = '', int $status = 200): never
+{
+    http_response_code($status);
+    echo json_encode([
+        'success' => $success,
+        'data' => $data,
+        'message' => $message,
+    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
+// Cria um movimento de caixa e, se vinculado a uma conta a pagar, baixa a conta
+// e grava a referência cruzada nos dois lados — tudo em transação.
+function cash_move_create_linked(PDO $pdo, array $payload, array $authUser): array
+{
+    $payableId = (int) ($payload['payableId'] ?? $payload['payable_id'] ?? 0);
+    $date = substr(trim((string) ($payload['date'] ?? '')), 0, 10);
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
+        cash_moves_respond(false, [], 'Data inválida.', 400);
+    }
+    $tipo = (string) ($payload['type'] ?? '');
+    $cashData = [
+        'date' => $date,
+        'bankAccount' => normalize_value($payload['bankAccount'] ?? ''),
+        'type' => $payableId > 0 ? 'Saída' : (in_array($tipo, ['Entrada', 'Saída', 'Transferência'], true) ? $tipo : 'Saída'),
+        'categoryId' => normalize_value($payload['categoryId'] ?? null),
+        'projectId' => normalize_value($payload['projectId'] ?? null),
+        'costCenterId' => normalize_value($payload['costCenterId'] ?? null),
+        'history' => normalize_value($payload['history'] ?? ''),
+        'amount' => round((float) ($payload['amount'] ?? 0), 2),
+        'originDocument' => normalize_value($payload['originDocument'] ?? null),
+        'status' => 'Confirmado',
+    ];
+    if ($payableId > 0) {
+        $cashData['referencia_tipo'] = 'CONTA_PAGAR';
+        $cashData['referencia_id'] = $payableId;
+    }
+
+    $pdo->beginTransaction();
+    try {
+        $cashId = insert_dynamic($pdo, 'cash_bank_movements', $cashData);
+        if ($payableId > 0) {
+            $stmt = $pdo->prepare('SELECT id, status, paidDate FROM accounts_payable WHERE id = ? LIMIT 1');
+            $stmt->execute([$payableId]);
+            $pay = $stmt->fetch();
+            if ($pay && ($pay['status'] ?? '') !== 'Cancelado') {
+                update_dynamic($pdo, 'accounts_payable', $payableId, [
+                    'status' => 'Pago',
+                    'paidDate' => !empty($pay['paidDate']) ? $pay['paidDate'] : $date,
+                    'referencia_tipo' => 'CAIXA_MANUAL',
+                    'referencia_id' => $cashId,
+                ]);
+            }
+        }
+        $pdo->commit();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        throw $e;
+    }
+
+    log_automation_event($pdo, 'CAIXA_VINCULADO_CONTA_PAGAR', 'cash_bank_movements', $cashId, 'accounts_payable', $payableId ?: null, 'OK',
+        $payableId ? ('Caixa manual baixou a conta a pagar #' . $payableId) : 'Movimento de caixa manual', payable_user_id($authUser));
+    server_audit($pdo, $authUser, 'create', 'cashMoves', $cashId, $payableId ? ('Caixa vinculado à conta a pagar #' . $payableId) : 'Movimento de caixa');
+
+    $stmt = $pdo->prepare('SELECT * FROM cash_bank_movements WHERE id = ? LIMIT 1');
+    $stmt->execute([$cashId]);
+    return ['cashMove' => $stmt->fetch() ?: [], 'payableId' => $payableId ?: null];
+}
+
+// Vincula um movimento de caixa e uma conta a pagar já existentes (botão
+// "Marcar como vinculado"): grava a referência cruzada e baixa a conta.
+function cash_move_link(PDO $pdo, array $payload, array $authUser): array
+{
+    $cashId = (int) ($payload['cashMoveId'] ?? $payload['cash_id'] ?? 0);
+    $payableId = (int) ($payload['payableId'] ?? $payload['payable_id'] ?? 0);
+    if ($cashId <= 0 || $payableId <= 0) {
+        cash_moves_respond(false, [], 'Informe o movimento de caixa e a conta a pagar.', 400);
+    }
+    $stmt = $pdo->prepare('SELECT id, `date` FROM cash_bank_movements WHERE id = ? LIMIT 1');
+    $stmt->execute([$cashId]);
+    $cash = $stmt->fetch();
+    $stmt = $pdo->prepare('SELECT id, status, paidDate FROM accounts_payable WHERE id = ? LIMIT 1');
+    $stmt->execute([$payableId]);
+    $pay = $stmt->fetch();
+    if (!$cash || !$pay) {
+        cash_moves_respond(false, [], 'Registro não encontrado.', 404);
+    }
+
+    $pdo->beginTransaction();
+    try {
+        update_dynamic($pdo, 'cash_bank_movements', $cashId, ['referencia_tipo' => 'CONTA_PAGAR', 'referencia_id' => $payableId]);
+        update_dynamic($pdo, 'accounts_payable', $payableId, [
+            'status' => ($pay['status'] ?? '') === 'Cancelado' ? $pay['status'] : 'Pago',
+            'paidDate' => !empty($pay['paidDate']) ? $pay['paidDate'] : (string) ($cash['date'] ?? ''),
+            'referencia_tipo' => 'CAIXA_MANUAL',
+            'referencia_id' => $cashId,
+        ]);
+        $pdo->commit();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        throw $e;
+    }
+
+    log_automation_event($pdo, 'CAIXA_VINCULADO_CONTA_PAGAR', 'cash_bank_movements', $cashId, 'accounts_payable', $payableId, 'OK', 'Vínculo confirmado manualmente pelo usuário.', payable_user_id($authUser));
+    server_audit($pdo, $authUser, 'update', 'cashMoves', $cashId, 'Vínculo caixa ↔ conta a pagar #' . $payableId);
+    return ['cashMoveId' => $cashId, 'payableId' => $payableId];
 }
 
 function ensure_api_sessions_table(PDO $pdo): void

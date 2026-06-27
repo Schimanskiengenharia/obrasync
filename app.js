@@ -4654,13 +4654,17 @@ function costCenterMovements(ccId, start, end) {
   (db.payable || []).filter((p) => sameId(p.costCenterId, ccId)).forEach((p) => {
     const date = String(p.paidDate || p.dueDate || "").slice(0, 10);
     if (!inRange(date)) return;
-    moves.push({ date, desc: p.document || "Conta a pagar", value: Number(p.amount || 0), kind: "saida", origin: "Conta a pagar", module: "payable", id: p.id });
+    const linked = p.referencia_tipo === "CAIXA_MANUAL" && p.referencia_id;
+    moves.push({ date, desc: p.document || "Conta a pagar", value: Number(p.amount || 0), kind: "saida", origin: linked ? "Conta a pagar + Caixa (vinculados)" : "Conta a pagar", module: "payable", id: p.id, linked: Boolean(linked), referencia_tipo: p.referencia_tipo || "", referencia_id: p.referencia_id || "" });
   });
   (db.cashMoves || []).filter((m) => sameId(m.costCenterId, ccId)).forEach((m) => {
     const date = String(m.date || "").slice(0, 10);
     if (!inRange(date)) return;
+    // Deduplicação: caixa manual já vinculado a uma conta a pagar não é recontado
+    // (o valor já entra pela própria conta a pagar).
+    if (m.referencia_tipo === "CONTA_PAGAR" && m.referencia_id) return;
     const kind = m.type === "Entrada" ? "entrada" : m.type === "Saída" ? "saida" : "neutro";
-    moves.push({ date, desc: m.history || m.originDocument || "Movimento de caixa", value: Number(m.amount || 0), kind, origin: "Manual (caixa)", module: "cashMoves", id: m.id });
+    moves.push({ date, desc: m.history || m.originDocument || "Movimento de caixa", value: Number(m.amount || 0), kind, origin: "Manual (caixa)", module: "cashMoves", id: m.id, referencia_tipo: m.referencia_tipo || "", referencia_id: m.referencia_id || "" });
   });
   return moves.sort((a, b) => String(b.date).localeCompare(String(a.date)));
 }
@@ -4718,16 +4722,29 @@ function costCenterHistoryPaneHtml(ccId, periodKey) {
   const entradas = all.filter((m) => m.kind === "entrada").reduce((s, m) => s + m.value, 0);
   const saidas = all.filter((m) => m.kind === "saida").reduce((s, m) => s + m.value, 0);
   const moves = all.slice(0, 20);
+  // Detecção de possível duplicidade: mesmo dia + mesmo valor presentes tanto em
+  // caixa manual quanto em conta a pagar (e ainda não vinculados entre si).
+  const dupKeyOf = (m) => `${m.date}|${(Math.round(m.value * 100) / 100).toFixed(2)}`;
+  const cashKeys = new Set(all.filter((m) => m.module === "cashMoves").map(dupKeyOf));
+  const payKeys = new Set(all.filter((m) => m.module === "payable").map(dupKeyOf));
+  const dupKeys = new Set([...cashKeys].filter((k) => payKeys.has(k)));
+  const canLink = canEditModule("cashMoves") && canEditModule("payable");
   const periodOptions = LUCRO_CAIXA_PERIODS.map(([v, l]) => `<option value="${v}" ${v === periodKey ? "selected" : ""}>${l}</option>`).join("");
-  const rows = moves.length ? moves.map((m) => `
-    <tr>
-      <td>${m.date ? asDate(m.date) : "—"}</td>
+  const rows = moves.length ? moves.map((m) => {
+    const isDup = (m.module === "cashMoves" || m.module === "payable") && dupKeys.has(dupKeyOf(m));
+    return `
+    <tr class="${isDup ? "cc-dup" : ""}">
+      <td>${m.date ? asDate(m.date) : "—"}${isDup ? ` <span class="cc-dup-warn" tabindex="0" title="Possível duplicidade — verifique se este lançamento já está registrado em Contas a Pagar">⚠️</span>` : ""}</td>
       <td>${svgText(m.desc)}</td>
       <td class="${m.kind === "entrada" ? "cc-pos" : m.kind === "saida" ? "cc-neg" : ""}">${m.kind === "entrada" ? "+" : m.kind === "saida" ? "−" : ""}${asMoney(m.value)}</td>
       <td>${m.kind === "entrada" ? "Entrada" : m.kind === "saida" ? "Saída" : "—"}</td>
       <td>${svgText(m.origin)}</td>
-      <td><button type="button" class="secondary cc-link" data-cc-open="${m.module}:${escapeHtml(m.id)}">Abrir</button></td>
-    </tr>`).join("") : `<tr><td colspan="6"><div class="empty">Sem lançamentos no período.</div></td></tr>`;
+      <td><div class="row-actions">
+        <button type="button" class="secondary cc-link" data-cc-open="${m.module}:${escapeHtml(m.id)}">Abrir</button>
+        ${isDup && canLink ? `<button type="button" class="secondary cc-dup-link" data-dupkey="${escapeHtml(dupKeyOf(m))}">Marcar como vinculado</button>` : ""}
+      </div></td>
+    </tr>`;
+  }).join("") : `<tr><td colspan="6"><div class="empty">Sem lançamentos no período.</div></td></tr>`;
   return `
     <div class="cc-hist-head">
       <label>Período<select id="ccHistPeriod">${periodOptions}</select></label>
@@ -4820,21 +4837,33 @@ function openCostCenterForm(id) {
     exTa.value = exTa.value.trim() ? `${exTa.value.trim()}\n${lines}` : lines;
   }));
 
-  const wireHistoryLinks = () => {
-    dialog.querySelectorAll("[data-cc-open]").forEach((btn) => btn.addEventListener("click", () => {
+  // Renderiza e re-liga os eventos do histórico (período, abrir original e o
+  // botão "Marcar como vinculado" das possíveis duplicidades).
+  const renderHistory = (periodKey) => {
+    const pane = q("#ccHistoricoPane");
+    if (!pane) return;
+    pane.innerHTML = costCenterHistoryPaneHtml(id, periodKey);
+    pane.querySelector("#ccHistPeriod")?.addEventListener("change", (event) => renderHistory(event.target.value));
+    pane.querySelectorAll("[data-cc-open]").forEach((btn) => btn.addEventListener("click", () => {
       const [module, recId] = String(btn.dataset.ccOpen).split(":");
       close();
       if (canAccessModule(module)) { currentModule = module; render(); if (canEditModule(module)) openForm(module, recId); }
     }));
+    pane.querySelectorAll("[data-dupkey]").forEach((btn) => btn.addEventListener("click", async () => {
+      const pair = findCostCenterDupPair(id, btn.dataset.dupkey);
+      if (!pair.cash || !pair.payable) { alert("Não foi possível identificar o par de lançamentos a vincular."); return; }
+      if (!confirm("Confirmar que o lançamento de caixa e a conta a pagar são o MESMO pagamento? A conta será baixada e o valor deixará de contar em dobro no centro de custo.")) return;
+      btn.disabled = true;
+      try {
+        await linkCashPayable(pair.cash.id, pair.payable.id);
+        renderHistory(pane.querySelector("#ccHistPeriod")?.value || periodKey);
+      } catch (error) {
+        alert(`Não foi possível vincular: ${error.message}`);
+        btn.disabled = false;
+      }
+    }));
   };
-  const wireHistoryPeriod = () => {
-    q("#ccHistPeriod")?.addEventListener("change", (event) => {
-      q("#ccHistoricoPane").innerHTML = costCenterHistoryPaneHtml(id, event.target.value);
-      wireHistoryPeriod();
-      wireHistoryLinks();
-    });
-  };
-  if (id) { wireHistoryPeriod(); wireHistoryLinks(); }
+  if (id) renderHistory("mesAtual");
 
   dialog.querySelectorAll("[data-close]").forEach((btn) => btn.addEventListener("click", close));
   dialog.addEventListener("cancel", (event) => { event.preventDefault(); close(); });
@@ -4864,6 +4893,151 @@ async function saveCostCenter(dialog, id, close) {
   logAudit(id ? "edit" : "create", "costCenters", data.name);
   close();
   render();
+}
+
+// ─── Prevenção de dupla contagem: vínculo caixa ↔ conta a pagar ─────────────
+const cashDupIgnored = new Set(); // duplicidades dispensadas pelo usuário nesta sessão
+
+// Localiza o par (movimento de caixa + conta a pagar) por trás de uma chave
+// "data|valor" para o botão "Marcar como vinculado".
+function findCostCenterDupPair(ccId, dupKey) {
+  const [date, valStr] = String(dupKey).split("|");
+  const val = Number(valStr);
+  const round2 = (v) => Math.round(Number(v || 0) * 100) / 100;
+  const cash = (db.cashMoves || []).find((m) => sameId(m.costCenterId, ccId)
+    && String(m.date || "").slice(0, 10) === date && round2(m.amount) === val
+    && !(m.referencia_tipo === "CONTA_PAGAR" && m.referencia_id));
+  const payable = (db.payable || []).find((p) => sameId(p.costCenterId, ccId)
+    && String(p.paidDate || p.dueDate || "").slice(0, 10) === date && round2(p.amount) === val
+    && p.status !== "Cancelado" && !(p.referencia_tipo === "CAIXA_MANUAL" && p.referencia_id));
+  return { cash, payable };
+}
+
+// Vincula um caixa e uma conta a pagar já existentes (servidor faz em transação;
+// modo local atualiza o db diretamente). Não re-renderiza — quem chama decide.
+async function linkCashPayable(cashId, payableId) {
+  if (serverMode) {
+    await apiModuleRequest("?module=cashMoves&action=link", { method: "POST", body: JSON.stringify({ cashMoveId: cashId, payableId }) });
+    await refreshData();
+    return;
+  }
+  const cash = byId("cashMoves", cashId);
+  const p = byId("payable", payableId);
+  if (cash) { cash.referencia_tipo = "CONTA_PAGAR"; cash.referencia_id = payableId; }
+  if (p && p.status !== "Cancelado") {
+    p.status = "Pago";
+    if (!p.paidDate) p.paidDate = (cash?.date) || new Date().toISOString().slice(0, 10);
+    p.referencia_tipo = "CAIXA_MANUAL";
+    p.referencia_id = cashId;
+  }
+  saveDb();
+}
+
+// Cria um movimento de caixa vinculado a uma conta a pagar (baixa a conta).
+async function submitLinkedCashMove(data, payableId) {
+  try {
+    if (serverMode) {
+      await apiModuleRequest("?module=cashMoves&action=create", { method: "POST", body: JSON.stringify({ ...data, type: "Saída", payableId }) });
+    } else {
+      const cashId = crypto.randomUUID();
+      db.cashMoves.push({ id: cashId, ...data, type: "Saída", status: "Confirmado", referencia_tipo: "CONTA_PAGAR", referencia_id: payableId });
+      const p = byId("payable", payableId);
+      if (p && p.status !== "Cancelado") {
+        p.status = "Pago";
+        if (!p.paidDate) p.paidDate = data.date || new Date().toISOString().slice(0, 10);
+        p.referencia_tipo = "CAIXA_MANUAL";
+        p.referencia_id = cashId;
+      }
+      saveDb();
+    }
+    return true;
+  } catch (error) {
+    alert(`Não foi possível registrar o caixa vinculado: ${error.message}`);
+    return false;
+  }
+}
+
+// Campo opcional "Vincular a conta a pagar" no formulário de novo caixa.
+function setupCashPayableLink() {
+  const formFields = qs("formFields");
+  if (!formFields || formFields.querySelector("#cashLinkPayable")) return;
+  const open = (db.payable || []).filter((p) => p.status !== "Pago" && p.status !== "Cancelado")
+    .sort((a, b) => String(a.dueDate || "").localeCompare(String(b.dueDate || "")));
+  const options = ['<option value="">— Não vincular —</option>'].concat(open.map((p) =>
+    `<option value="${escapeHtml(p.id)}">${escapeHtml(`${p.document || "Conta"} · ${asMoney(p.amount)} · vence ${asDate(String(p.dueDate || "").slice(0, 10)) || "—"}`)}</option>`)).join("");
+  const wrap = document.createElement("label");
+  wrap.className = "full cash-link-field";
+  wrap.innerHTML = `Vincular a conta a pagar (opcional)<select id="cashLinkPayable">${options}</select><span class="field-hint">Ao vincular, a conta a pagar é baixada automaticamente e o valor deixa de contar em dobro no centro de custo.</span>`;
+  formFields.appendChild(wrap);
+  wrap.querySelector("#cashLinkPayable").addEventListener("change", (event) => {
+    const p = byId("payable", event.target.value);
+    if (!p) return;
+    const amountInput = formFields.querySelector('[name="amount"]');
+    const typeSel = formFields.querySelector('[name="type"]');
+    const ccSel = formFields.querySelector('[name="costCenterId"]');
+    if (amountInput && !amountInput.value) amountInput.value = formatMoneyInput(p.amount);
+    if (typeSel) typeSel.value = "Saída";
+    if (ccSel && p.costCenterId && !ccSel.value) ccSel.value = p.costCenterId;
+  });
+}
+
+// PARTE 4 — pares de caixa (saída) e conta a pagar com mesmo valor, centro de
+// custo e data, ainda não vinculados entre si.
+function findPossibleDuplicates() {
+  const round2 = (v) => Math.round(Number(v || 0) * 100) / 100;
+  const payables = (db.payable || []).filter((p) => p.status !== "Cancelado" && p.costCenterId && !(p.referencia_tipo === "CAIXA_MANUAL" && p.referencia_id));
+  const pairs = [];
+  (db.cashMoves || []).forEach((m) => {
+    if (m.type !== "Saída" || !m.costCenterId) return;
+    if (m.referencia_tipo === "CONTA_PAGAR" && m.referencia_id) return;
+    const date = String(m.date || "").slice(0, 10);
+    const val = round2(m.amount);
+    const match = payables.find((p) => sameId(p.costCenterId, m.costCenterId) && round2(p.amount) === val
+      && (String(p.paidDate || "").slice(0, 10) === date || String(p.dueDate || "").slice(0, 10) === date));
+    if (match) pairs.push({ cashId: m.id, payableId: match.id, date, value: val, costCenterId: m.costCenterId, cashDesc: m.history || m.originDocument || "Caixa", payDesc: match.document || "Conta a pagar" });
+  });
+  return pairs;
+}
+
+function duplicatesReportPanel() {
+  const pairs = findPossibleDuplicates().filter((pr) => !cashDupIgnored.has(`${pr.cashId}:${pr.payableId}`));
+  const rows = pairs.length ? pairs.map((pr) => `
+    <tr>
+      <td>${pr.date ? asDate(pr.date) : "—"}</td>
+      <td>${svgText(nameOf("costCenters", pr.costCenterId) || "—")}</td>
+      <td class="cc-neg">${asMoney(pr.value)}</td>
+      <td>${svgText(pr.cashDesc)}</td>
+      <td>${svgText(pr.payDesc)}</td>
+      <td><div class="row-actions">
+        <button type="button" class="primary" data-dup-link="${escapeHtml(pr.cashId)}:${escapeHtml(pr.payableId)}">Vincular</button>
+        <button type="button" class="secondary" data-dup-ignore="${escapeHtml(pr.cashId)}:${escapeHtml(pr.payableId)}">Ignorar</button>
+      </div></td>
+    </tr>`).join("") : `<tr><td colspan="6"><div class="empty">Nenhuma duplicidade provável encontrada. 🎉</div></td></tr>`;
+  return `
+    <section class="panel dup-report">
+      <h3>⚠️ Lançamentos possivelmente duplicados</h3>
+      <p class="muted">Movimentos de caixa (saída) e contas a pagar com o mesmo valor, centro de custo e data. Vincule para não contar o valor duas vezes, ou ignore se forem pagamentos distintos.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Data</th><th>Centro de custo</th><th>Valor</th><th>Caixa</th><th>Conta a pagar</th><th>Ação</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </section>`;
+}
+
+function wireDuplicatesReport() {
+  qs("content").querySelectorAll("[data-dup-link]").forEach((btn) => btn.addEventListener("click", async () => {
+    const [cashId, payableId] = String(btn.dataset.dupLink).split(":");
+    if (!confirm("Vincular este lançamento de caixa à conta a pagar? A conta será baixada e o valor deixará de contar em dobro.")) return;
+    btn.disabled = true;
+    try { await linkCashPayable(cashId, payableId); render(); }
+    catch (error) { alert(`Não foi possível vincular: ${error.message}`); btn.disabled = false; }
+  }));
+  qs("content").querySelectorAll("[data-dup-ignore]").forEach((btn) => btn.addEventListener("click", () => {
+    cashDupIgnored.add(btn.dataset.dupIgnore);
+    render();
+  }));
 }
 
 function renderCrud(key) {
@@ -5255,6 +5429,7 @@ function applyFormEnhancements() {
   if (editing?.key === "viabilityAnalyses") setupViabilityFormPreview();
   if (editing?.key === "projects") setupProjectClientAutofill();
   if (editing?.key === "payable" && !editing.id) setupPayableRecurrence();
+  if (editing?.key === "cashMoves" && !editing.id) setupCashPayableLink();
 }
 
 // Preenchimento automático dos dados do cliente ao montar uma obra/projeto.
@@ -6009,6 +6184,16 @@ async function saveForm(event) {
   if (editing.key === "payable" && editing.id) {
     const handled = await maybeApplyRecurrenceScopeEdit(data);
     if (handled) return; // já tratado (propagou e fechou) — não cai no fluxo normal
+  }
+  // Novo movimento de caixa vinculado a uma conta a pagar: baixa a conta e grava
+  // a referência cruzada (evita dupla contagem no centro de custo).
+  if (editing.key === "cashMoves" && !editing.id) {
+    const payableId = qs("cashLinkPayable")?.value;
+    if (payableId) {
+      const ok = await submitLinkedCashMove(data, payableId);
+      if (ok) { qs("recordDialog").close(); if (serverMode) await refreshAndRender(); else render(); }
+      return;
+    }
   }
   const previousRecord = editing.id ? byId(editing.key, editing.id) : null;
   try {
@@ -10964,11 +11149,13 @@ function renderReports(mode = "reports") {
       </div>
     </section>
     ${report.rows.length ? table(report.title, report.rows, report.fields) : '<div class="empty">Sem dados para exibir</div>'}
+    ${mode === "reports" ? duplicatesReportPanel() : ""}
     <section class="split">
       <div class="panel"><h3>Fluxo de caixa</h3>${bars(cashFlowByBank())}</div>
       <div class="panel"><h3>Resultado por centro de custo</h3>${bars(resultByCostCenter())}</div>
     </section>
   `;
+  if (mode === "reports") wireDuplicatesReport();
 }
 
 function groupedReport(rows, idField, collection) {

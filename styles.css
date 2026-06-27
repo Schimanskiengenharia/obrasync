@@ -1794,6 +1794,17 @@ html[data-theme="dark"] .alert-warning {
 .cc-hist-nota { margin-top: 8px; font-size: 11px; }
 .cc-link { padding: 4px 10px; font-size: 12px; }
 
+/* Possível duplicidade caixa ↔ conta a pagar */
+.cc-dup td { background: #fff8e6; }
+html[data-theme="dark"] .cc-dup td { background: rgba(245, 200, 60, 0.12); }
+.cc-dup-warn { cursor: help; }
+.cc-dup-link { white-space: nowrap; }
+
+.dup-report { margin-top: 16px; padding: 16px; }
+.dup-report h3 { margin: 0 0 4px; }
+
+.cash-link-field .field-hint { display: block; margin-top: 4px; }
+
 .version-panel {
   display: grid;
   grid-template-columns: minmax(190px, 260px) 1fr;
