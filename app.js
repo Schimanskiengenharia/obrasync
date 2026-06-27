@@ -19,8 +19,8 @@ if (APP_ENV === "production" && location.protocol === "http:") {
   location.replace(location.href.replace(/^http:/, "https:"));
 }
 const APP_NAME = "ObraSync";
-const APP_VERSION = "v1.11.0";
-const APP_VERSION_DATE = "2026-06-13";
+const APP_VERSION = "v1.12.0";
+const APP_VERSION_DATE = "2026-06-27";
 const APP_CHANGELOG = [
   "Controle interno de versão e instruções de atualização segura.",
   "Perfis e permissões preparados por módulo e ação.",
@@ -43,6 +43,11 @@ const APP_CHANGELOG = [
   "Conciliação bancária OFX multi-banco: parser, controle de duplicatas por FITID (ofx_imports/ofx_fitids), prévia, match automático por valor+data e baixa automática de contas a pagar/receber (v1.10.0).",
   "Importação de XML NFS-e (padrão ABRASF): leitura automática, prévia em lote, criação de Contas a Receber (emitidas) e a Pagar (recebidas) vinculadas à obra (v1.11.0).",
   "Criação automática de cliente/fornecedor a partir do XML NFS-e durante a importação, com dados de nome, CNPJ/CPF, endereço, e-mail e telefone (v1.11.0).",
+  "Orçamento de Obra reestruturado: etapas (orcamento_etapas), tipos de custo, código hierárquico e visões Por Etapa, Por Centro de Custo, Por Tipo e Previsto vs Realizado, com BDI por etapa, impressão e exportação CSV (v1.12.0).",
+  "Coluna Realizado vs Orçado no Orçamento de Obra: badges de execução, alerta de estouro, totalizadores e atualização de quantidade realizada com histórico (v1.12.0).",
+  "Dashboard de execução de obras consumindo endpoint do servidor (resumo previsto/realizado), com spinner de carregamento, erro com botão de retentar, atualização automática a cada 5 min e tooltip combinado por obra no gráfico (v1.12.0).",
+  "Correção do erro 500 na criação de contas a pagar recorrentes (auto-cura das colunas de recorrência) e na aprovação de marcos (colunas de referência em accounts_receivable) (v1.12.0).",
+  "Varredura de segurança: correção de XSS armazenado em widgets, cards, selects e relatórios; rate limit na troca obrigatória de senha; bloqueio do diretório .git no Apache (v1.12.0).",
 ];
 
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
@@ -3862,7 +3867,7 @@ function renderDashboard() {
   const cashFlow = monthlyCashFlowRows();
   const monthlyResult = monthlyResultRows();
   const project = activeDashboardProject();
-  const projectOptions = db.projects.map((row) => `<option value="${row.id}" ${sameId(row.id, dashboardProjectId) ? "selected" : ""}>${row.name}</option>`).join("");
+  const projectOptions = db.projects.map((row) => `<option value="${row.id}" ${sameId(row.id, dashboardProjectId) ? "selected" : ""}>${svgText(row.name)}</option>`).join("");
   const dashboardCards = project ? [
     ["Receita contratada da obra", metrics.revenueContracted],
     ["Receita recebida da obra", metrics.revenueReceived],
@@ -3973,7 +3978,7 @@ function renderDashboard() {
   qs("content").innerHTML = `
     <section class="dashboard-intro">
       <div>
-        <h2>${project ? project.name : "Visão geral ObraSync"}</h2>
+        <h2>${project ? svgText(project.name) : "Visão geral ObraSync"}</h2>
         <p>Indicadores e gráficos são recalculados automaticamente a partir dos dados salvos no servidor.</p>
       </div>
       <div class="dashboard-controls">
@@ -4296,10 +4301,10 @@ function dashboardAgendaKanbanWidgets() {
   const events = upcomingAgendaEvents(7);
   const cards = urgentKanbanCards();
   const eventRows = events.length ? events.map((event) => `
-    <li><strong>${svgText(event.titulo)}</strong><span>${asDate(String(event.data_inicio || "").slice(0, 10))} · ${agendaTypeLabel(event.tipo)}${event.obra_id ? ` · ${nameOf("projects", event.obra_id)}` : ""}</span></li>
+    <li><strong>${svgText(event.titulo)}</strong><span>${asDate(String(event.data_inicio || "").slice(0, 10))} · ${agendaTypeLabel(event.tipo)}${event.obra_id ? ` · ${svgText(nameOf("projects", event.obra_id))}` : ""}</span></li>
   `).join("") : '<li class="muted-row">Sem eventos nos próximos 7 dias</li>';
   const cardRows = cards.length ? cards.map((card) => `
-    <li><strong>${svgText(card.titulo)}</strong><span>${priorityLabel(card.prioridade)} · ${card.data_vencimento ? asDate(card.data_vencimento) : "Sem prazo"}${card.obra_id ? ` · ${nameOf("projects", card.obra_id)}` : ""}</span></li>
+    <li><strong>${svgText(card.titulo)}</strong><span>${priorityLabel(card.prioridade)} · ${card.data_vencimento ? asDate(card.data_vencimento) : "Sem prazo"}${card.obra_id ? ` · ${svgText(nameOf("projects", card.obra_id))}` : ""}</span></li>
   `).join("") : '<li class="muted-row">Sem cards urgentes ou atrasados</li>';
   return `
     <section class="split dashboard-work-widgets">
@@ -4341,7 +4346,7 @@ function urgentKanbanCards() {
 function kpi(label, value, format = true) {
   const numeric = typeof value === "number" ? value : null;
   const tone = numeric === null ? "" : numeric < 0 ? "negative" : numeric > 0 ? "positive" : "";
-  return `<article class="kpi ${tone}"><span>${label}</span><strong>${format ? asMoney(value) : value}</strong></article>`;
+  return `<article class="kpi ${tone}"><span>${label}</span><strong>${format ? asMoney(value) : svgText(value)}</strong></article>`;
 }
 
 function resultByCostCenter() {
@@ -4364,7 +4369,7 @@ function bars(rows) {
   const max = Math.max(...rows.map((r) => Math.abs(r.value)), 1);
   return `<div class="mini-bars">${rows.map((r) => `
     <div class="bar-row">
-      <strong>${r.label}</strong>
+      <strong>${svgText(r.label)}</strong>
       <span class="bar-track"><span class="bar-fill" style="width:${Math.max(4, Math.abs(r.value) / max * 100)}%"></span></span>
       <span>${asMoney(r.value)}</span>
     </div>`).join("")}</div>`;
@@ -7090,7 +7095,7 @@ function renderKanban() {
   const boards = db.kanbanBoards || [];
   if (!selectedKanbanBoardId || !boards.some((board) => sameId(board.id, selectedKanbanBoardId))) selectedKanbanBoardId = boards[0]?.id || "";
   const board = boards.find((row) => sameId(row.id, selectedKanbanBoardId));
-  const boardOptions = boards.map((row) => `<option value="${row.id}" ${sameId(row.id, selectedKanbanBoardId) ? "selected" : ""}>${row.nome}</option>`).join("");
+  const boardOptions = boards.map((row) => `<option value="${row.id}" ${sameId(row.id, selectedKanbanBoardId) ? "selected" : ""}>${svgText(row.nome)}</option>`).join("");
   const columns = (db.kanbanColumns || []).filter((column) => sameId(column.board_id, selectedKanbanBoardId)).sort((a, b) => Number(a.ordem || 0) - Number(b.ordem || 0));
   qs("content").innerHTML = `
     <section class="module-head">
@@ -7102,7 +7107,7 @@ function renderKanban() {
     </section>
     <section class="schedule-toolbar kanban-toolbar">
       <label>Board<select id="kanbanBoardSelect">${boardOptions}</select></label>
-      <span>${board?.obra_id ? `Obra: ${nameOf("projects", board.obra_id)}` : "Sem obra vinculada"}</span>
+      <span>${board?.obra_id ? `Obra: ${svgText(nameOf("projects", board.obra_id))}` : "Sem obra vinculada"}</span>
     </section>
     <section class="kanban-board">
       ${columns.map((column) => kanbanColumnHtml(column, editable)).join("") || '<div class="empty">Nenhuma coluna neste board.</div>'}
@@ -7492,8 +7497,8 @@ function agendaEventCardHtml(event) {
     <article class="agenda-event ${event.tipo || ""} ${statusClass}">
       <strong>${svgText(event.titulo || "Sem titulo")}</strong>
       <span>${start}${end ? ` - ${end}` : ""}</span>
-      <small>${agendaTypeLabel(event.tipo)}${event.usuario_id ? ` - ${nameOf("users", event.usuario_id)}` : ""}</small>
-      ${event.cliente_id || event.obra_id ? `<small>${[nameOf("clients", event.cliente_id), nameOf("projects", event.obra_id)].filter(Boolean).join(" - ")}</small>` : ""}
+      <small>${agendaTypeLabel(event.tipo)}${event.usuario_id ? ` - ${svgText(nameOf("users", event.usuario_id))}` : ""}</small>
+      ${event.cliente_id || event.obra_id ? `<small>${svgText([nameOf("clients", event.cliente_id), nameOf("projects", event.obra_id)].filter(Boolean).join(" - "))}</small>` : ""}
       ${event.status ? `<em class="agenda-status-label">${svgText(agendaStatusLabel(event.status))}</em>` : ""}
       ${editable ? `<div class="agenda-event-actions">
         <button type="button" class="agenda-icon-btn" data-agenda-edit="${escapeHtml(event.id)}" title="Editar compromisso" aria-label="Editar">✎</button>
@@ -7649,7 +7654,7 @@ function kanbanCardHtml(card, editable) {
       <strong>${svgText(card.titulo)}</strong>
       <p>${svgText(card.descricao || "")}</p>
       <footer>
-        <span>${card.responsavel_id ? nameOf("users", card.responsavel_id) : "Sem responsável"}</span>
+        <span>${card.responsavel_id ? svgText(nameOf("users", card.responsavel_id)) : "Sem responsável"}</span>
         <span>${card.data_vencimento ? asDate(card.data_vencimento) : "Sem prazo"}</span>
       </footer>
       <div class="kanban-card-actions">
@@ -10441,7 +10446,7 @@ async function importSinapiCsvLocal({ type, sheetName, uf, referenceMonth, refer
     return;
   }
   const reference = (db.sinapiReferences || []).find((row) => row.uf === uf && Number(row.referenceMonth) === referenceMonth && Number(row.referenceYear) === referenceYear && row.priceType === referenceType)
-    || { id: uid(), uf, referenceMonth, referenceYear, priceType: referenceType, source: "SINAPI/CAIXA", defaultUf: uf, locationName: "Campo Grande/MS", issueDate: "2026-05-12", availableTypes: "Sem desoneração; Com desoneração; Sem encargos sociais", importDate: new Date().toISOString().slice(0, 10), importUserId: currentUser?.id || "", status: "Ativo" };
+    || { id: crypto.randomUUID(), uf, referenceMonth, referenceYear, priceType: referenceType, source: "SINAPI/CAIXA", defaultUf: uf, locationName: "Campo Grande/MS", issueDate: "2026-05-12", availableTypes: "Sem desoneração; Com desoneração; Sem encargos sociais", importDate: new Date().toISOString().slice(0, 10), importUserId: currentUser?.id || "", status: "Ativo" };
   if (!byId("sinapiReferences", reference.id)) db.sinapiReferences.push(reference);
   const text = await file.text();
   const rows = parseCsv(text);
@@ -10454,7 +10459,7 @@ async function importSinapiCsvLocal({ type, sheetName, uf, referenceMonth, refer
       continue;
     }
     const key = csvType === "inputs" ? "sinapiInputs" : csvType === "compositions" ? "sinapiCompositions" : csvType === "compositionItems" ? "sinapiCompositionItems" : csvType === "labor" ? "sinapiLabor" : csvType === "families" ? "sinapiFamilies" : "sinapiMaintenances";
-    db[key].push({ id: uid(), ...record });
+    db[key].push({ id: crypto.randomUUID(), ...record });
     result.created++;
   }
   saveDb();

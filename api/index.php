@@ -2060,9 +2060,14 @@ function bootstrap_data(PDO $pdo, array $resources, ?array $authUser = null, boo
             || (resolve_existing_table($pdo, ['orcamento_obra_itens'], false) && !in_array('etapa_id', table_columns($pdo, 'orcamento_obra_itens'), true))) {
             ensure_budget_structure($pdo);
         }
-        // Colunas de referência cruzada caixa ↔ conta a pagar (anti dupla contagem).
-        if (resolve_existing_table($pdo, ['cash_bank_movements'], false)
-            && !in_array('referencia_tipo', table_columns($pdo, 'cash_bank_movements'), true)) {
+        // Colunas de referência cruzada caixa ↔ conta a pagar/receber. Dispara se
+        // QUALQUER das duas tabelas estiver sem a coluna — accounts_receivable era
+        // ignorada antes (migração só cobria caixa/pagar), quebrando a aprovação de
+        // marcos com 500. ensure_referencia_columns é idempotente para as três.
+        if ((resolve_existing_table($pdo, ['cash_bank_movements'], false)
+                && !in_array('referencia_tipo', table_columns($pdo, 'cash_bank_movements'), true))
+            || (resolve_existing_table($pdo, ['accounts_receivable'], false)
+                && !in_array('referencia_tipo', table_columns($pdo, 'accounts_receivable'), true))) {
             ensure_referencia_columns($pdo);
         }
         // Colunas de recorrência (parcelamento/custos fixos) em contas a pagar.
@@ -2535,6 +2540,15 @@ function ensure_referencia_columns(PDO $pdo): void
         "ALTER TABLE accounts_payable
             ADD COLUMN IF NOT EXISTS referencia_tipo VARCHAR(30) NULL AFTER status,
             ADD COLUMN IF NOT EXISTS referencia_id BIGINT UNSIGNED NULL AFTER referencia_tipo"
+    );
+    // accounts_receivable também precisa das colunas: automate_approved_milestone()
+    // (aprovação de marco → conta a receber) lança "accounts_receivable sem colunas
+    // de referencia" e dá 500 sem elas, e a migração nunca as criou nessa tabela.
+    // Sem AFTER porque a posição é cosmética e evita erro se a coluna de âncora variar.
+    $pdo->exec(
+        "ALTER TABLE accounts_receivable
+            ADD COLUMN IF NOT EXISTS referencia_tipo VARCHAR(30) NULL,
+            ADD COLUMN IF NOT EXISTS referencia_id BIGINT UNSIGNED NULL"
     );
 }
 
@@ -6137,6 +6151,17 @@ function handle_forced_change_password(PDO $pdo, array $payload): never
         fail('Informe a senha atual.', 400);
     }
 
+    // Rate limit na MESMA janela/contexto do login. Sem isto, esta rota (que
+    // identifica o usuário pelo username do corpo e confere a senha atual antes da
+    // validação de força) vira um oráculo de força bruta/enumeração que contorna o
+    // throttle do login. Contabilizar sob 'login' impede usar esta rota como bypass.
+    $ip = (string) ($_SERVER['REMOTE_ADDR'] ?? '');
+    ensure_login_attempts_table($pdo);
+    if (count_recent_attempts($pdo, 'login', 'ip', $ip, LOGIN_WINDOW_SECONDS) >= LOGIN_MAX_PER_IP
+        || ($username !== '' && count_recent_attempts($pdo, 'login', 'username', $username, LOGIN_WINDOW_SECONDS) >= LOGIN_MAX_PER_USER)) {
+        fail('Muitas tentativas. Aguarde 15 minutos e tente novamente.', 429);
+    }
+
     ensure_api_sessions_table($pdo);
     $user = null;
     if ($token !== '') {
@@ -6156,6 +6181,8 @@ function handle_forced_change_password(PDO $pdo, array $payload): never
         $user = $stmt->fetch() ?: null;
     }
     if (!$user) {
+        register_attempt($pdo, 'login', $username, $ip);
+        server_audit($pdo, null, 'forced_change_failed', 'sistema', null, $username !== '' ? $username : 'desconhecido');
         fail('Sessão inválida. Faça login novamente.', 401);
     }
     if (($user['status'] ?? '') !== 'Ativo' || !empty($user['blocked'])) {
@@ -6165,6 +6192,8 @@ function handle_forced_change_password(PDO $pdo, array $payload): never
     // A senha atual precisa estar correta antes de qualquer outra validação.
     $stored = (string) ($user['password'] ?? '');
     if (!password_matches($stored, $currentPassword, !empty($user['mustChangePassword']))) {
+        register_attempt($pdo, 'login', (string) ($user['username'] ?? $username), $ip);
+        server_audit($pdo, null, 'forced_change_failed', 'sistema', null, (string) ($user['username'] ?? $username));
         fail('Senha atual incorreta.', 400);
     }
 
@@ -6178,6 +6207,8 @@ function handle_forced_change_password(PDO $pdo, array $payload): never
         ->execute([$hash, (int) $user['id']]);
     // Encerra todas as sessões do usuário: força novo login com a senha recém-definida.
     $pdo->prepare('DELETE FROM api_sessions WHERE userId = ?')->execute([(int) $user['id']]);
+    // Sucesso zera o contador de tentativas do usuário (mesma lógica do login).
+    $pdo->prepare("DELETE FROM login_attempts WHERE context = 'login' AND username = ?")->execute([(string) ($user['username'] ?? $username)]);
     respond(['ok' => true, 'message' => 'Senha atualizada com sucesso.']);
 }
 

@@ -4,6 +4,11 @@ Options -Indexes
   Require all denied
 </FilesMatch>
 
+# O docroot é uma working tree Git (o deploy roda `git pull`). Sem esta regra,
+# /.git/HEAD, /.git/config e os packs ficam acessíveis e permitem reconstruir
+# todo o código-fonte server-side e o histórico. Bloqueia qualquer caminho .git.
+RedirectMatch 404 /\.git(/|$)
+
 <IfModule mod_headers.c>
   # Força o navegador a revalidar HTML/JS/CSS a cada carga (responde 304 quando
   # nada mudou). Evita que correções publicadas continuem servidas do cache.

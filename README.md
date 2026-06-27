@@ -1,6 +1,6 @@
 # ObraSync
 
-> Versão `v1.11.0` · 2026-06-13
+> Versão `v1.12.0` · 2026-06-27
 
 ObraSync é uma aplicação web em HTML, CSS, JavaScript puro, PHP e MariaDB/MySQL para gestão integrada de obras, financeiro, comercial e contabilidade gerencial. O frontend fica em `/var/www/financeiro`, a URL pública é `https://schimanskiengenharia.com.br/financeiro`, os dados persistentes ficam no banco e os arquivos de dados ficam fora da pasta pública.
 
@@ -12,8 +12,9 @@ Antes de atualizar em produção, faça backup do banco e de `/var/lib/financeir
 
 Esta seção orienta qualquer pessoa — ou outra IA — que precise continuar o trabalho sem se perder.
 
-- **Versão atual:** `v1.11.0` (2026-06-13). A versão fica em **dois lugares que devem andar juntos**: a constante `APP_VERSION`/`APP_VERSION_DATE` no topo de `app.js` (com `APP_CHANGELOG`) e o cabeçalho deste README. O painel "Versão" em Configurações lê de `APP_VERSION`.
-- **Cache busting:** sempre que `app.js` ou `styles.css` mudarem, **incremente o `?v=NNNN`** das tags correspondentes em `index.html` (hoje `app.js?v=1733`, `styles.css?v=1731`). Sem isso o navegador serve a versão velha.
+- **Versão atual:** `v1.12.0` (2026-06-27). A versão fica em **dois lugares que devem andar juntos**: a constante `APP_VERSION`/`APP_VERSION_DATE` no topo de `app.js` (com `APP_CHANGELOG`) e o cabeçalho deste README. O painel "Versão" em Configurações lê de `APP_VERSION`.
+- **Cache busting:** sempre que `app.js` ou `styles.css` mudarem, **incremente o `?v=NNNN`** das tags correspondentes em `index.html` (hoje `app.js?v=1742`, `styles.css?v=1742`). Sem isso o navegador serve a versão velha.
+- **Estado de saúde (2026-06-27):** varredura completa de segurança/bugs concluída — ver `STATUS.md` na raiz e a seção **Auditoria de Código — 2026-06-27** no fim deste README. Itens CRÍTICOS/ALTOS já corrigidos; pendências MÉDIO/BAIXO listadas em `STATUS.md`.
 - **Arquitetura:** SPA sem build. Todo o frontend está em `app.js` (arquivo único, ~10 mil linhas) + `index.html` (shell) + `styles.css`. Todo o backend está em `api/index.php` (arquivo único). O banco é MariaDB/MySQL.
 - **Convenções do backend (siga-as):** respostas via `respond(['ok' => true, 'data' => ...])` e erros via `fail($msg, $status)`; INSERT/UPDATE genéricos via `insert_dynamic()`/`update_dynamic()` (descartam colunas inexistentes — toleram diferenças de schema); auditoria via `server_audit()`. Muitas tabelas novas são criadas sob demanda por funções `ensure_*` no próprio `index.php` (além das migrations).
 - **Convenções do frontend:** chamadas autenticadas via `apiRequest()`; uploads via `fetchForm()`; toasts via `showToast()`; escape de HTML via `svgText()`/`escapeHtml()`. O token de sessão vai no header `Authorization: Bearer`.
@@ -25,6 +26,17 @@ Esta seção orienta qualquer pessoa — ou outra IA — que precise continuar o
 ## Histórico de Versões
 
 Mapa de cada marco do produto, do mais novo ao mais antigo, com as features e as tabelas/arquivos envolvidos. Use-o para entender *o que existe e por quê* antes de mexer.
+
+### v1.12.0 — 2026-06-27 · Orçamento profissional, dashboard de execução e varredura de segurança
+- **Refatoração do Orçamento de Obra** (migration `2026-06-09-orcamento-estrutura-completa.sql`; tabela `orcamento_etapas` + colunas `codigo`/`tipo`/`etapa_id`/`sinapi_id`/`composicao_propria_id`/`ordem` em `orcamento_obra_itens`; `ensure_budget_structure`). Estrutura por **etapas/subitens**, **tipos de custo** (material, mão de obra, equipamento, subempreiteiro, outros), código hierárquico, **BDI por etapa** e quatro visões: **Por Etapa**, **Por Centro de Custo**, **Por Tipo de Custo** e **Previsto vs Realizado**. Modal de inclusão em 3 abas (SINAPI/Composição própria/Manual), totalizadores, impressão e exportação CSV.
+- **Realizado vs Orçado** no Orçamento de Obra (endpoint `?module=workBudgetExecution`; `orcamento_item_execucao_log`; migration `2026-06-09-execucao-orcamento-historico.sql`): badges de execução, alerta de estouro, totalizadores, barra de progresso, filtros e atualização da quantidade realizada com histórico.
+- **Dashboard de execução de obras** (endpoint `?module=dashboardExecution&action=summary`): 3 widgets (execução por obra, alerta de estouro e gráfico **Previsto vs Realizado**) que consomem o resumo do servidor, com **spinner** de carregamento, **erro + botão retentar**, **auto-refresh a cada 5 min** / botão Atualizar e **tooltip combinado por obra** no gráfico SVG.
+- **Pedidos de compra com itens detalhados** (migration `2026-06-09-purchase-order-items.sql`; `purchase_order_items` + `condicoes_pagamento`/coluna de vínculo a orçamento; `ensure_purchase_order_items`) e visualização individual imprimível com cabeçalho/rodapé da empresa.
+- **Identidade visual nos documentos** (`generateDocumentHeader`/`generateDocumentFooter`): logo, dados e endereço completo da empresa em propostas, pedidos de compra e RDO; upload de logo/site (`logo_url`/`website`/`instagram`/`whatsapp`; migrations `2026-06-09-logo-site-empresa.sql`, `…-campos-endereco-fornecedores-empresa.sql`).
+- **Preenchimento automático global de dados do cliente** em todos os módulos (busca pontual `?module=clients&action=get`), **snapshot do cliente em propostas/contratos** (migration `2026-06-09-snapshot-cliente-proposta.sql`) e **busca de endereço por CEP (ViaCEP)** com campos cidade/estado/complemento em clientes e fornecedores.
+- **Contas a pagar recorrentes + quitação antecipada** (migration `2026-06-09-contas-recorrentes.sql`; `ensure_payable_recurrence_columns`) e **prevenção de dupla contagem** caixa ↔ conta a pagar (migration `2026-06-09-vinculo-caixa-conta-pagar.sql`; `ensure_referencia_columns`).
+- **Correções de erro 500:** auto-cura das colunas de recorrência na criação de parcelas; colunas de referência adicionadas a `accounts_receivable` na aprovação de marcos (`automate_approved_milestone`).
+- **Varredura de segurança (2026-06-27):** correção de **XSS armazenado** em widgets do dashboard, cards de agenda/kanban, `<option>`/cabeçalhos e helpers de relatório (`bars`/`kpi`); **rate limit** na rota de troca obrigatória de senha (anti força-bruta/enumeração); **bloqueio do diretório `.git`** no Apache. Detalhes e pendências em `STATUS.md`.
 
 ### v1.11.0 — 2026-06-13 · Importação de NFS-e (XML ABRASF)
 - **Importação de XML NFS-e** (`handle_nfse_preview`/`handle_nfse_import` + `parse_nfse_abrasf` em `api/index.php`; `setupNfseImport`/`analisarNfseXml`/`renderizarPreviewNfse`/`importarNfsesSelecionadas` em `app.js`). Lê o XML padrão ABRASF (uma ou várias NFs), mostra prévia em lote e grava: NFs **emitidas** pela empresa → **Contas a Receber**; NFs de **fornecedores** → **Contas a Pagar**. Cada NF vira também um `fiscal_documents` vinculado à obra (obrigatória). Controle de duplicatas por `documentNumber` (`NFS-e <numero>`). Tudo transacional.
@@ -1062,3 +1074,47 @@ Após subir os arquivos, execute as migrations novas que ainda não foram rodada
 
 30. **Operador pode fechar NC** (edição em `qualidadeNc`) — avaliar se o
     fechamento deve exigir gestor/engenharia (decisão de negócio do SGQ).
+
+---
+
+## Auditoria de Código — 2026-06-27 (3ª rodada — varredura completa)
+
+> Varredura de segurança, bugs, performance, qualidade e UX sobre `app.js`,
+> `api/index.php`, `deploy.php`, `.htaccess`, `migrations/`. Os itens
+> **CRÍTICO/ALTO de segurança** e os **bugs que quebram o sistema** foram
+> corrigidos nesta versão (v1.12.0). O relatório completo e as pendências
+> MÉDIO/BAIXO estão em **`STATUS.md`** (raiz do projeto).
+
+### Corrigidos nesta rodada (v1.12.0)
+
+1. ~~**XSS armazenado** em vários pontos que injetavam dados do banco em
+   `innerHTML` sem escape: helpers `bars()`/`kpi()` (DRE/Relatórios), `<option>`
+   e cabeçalhos do Dashboard/Kanban, e nomes via `nameOf()` em cards de
+   Agenda/Kanban/Dashboard.~~ ✅ Envolvidos com `svgText()`.
+2. ~~**Bug crítico:** `importSinapiCsvLocal` chamava `uid()` (função
+   inexistente) → `ReferenceError` abortava a importação local de CSV
+   SINAPI.~~ ✅ Trocado por `crypto.randomUUID()`.
+3. ~~**Erro 500 na aprovação de marcos:** `automate_approved_milestone` exige
+   colunas de referência em `accounts_receivable`, que nenhuma migração criava
+   (só caixa/contas a pagar). Lançava 500 e desfazia a mudança de status.~~
+   ✅ `ensure_referencia_columns` agora cobre `accounts_receivable` + guarda no
+   bootstrap.
+4. ~~**Oráculo de força bruta/enumeração** na rota pública
+   `forced-change-password`: identificava o usuário pelo `username` do corpo e
+   conferia a senha sem rate limit nem log, contornando o throttle do login.~~
+   ✅ Rate limit na mesma janela/contexto do login + registro de tentativas e
+   auditoria de falhas.
+5. ~~**Diretório `.git` exposto** via HTTP (o docroot é uma working tree).~~
+   ✅ `RedirectMatch 404 /\.git` no `.htaccess`.
+
+### Pendentes (ver `STATUS.md` para detalhes e prioridade)
+
+- **MÉDIO:** tabelas sem `ensure_*` que dão 500 em servidor sem a migração
+  (`fiscal_documents`, `agenda_eventos`/Kanban) — rodar a migração resolve, mas
+  falta a auto-cura; colunas `email`/`blocked`/`mustChangePassword` de
+  `system_users` idem; filtro `applyFilters` deixa passar registros com campo
+  vazio.
+- **BAIXO:** SVG de logo sem sanitização de conteúdo; senha legada em texto puro
+  durante a transição; `bootstrap`/`db()` fora do try/catch; XXE hardening no
+  parse de XML; `proposalBody` reinjetado como HTML; `bootstrapApp()` sem
+  `.catch`.
