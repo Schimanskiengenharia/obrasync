@@ -1743,8 +1743,8 @@ async function handleApiResponse(response, path, retry) {
     error.status = 401;
     throw error;
   }
-  if (!response.ok || payload.ok === false) {
-    const error = new Error(payload.error || `Erro HTTP ${response.status}`);
+  if (!response.ok || payload.ok === false || payload.success === false) {
+    const error = new Error(payload.error || payload.message || `Erro HTTP ${response.status}`);
     error.status = response.status;
     throw error;
   }
@@ -4431,8 +4431,10 @@ function renderCrud(key) {
       </div>
       ${editable ? '<button class="primary" type="button" id="newRecord">Novo</button>' : ""}
     </section>
+    ${key === "payable" ? payableGroupsPanelHtml(rows) : ""}
     ${table(config.title, rows, tableFields, editable, key)}
   `;
+  if (key === "payable") setupPayableGroupActions();
   qs("newRecord")?.addEventListener("click", () => openForm(key));
   qs("content").querySelectorAll("[data-edit]").forEach((button) => button.addEventListener("click", () => openForm(key, button.dataset.edit)));
   qs("content").querySelectorAll("[data-delete]").forEach((button) => button.addEventListener("click", () => removeRecord(key, button.dataset.delete)));
@@ -4797,6 +4799,7 @@ function applyFormEnhancements() {
   }
   if (editing?.key === "viabilityAnalyses") setupViabilityFormPreview();
   if (editing?.key === "projects") setupProjectClientAutofill();
+  if (editing?.key === "payable" && !editing.id) setupPayableRecurrence();
 }
 
 // Preenchimento automático dos dados do cliente ao montar uma obra/projeto.
@@ -4941,6 +4944,461 @@ function openClientFullView(clientId) {
   dialog.showModal();
 }
 
+// ─── Contas a pagar recorrentes + quitação antecipada ───────────────────────
+const RECORRENCIA_TIPOS = [
+  ["mensal", "Mensal"], ["bimestral", "Bimestral"], ["trimestral", "Trimestral"],
+  ["semestral", "Semestral"], ["anual", "Anual"],
+];
+const RECORRENCIA_MESES = { mensal: 1, bimestral: 2, trimestral: 3, semestral: 6, anual: 12 };
+const RECORRENCIA_INDETERMINADO_PARCELAS = 24; // horizonte rolante para "indeterminado"
+
+// Wrapper para os endpoints de módulo (?module=...&action=...) que respondem
+// no padrão { success, data, message }. Devolve apenas o data em caso de sucesso.
+async function apiModuleRequest(path, options = {}) {
+  const payload = await apiRequest(path, options);
+  if (payload && payload.success === false) throw new Error(payload.message || "Operação não concluída.");
+  return payload?.data ?? payload;
+}
+
+function recCapitalize(text) {
+  const s = String(text || "");
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : "";
+}
+
+// Soma meses preservando o dia, clampando ao último dia do mês de destino.
+function addMonthsClamped(iso, months) {
+  const [y, m, d] = String(iso).slice(0, 10).split("-").map(Number);
+  if (!y || !m || !d) return String(iso).slice(0, 10);
+  const target = new Date(y, (m - 1) + months, 1);
+  const lastDay = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
+  const day = String(Math.min(d, lastDay)).padStart(2, "0");
+  const mm = String(target.getMonth() + 1).padStart(2, "0");
+  return `${target.getFullYear()}-${mm}-${day}`;
+}
+
+// Injeta no formulário de nova conta a pagar a opção de recorrência/parcelamento.
+function setupPayableRecurrence() {
+  const formFields = qs("formFields");
+  if (!formFields || formFields.querySelector("#payableRecurrenceBox")) return;
+  const tipoOptions = RECORRENCIA_TIPOS.map(([v, l]) => `<option value="${v}">${l}</option>`).join("");
+  const box = document.createElement("div");
+  box.id = "payableRecurrenceBox";
+  box.className = "full payable-recurrence-box";
+  box.innerHTML = `
+    <label class="payable-recurrence-toggle">
+      <input type="checkbox" id="payableRecurrenceToggle"> Conta recorrente / parcelada
+    </label>
+    <div id="payableRecurrenceFields" class="payable-recurrence-fields hidden">
+      <label>Tipo de recorrência<select id="recTipo">${tipoOptions}</select></label>
+      <label>Número de parcelas<input type="number" id="recParcelas" min="1" value="12"></label>
+      <label class="rec-inline"><input type="checkbox" id="recIndeterminado"> Indeterminado</label>
+      <label>Data da 1ª parcela<input type="date" id="recPrimeiraData"></label>
+      <label>Valor da 1ª parcela (R$)<input type="text" inputmode="decimal" id="recValorPrimeira" placeholder="0,00"></label>
+      <label>Valor das demais (R$)<input type="text" inputmode="decimal" id="recValorDemais" placeholder="igual à 1ª"></label>
+      <p id="recPreview" class="payable-recurrence-preview full"></p>
+    </div>`;
+  formFields.appendChild(box);
+
+  const toggle = box.querySelector("#payableRecurrenceToggle");
+  const fields = box.querySelector("#payableRecurrenceFields");
+  const amountInput = formFields.querySelector('[name="amount"]');
+  const dueInput = formFields.querySelector('[name="dueDate"]');
+  const updatePreview = () => {
+    const preview = box.querySelector("#recPreview");
+    const cfg = readRecurrenceConfig();
+    if (!cfg) { preview.textContent = ""; return; }
+    const parcels = buildRecurrenceParcels(cfg);
+    if (!parcels.length) { preview.textContent = ""; return; }
+    const last = parcels[parcels.length - 1];
+    preview.textContent = `Serão geradas ${cfg.indeterminado ? `${parcels.length} parcelas (indeterminado)` : `${parcels.length} parcelas`} ${cfg.tipo}, de ${asDate(parcels[0].dueDate)} até ${asDate(last.dueDate)}.`;
+  };
+
+  toggle.addEventListener("change", () => {
+    fields.classList.toggle("hidden", !toggle.checked);
+    if (toggle.checked) {
+      if (!box.querySelector("#recPrimeiraData").value) box.querySelector("#recPrimeiraData").value = (dueInput?.value || new Date().toISOString().slice(0, 10));
+      if (!box.querySelector("#recValorPrimeira").value && amountInput?.value) box.querySelector("#recValorPrimeira").value = amountInput.value;
+      updatePreview();
+    }
+  });
+  box.querySelector("#recIndeterminado").addEventListener("change", (e) => {
+    box.querySelector("#recParcelas").disabled = e.target.checked;
+    updatePreview();
+  });
+  ["#recTipo", "#recParcelas", "#recPrimeiraData", "#recValorPrimeira", "#recValorDemais"].forEach((sel) =>
+    box.querySelector(sel).addEventListener("input", updatePreview));
+}
+
+function readRecurrenceConfig() {
+  const box = qs("payableRecurrenceBox");
+  if (!box) return null;
+  const indeterminado = box.querySelector("#recIndeterminado").checked;
+  const parcelas = indeterminado ? 0 : Math.max(1, Number(box.querySelector("#recParcelas").value || 0));
+  const primeiraData = box.querySelector("#recPrimeiraData").value;
+  if (!primeiraData || (!indeterminado && parcelas < 1)) return null;
+  const valorPrimeira = parseMoneyInput(box.querySelector("#recValorPrimeira").value);
+  const demaisRaw = box.querySelector("#recValorDemais").value.trim();
+  const valorDemais = demaisRaw ? parseMoneyInput(demaisRaw) : valorPrimeira;
+  return { tipo: box.querySelector("#recTipo").value, indeterminado, parcelas, primeiraData, valorPrimeira, valorDemais };
+}
+
+function buildRecurrenceParcels(cfg) {
+  const total = cfg.indeterminado ? RECORRENCIA_INDETERMINADO_PARCELAS : Math.min(360, cfg.parcelas);
+  const months = RECORRENCIA_MESES[cfg.tipo] || 1;
+  return Array.from({ length: total }, (_, idx) => {
+    const i = idx + 1;
+    return {
+      parcela_numero: i,
+      parcela_total: cfg.indeterminado ? null : total,
+      dueDate: addMonthsClamped(cfg.primeiraData, months * (i - 1)),
+      amount: i === 1 ? cfg.valorPrimeira : cfg.valorDemais,
+    };
+  });
+}
+
+// Cria a recorrência (servidor gera as parcelas em transação; modo local gera no db).
+async function submitPayableRecurrence(data) {
+  const cfg = readRecurrenceConfig();
+  if (!cfg) { alert("Preencha os dados da recorrência: tipo, parcelas, data da 1ª parcela e valor."); return false; }
+  const descricao = String(data.document || "").trim();
+  if (!descricao) { alert("Informe o documento/descrição da conta."); return false; }
+  if (!(cfg.valorPrimeira > 0) && !(cfg.valorDemais > 0)) { alert("Informe o valor das parcelas."); return false; }
+  const today = new Date().toISOString().slice(0, 10);
+  try {
+    if (serverMode) {
+      await apiModuleRequest("?module=payable&action=create_recurrence", {
+        method: "POST",
+        body: JSON.stringify({
+          descricao,
+          recorrencia_tipo: cfg.tipo,
+          parcelas: cfg.indeterminado ? 0 : cfg.parcelas,
+          primeira_data: cfg.primeiraData,
+          valor_primeira: cfg.valorPrimeira,
+          valor_demais: cfg.valorDemais,
+          issueDate: data.issueDate || today,
+          supplierId: data.supplierId || "",
+          projectId: data.projectId || "",
+          categoryId: data.categoryId || "",
+          costCenterId: data.costCenterId || "",
+          bankAccount: data.bankAccount || "",
+        }),
+      });
+    } else {
+      const rid = crypto.randomUUID();
+      buildRecurrenceParcels(cfg).forEach((p) => {
+        db.payable.push({
+          id: crypto.randomUUID(),
+          document: cfg.indeterminado ? `${descricao} - Parcela ${p.parcela_numero}` : `${descricao} - Parcela ${p.parcela_numero}/${p.parcela_total}`,
+          issueDate: data.issueDate || today,
+          dueDate: p.dueDate,
+          paidDate: "",
+          supplierId: data.supplierId || "",
+          projectId: data.projectId || "",
+          categoryId: data.categoryId || "",
+          costCenterId: data.costCenterId || "",
+          bankAccount: data.bankAccount || "",
+          amount: p.amount,
+          status: "Aberto",
+          recorrencia_id: rid,
+          parcela_numero: p.parcela_numero,
+          parcela_total: p.parcela_total,
+          recorrencia_tipo: cfg.tipo,
+        });
+      });
+      saveDb();
+    }
+    return true;
+  } catch (error) {
+    alert(`Não foi possível gerar as parcelas: ${error.message}`);
+    return false;
+  }
+}
+
+// Edição de parcela recorrente: pergunta o escopo. Retorna true se já tratou
+// (propagou para várias parcelas e fechou); false para seguir o update normal.
+async function maybeApplyRecurrenceScopeEdit(data) {
+  const rec = byId("payable", editing.id);
+  if (!rec || !rec.recorrencia_id) return false; // não recorrente
+  const scope = await chooseRecurrenceScope();
+  if (scope === null) return true;   // cancelou
+  if (scope === "one") return false; // segue update normal de uma parcela
+  const fields = {
+    amount: data.amount,
+    supplierId: data.supplierId || "",
+    categoryId: data.categoryId || "",
+    costCenterId: data.costCenterId || "",
+    projectId: data.projectId || "",
+    bankAccount: data.bankAccount || "",
+  };
+  try {
+    if (serverMode) {
+      await apiModuleRequest("?module=payable&action=update_scope", {
+        method: "POST",
+        body: JSON.stringify({ recorrencia_id: rec.recorrencia_id, scope, parcela_numero: rec.parcela_numero, parcela_id: rec.id, fields }),
+      });
+      qs("recordDialog").close();
+      await refreshAndRender();
+    } else {
+      (db.payable || []).forEach((p) => {
+        if (!sameId(p.recorrencia_id, rec.recorrencia_id)) return;
+        if (p.status === "Pago" || p.status === "Cancelado") return;
+        if (scope === "forward" && Number(p.parcela_numero || 0) < Number(rec.parcela_numero || 0)) return;
+        Object.assign(p, fields);
+      });
+      saveDb();
+      qs("recordDialog").close();
+      render();
+    }
+  } catch (error) {
+    alert(`Não foi possível atualizar as parcelas: ${error.message}`);
+  }
+  return true;
+}
+
+function chooseRecurrenceScope() {
+  return new Promise((resolve) => {
+    const dialog = document.createElement("dialog");
+    dialog.className = "agenda-detail-dialog";
+    dialog.innerHTML = `
+      <div class="modal-box agenda-detail-box">
+        <h3>Alterar parcela recorrente</h3>
+        <p class="muted">Esta conta faz parte de uma recorrência. O que deseja alterar?</p>
+        <div class="recurrence-scope-actions">
+          <button type="button" class="secondary" data-scope="one">Apenas esta parcela</button>
+          <button type="button" class="secondary" data-scope="forward">Esta e as próximas</button>
+          <button type="button" class="secondary" data-scope="all">Todas as parcelas em aberto</button>
+          <button type="button" class="link-button" data-scope="cancel">Cancelar</button>
+        </div>
+      </div>`;
+    document.body.appendChild(dialog);
+    const done = (val) => { try { dialog.close(); } catch { /* já fechado */ } dialog.remove(); resolve(val); };
+    dialog.querySelectorAll("[data-scope]").forEach((btn) => btn.addEventListener("click", () => {
+      const s = btn.dataset.scope;
+      done(s === "cancel" ? null : s);
+    }));
+    dialog.addEventListener("cancel", (event) => { event.preventDefault(); done(null); });
+    dialog.showModal();
+  });
+}
+
+// ── Painel visual de grupos de recorrência na lista de contas a pagar ──
+function groupRecurrences(rows) {
+  const map = new Map();
+  (rows || []).forEach((row) => {
+    if (!row.recorrencia_id) return;
+    if (!map.has(row.recorrencia_id)) map.set(row.recorrencia_id, []);
+    map.get(row.recorrencia_id).push(row);
+  });
+  return Array.from(map.entries()).map(([rid, parcels]) => {
+    parcels.sort((a, b) => Number(a.parcela_numero || 0) - Number(b.parcela_numero || 0));
+    const ativas = parcels.filter((p) => p.status !== "Cancelado");
+    const total = Number(parcels[0]?.parcela_total) || ativas.length;
+    const pagas = parcels.filter((p) => p.status === "Pago").length;
+    const baseName = String(parcels[0]?.document || "").replace(/\s*-\s*Parcela.*$/i, "") || "Recorrência";
+    return { rid, parcels, total, pagas, baseName, tipo: parcels[0]?.recorrencia_tipo || "", indeterminado: !parcels[0]?.parcela_total };
+  });
+}
+
+function payableGroupsPanelHtml(rows) {
+  const groups = groupRecurrences(rows);
+  if (!groups.length) return "";
+  return `<section class="payable-groups">
+    <h3>Contas recorrentes</h3>
+    <div class="payable-groups-grid">${groups.map(payableGroupCardHtml).join("")}</div>
+  </section>`;
+}
+
+function payableGroupCardHtml(g) {
+  const denom = g.total || g.parcels.length;
+  const pct = denom ? Math.min(100, Math.round((g.pagas / denom) * 100)) : 0;
+  const done = g.pagas >= denom && denom > 0;
+  return `<article class="payable-group-card">
+    <header>
+      <strong title="${escapeHtml(g.baseName)}">${svgText(g.baseName)}</strong>
+      <button type="button" class="payable-group-menu-btn" data-group-menu="${escapeHtml(g.rid)}" title="Opções" aria-label="Opções">⋯</button>
+    </header>
+    <div class="payable-group-meta">
+      <span class="badge ${done ? "badge-done" : "badge-progress"}">${g.pagas}/${denom} pagas</span>
+      <span class="muted">${recCapitalize(g.tipo)}${g.indeterminado ? " · indeterminado" : ""}</span>
+    </div>
+    <div class="payable-progress"><span style="width:${pct}%"></span></div>
+    <div class="payable-group-actions" id="groupActions-${escapeHtml(g.rid)}" hidden>
+      <button type="button" class="secondary" data-group-view="${escapeHtml(g.rid)}">Ver todas as parcelas</button>
+      <button type="button" class="secondary" data-group-settle="${escapeHtml(g.rid)}">Quitar antecipadamente</button>
+      <button type="button" class="secondary" data-group-update="${escapeHtml(g.rid)}">Alterar valor das próximas</button>
+      <button type="button" class="danger" data-group-cancel="${escapeHtml(g.rid)}">Cancelar recorrência</button>
+    </div>
+  </article>`;
+}
+
+function setupPayableGroupActions() {
+  const content = qs("content");
+  content.querySelectorAll("[data-group-menu]").forEach((btn) => btn.addEventListener("click", () => {
+    const el = qs("groupActions-" + btn.dataset.groupMenu);
+    if (el) el.hidden = !el.hidden;
+  }));
+  content.querySelectorAll("[data-group-view]").forEach((btn) => btn.addEventListener("click", () => openRecurrenceParcels(btn.dataset.groupView)));
+  content.querySelectorAll("[data-group-settle]").forEach((btn) => btn.addEventListener("click", () => openEarlySettlement(btn.dataset.groupSettle)));
+  content.querySelectorAll("[data-group-update]").forEach((btn) => btn.addEventListener("click", () => updateFutureParcels(btn.dataset.groupUpdate)));
+  content.querySelectorAll("[data-group-cancel]").forEach((btn) => btn.addEventListener("click", () => cancelRecurrenceGroup(btn.dataset.groupCancel)));
+}
+
+function groupParcels(rid) {
+  return (db.payable || []).filter((p) => sameId(p.recorrencia_id, rid))
+    .sort((a, b) => Number(a.parcela_numero || 0) - Number(b.parcela_numero || 0));
+}
+
+function openRecurrenceParcels(rid) {
+  const parcels = groupParcels(rid);
+  if (!parcels.length) return;
+  const rowsHtml = parcels.map((p) => `<div class="agenda-detail-row"><dt>${svgText(p.document || ("Parcela " + p.parcela_numero))}</dt><dd>${asDate(String(p.dueDate || "").slice(0, 10))} · ${asMoney(p.amount)} · ${svgText(p.status)}${p.juros_aplicado != null && p.juros_aplicado !== "" ? " ⚡" : ""}</dd></div>`).join("");
+  const dialog = document.createElement("dialog");
+  dialog.className = "agenda-detail-dialog";
+  dialog.innerHTML = `<div class="modal-box agenda-detail-box"><h3>Parcelas da recorrência</h3><dl class="agenda-detail-list">${rowsHtml}</dl><div class="agenda-detail-actions"><button type="button" class="secondary" data-close>Fechar</button></div></div>`;
+  document.body.appendChild(dialog);
+  const close = () => { try { dialog.close(); } catch { /* já fechado */ } dialog.remove(); };
+  dialog.querySelector("[data-close]")?.addEventListener("click", close);
+  dialog.addEventListener("cancel", (event) => { event.preventDefault(); close(); });
+  dialog.addEventListener("click", (event) => { if (event.target === dialog) close(); });
+  dialog.showModal();
+}
+
+function openEarlySettlement(rid) {
+  const future = groupParcels(rid).filter((p) => p.status !== "Pago" && p.status !== "Cancelado");
+  if (!future.length) { alert("Não há parcelas em aberto para quitar nesta recorrência."); return; }
+  const dialog = document.createElement("dialog");
+  dialog.className = "agenda-detail-dialog early-settlement-dialog";
+  dialog.innerHTML = `
+    <div class="modal-box">
+      <h3>Quitar antecipadamente</h3>
+      <p class="muted">Selecione as parcelas a quitar. As parcelas futuras NÃO selecionadas serão canceladas.</p>
+      <div class="settlement-list">
+        ${future.map((p) => `
+          <label class="settlement-item">
+            <input type="checkbox" class="settle-check" data-id="${escapeHtml(p.id)}" data-amount="${Number(p.amount || 0)}" checked>
+            <span class="settlement-name">${svgText(p.document || ("Parcela " + p.parcela_numero))}</span>
+            <span class="muted">${asDate(String(p.dueDate || "").slice(0, 10))}</span>
+            <strong>${asMoney(p.amount)}</strong>
+          </label>`).join("")}
+      </div>
+      <div class="settlement-fields">
+        <label>Juros / Multa (R$)<input type="text" inputmode="decimal" id="settleJuros" value="0,00"></label>
+        <label>Desconto (R$)<input type="text" inputmode="decimal" id="settleDesconto" value="0,00"></label>
+        <label>Conta/Banco de saída (opcional)<input type="text" id="settleBank" placeholder="Ex.: Banco do Brasil"></label>
+      </div>
+      <p class="settlement-summary" id="settleSummary"></p>
+      <div class="agenda-detail-actions">
+        <button type="button" class="primary" id="settleConfirm">Confirmar quitação</button>
+        <button type="button" class="secondary" data-close>Cancelar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(dialog);
+  const close = () => { try { dialog.close(); } catch { /* já fechado */ } dialog.remove(); };
+  const updateSummary = () => {
+    const selected = [...dialog.querySelectorAll(".settle-check")].filter((c) => c.checked);
+    const original = selected.reduce((s, c) => s + Number(c.dataset.amount || 0), 0);
+    const juros = parseMoneyInput(dialog.querySelector("#settleJuros").value);
+    const desconto = parseMoneyInput(dialog.querySelector("#settleDesconto").value);
+    const total = Math.max(0, original + juros - desconto);
+    dialog.querySelector("#settleSummary").innerHTML = `${selected.length} parcela(s) · Valor original: <strong>${asMoney(original)}</strong> · Juros: <strong>${asMoney(juros)}</strong> · Desconto: <strong>${asMoney(desconto)}</strong> · Total a pagar: <strong>${asMoney(total)}</strong>`;
+  };
+  dialog.querySelectorAll(".settle-check, #settleJuros, #settleDesconto").forEach((el) => el.addEventListener("input", updateSummary));
+  updateSummary();
+  dialog.querySelector("[data-close]")?.addEventListener("click", close);
+  dialog.addEventListener("cancel", (event) => { event.preventDefault(); close(); });
+  dialog.querySelector("#settleConfirm").addEventListener("click", async () => {
+    const ids = [...dialog.querySelectorAll(".settle-check")].filter((c) => c.checked).map((c) => c.dataset.id);
+    if (!ids.length) { alert("Selecione ao menos uma parcela."); return; }
+    const juros = parseMoneyInput(dialog.querySelector("#settleJuros").value);
+    const desconto = parseMoneyInput(dialog.querySelector("#settleDesconto").value);
+    const bankAccount = dialog.querySelector("#settleBank").value.trim();
+    if (!confirm("Confirmar a quitação antecipada das parcelas selecionadas? As demais parcelas futuras serão canceladas.")) return;
+    const confirmBtn = dialog.querySelector("#settleConfirm");
+    confirmBtn.disabled = true;
+    try {
+      await runEarlySettlement(rid, ids, juros, desconto, bankAccount);
+      close();
+    } catch (error) {
+      alert(`Não foi possível quitar: ${error.message}`);
+      confirmBtn.disabled = false;
+    }
+  });
+  dialog.showModal();
+}
+
+async function runEarlySettlement(rid, ids, juros, desconto, bankAccount) {
+  if (serverMode) {
+    await apiModuleRequest("?module=payable&action=early_settlement", {
+      method: "POST",
+      body: JSON.stringify({ recorrencia_id: rid, parcela_ids: ids, juros, desconto, bankAccount }),
+    });
+    await refreshAndRender();
+    return;
+  }
+  const today = new Date().toISOString().slice(0, 10);
+  const idset = new Set(ids.map(String));
+  const selected = (db.payable || []).filter((p) => sameId(p.recorrencia_id, rid) && idset.has(String(p.id)) && p.status !== "Pago" && p.status !== "Cancelado");
+  const original = selected.reduce((s, p) => s + Number(p.amount || 0), 0);
+  let jurosRest = juros;
+  selected.forEach((p, i) => {
+    const jp = original <= 0 ? 0 : (i === selected.length - 1 ? jurosRest : Math.round(juros * (Number(p.amount || 0) / original) * 100) / 100);
+    jurosRest = Math.round((jurosRest - jp) * 100) / 100;
+    Object.assign(p, { status: "Pago", paidDate: today, valor_original: Number(p.amount || 0), juros_aplicado: jp });
+    if (bankAccount) p.bankAccount = bankAccount;
+  });
+  (db.payable || []).forEach((p) => {
+    if (sameId(p.recorrencia_id, rid) && p.status !== "Pago" && p.status !== "Cancelado") p.status = "Cancelado";
+  });
+  const total = Math.max(0, original + juros - desconto);
+  if (total > 0) {
+    db.cashMoves.push({ id: crypto.randomUUID(), date: today, bankAccount: bankAccount || "", type: "Saída", history: `Quitação antecipada — ${selected.length} parcela(s)`, amount: total, originDocument: `QUIT:${rid}`, status: "Confirmado" });
+  }
+  saveDb();
+  render();
+}
+
+async function updateFutureParcels(rid) {
+  const future = groupParcels(rid).filter((p) => p.status !== "Pago" && p.status !== "Cancelado");
+  if (!future.length) { alert("Não há parcelas futuras em aberto."); return; }
+  const input = prompt(`Novo valor para as ${future.length} parcela(s) em aberto (R$):`, formatMoneyInput(future[0]?.amount || 0));
+  if (input === null) return;
+  const novoValor = parseMoneyInput(input);
+  if (!(novoValor > 0)) { alert("Valor inválido."); return; }
+  try {
+    if (serverMode) {
+      await apiModuleRequest("?module=payable&action=update_scope", {
+        method: "POST",
+        body: JSON.stringify({ recorrencia_id: rid, scope: "all", fields: { amount: novoValor } }),
+      });
+      await refreshAndRender();
+    } else {
+      future.forEach((p) => { p.amount = novoValor; });
+      saveDb();
+      render();
+    }
+  } catch (error) {
+    alert(`Não foi possível atualizar: ${error.message}`);
+  }
+}
+
+async function cancelRecurrenceGroup(rid) {
+  const future = groupParcels(rid).filter((p) => p.status !== "Pago" && p.status !== "Cancelado");
+  if (!future.length) { alert("Não há parcelas futuras para cancelar."); return; }
+  if (!confirm(`Cancelar ${future.length} parcela(s) futura(s) desta recorrência? As parcelas já pagas são mantidas como histórico.`)) return;
+  try {
+    if (serverMode) {
+      await apiModuleRequest("?module=payable&action=cancel_recurrence", { method: "POST", body: JSON.stringify({ recorrencia_id: rid }) });
+      await refreshAndRender();
+    } else {
+      future.forEach((p) => { p.status = "Cancelado"; });
+      saveDb();
+      render();
+    }
+  } catch (error) {
+    alert(`Não foi possível cancelar: ${error.message}`);
+  }
+}
+
 // Validação em tempo real (no blur) dos campos do cadastro de usuários.
 // Os inputs do formulário genérico usam name= (sem id); seleção via #formFields.
 function setupUserFormValidation() {
@@ -5082,6 +5540,20 @@ async function saveForm(event) {
       selfPasswordChanged = true;
       if (choice === "logout") data.logoutOtherSessions = true;
     }
+  }
+  // Conta a pagar recorrente: gera todas as parcelas em vez de um único registro.
+  if (editing.key === "payable" && !editing.id && qs("payableRecurrenceToggle")?.checked) {
+    const ok = await submitPayableRecurrence(data);
+    if (ok) {
+      qs("recordDialog").close();
+      if (serverMode) await refreshAndRender(); else render();
+    }
+    return;
+  }
+  // Edição de uma parcela recorrente: pergunta o escopo (esta / próximas / todas).
+  if (editing.key === "payable" && editing.id) {
+    const handled = await maybeApplyRecurrenceScopeEdit(data);
+    if (handled) return; // já tratado (propagou e fechou) — não cai no fluxo normal
   }
   const previousRecord = editing.id ? byId(editing.key, editing.id) : null;
   try {
@@ -5650,11 +6122,17 @@ function agendaFinancialEvents(startKey, endKey) {
     const dateKey = dayOf(row.dueDate);
     if (!inRange(dateKey)) return;
     let color = "pagar";
-    if (row.status === "Pago") color = "pago";
-    else if (dateKey < todayKey) color = "vencido";
+    let icon = "$";
+    if (row.status === "Pago") {
+      color = "pago";
+      // Quitação antecipada preenche valor_original → marcador especial ⚡.
+      if (row.recorrencia_id && row.valor_original != null && row.valor_original !== "") icon = "⚡";
+    } else if (dateKey < todayKey) {
+      color = "vencido";
+    }
     events.push({
-      dateKey, color, icon: "$", collection: "payable", id: row.id,
-      title: `Pagar: ${nameOf("suppliers", row.supplierId) || row.document || "—"} · ${asMoney(row.amount)}`,
+      dateKey, color, icon, collection: "payable", id: row.id,
+      title: `${icon === "⚡" ? "Quitado antecip.: " : "Pagar: "}${nameOf("suppliers", row.supplierId) || row.document || "—"} · ${asMoney(row.amount)}`,
     });
   });
 

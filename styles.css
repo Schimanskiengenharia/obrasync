@@ -2978,6 +2978,234 @@ html[data-theme="dark"] .client-autofill-head {
   opacity: 0.8;
 }
 
+/* ── Contas a pagar recorrentes ── */
+.payable-recurrence-box {
+  border-top: 1px dashed var(--line);
+  padding-top: 12px;
+  margin-top: 4px;
+  display: grid;
+  gap: 12px;
+}
+
+.payable-recurrence-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.payable-recurrence-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid #bbdefb;
+  border-radius: 8px;
+  background: #f5fbff;
+}
+
+html[data-theme="dark"] .payable-recurrence-fields {
+  border-color: rgba(144, 202, 249, 0.35);
+  background: rgba(30, 136, 229, 0.1);
+}
+
+.payable-recurrence-fields label {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.payable-recurrence-fields .rec-inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  align-self: end;
+}
+
+.payable-recurrence-preview {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: #1565c0;
+}
+
+html[data-theme="dark"] .payable-recurrence-preview { color: #90caf9; }
+
+/* Painel de grupos de recorrência na listagem de contas a pagar. */
+.payable-groups {
+  margin-bottom: 18px;
+}
+
+.payable-groups h3 {
+  margin: 0 0 10px;
+  font-size: 15px;
+}
+
+.payable-groups-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.payable-group-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  padding: 12px 14px;
+  display: grid;
+  gap: 9px;
+}
+
+.payable-group-card header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.payable-group-card header strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.payable-group-menu-btn {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--ink);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.payable-group-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.badge-progress { background: #1a73e8; }
+.badge-done { background: #2e7d32; }
+
+.payable-progress {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.payable-progress span {
+  display: block;
+  height: 100%;
+  background: #2e7d32;
+  transition: width 0.3s ease;
+}
+
+.payable-group-actions {
+  display: grid;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.payable-group-actions[hidden] {
+  display: none;
+}
+
+.payable-group-actions button {
+  width: 100%;
+  text-align: left;
+}
+
+/* Modal de quitação antecipada. */
+.early-settlement-dialog {
+  width: min(560px, calc(100vw - 24px));
+}
+
+.early-settlement-dialog .modal-box {
+  padding: 20px;
+  display: grid;
+  gap: 14px;
+}
+
+.early-settlement-dialog h3 { margin: 0; }
+
+.settlement-list {
+  display: grid;
+  gap: 6px;
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px;
+}
+
+.settlement-item {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  padding: 4px 2px;
+}
+
+.settlement-item .settlement-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settlement-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.settlement-fields label {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.settlement-summary {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--panel-2);
+  font-size: 13px;
+}
+
+.recurrence-scope-actions {
+  display: grid;
+  gap: 8px;
+}
+
+.recurrence-scope-actions .link-button {
+  justify-self: center;
+  margin-top: 4px;
+}
+
 menu {
   display: flex;
   justify-content: flex-end;
@@ -3282,6 +3510,8 @@ menu {
   .chart-grid,
   .form-grid,
   .client-autofill-grid,
+  .payable-recurrence-fields,
+  .settlement-fields,
   .version-panel,
   .schedule-toolbar,
   .proposal-generator-grid,

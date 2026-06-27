@@ -81,6 +81,15 @@ try {
         handle_clients_module($pdo, $method, $_GET);
     }
 
+    // Contas a pagar recorrentes e quitação antecipada. Ex.:
+    //   POST ?module=payable&action=create_recurrence
+    //   POST ?module=payable&action=early_settlement
+    //   GET  ?module=payable&action=group&recorrencia_id=...
+    if (in_array($module, ['payable', 'accounts_payable', 'contas-pagar'], true)) {
+        authorize_request($pdo, $authUser, 'payable', action_for_method($method));
+        handle_payable_module($pdo, $method, $_GET, $authUser);
+    }
+
     if ($resource === '' || $resource === 'bootstrap') {
         require_method($method, ['GET']);
         respond(['ok' => true, 'data' => bootstrap_data($pdo, $resources, $authUser)]);
@@ -714,6 +723,336 @@ function clients_get_by_id(PDO $pdo, int $id): ?array
     return $record ?: null;
 }
 
+// ─── Contas a pagar recorrentes + quitação antecipada ───────────────────────
+// Teto de segurança para geração de parcelas; recorrência "indeterminada" gera
+// um horizonte rolante padrão (não dá para gerar infinitas linhas).
+const PAYABLE_RECURRENCE_MAX = 360;
+const PAYABLE_RECURRENCE_INDETERMINADO = 24;
+
+function handle_payable_module(PDO $pdo, string $method, array $query, array $authUser): never
+{
+    $action = strtolower(trim((string) ($query['action'] ?? '')));
+    try {
+        if ($action === 'create_recurrence') {
+            require_method($method, ['POST']);
+            payable_respond(true, payable_create_recurrence($pdo, read_json(), $authUser), 'Parcelas geradas com sucesso.', 201);
+        }
+        if ($action === 'early_settlement') {
+            require_method($method, ['POST']);
+            payable_respond(true, payable_early_settlement($pdo, read_json(), $authUser), 'Quitação antecipada registrada com sucesso.');
+        }
+        if ($action === 'update_scope') {
+            require_method($method, ['POST']);
+            payable_respond(true, payable_update_scope($pdo, read_json(), $authUser), 'Parcelas atualizadas.');
+        }
+        if ($action === 'cancel_recurrence') {
+            require_method($method, ['POST']);
+            payable_respond(true, payable_cancel_recurrence($pdo, read_json(), $authUser), 'Recorrência cancelada.');
+        }
+        if ($action === 'group') {
+            require_method($method, ['GET']);
+            $rid = trim((string) ($query['recorrencia_id'] ?? ''));
+            if ($rid === '') {
+                payable_respond(false, [], 'Informe o recorrencia_id.', 400);
+            }
+            payable_respond(true, payable_group_parcels($pdo, $rid));
+        }
+        payable_respond(false, [], 'Ação de contas a pagar inválida.', 400);
+    } catch (Throwable $e) {
+        error_log('[ObraSync payable] ' . $e->getMessage() . ' em ' . $e->getFile() . ':' . $e->getLine());
+        payable_respond(false, [], 'Erro interno ao processar contas a pagar. Nada foi gravado.', 500);
+    }
+}
+
+function payable_respond(bool $success, mixed $data = [], string $message = '', int $status = 200): never
+{
+    http_response_code($status);
+    echo json_encode([
+        'success' => $success,
+        'data' => $data,
+        'message' => $message,
+    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
+function payable_user_id(array $authUser): ?int
+{
+    $id = (int) ($authUser['id'] ?? 0);
+    return $id > 0 ? $id : null;
+}
+
+function payable_uuid(): string
+{
+    $data = random_bytes(16);
+    $data[6] = chr((ord($data[6]) & 0x0f) | 0x40);
+    $data[8] = chr((ord($data[8]) & 0x3f) | 0x80);
+    return vsprintf('%s%s-%s-%s-%s-%s%s%s', str_split(bin2hex($data), 4));
+}
+
+function payable_period_months(string $tipo): int
+{
+    return ['mensal' => 1, 'bimestral' => 2, 'trimestral' => 3, 'semestral' => 6, 'anual' => 12][$tipo] ?? 1;
+}
+
+// Soma meses preservando o dia do vencimento e clampando ao último dia do mês
+// (ex.: vencimento dia 31 cai no dia 28/30 nos meses mais curtos).
+function payable_add_months(string $isoDate, int $months): string
+{
+    $base = new DateTimeImmutable($isoDate);
+    $day = (int) $base->format('d');
+    $target = $base->modify('first day of this month')->modify('+' . $months . ' months');
+    $lastDay = (int) $target->format('t');
+    return $target->setDate((int) $target->format('Y'), (int) $target->format('m'), min($day, $lastDay))->format('Y-m-d');
+}
+
+function payable_group_parcels(PDO $pdo, string $rid): array
+{
+    $table = resolve_existing_table($pdo, ['accounts_payable']);
+    $stmt = $pdo->prepare('SELECT * FROM `' . $table . '` WHERE recorrencia_id = ? ORDER BY parcela_numero ASC, dueDate ASC, id ASC');
+    $stmt->execute([$rid]);
+    return $stmt->fetchAll();
+}
+
+function payable_create_recurrence(PDO $pdo, array $payload, array $authUser): array
+{
+    $table = resolve_existing_table($pdo, ['accounts_payable']);
+    $tipo = strtolower(trim((string) ($payload['recorrencia_tipo'] ?? 'mensal')));
+    if (!in_array($tipo, ['mensal', 'bimestral', 'trimestral', 'semestral', 'anual'], true)) {
+        payable_respond(false, [], 'Tipo de recorrência inválido.', 400);
+    }
+    $descricao = trim((string) ($payload['descricao'] ?? $payload['document'] ?? ''));
+    if ($descricao === '') {
+        payable_respond(false, [], 'Informe a descrição/nome da conta.', 400);
+    }
+    $primeiraData = substr(trim((string) ($payload['primeira_data'] ?? $payload['dueDate'] ?? '')), 0, 10);
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $primeiraData)) {
+        payable_respond(false, [], 'Data da primeira parcela inválida.', 400);
+    }
+    $indeterminado = empty($payload['parcelas']) || (int) $payload['parcelas'] <= 0;
+    $total = $indeterminado ? PAYABLE_RECURRENCE_INDETERMINADO : min(PAYABLE_RECURRENCE_MAX, (int) $payload['parcelas']);
+    $valorPrimeira = round((float) ($payload['valor_primeira'] ?? $payload['amount'] ?? 0), 2);
+    $valorDemais = round((float) ($payload['valor_demais'] ?? $valorPrimeira), 2);
+    if ($valorPrimeira <= 0 && $valorDemais <= 0) {
+        payable_respond(false, [], 'Informe o valor das parcelas.', 400);
+    }
+
+    $months = payable_period_months($tipo);
+    $rid = payable_uuid();
+    $issueDate = substr(trim((string) ($payload['issueDate'] ?? $primeiraData)), 0, 10);
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $issueDate)) {
+        $issueDate = $primeiraData;
+    }
+    $openStatus = open_status_for_table($pdo, $table);
+
+    $created = [];
+    $pdo->beginTransaction();
+    try {
+        for ($i = 1; $i <= $total; $i++) {
+            $due = payable_add_months($primeiraData, $months * ($i - 1));
+            $amount = $i === 1 ? $valorPrimeira : $valorDemais;
+            $label = $indeterminado
+                ? ($descricao . ' - Parcela ' . $i)
+                : ($descricao . ' - Parcela ' . $i . '/' . $total);
+            $created[] = insert_dynamic($pdo, $table, [
+                'document' => mb_substr($label, 0, 80),
+                'issueDate' => $issueDate,
+                'dueDate' => $due,
+                'supplierId' => normalize_value($payload['supplierId'] ?? null),
+                'projectId' => normalize_value($payload['projectId'] ?? null),
+                'categoryId' => normalize_value($payload['categoryId'] ?? null),
+                'costCenterId' => normalize_value($payload['costCenterId'] ?? null),
+                'bankAccount' => normalize_value($payload['bankAccount'] ?? null),
+                'amount' => $amount,
+                'status' => $openStatus,
+                'recorrencia_id' => $rid,
+                'parcela_numero' => $i,
+                'parcela_total' => $indeterminado ? null : $total,
+                'recorrencia_tipo' => $tipo,
+            ]);
+        }
+        $pdo->commit();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        throw $e;
+    }
+
+    log_automation_event($pdo, 'CONTA_RECORRENTE_GERADA', 'accounts_payable', $created[0] ?? null, 'accounts_payable', null, 'OK',
+        $descricao . ' — ' . count($created) . ' parcela(s) ' . $tipo . ($indeterminado ? ' (indeterminado)' : ''), payable_user_id($authUser));
+    server_audit($pdo, $authUser, 'create', 'payable', $created[0] ?? null, 'Conta recorrente: ' . $descricao . ' (' . count($created) . ' parcelas)');
+
+    return [
+        'recorrencia_id' => $rid,
+        'parcela_total' => $indeterminado ? null : $total,
+        'indeterminado' => $indeterminado,
+        'created' => count($created),
+        'parcels' => payable_group_parcels($pdo, $rid),
+    ];
+}
+
+function payable_early_settlement(PDO $pdo, array $payload, array $authUser): array
+{
+    $table = resolve_existing_table($pdo, ['accounts_payable']);
+    $rid = trim((string) ($payload['recorrencia_id'] ?? ''));
+    $ids = array_values(array_filter(array_map('intval', (array) ($payload['parcela_ids'] ?? [])), fn ($v) => $v > 0));
+    $ids = array_values(array_unique($ids));
+    if ($rid === '' || !$ids) {
+        payable_respond(false, [], 'Selecione ao menos uma parcela para quitar.', 400);
+    }
+    $juros = round(max(0, (float) ($payload['juros'] ?? 0)), 2);
+    $desconto = round(max(0, (float) ($payload['desconto'] ?? 0)), 2);
+    $bankAccount = trim((string) ($payload['bankAccount'] ?? ''));
+    $today = (new DateTimeImmutable('today'))->format('Y-m-d');
+
+    $placeholders = implode(',', array_fill(0, count($ids), '?'));
+    $stmt = $pdo->prepare('SELECT * FROM `' . $table . '` WHERE recorrencia_id = ? AND id IN (' . $placeholders . ')');
+    $stmt->execute([$rid, ...$ids]);
+    $selected = array_filter($stmt->fetchAll(), fn ($p) => !in_array($p['status'], ['Pago', 'Cancelado'], true));
+    if (!$selected) {
+        payable_respond(false, [], 'As parcelas selecionadas já estão pagas ou canceladas.', 422);
+    }
+
+    $somaOriginal = round(array_sum(array_map(fn ($p) => (float) $p['amount'], $selected)), 2);
+    $totalPago = max(0, round($somaOriginal + $juros - $desconto, 2));
+
+    $pdo->beginTransaction();
+    try {
+        // 1) Baixa as parcelas selecionadas; juros rateado proporcionalmente ao valor.
+        $settledIds = [];
+        $jurosRestante = $juros;
+        $n = count($selected);
+        $k = 0;
+        foreach ($selected as $p) {
+            $k++;
+            $jurosParcela = $somaOriginal <= 0 ? 0
+                : ($k === $n ? $jurosRestante : round($juros * ((float) $p['amount'] / $somaOriginal), 2));
+            $jurosRestante = round($jurosRestante - $jurosParcela, 2);
+            update_dynamic($pdo, $table, (int) $p['id'], [
+                'status' => 'Pago',
+                'paidDate' => $today,
+                'valor_original' => round((float) $p['amount'], 2),
+                'juros_aplicado' => $jurosParcela,
+                'bankAccount' => $bankAccount !== '' ? $bankAccount : ($p['bankAccount'] ?? null),
+            ]);
+            $settledIds[] = (int) $p['id'];
+        }
+
+        // 2) Cancela as parcelas futuras NÃO selecionadas do grupo (mantém as pagas).
+        $stmt = $pdo->prepare('UPDATE `' . $table . '` SET status = \'Cancelado\' WHERE recorrencia_id = ? AND status NOT IN (\'Pago\', \'Cancelado\')');
+        $stmt->execute([$rid]);
+        $cancelled = $stmt->rowCount();
+
+        // 3) Lança o valor total efetivamente pago no caixa/banco.
+        if ($totalPago > 0) {
+            $hist = 'Quitação antecipada — ' . count($settledIds) . ' parcela(s) [recorrência ' . $rid . ']'
+                . ($juros > 0 ? ' +juros R$ ' . number_format($juros, 2, ',', '.') : '')
+                . ($desconto > 0 ? ' -desconto R$ ' . number_format($desconto, 2, ',', '.') : '');
+            $pdo->prepare(
+                'INSERT INTO cash_bank_movements (`date`, bankAccount, `type`, history, amount, originDocument, status)
+                 VALUES (?, ?, \'Saída\', ?, ?, ?, \'Confirmado\')'
+            )->execute([$today, $bankAccount, $hist, $totalPago, mb_substr('QUIT:' . $rid, 0, 100)]);
+        }
+        $pdo->commit();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        throw $e;
+    }
+
+    log_automation_event($pdo, 'QUITACAO_ANTECIPADA', 'accounts_payable', $settledIds[0] ?? null, 'cash_bank_movements', null, 'OK',
+        count($settledIds) . ' parcela(s); original R$ ' . number_format($somaOriginal, 2, ',', '.')
+        . '; juros R$ ' . number_format($juros, 2, ',', '.')
+        . '; desconto R$ ' . number_format($desconto, 2, ',', '.')
+        . '; total R$ ' . number_format($totalPago, 2, ',', '.'), payable_user_id($authUser));
+    server_audit($pdo, $authUser, 'update', 'payable', $settledIds[0] ?? null,
+        'Quitação antecipada: ' . count($settledIds) . ' parcelas, total R$ ' . number_format($totalPago, 2, ',', '.'));
+
+    return [
+        'recorrencia_id' => $rid,
+        'settled' => $settledIds,
+        'cancelled' => $cancelled,
+        'valor_original' => $somaOriginal,
+        'juros' => $juros,
+        'desconto' => $desconto,
+        'total' => $totalPago,
+        'parcels' => payable_group_parcels($pdo, $rid),
+    ];
+}
+
+// Alteração em lote de parcelas de uma recorrência (não toca em parcelas pagas
+// ou canceladas). scope: one | forward | all.
+function payable_update_scope(PDO $pdo, array $payload, array $authUser): array
+{
+    $table = resolve_existing_table($pdo, ['accounts_payable']);
+    $rid = trim((string) ($payload['recorrencia_id'] ?? ''));
+    $scope = (string) ($payload['scope'] ?? 'all');
+    $fromParcela = (int) ($payload['parcela_numero'] ?? 0);
+    $parcelaId = (int) ($payload['parcela_id'] ?? 0);
+    $fields = is_array($payload['fields'] ?? null) ? $payload['fields'] : [];
+    if ($rid === '') {
+        payable_respond(false, [], 'Informe o recorrencia_id.', 400);
+    }
+
+    $allowed = ['amount', 'supplierId', 'categoryId', 'costCenterId', 'projectId', 'bankAccount'];
+    $data = [];
+    foreach ($allowed as $f) {
+        if (array_key_exists($f, $fields)) {
+            $data[$f] = normalize_value($fields[$f]);
+        }
+    }
+    if (!$data) {
+        payable_respond(false, [], 'Nenhum campo válido para atualizar.', 400);
+    }
+
+    $sql = 'SELECT id FROM `' . $table . '` WHERE recorrencia_id = ? AND status NOT IN (\'Pago\', \'Cancelado\')';
+    $params = [$rid];
+    if ($scope === 'one') {
+        $sql .= ' AND id = ?';
+        $params[] = $parcelaId;
+    } elseif ($scope === 'forward') {
+        $sql .= ' AND parcela_numero >= ?';
+        $params[] = $fromParcela;
+    }
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    $ids = array_map('intval', array_column($stmt->fetchAll(), 'id'));
+
+    $pdo->beginTransaction();
+    try {
+        foreach ($ids as $id) {
+            update_dynamic($pdo, $table, $id, $data);
+        }
+        $pdo->commit();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        throw $e;
+    }
+
+    server_audit($pdo, $authUser, 'update', 'payable', null, 'Recorrência ' . $rid . ': ' . count($ids) . ' parcela(s) [' . $scope . ']');
+    return ['updated' => count($ids), 'ids' => $ids, 'parcels' => payable_group_parcels($pdo, $rid)];
+}
+
+function payable_cancel_recurrence(PDO $pdo, array $payload, array $authUser): array
+{
+    $table = resolve_existing_table($pdo, ['accounts_payable']);
+    $rid = trim((string) ($payload['recorrencia_id'] ?? ''));
+    if ($rid === '') {
+        payable_respond(false, [], 'Informe o recorrencia_id.', 400);
+    }
+    $stmt = $pdo->prepare('UPDATE `' . $table . '` SET status = \'Cancelado\' WHERE recorrencia_id = ? AND status NOT IN (\'Pago\', \'Cancelado\')');
+    $stmt->execute([$rid]);
+    $count = $stmt->rowCount();
+
+    log_automation_event($pdo, 'RECORRENCIA_CANCELADA', 'accounts_payable', null, null, null, 'OK',
+        'Recorrência ' . $rid . ': ' . $count . ' parcela(s) futura(s) cancelada(s).', payable_user_id($authUser));
+    server_audit($pdo, $authUser, 'update', 'payable', null, 'Recorrência ' . $rid . ' cancelada (' . $count . ' futuras).');
+    return ['cancelled' => $count, 'parcels' => payable_group_parcels($pdo, $rid)];
+}
+
 function agenda_list_events(PDO $pdo, array $query): array
 {
     $table = resolve_existing_table($pdo, ['agenda_eventos']);
@@ -1155,7 +1494,7 @@ function resource_map(): array
         'viabilityAnalyses' => r('viability_analyses', ['analises-viabilidade','análises-viabilidade'], ['projectId','proposalId','contractValue','estimatedCost','executionMonths','tmaPercent','grossMargin','marginPercent','estimatedProfit','paybackMonths','npv','irrPercent','autoVerdict','verdict','finalVerdict','verdictJustification','verdictHistory','risks','notes','analysisDate','responsibleUserId','status'], []),
         'plugins' => r('system_plugins', ['plugins'], ['name','url','icon','description','roles','sortOrder','status'], ['name']),
         'receivable' => r('accounts_receivable', ['contas-receber','contas_a_receber'], ['document','issueDate','dueDate','receivedDate','clientId','projectId','proposalId','categoryId','costCenterId','bankAccount','amount','status'], ['document']),
-        'payable' => r('accounts_payable', ['contas-pagar','contas_a_pagar'], ['document','issueDate','dueDate','paidDate','supplierId','projectId','categoryId','costCenterId','bankAccount','amount','status'], ['document']),
+        'payable' => r('accounts_payable', ['contas-pagar','contas_a_pagar'], ['document','issueDate','dueDate','paidDate','supplierId','projectId','categoryId','costCenterId','bankAccount','amount','status','recorrencia_id','parcela_numero','parcela_total','recorrencia_tipo','juros_aplicado','valor_original'], ['document']),
         'cashMoves' => r('cash_bank_movements', ['movimentacoes-caixa','movimentacoes','movimentações'], ['date','bankAccount','type','categoryId','projectId','costCenterId','history','amount','originDocument','status'], ['originDocument']),
         'chartAccounts' => r('chart_accounts', ['plano-contas'], ['code','name','type','parentId','acceptsEntries','status'], ['code']),
         'journalEntries' => r('journal_entries', ['lancamentos-contabeis','lançamentos-contábeis'], ['entryDate','competenceDate','debitAccountId','creditAccountId','history','amount','projectId','costCenterId','originDocument'], ['originDocument']),
