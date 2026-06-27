@@ -4796,6 +4796,149 @@ function applyFormEnhancements() {
     pwdInput.addEventListener("input", updateMeter);
   }
   if (editing?.key === "viabilityAnalyses") setupViabilityFormPreview();
+  if (editing?.key === "projects") setupProjectClientAutofill();
+}
+
+// Preenchimento automático dos dados do cliente ao montar uma obra/projeto.
+// A tabela `clients` só possui name, document (CPF/CNPJ), email, phone, zipCode
+// e address — então os únicos campos da obra com correspondência DIRETA de
+// coluna são "address" e "zipCode" (preenchidos e destacados como automáticos).
+// Os demais dados do cliente (nome, CPF/CNPJ, e-mail, telefone) são exibidos num
+// painel de referência, já que a tabela `projects` não tem colunas para eles.
+const PROJECT_CLIENT_AUTOFILL_MAP = { address: "address", zipCode: "zipCode" };
+
+function setupProjectClientAutofill() {
+  const formFields = qs("formFields");
+  const clientSelect = formFields.querySelector('select[name="clientId"]');
+  if (!clientSelect) return;
+
+  const inputByName = (name) => formFields.querySelector(`[name="${name}"]`);
+
+  // Indicação visual (ícone de sincronização) ao lado do campo de cliente.
+  if (!clientSelect.parentElement.querySelector(".client-sync-indicator")) {
+    clientSelect.insertAdjacentHTML(
+      "afterend",
+      '<span class="client-sync-indicator" title="Dados preenchidos automaticamente do cadastro do cliente">🔄 Endereço e CEP são preenchidos automaticamente do cliente</span>'
+    );
+  }
+
+  // Painel de referência com os demais dados do cliente + botão de cadastro.
+  let panel = formFields.querySelector("#clientAutofillPanel");
+  if (!panel) {
+    panel = document.createElement("div");
+    panel.id = "clientAutofillPanel";
+    panel.className = "client-autofill-panel full hidden";
+    clientSelect.closest("label").insertAdjacentElement("afterend", panel);
+  }
+
+  // Edição manual remove o destaque "automático" do campo (e o protege de ser
+  // limpo quando o cliente é desmarcado).
+  Object.keys(PROJECT_CLIENT_AUTOFILL_MAP).forEach((projField) => {
+    const input = inputByName(projField);
+    input?.addEventListener("input", () => {
+      if (input.dataset.autofilled === "1" && input.value !== (input.dataset.autofilledValue || "")) {
+        input.classList.remove("autofilled");
+        input.dataset.autofilled = "0";
+      }
+    });
+  });
+
+  const applyClient = (clientId) => {
+    const client = clientId ? byId("clients", clientId) : null;
+    Object.entries(PROJECT_CLIENT_AUTOFILL_MAP).forEach(([projField, clientField]) => {
+      const input = inputByName(projField);
+      if (!input) return;
+      if (client) {
+        let value = client[clientField] || "";
+        if (projField === "zipCode" && value) value = maskCep(value);
+        input.value = value;
+        input.dataset.autofilled = "1";
+        input.dataset.autofilledValue = value;
+        input.classList.add("autofilled");
+      } else if (input.dataset.autofilled === "1") {
+        // Só limpa o que foi preenchido automaticamente e não foi editado à mão.
+        input.value = "";
+        input.dataset.autofilled = "0";
+        input.classList.remove("autofilled");
+      }
+    });
+    renderClientAutofillPanel(panel, client);
+  };
+
+  clientSelect.addEventListener("change", () => applyClient(clientSelect.value));
+
+  // Ao abrir uma obra que já tem cliente, mostra o painel de referência SEM
+  // sobrescrever os valores já gravados na obra.
+  if (clientSelect.value) renderClientAutofillPanel(panel, byId("clients", clientSelect.value));
+}
+
+function renderClientAutofillPanel(panel, client) {
+  if (!panel) return;
+  if (!client) {
+    panel.classList.add("hidden");
+    panel.innerHTML = "";
+    return;
+  }
+  const linha = (label, value) => `<div class="client-autofill-row"><span>${label}</span><strong>${svgText(value || "—")}</strong></div>`;
+  panel.innerHTML = `
+    <div class="client-autofill-head">
+      <span>🔄 Dados do cliente carregados automaticamente</span>
+      <button type="button" class="link-button" data-open-client="${escapeHtml(client.id)}">Ver cadastro completo do cliente</button>
+    </div>
+    <div class="client-autofill-grid">
+      ${linha("Nome", client.name)}
+      ${linha("CPF/CNPJ", client.document ? maskDocument(client.document) : "")}
+      ${linha("E-mail", client.email)}
+      ${linha("Telefone/WhatsApp", client.phone ? maskPhone(client.phone) : "")}
+      ${linha("Endereço", client.address)}
+      ${linha("CEP", client.zipCode ? maskCep(client.zipCode) : "")}
+    </div>
+  `;
+  panel.classList.remove("hidden");
+  panel.querySelector("[data-open-client]")?.addEventListener("click", () => openClientFullView(client.id));
+}
+
+// Modal empilhado (sem perder o formulário da obra) com o cadastro completo do
+// cliente. "Editar no módulo Clientes" leva ao cadastro para completar dados
+// faltantes, confirmando antes de descartar a obra em edição.
+function openClientFullView(clientId) {
+  const client = byId("clients", clientId);
+  if (!client) { alert("Cliente não encontrado."); return; }
+  const linha = (label, value) => `<div class="agenda-detail-row"><dt>${escapeHtml(label)}</dt><dd>${svgText(value || "—")}</dd></div>`;
+  const dialog = document.createElement("dialog");
+  dialog.className = "agenda-detail-dialog";
+  dialog.innerHTML = `
+    <div class="modal-box agenda-detail-box">
+      <h3>Cadastro do cliente</h3>
+      <dl class="agenda-detail-list">
+        ${linha("Nome", client.name)}
+        ${linha("CPF/CNPJ", client.document ? maskDocument(client.document) : "")}
+        ${linha("E-mail", client.email)}
+        ${linha("Telefone/WhatsApp", client.phone ? maskPhone(client.phone) : "")}
+        ${linha("CEP", client.zipCode ? maskCep(client.zipCode) : "")}
+        ${linha("Endereço", client.address)}
+        ${linha("Status", client.status)}
+      </dl>
+      <div class="agenda-detail-actions">
+        ${canEditModule("clients") ? '<button type="button" class="primary" data-edit-client>Editar no módulo Clientes</button>' : ""}
+        <button type="button" class="secondary" data-close-client>Fechar</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(dialog);
+  const close = () => { try { dialog.close(); } catch { /* já fechado */ } dialog.remove(); };
+  dialog.querySelector("[data-close-client]")?.addEventListener("click", close);
+  dialog.querySelector("[data-edit-client]")?.addEventListener("click", () => {
+    if (!confirm("Abrir o cadastro do cliente vai fechar o formulário da obra atual. Dados não salvos da obra serão perdidos. Continuar?")) return;
+    close();
+    try { qs("recordDialog").close(); } catch { /* já fechado */ }
+    currentModule = "clients";
+    render();
+    openForm("clients", clientId);
+  });
+  dialog.addEventListener("cancel", (event) => { event.preventDefault(); close(); });
+  dialog.addEventListener("click", (event) => { if (event.target === dialog) close(); });
+  dialog.showModal();
 }
 
 // Validação em tempo real (no blur) dos campos do cadastro de usuários.

@@ -74,6 +74,13 @@ try {
         handle_agenda_module($pdo, $method, $_GET);
     }
 
+    // Busca pontual de um cliente por id, usada pelo preenchimento automático de
+    // dados do cliente ao montar uma obra/projeto. Ex.: ?module=clients&action=get&id=5
+    if (in_array($module, ['clients', 'cliente', 'clientes'], true)) {
+        authorize_request($pdo, $authUser, 'clients', action_for_method($method));
+        handle_clients_module($pdo, $method, $_GET);
+    }
+
     if ($resource === '' || $resource === 'bootstrap') {
         require_method($method, ['GET']);
         respond(['ok' => true, 'data' => bootstrap_data($pdo, $resources, $authUser)]);
@@ -654,6 +661,57 @@ function agenda_respond(bool $success, mixed $data = [], string $message = '', i
         'message' => $message,
     ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit;
+}
+
+// Módulo de consulta de clientes. Hoje expõe a busca por id (action=get),
+// usada pelo preenchimento automático ao montar uma obra/projeto. Retorna todos
+// os campos do cliente no padrão { success, data, message }.
+function handle_clients_module(PDO $pdo, string $method, array $query): never
+{
+    $action = strtolower(trim((string) ($query['action'] ?? '')));
+    if ($action === '' && $method === 'GET') {
+        $action = 'get';
+    }
+
+    try {
+        if ($action === 'get') {
+            require_method($method, ['GET']);
+            $id = (int) ($query['id'] ?? 0);
+            if ($id <= 0) {
+                clients_module_respond(false, [], 'Informe o id do cliente.', 400);
+            }
+            $client = clients_get_by_id($pdo, $id);
+            if ($client === null) {
+                clients_module_respond(false, [], 'Cliente não encontrado.', 404);
+            }
+            clients_module_respond(true, $client);
+        }
+
+        clients_module_respond(false, [], 'Ação de clientes inválida.', 400);
+    } catch (Throwable $e) {
+        error_log('[ObraSync clients] ' . $e->getMessage() . ' em ' . $e->getFile() . ':' . $e->getLine());
+        clients_module_respond(false, [], 'Erro interno ao buscar o cliente.', 500);
+    }
+}
+
+function clients_module_respond(bool $success, mixed $data = [], string $message = '', int $status = 200): never
+{
+    http_response_code($status);
+    echo json_encode([
+        'success' => $success,
+        'data' => $data,
+        'message' => $message,
+    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
+function clients_get_by_id(PDO $pdo, int $id): ?array
+{
+    $table = resolve_existing_table($pdo, ['clients']);
+    $stmt = $pdo->prepare('SELECT * FROM `' . $table . '` WHERE id = ? LIMIT 1');
+    $stmt->execute([$id]);
+    $record = $stmt->fetch();
+    return $record ?: null;
 }
 
 function agenda_list_events(PDO $pdo, array $query): array
