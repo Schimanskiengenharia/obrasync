@@ -1754,14 +1754,6 @@ html[data-theme="dark"] .alert-warning {
 .cc-pane.active { display: block; }
 .cc-pane textarea { width: 100%; resize: vertical; }
 
-.cc-uso-actions,
-.cc-ex-buttons {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-
 .cc-foot {
   display: flex;
   justify-content: flex-end;

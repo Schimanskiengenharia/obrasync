@@ -49,7 +49,7 @@ const APP_CHANGELOG = [
   "Correção do erro 500 na criação de contas a pagar recorrentes (auto-cura das colunas de recorrência) e na aprovação de marcos (colunas de referência em accounts_receivable) (v1.12.0).",
   "Varredura de segurança: correção de XSS armazenado em widgets, cards, selects e relatórios; rate limit na troca obrigatória de senha; bloqueio do diretório .git no Apache (v1.12.0).",
   "Auto-cura (ensure_*) de fiscal_documents, agenda/kanban e colunas email/blocked/mustChangePassword de usuários — evita erro 500 em servidor sem a migração; hardening de XXE no parse de XML, sanitização de logo SVG, filtros corrigidos e tela inicial à prova de falha (v1.12.1).",
-  "Novo tipo \"Fiscal / Tributário\" nos centros de custo: dropdown de cadastro, badge na listagem, sugestão automática de uso e exemplos de lançamentos (tributos, taxas e licenças); lista padrão completa com 25 centros (ADM-01..09, TEC-01..10, FIS-01..02, FIN-01..04) com exemplos pré-preenchidos (v1.13.0).",
+  "Novo tipo \"Fiscal / Tributário\" nos centros de custo: dropdown de cadastro e badge na listagem; lista padrão completa com 25 centros (ADM-01..09, TEC-01..10, FIS-01..02, FIN-01..04) com exemplos pré-preenchidos. Abas \"O que entra aqui\" e \"Exemplos de Lançamentos\" simplificadas para texto livre, sem botões de sugestão/modelos (v1.13.0).",
 ];
 
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
@@ -4931,33 +4931,9 @@ const COST_CENTER_TIPOS = [
   ["fiscal_tributario", "Fiscal / Tributário"],
 ];
 
-const COST_CENTER_SUGESTOES = {
-  administrativo: "Lançar aqui todas as despesas administrativas relacionadas ao funcionamento do escritório e da empresa, como: aluguel, contas de consumo (água, luz, internet), material de escritório, serviços gerais.",
-  tecnico: "Lançar aqui todos os custos diretamente relacionados à execução dos serviços técnicos: materiais de obra, mão de obra técnica, subempreiteiros, ART/RRT, EPIs.",
-  operacional: "Lançar aqui todos os custos diretamente relacionados à execução dos serviços técnicos: materiais de obra, mão de obra técnica, subempreiteiros, ART/RRT, EPIs.",
-  financeiro: "Lançar aqui custos financeiros: juros bancários, tarifas, IOF, multas fiscais, encargos de parcelamentos.",
-  fiscal_tributario: "Lançar aqui todos os tributos, impostos e taxas obrigatórias da empresa: ISS, PIS, COFINS, IRPJ, CSLL, Simples Nacional, INSS, alvarás, licenças municipais, taxas de bombeiros, vigilância sanitária e demais obrigações fiscais.",
-};
-const COST_CENTER_SUGESTAO_PESSOAL = "Lançar aqui todos os custos com pessoas: salários, pró-labore, encargos sociais (INSS, FGTS), benefícios (VT, VR, plano de saúde), rescisões e férias.";
-
-const COST_CENTER_EXEMPLOS = [
-  ["Administrativo Geral", ["Aluguel do escritório", "Conta de energia elétrica", "Conta de água e esgoto", "Internet e telefone", "Material de escritório", "Limpeza e conservação", "Segurança patrimonial"]],
-  ["Pessoal e RH", ["Salários dos funcionários", "Pró-labore dos sócios", "INSS patronal", "FGTS", "Vale transporte", "Vale refeição", "Plano de saúde", "13º salário e férias"]],
-  ["Veículos e Transporte", ["Combustível", "Manutenção e revisão", "IPVA e licenciamento", "Seguro veicular", "Pedágios e estacionamentos"]],
-  ["Equipamentos e Ferramentas", ["Compra de ferramentas", "Aluguel de equipamentos", "Manutenção de equipamentos", "Calibração e certificação"]],
-  ["Impostos e Taxas", ["ISS (Imposto Sobre Serviços)", "PIS e COFINS", "IRPJ e CSLL", "Alvará e licenças", "Taxas municipais"]],
-  ["Obras Civis / Técnico", ["Materiais de construção", "Mão de obra pedreiro/servente", "Subempreiteiros", "ART ou RRT", "EPIs (capacete, bota, luva)", "Locação de andaimes"]],
-  ["Instalações Elétricas", ["Fios, cabos e conduítes", "Quadros elétricos e disjuntores", "Iluminação", "Mão de obra eletricista", "ART elétrica", "Medidores e equipamentos"]],
-  ["Fiscal / Tributário", ["ISS mensal (Imposto Sobre Serviços)", "PIS mensal", "COFINS mensal", "IRPJ trimestral", "CSLL trimestral", "Simples Nacional mensal", "Alvará de funcionamento", "Licença ambiental", "Taxa de bombeiros", "Taxa de vigilância sanitária", "IPTU do escritório", "ART e RRT (Anotações de Responsabilidade Técnica)", "Taxa CREA anuidade", "Taxa CAU anuidade"]],
-];
-
 function costCenterTipoLabel(tipo) {
   const found = COST_CENTER_TIPOS.find(([value]) => value === tipo);
   return found ? found[1] : "Administrativo";
-}
-
-function costCenterSuggestion(tipo) {
-  return COST_CENTER_SUGESTOES[tipo] || COST_CENTER_SUGESTOES.administrativo;
 }
 
 // Lançamentos vinculados a um centro de custo (contas a receber/pagar + caixa),
@@ -5093,7 +5069,6 @@ function openCostCenterForm(id) {
   const cc = id ? byId("costCenters", id) : {};
   const tipoOptions = COST_CENTER_TIPOS.map(([v, l]) => `<option value="${v}" ${(cc.tipo || "administrativo") === v ? "selected" : ""}>${l}</option>`).join("");
   const statusOptions = ["Ativo", "Inativo"].map((s) => `<option ${(cc.status || "Ativo") === s ? "selected" : ""}>${s}</option>`).join("");
-  const exemploBtns = COST_CENTER_EXEMPLOS.map(([cat], i) => `<button type="button" class="secondary cc-ex-btn" data-ex="${i}">+ ${escapeHtml(cat)}</button>`).join("");
   const dialog = document.createElement("dialog");
   dialog.className = "cc-dialog";
   dialog.innerHTML = `
@@ -5119,16 +5094,11 @@ function openCostCenterForm(id) {
           </div>
         </section>
         <section class="cc-pane" data-pane="uso">
-          <p class="muted">Descreva o que deve ser lançado neste centro de custo. Use a sugestão automática pelo tipo se quiser.</p>
-          <div class="cc-uso-actions">
-            <button type="button" class="secondary" data-suggest>Sugerir texto pelo tipo</button>
-            <button type="button" class="secondary" data-suggest-pessoal>Modelo: Pessoal e RH</button>
-          </div>
+          <p class="muted">Descreva o que deve ser lançado neste centro de custo.</p>
           <textarea name="descricao_uso" rows="7" placeholder="Ex.: Lançar aqui todas as despesas administrativas...">${escapeHtml(cc.descricao_uso || "")}</textarea>
         </section>
         <section class="cc-pane" data-pane="exemplos">
-          <p class="muted">Liste exemplos de lançamentos típicos. Clique nos modelos para inserir listas prontas (edite à vontade).</p>
-          <div class="cc-ex-buttons">${exemploBtns}</div>
+          <p class="muted">Liste exemplos de lançamentos típicos.</p>
           <textarea name="exemplos" rows="9" placeholder="- Aluguel do escritório&#10;- Conta de energia elétrica">${escapeHtml(cc.exemplos || "")}</textarea>
         </section>
         <section class="cc-pane" data-pane="historico" id="ccHistoricoPane">
@@ -5147,19 +5117,6 @@ function openCostCenterForm(id) {
   dialog.querySelectorAll("[data-tab]").forEach((btn) => btn.addEventListener("click", () => {
     dialog.querySelectorAll("[data-tab]").forEach((b) => b.classList.toggle("active", b === btn));
     dialog.querySelectorAll("[data-pane]").forEach((p) => p.classList.toggle("active", p.dataset.pane === btn.dataset.tab));
-  }));
-
-  const tipoSel = q('[name="tipo"]');
-  const usoTa = q('[name="descricao_uso"]');
-  q("[data-suggest]").addEventListener("click", () => { usoTa.value = costCenterSuggestion(tipoSel.value); });
-  q("[data-suggest-pessoal]").addEventListener("click", () => { usoTa.value = COST_CENTER_SUGESTAO_PESSOAL; });
-  tipoSel.addEventListener("change", () => { if (!usoTa.value.trim()) usoTa.value = costCenterSuggestion(tipoSel.value); });
-
-  dialog.querySelectorAll(".cc-ex-btn").forEach((btn) => btn.addEventListener("click", () => {
-    const items = COST_CENTER_EXEMPLOS[Number(btn.dataset.ex)][1];
-    const exTa = q('[name="exemplos"]');
-    const lines = items.map((it) => `- ${it}`).join("\n");
-    exTa.value = exTa.value.trim() ? `${exTa.value.trim()}\n${lines}` : lines;
   }));
 
   // Renderiza e re-liga os eventos do histórico (período, abrir original e o
