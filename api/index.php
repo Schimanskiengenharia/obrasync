@@ -1449,7 +1449,7 @@ function resource_map(): array
 {
     return [
         'clients' => r('clients', ['clientes'], ['name','document','zipCode','address','numero','complemento','bairro','cidade','estado','email','phone','status'], ['document','name']),
-        'suppliers' => r('suppliers', ['fornecedores'], ['name','document','zipCode','address','email','phone','status'], ['document','name']),
+        'suppliers' => r('suppliers', ['fornecedores'], ['name','document','zipCode','address','numero','complemento','bairro','cidade','estado','email','phone','status'], ['document','name']),
         'categories' => r('financial_categories', ['categorias'], ['name','type','chartAccountId','status'], ['name']),
         'costCenters' => r('cost_centers', ['centros-custo','centros_de_custo'], ['code','name','manager','status','tipo','descricao_uso','exemplos'], ['code','name']),
         'bankAccounts' => r('bank_accounts', ['contas-bancarias','contas_bancarias'], ['name','bank','agency','accountNumber','openingBalance','status'], ['name']),
@@ -1516,7 +1516,7 @@ function resource_map(): array
         'journalEntries' => r('journal_entries', ['lancamentos-contabeis','lançamentos-contábeis'], ['entryDate','competenceDate','debitAccountId','creditAccountId','history','amount','projectId','costCenterId','originDocument'], ['originDocument']),
         'taxDocuments' => r('tax_documents', ['documentos-fiscais'], ['document','date','type','clientId','supplierId','projectId','amount','status'], ['document']),
         'taxes' => r('taxes', ['impostos'], ['name','competenceDate','baseAmount','rate','amount','projectId','status'], ['name','competenceDate']),
-        'companySettings' => r('company_settings', ['dados-empresa'], ['name','document','zipCode','address','email','phone','city','status'], ['document','name']),
+        'companySettings' => r('company_settings', ['dados-empresa'], ['name','document','zipCode','address','numero','complemento','bairro','city','estado','email','phone','status'], ['document','name']),
         'users' => r('system_users', ['usuarios','usuários'], ['username','fullName','email','password','role','status','blocked','mustChangePassword','cpf','data_nascimento','celular'], ['username'], ['password']),
         'permissions' => r('role_permissions', ['permissoes','permissões'], ['role','module','canView','canCreate','canEdit','canDelete','canExport','canApprove','canAttach','status'], ['role','module']),
         'systemVersion' => r('sistema_versoes', ['sistema-versoes','versoes-sistema'], ['versao','data_versao','descricao','alteracoes'], ['versao']),
@@ -1951,6 +1951,14 @@ function bootstrap_data(PDO $pdo, array $resources, ?array $authUser = null, boo
             && !in_array('cidade', table_columns($pdo, 'clients'), true)) {
             ensure_client_address_columns($pdo);
         }
+        if (resolve_existing_table($pdo, ['suppliers'], false)
+            && !in_array('cidade', table_columns($pdo, 'suppliers'), true)) {
+            ensure_supplier_address_columns($pdo);
+        }
+        if (resolve_existing_table($pdo, ['company_settings'], false)
+            && !in_array('estado', table_columns($pdo, 'company_settings'), true)) {
+            ensure_company_address_columns($pdo);
+        }
         // Colunas de referência cruzada caixa ↔ conta a pagar (anti dupla contagem).
         if (resolve_existing_table($pdo, ['cash_bank_movements'], false)
             && !in_array('referencia_tipo', table_columns($pdo, 'cash_bank_movements'), true)) {
@@ -2044,6 +2052,31 @@ function ensure_client_address_columns(PDO $pdo): void
             ADD COLUMN IF NOT EXISTS complemento VARCHAR(100) NULL,
             ADD COLUMN IF NOT EXISTS bairro VARCHAR(100) NULL,
             ADD COLUMN IF NOT EXISTS cidade VARCHAR(100) NULL,
+            ADD COLUMN IF NOT EXISTS estado VARCHAR(2) NULL"
+    );
+}
+
+// Mesmo endereço estruturado para fornecedores.
+function ensure_supplier_address_columns(PDO $pdo): void
+{
+    $pdo->exec(
+        "ALTER TABLE suppliers
+            ADD COLUMN IF NOT EXISTS numero VARCHAR(20) NULL,
+            ADD COLUMN IF NOT EXISTS complemento VARCHAR(100) NULL,
+            ADD COLUMN IF NOT EXISTS bairro VARCHAR(100) NULL,
+            ADD COLUMN IF NOT EXISTS cidade VARCHAR(100) NULL,
+            ADD COLUMN IF NOT EXISTS estado VARCHAR(2) NULL"
+    );
+}
+
+// Dados da empresa: já possui `city` (cidade); acrescenta os demais campos.
+function ensure_company_address_columns(PDO $pdo): void
+{
+    $pdo->exec(
+        "ALTER TABLE company_settings
+            ADD COLUMN IF NOT EXISTS numero VARCHAR(20) NULL,
+            ADD COLUMN IF NOT EXISTS complemento VARCHAR(100) NULL,
+            ADD COLUMN IF NOT EXISTS bairro VARCHAR(100) NULL,
             ADD COLUMN IF NOT EXISTS estado VARCHAR(2) NULL"
     );
 }

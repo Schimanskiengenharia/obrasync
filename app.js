@@ -457,13 +457,18 @@ const configs = {
     title: "Fornecedores",
     description: "Cadastro de fornecedores para compras, contas a pagar, categorias e documentos de origem.",
     fields: [
-      ["name",     "Nome",       "text",   true],
-      ["document", "CPF/CNPJ",   "text"],
-      ["zipCode",  "CEP",        "text"],
-      ["address",  "Endereço",   "text"],
-      ["email",    "E-mail",     "email",  true],
-      ["phone",    "Celular",    "text",   true],
-      ["status",   "Status",     "select", ["Ativo", "Inativo"]],
+      ["name",        "Nome / Razão social",   "text",   true],
+      ["document",    "CPF/CNPJ",              "text"],
+      ["email",       "E-mail",                "email",  true],
+      ["phone",       "Celular / WhatsApp",    "text",   true],
+      ["zipCode",     "CEP",                   "text"],
+      ["address",     "Rua / Logradouro",      "text"],
+      ["numero",      "Número",                "text"],
+      ["complemento", "Complemento",           "text"],
+      ["bairro",      "Bairro",                "text"],
+      ["cidade",      "Cidade",                "text"],
+      ["estado",      "Estado (UF)",           "select", ["", "AC", "AL", "AM", "AP", "BA", "CE", "DF", "ES", "GO", "MA", "MG", "MS", "MT", "PA", "PB", "PE", "PI", "PR", "RJ", "RN", "RO", "RR", "RS", "SC", "SE", "SP", "TO"]],
+      ["status",      "Status",                "select", ["Ativo", "Inativo"]],
     ],
   },
   products: {
@@ -1180,11 +1185,15 @@ const configs = {
     fields: [
       ["name", "Razão social", "text", true],
       ["document", "CNPJ", "text"],
-      ["zipCode", "CEP", "text"],
-      ["address", "Endereço", "text"],
       ["email", "E-mail", "email"],
       ["phone", "Telefone", "text"],
+      ["zipCode", "CEP", "text"],
+      ["address", "Rua / Logradouro", "text"],
+      ["numero", "Número", "text"],
+      ["complemento", "Complemento", "text"],
+      ["bairro", "Bairro", "text"],
       ["city", "Cidade", "text"],
+      ["estado", "Estado (UF)", "select", ["", "AC", "AL", "AM", "AP", "BA", "CE", "DF", "ES", "GO", "MA", "MG", "MS", "MT", "PA", "PB", "PE", "PI", "PR", "RJ", "RN", "RO", "RR", "RS", "SC", "SE", "SP", "TO"]],
       ["status", "Status", "select", ["Ativo", "Inativo"]],
     ],
   },
@@ -5502,7 +5511,7 @@ function applyFormEnhancements() {
   // Preenchimento automático global: qualquer formulário com select de cliente.
   const clientSelect = qs("formFields").querySelector('select[name="clientId"], select[name="cliente_id"]');
   if (clientSelect) setupClientAutofill(qs("formFields"), clientSelect);
-  if (editing?.key === "clients") setupClientAddressCep();
+  if (["clients", "suppliers", "companySettings"].includes(editing?.key)) setupAddressCep();
   if (editing?.key === "payable" && !editing.id) setupPayableRecurrence();
   if (editing?.key === "payable" && editing.id) setupPayableCashLink();
   if (editing?.key === "cashMoves" && !editing.id) setupCashPayableLink();
@@ -5648,20 +5657,24 @@ function setupClientAutofill(container, clientSelect) {
   if (clientSelect.value) carregarDadosCliente(clientSelect.value, (client) => renderClientAutofillPanel(panel, client));
 }
 
-// Busca automática de endereço pelo CEP (ViaCEP) no cadastro de clientes.
-// Ao sair do campo CEP, preenche rua, bairro, cidade e UF; número e
-// complemento ficam para o usuário. CEP inexistente mostra aviso.
-function setupClientAddressCep() {
+// Busca automática de endereço pelo CEP (ViaCEP) nos cadastros de clientes,
+// fornecedores e dados da empresa. Ao sair do campo CEP, preenche rua, bairro,
+// cidade e UF; número e complemento ficam para o usuário. Tolerante a nomes de
+// campo: cidade pode ser "cidade" ou "city"; UF pode ser "estado" ou "uf".
+function setupAddressCep() {
   const formFields = qs("formFields");
   const cepInput = formFields?.querySelector('[name="zipCode"]');
   if (!cepInput || cepInput.dataset.cepReady === "1") return;
   cepInput.dataset.cepReady = "1";
-  const setVal = (name, value) => {
-    const el = formFields.querySelector(`[name="${name}"]`);
-    if (!el || !value) return;
-    el.value = value;
-    el.classList.add("autofilled");
-    el.title = "Preenchido automaticamente pela busca de CEP. Clique para editar.";
+  const setVal = (names, value) => {
+    if (!value) return;
+    for (const name of names) {
+      const el = formFields.querySelector(`[name="${name}"]`);
+      if (!el) continue;
+      el.value = value;
+      el.classList.add("autofilled");
+      el.title = "Preenchido automaticamente pela busca de CEP. Clique para editar.";
+    }
   };
   cepInput.addEventListener("blur", async () => {
     const cep = onlyDigits(cepInput.value);
@@ -5677,10 +5690,10 @@ function setupClientAddressCep() {
       if (typeof showToast === "function") showToast("CEP não encontrado"); else alert("CEP não encontrado");
       return;
     }
-    setVal("address", data.logradouro);
-    setVal("bairro", data.bairro);
-    setVal("cidade", data.localidade);
-    setVal("estado", data.uf); // o select de UF recebe a sigla diretamente
+    setVal(["address"], data.logradouro);
+    setVal(["bairro"], data.bairro);
+    setVal(["cidade", "city"], data.localidade);
+    setVal(["estado", "uf"], data.uf); // o select de UF recebe a sigla diretamente
     formFields.querySelector('[name="numero"]')?.focus();
   });
 }
