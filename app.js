@@ -5139,7 +5139,9 @@ function renderCrud(key) {
     .map((field) => field[0]);
   if (key === "fiscalDocuments") tableFields.push("hasPdf", "hasXml");
   if (key === "payable" || key === "receivable") tableFields.push("fiscalDocumentNumber");
+  const docTitle = { purchaseOrders: "Pedido de Compra" }[key];
   qs("content").innerHTML = `
+    ${docTitle ? generateDocumentHeader(docTitle, documentPeriodSubtitle()) : ""}
     <section class="module-head">
       <div>
         <h2>${config.title}</h2>
@@ -5149,6 +5151,7 @@ function renderCrud(key) {
     </section>
     ${key === "payable" ? payableGroupsPanelHtml(rows) : ""}
     ${table(config.title, rows, tableFields, editable, key)}
+    ${docTitle ? generateDocumentFooter() : ""}
   `;
   if (key === "payable") setupPayableGroupActions();
   qs("newRecord")?.addEventListener("click", () => openForm(key));
@@ -7547,6 +7550,7 @@ function renderProjectSchedule() {
   const metrics = project ? scheduleMetrics(project.id, rows) : scheduleMetrics("");
   const tableFields = ["sortOrder", "stageName", "status", "plannedStartDate", "plannedEndDate", "actualStartDate", "actualEndDate", "plannedPhysicalPercent", "actualPhysicalPercent", "plannedFinancialAmount", "actualFinancialAmount", "workBudgetId", "workBudgetItemId", "durationDays", "predecessorIds", "responsible", "isMilestone"];
   qs("content").innerHTML = `
+    ${generateDocumentHeader("Cronograma Físico-Financeiro", `${project?.name || "Sem obra selecionada"} · ${documentPeriodSubtitle()}`)}
     <section class="module-head">
       <div>
         <h2>Cronograma Físico-Financeiro</h2>
@@ -7587,6 +7591,7 @@ function renderProjectSchedule() {
     ${ganttChart(rows)}
     ${scheduleStepCards(rows)}
     ${table("Etapas do cronograma", rows, tableFields, editable)}
+    ${generateDocumentFooter()}
   `;
   qs("newRecord")?.addEventListener("click", () => openForm("projectSchedule"));
   qs("whatsappUpdateBtn")?.addEventListener("click", () => createWhatsappUpdate(project?.id));
@@ -7887,6 +7892,7 @@ function renderWorkBudgets() {
   const items = selected ? budgetItemsFor(selected.id) : [];
   const abc = abcRows(items);
   qs("content").innerHTML = `
+    ${generateDocumentHeader("Orçamento de Obra", selected ? [selected.name, nameOf("projects", selected.projectId) || "Sem obra", asDate(selected.budgetDate)].filter(Boolean).join(" · ") : "Sem orçamento selecionado")}
     <section class="module-head">
       <div>
         <h2>Orçamentos de Obras</h2>
@@ -7920,6 +7926,7 @@ function renderWorkBudgets() {
     </section>
     ${table("Orçamentos de obras", rows, ["name", "projectId", "clientId", "budgetDate", "sinapiReferenceId", "priceType", "bdiPercent", "directCost", "totalCost", "totalPrice", "status"], editable, "workBudgets")}
     ${selected ? table(`Itens do orçamento: ${selected.name}`, items, ["origin", "code", "description", "unit", "quantity", "unitCost", "totalCost", "bdiPercent", "unitPrice", "totalPrice", "stageName", "costCenterId", "categoryId"], editable, "workBudgetItems") : '<div class="empty">Sem dados para exibir</div>'}
+    ${generateDocumentFooter()}
   `;
   qs("newRecord")?.addEventListener("click", () => openForm("workBudgets"));
   qs("newBudgetItem")?.addEventListener("click", () => openForm("workBudgetItems"));
@@ -10129,6 +10136,57 @@ function companyLogoSrc(company, bust) {
   return `${API_BASE}/?module=companySettings&action=getLogo&v=${encodeURIComponent(bust || c.logo_url)}`;
 }
 
+// ─── Cabeçalho/rodapé padrão de documentos (reutilizável + print-only) ──────
+// Subtítulo de período a partir dos filtros superiores.
+function documentPeriodSubtitle() {
+  const f = getFilters();
+  if (f.start && f.end) return `Período: ${asDate(f.start)} a ${asDate(f.end)}`;
+  if (f.start) return `A partir de ${asDate(f.start)}`;
+  if (f.end) return `Até ${asDate(f.end)}`;
+  return "Todos os períodos";
+}
+
+// Cabeçalho padronizado: logo à esquerda, dados da empresa ao centro, título e
+// subtítulo à direita, com linha divisória. Visível apenas na impressão.
+function generateDocumentHeader(titulo, subtitulo = "") {
+  const c = (db.companySettings || [])[0] || {};
+  const logo = companyLogoSrc(c);
+  const addr = companyAddressLines(c);
+  const enderecoLinha = [addr.street, addr.cityCep].filter(Boolean).join(" · ");
+  const contatos = [
+    (c.whatsapp || c.phone) ? `📱 ${c.whatsapp || c.phone}` : "",
+    c.email ? `📧 ${c.email}` : "",
+    (c.website || c.site) ? `🌐 ${c.website || c.site}` : "",
+  ].filter(Boolean).join(" · ");
+  return `
+    <header class="doc-header doc-print-only">
+      ${logo ? `<img class="doc-logo" src="${escapeHtml(logo)}" alt="Logo da empresa">` : ""}
+      <div class="doc-company">
+        <strong class="doc-company-name">${svgText(c.name || "Empresa")}</strong>
+        ${c.document ? `<span>CNPJ: ${svgText(c.document)}</span>` : ""}
+        ${enderecoLinha ? `<span>${svgText(enderecoLinha)}</span>` : ""}
+        ${contatos ? `<span>${svgText(contatos)}</span>` : ""}
+      </div>
+      <div class="doc-title-box">
+        <span class="doc-title">${svgText(titulo)}</span>
+        ${subtitulo ? `<span class="doc-subtitle">${svgText(subtitulo)}</span>` : ""}
+      </div>
+    </header>`;
+}
+
+// Rodapé padronizado: dados da empresa + data/hora de geração. O número de página
+// é resolvido por CSS (@page counter). Visível apenas na impressão.
+function generateDocumentFooter() {
+  const c = (db.companySettings || [])[0] || {};
+  const info = [c.name, c.document ? `CNPJ ${c.document}` : "", c.whatsapp || c.phone, c.email].filter(Boolean).join(" · ");
+  const stamp = new Date().toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  return `
+    <footer class="doc-footer doc-print-only">
+      <span>${svgText(info)}</span>
+      <span>Gerado em ${svgText(stamp)}</span>
+    </footer>`;
+}
+
 // Linha de contato do cabeçalho: 📱 WhatsApp · 📧 E-mail · 🌐 Site (ignora vazios).
 function proposalCompanyContactLine(vars) {
   const parts = [
@@ -10485,7 +10543,10 @@ function renderProjectRevenues() {
 
 function renderProjectReport() {
   const rows = resultByProjectRows().map((row) => ({ name: row.label, total: row.value }));
+  const f = getFilters();
+  const obraNome = f.projectId ? (nameOf("projects", f.projectId) || "Obra") : "Todas as obras";
   qs("content").innerHTML = `
+    ${generateDocumentHeader("Relatório de Obra", `${obraNome} · ${documentPeriodSubtitle()}`)}
     <section class="module-head">
       <div>
         <h2>Relatório por obra</h2>
@@ -10494,6 +10555,7 @@ function renderProjectReport() {
     </section>
     ${table("Relatório por obra", rows, ["name", "total"])}
     ${chartPanel("Resultado por obra/projeto", "Receita menos despesas por obra", horizontalBarChart(resultByProjectRows(), "#0f766e"))}
+    ${generateDocumentFooter()}
   `;
 }
 
@@ -11487,6 +11549,7 @@ function renderReports(mode = "reports") {
   };
   const report = reportMap[mode] || reportMap.reports;
   qs("content").innerHTML = `
+    ${generateDocumentHeader(report.title, documentPeriodSubtitle())}
     <section class="module-head">
       <div>
         <h2>${report.title}</h2>
@@ -11499,6 +11562,7 @@ function renderReports(mode = "reports") {
       <div class="panel"><h3>Fluxo de caixa</h3>${bars(cashFlowByBank())}</div>
       <div class="panel"><h3>Resultado por centro de custo</h3>${bars(resultByCostCenter())}</div>
     </section>
+    ${generateDocumentFooter()}
   `;
   if (mode === "reports") wireDuplicatesReport();
 }

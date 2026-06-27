@@ -1867,6 +1867,71 @@ html[data-theme="dark"] .cc-dup td { background: rgba(245, 200, 60, 0.12); }
   gap: 8px;
 }
 
+/* Cabeçalho/rodapé padrão de documentos — só aparecem na impressão */
+.doc-print-only { display: none; }
+
+@media print {
+  .doc-print-only { display: flex; }
+
+  .doc-header {
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    border-bottom: 2px solid #0f766e;
+    padding-bottom: 10px;
+    margin-bottom: 16px;
+  }
+
+  .doc-logo {
+    flex: none;
+    max-height: 60px;
+    max-width: 180px;
+    object-fit: contain;
+  }
+
+  .doc-company {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    font-size: 10.5px;
+    color: #333;
+  }
+
+  .doc-company-name { font-size: 15px; }
+
+  .doc-title-box {
+    display: flex;
+    flex-direction: column;
+    text-align: right;
+    min-width: 170px;
+  }
+
+  .doc-title {
+    font-size: 16px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #0f766e;
+  }
+
+  .doc-subtitle { font-size: 11px; color: #555; }
+
+  .doc-footer {
+    position: fixed;
+    bottom: 6mm;
+    left: 12mm;
+    right: 12mm;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    border-top: 1px solid #ccc;
+    padding-top: 4px;
+    font-size: 9px;
+    color: #777;
+    background: #fff;
+  }
+}
+
 .version-panel {
   display: grid;
   grid-template-columns: minmax(190px, 260px) 1fr;
