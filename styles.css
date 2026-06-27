@@ -3228,6 +3228,21 @@ html[data-theme="dark"] .client-autofill-head {
   opacity: 0.8;
 }
 
+.filter-client-sync {
+  margin-top: 4px;
+  font-size: 11px;
+}
+
+.filter-client-sync .link-button {
+  font-size: 11px;
+}
+
+.client-missing {
+  font-style: italic;
+  font-weight: 500;
+  opacity: 0.85;
+}
+
 /* ── Contas a pagar recorrentes ── */
 .payable-recurrence-box {
   border-top: 1px dashed var(--line);
