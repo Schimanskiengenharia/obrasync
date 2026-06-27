@@ -1448,7 +1448,7 @@ function fail(string $message, int $status): never
 function resource_map(): array
 {
     return [
-        'clients' => r('clients', ['clientes'], ['name','document','zipCode','address','email','phone','status'], ['document','name']),
+        'clients' => r('clients', ['clientes'], ['name','document','zipCode','address','numero','complemento','bairro','cidade','estado','email','phone','status'], ['document','name']),
         'suppliers' => r('suppliers', ['fornecedores'], ['name','document','zipCode','address','email','phone','status'], ['document','name']),
         'categories' => r('financial_categories', ['categorias'], ['name','type','chartAccountId','status'], ['name']),
         'costCenters' => r('cost_centers', ['centros-custo','centros_de_custo'], ['code','name','manager','status','tipo','descricao_uso','exemplos'], ['code','name']),
@@ -1946,6 +1946,11 @@ function bootstrap_data(PDO $pdo, array $resources, ?array $authUser = null, boo
             }
             ensure_default_cost_centers($pdo);
         }
+        // Endereço estruturado no cadastro de clientes (cidade/estado p/ snapshot).
+        if (resolve_existing_table($pdo, ['clients'], false)
+            && !in_array('cidade', table_columns($pdo, 'clients'), true)) {
+            ensure_client_address_columns($pdo);
+        }
         // Colunas de referência cruzada caixa ↔ conta a pagar (anti dupla contagem).
         if (resolve_existing_table($pdo, ['cash_bank_movements'], false)
             && !in_array('referencia_tipo', table_columns($pdo, 'cash_bank_movements'), true)) {
@@ -2030,6 +2035,37 @@ function ensure_client_snapshot_columns(PDO $pdo): void
     }
 }
 
+// Colunas de endereço estruturado no cadastro de clientes (idempotente).
+function ensure_client_address_columns(PDO $pdo): void
+{
+    $pdo->exec(
+        "ALTER TABLE clients
+            ADD COLUMN IF NOT EXISTS numero VARCHAR(20) NULL,
+            ADD COLUMN IF NOT EXISTS complemento VARCHAR(100) NULL,
+            ADD COLUMN IF NOT EXISTS bairro VARCHAR(100) NULL,
+            ADD COLUMN IF NOT EXISTS cidade VARCHAR(100) NULL,
+            ADD COLUMN IF NOT EXISTS estado VARCHAR(2) NULL"
+    );
+}
+
+// Monta o endereço completo do cliente (logradouro, número, complemento, bairro)
+// para o snapshot de proposta/contrato.
+function compose_client_address(array $client): string
+{
+    $logradouro = trim((string) ($client['address'] ?? ''));
+    $numero = trim((string) ($client['numero'] ?? ''));
+    $line1 = $logradouro;
+    if ($numero !== '') {
+        $line1 .= ($line1 !== '' ? ', ' : '') . $numero;
+    }
+    $parts = array_filter([
+        $line1,
+        trim((string) ($client['complemento'] ?? '')),
+        trim((string) ($client['bairro'] ?? '')),
+    ], static fn ($p) => $p !== '');
+    return implode(' - ', $parts);
+}
+
 // Copia os dados ATUAIS do cliente para as colunas de snapshot da proposta/
 // contrato. Só (re)captura na criação ($before === null), quando o cliente foi
 // trocado, ou quando o snapshot ainda está vazio — assim o registro preserva os
@@ -2063,14 +2099,16 @@ function maybe_snapshot_client(PDO $pdo, string $table, int $id, ?array $before)
         if (!$client) {
             return;
         }
+        $endereco = compose_client_address($client);
         update_dynamic($pdo, $table, $id, [
             'cliente_nome' => $client['name'] ?? null,
             'cliente_cpf_cnpj' => $client['document'] ?? null,
             'cliente_email' => $client['email'] ?? null,
             'cliente_telefone' => $client['phone'] ?? null,
-            'cliente_endereco' => $client['address'] ?? null,
+            'cliente_endereco' => $endereco !== '' ? $endereco : ($client['address'] ?? null),
+            'cliente_cidade' => $client['cidade'] ?? null,
+            'cliente_estado' => $client['estado'] ?? null,
             'cliente_cep' => $client['zipCode'] ?? null,
-            // cidade/estado não existem na tabela clients; permanecem nulos.
         ]);
     } catch (Throwable $error) {
         error_log('[ObraSync snapshot] ' . $error->getMessage());

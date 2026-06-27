@@ -439,13 +439,18 @@ const configs = {
     title: "Clientes",
     description: "Cadastro de clientes usado em orçamentos, vendas, contas a receber e filtros gerenciais.",
     fields: [
-      ["name",     "Nome",       "text",   true],
-      ["document", "CPF/CNPJ",   "text"],
-      ["zipCode",  "CEP",        "text"],
-      ["address",  "Endereço",   "text"],
-      ["email",    "E-mail",     "email",  true],
-      ["phone",    "Celular",    "text",   true],
-      ["status",   "Status",     "select", ["Ativo", "Inativo"]],
+      ["name",        "Nome / Razão social",   "text",   true],
+      ["document",    "CPF/CNPJ",              "text"],
+      ["email",       "E-mail",                "email",  true],
+      ["phone",       "Celular / WhatsApp",    "text",   true],
+      ["zipCode",     "CEP",                   "text"],
+      ["address",     "Rua / Logradouro",      "text"],
+      ["numero",      "Número",                "text"],
+      ["complemento", "Complemento",           "text"],
+      ["bairro",      "Bairro",                "text"],
+      ["cidade",      "Cidade",                "text"],
+      ["estado",      "Estado (UF)",           "select", ["", "AC", "AL", "AM", "AP", "BA", "CE", "DF", "ES", "GO", "MA", "MG", "MS", "MT", "PA", "PB", "PE", "PI", "PR", "RJ", "RN", "RO", "RR", "RS", "SC", "SE", "SP", "TO"]],
+      ["status",      "Status",                "select", ["Ativo", "Inativo"]],
     ],
   },
   suppliers: {
@@ -5497,6 +5502,7 @@ function applyFormEnhancements() {
   // Preenchimento automático global: qualquer formulário com select de cliente.
   const clientSelect = qs("formFields").querySelector('select[name="clientId"], select[name="cliente_id"]');
   if (clientSelect) setupClientAutofill(qs("formFields"), clientSelect);
+  if (editing?.key === "clients") setupClientAddressCep();
   if (editing?.key === "payable" && !editing.id) setupPayableRecurrence();
   if (editing?.key === "payable" && editing.id) setupPayableCashLink();
   if (editing?.key === "cashMoves" && !editing.id) setupCashPayableLink();
@@ -5642,6 +5648,50 @@ function setupClientAutofill(container, clientSelect) {
   if (clientSelect.value) carregarDadosCliente(clientSelect.value, (client) => renderClientAutofillPanel(panel, client));
 }
 
+// Busca automática de endereço pelo CEP (ViaCEP) no cadastro de clientes.
+// Ao sair do campo CEP, preenche rua, bairro, cidade e UF; número e
+// complemento ficam para o usuário. CEP inexistente mostra aviso.
+function setupClientAddressCep() {
+  const formFields = qs("formFields");
+  const cepInput = formFields?.querySelector('[name="zipCode"]');
+  if (!cepInput || cepInput.dataset.cepReady === "1") return;
+  cepInput.dataset.cepReady = "1";
+  const setVal = (name, value) => {
+    const el = formFields.querySelector(`[name="${name}"]`);
+    if (!el || !value) return;
+    el.value = value;
+    el.classList.add("autofilled");
+    el.title = "Preenchido automaticamente pela busca de CEP. Clique para editar.";
+  };
+  cepInput.addEventListener("blur", async () => {
+    const cep = onlyDigits(cepInput.value);
+    if (cep.length !== 8) return;
+    let data;
+    try {
+      const resp = await fetch(`https://viacep.com.br/ws/${cep}/json/`);
+      data = await resp.json();
+    } catch {
+      return; // rede indisponível: o usuário preenche manualmente, sem erro
+    }
+    if (!data || data.erro) {
+      if (typeof showToast === "function") showToast("CEP não encontrado"); else alert("CEP não encontrado");
+      return;
+    }
+    setVal("address", data.logradouro);
+    setVal("bairro", data.bairro);
+    setVal("cidade", data.localidade);
+    setVal("estado", data.uf); // o select de UF recebe a sigla diretamente
+    formFields.querySelector('[name="numero"]')?.focus();
+  });
+}
+
+// Endereço completo legível do cliente (logradouro, número, complemento, bairro).
+function clientFullAddress(client) {
+  if (!client) return "";
+  const line1 = [client.address, client.numero].filter((v) => v && String(v).trim()).join(", ");
+  return [line1, client.complemento, client.bairro].filter((v) => v && String(v).trim()).join(" - ");
+}
+
 function renderClientAutofillPanel(panel, client) {
   if (!panel) return;
   if (!client) {
@@ -5666,7 +5716,8 @@ function renderClientAutofillPanel(panel, client) {
       ${linha("CPF/CNPJ", client.document ? maskDocument(client.document) : "")}
       ${linha("E-mail", client.email)}
       ${linha("Telefone/WhatsApp", client.phone ? maskPhone(client.phone) : "")}
-      ${linha("Endereço", client.address)}
+      ${linha("Endereço", clientFullAddress(client))}
+      ${linha("Cidade/UF", [client.cidade, client.estado].filter(Boolean).join(" / "))}
       ${linha("CEP", client.zipCode ? maskCep(client.zipCode) : "")}
     </div>
   `;
@@ -5692,7 +5743,9 @@ function openClientFullView(clientId) {
         ${linha("E-mail", client.email)}
         ${linha("Telefone/WhatsApp", client.phone ? maskPhone(client.phone) : "")}
         ${linha("CEP", client.zipCode ? maskCep(client.zipCode) : "")}
-        ${linha("Endereço", client.address)}
+        ${linha("Endereço", clientFullAddress(client))}
+        ${linha("Cidade", client.cidade)}
+        ${linha("Estado", client.estado)}
         ${linha("Status", client.status)}
       </dl>
       <div class="agenda-detail-actions">
