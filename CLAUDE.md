@@ -1,7 +1,7 @@
 # CLAUDE.md — Guia para agentes de IA no projeto ObraSync
 
-> **Versão atual:** `v1.12.0` · 2026-06-27
-> **Última varredura de código:** 2026-06-27 (3ª rodada — segurança, bugs, performance, qualidade, UX)
+> **Versão atual:** `v1.12.1` · 2026-06-27
+> **Última varredura de código:** 2026-06-27 (3ª rodada — segurança, bugs, performance, qualidade, UX; itens MÉDIO/BAIXO fechados na v1.12.1)
 
 Este arquivo orienta qualquer agente (ou pessoa) que continue o desenvolvimento.
 Leia também o `README.md` (seção "Para quem está retomando o projeto") e o
@@ -38,20 +38,23 @@ Leia também o `README.md` (seção "Para quem está retomando o projeto") e o
 | 5 | ALTO | Segurança | Diretório `.git` exposto via HTTP (docroot é working tree) | `RedirectMatch 404 /\.git` no `.htaccess` |
 | — | CRÍTICO | Bug (500) | (rodada anterior) Criação de parcelas recorrentes dava 500 sem as colunas de recorrência | `ensure_payable_recurrence_columns` |
 
-## Problemas PENDENTES (aguardando aprovação) — por prioridade
+## Problemas da varredura — TODOS resolvidos na v1.12.1
 
-**MÉDIO**
-- Tabelas sem `ensure_*` → 500 em servidor que não rodou a migração: `fiscal_documents` (POST de NF/NFS-e), `agenda_eventos` + `kanban_*` (módulo Agenda). Rodar a migração resolve; falta a auto-cura.
-- `system_users` referencia `email`/`blocked`/`mustChangePassword` sem `ensure_*` (só `cpf/data_nascimento/celular` são auto-curados) → risco de 500 em toda request autenticada se a coluna faltar.
-- `applyFilters` (app.js): registro com campo de filtro vazio "passa" pelo filtro (`row[key]` falsy) — filtros de cliente/status/categoria ficam furados.
+**MÉDIO ✅**
+- `ensure_fiscal_documents_table()` — `fiscal_documents` auto-curada (POST de NF e NFS-e).
+- `ensure_agenda_tables()` / `ensure_kanban_tables()` — Agenda/Kanban auto-curados.
+- `ensure_users_extra_columns()` agora cria `email`/`blocked`/`mustChangePassword`.
+- `applyFilters` com comparação estrita (campo vazio não burla mais o filtro).
 
-**BAIXO**
-- Upload de logo SVG sem sanitização de conteúdo (mitigado pela CSP).
-- Aceitação de senha legada em texto puro durante a transição (`mustChangePassword`).
-- `load_config()`/`db()` fora do try/catch global (vaza DSN se `display_errors=On`).
-- XXE hardening ausente em `simplexml_load_string` (mitigado pelo PHP 8).
-- `proposalBody` reinjetado como HTML cru do banco; `bootstrapApp()` sem `.catch`.
-- `generatedLink` vira `<a href>` sem validar esquema (`javascript:` passa pelo escape).
+**BAIXO ✅**
+- Logo SVG: rejeita conteúdo ativo no upload + CSP `sandbox` ao servir.
+- `display_errors=0`/`log_errors=1` no topo do `index.php`.
+- `safe_xml_load()` (rejeita DOCTYPE + `LIBXML_NONET`) em todos os parses de XML.
+- `sanitizeStoredHtml()` no `proposalBody`; `bootstrapApp().catch(...)`.
+
+**Aceito por design (não alterar):**
+- Senha legada em texto puro na transição `mustChangePassword` — fluxo documentado de primeiro login (seed → bcrypt). Remover quebra ativação de instalações novas.
+- `generatedLink` já valida `^https?://` — nada a fazer.
 
 > Pontos fortes confirmados (não re-sinalizar): prepared statements em todo SQL (sem SQLi), autorização por rota/perfil após `authenticate_request`, sessão com token CSPRNG + SHA-256 + idle/TTL, `password_hash`, rate limit de login/reset, CSRF mitigado por auth via header, uploads fora do docroot, deploy com HMAC + `escapeshellarg`.
 
@@ -67,9 +70,9 @@ Leia também o `README.md` (seção "Para quem está retomando o projeto") e o
 | Financeiro (pagar/receber/caixa/fluxo) | ✅ Estável. Recorrentes + quitação antecipada + anti dupla contagem + OFX. |
 | Pedidos de compra | ✅ Itens detalhados + condições + impressão com identidade visual. |
 | Comercial (propostas/gerador) | ✅ Estável. Snapshot de cliente + identidade visual no PDF. |
-| Cronograma / Gantt / MS Project | ⚠️ Funcional; aprovação de marco corrigida nesta versão (era 500). |
-| Agenda / Kanban | ⚠️ Funcional se a migração rodou; falta `ensure_*` (pendência MÉDIO). |
-| Notas/Documentos fiscais + NFS-e | ⚠️ Funcional; `fiscal_documents` sem `ensure_*` (pendência MÉDIO). |
+| Cronograma / Gantt / MS Project | ✅ Estável; aprovação de marco corrigida (era 500). |
+| Agenda / Kanban | ✅ Estável; auto-curado por `ensure_agenda_tables`/`ensure_kanban_tables`. |
+| Notas/Documentos fiscais + NFS-e | ✅ Estável; auto-curado por `ensure_fiscal_documents_table`. |
 | Qualidade (PBQP-H) | ✅ Estável (auto-curado por `ensure_qualidade_tables`). |
 | Plugins / Viabilidade / SINAPI | ✅ Estável. |
 | RDO | ✅ Com cabeçalho/rodapé da empresa. |

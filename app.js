@@ -19,7 +19,7 @@ if (APP_ENV === "production" && location.protocol === "http:") {
   location.replace(location.href.replace(/^http:/, "https:"));
 }
 const APP_NAME = "ObraSync";
-const APP_VERSION = "v1.12.0";
+const APP_VERSION = "v1.12.1";
 const APP_VERSION_DATE = "2026-06-27";
 const APP_CHANGELOG = [
   "Controle interno de versão e instruções de atualização segura.",
@@ -48,6 +48,7 @@ const APP_CHANGELOG = [
   "Dashboard de execução de obras consumindo endpoint do servidor (resumo previsto/realizado), com spinner de carregamento, erro com botão de retentar, atualização automática a cada 5 min e tooltip combinado por obra no gráfico (v1.12.0).",
   "Correção do erro 500 na criação de contas a pagar recorrentes (auto-cura das colunas de recorrência) e na aprovação de marcos (colunas de referência em accounts_receivable) (v1.12.0).",
   "Varredura de segurança: correção de XSS armazenado em widgets, cards, selects e relatórios; rate limit na troca obrigatória de senha; bloqueio do diretório .git no Apache (v1.12.0).",
+  "Auto-cura (ensure_*) de fiscal_documents, agenda/kanban e colunas email/blocked/mustChangePassword de usuários — evita erro 500 em servidor sem a migração; hardening de XXE no parse de XML, sanitização de logo SVG, filtros corrigidos e tela inicial à prova de falha (v1.12.1).",
 ];
 
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
@@ -2605,7 +2606,7 @@ function applyFilters(rows, options = {}) {
     if (!matchesDateRange(row, filters.start, filters.end)) return false;
     for (const key of ["clientId", "supplierId", "costCenterId", "projectId", "status", "categoryId"]) {
       if (options.ignoreProject && key === "projectId") continue;
-      if (filters[key] && row[key] && row[key] !== filters[key]) return false;
+      if (filters[key] && String(row[key] || "") !== String(filters[key])) return false;
     }
     const rowProjectId = row.projectId || (Object.prototype.hasOwnProperty.call(row, "budgetForecast") ? row.id : "");
     if (!options.ignoreProject && filters.projectId && String(rowProjectId || "") !== String(filters.projectId)) return false;
@@ -10642,8 +10643,26 @@ function openSavedProposalPreview(proposalId) {
       </div>
     </section>
   `;
-  qs("proposalPreview").innerHTML = proposal.proposalBody;
+  qs("proposalPreview").innerHTML = sanitizeStoredHtml(proposal.proposalBody);
   qs("proposalGeneratorDialog").showModal();
+}
+
+// Defesa em profundidade: o corpo da proposta é HTML gerado com campos já
+// escapados, mas fica persistido no banco e é reinjetado aqui. Parseia num
+// <template> inerte (scripts não executam, imagens não carregam) e remove
+// qualquer conteúdo ativo antes de exibir, caso o registro tenha sido adulterado.
+function sanitizeStoredHtml(html) {
+  const tpl = document.createElement("template");
+  tpl.innerHTML = String(html || "");
+  tpl.content.querySelectorAll("script, iframe, object, embed").forEach((el) => el.remove());
+  tpl.content.querySelectorAll("*").forEach((el) => {
+    [...el.attributes].forEach((attr) => {
+      const name = attr.name.toLowerCase();
+      const activeUrl = /^(href|src|xlink:href)$/.test(name) && /^\s*javascript:/i.test(attr.value);
+      if (name.startsWith("on") || activeUrl) el.removeAttribute(attr.name);
+    });
+  });
+  return tpl.innerHTML;
 }
 
 function setProposalDialogMode(mode) {
@@ -13707,4 +13726,13 @@ function syncPwdMatchFeedback() {
 document.getElementById("changePwdConfirm")?.addEventListener("input", syncPwdMatchFeedback);
 document.getElementById("changePwdNew")?.addEventListener("input", syncPwdMatchFeedback);
 
-bootstrapApp();
+bootstrapApp().catch((error) => {
+  console.error("Falha ao iniciar o ObraSync:", error);
+  try {
+    showLoginPanel("login");
+    qs("loginScreen").classList.remove("hidden");
+    qs("appShell").classList.add("hidden");
+  } catch (e) {
+    /* DOM ainda não pronto: nada a fazer além do log acima. */
+  }
+});

@@ -1,6 +1,6 @@
 # ObraSync
 
-> Versão `v1.12.0` · 2026-06-27
+> Versão `v1.12.1` · 2026-06-27
 
 ObraSync é uma aplicação web em HTML, CSS, JavaScript puro, PHP e MariaDB/MySQL para gestão integrada de obras, financeiro, comercial e contabilidade gerencial. O frontend fica em `/var/www/financeiro`, a URL pública é `https://schimanskiengenharia.com.br/financeiro`, os dados persistentes ficam no banco e os arquivos de dados ficam fora da pasta pública.
 
@@ -12,9 +12,9 @@ Antes de atualizar em produção, faça backup do banco e de `/var/lib/financeir
 
 Esta seção orienta qualquer pessoa — ou outra IA — que precise continuar o trabalho sem se perder.
 
-- **Versão atual:** `v1.12.0` (2026-06-27). A versão fica em **dois lugares que devem andar juntos**: a constante `APP_VERSION`/`APP_VERSION_DATE` no topo de `app.js` (com `APP_CHANGELOG`) e o cabeçalho deste README. O painel "Versão" em Configurações lê de `APP_VERSION`.
-- **Cache busting:** sempre que `app.js` ou `styles.css` mudarem, **incremente o `?v=NNNN`** das tags correspondentes em `index.html` (hoje `app.js?v=1742`, `styles.css?v=1742`). Sem isso o navegador serve a versão velha.
-- **Estado de saúde (2026-06-27):** varredura completa de segurança/bugs concluída — ver `STATUS.md` na raiz e a seção **Auditoria de Código — 2026-06-27** no fim deste README. Itens CRÍTICOS/ALTOS já corrigidos; pendências MÉDIO/BAIXO listadas em `STATUS.md`.
+- **Versão atual:** `v1.12.1` (2026-06-27). A versão fica em **dois lugares que devem andar juntos**: a constante `APP_VERSION`/`APP_VERSION_DATE` no topo de `app.js` (com `APP_CHANGELOG`) e o cabeçalho deste README. O painel "Versão" em Configurações lê de `APP_VERSION`.
+- **Cache busting:** sempre que `app.js` ou `styles.css` mudarem, **incremente o `?v=NNNN`** das tags correspondentes em `index.html` (hoje `app.js?v=1743`, `styles.css?v=1743`). Sem isso o navegador serve a versão velha.
+- **Estado de saúde (2026-06-27):** varredura completa de segurança/bugs concluída e **todas as pendências MÉDIO/BAIXO fechadas na v1.12.1** — ver `STATUS.md` na raiz e a seção **Auditoria de Código — 2026-06-27** no fim deste README.
 - **Arquitetura:** SPA sem build. Todo o frontend está em `app.js` (arquivo único, ~10 mil linhas) + `index.html` (shell) + `styles.css`. Todo o backend está em `api/index.php` (arquivo único). O banco é MariaDB/MySQL.
 - **Convenções do backend (siga-as):** respostas via `respond(['ok' => true, 'data' => ...])` e erros via `fail($msg, $status)`; INSERT/UPDATE genéricos via `insert_dynamic()`/`update_dynamic()` (descartam colunas inexistentes — toleram diferenças de schema); auditoria via `server_audit()`. Muitas tabelas novas são criadas sob demanda por funções `ensure_*` no próprio `index.php` (além das migrations).
 - **Convenções do frontend:** chamadas autenticadas via `apiRequest()`; uploads via `fetchForm()`; toasts via `showToast()`; escape de HTML via `svgText()`/`escapeHtml()`. O token de sessão vai no header `Authorization: Bearer`.
@@ -1107,14 +1107,20 @@ Após subir os arquivos, execute as migrations novas que ainda não foram rodada
 5. ~~**Diretório `.git` exposto** via HTTP (o docroot é uma working tree).~~
    ✅ `RedirectMatch 404 /\.git` no `.htaccess`.
 
-### Pendentes (ver `STATUS.md` para detalhes e prioridade)
+### Rodada 3b — v1.12.1 (todas as pendências MÉDIO/BAIXO fechadas)
 
-- **MÉDIO:** tabelas sem `ensure_*` que dão 500 em servidor sem a migração
-  (`fiscal_documents`, `agenda_eventos`/Kanban) — rodar a migração resolve, mas
-  falta a auto-cura; colunas `email`/`blocked`/`mustChangePassword` de
-  `system_users` idem; filtro `applyFilters` deixa passar registros com campo
-  vazio.
-- **BAIXO:** SVG de logo sem sanitização de conteúdo; senha legada em texto puro
-  durante a transição; `bootstrap`/`db()` fora do try/catch; XXE hardening no
-  parse de XML; `proposalBody` reinjetado como HTML; `bootstrapApp()` sem
-  `.catch`.
+- ~~**MÉDIO:** tabelas sem `ensure_*` (`fiscal_documents`, `agenda_eventos`/Kanban)
+  e colunas `email`/`blocked`/`mustChangePassword` de `system_users`; filtro
+  `applyFilters` deixando passar registros com campo vazio.~~
+  ✅ `ensure_fiscal_documents_table()`, `ensure_agenda_tables()`,
+  `ensure_kanban_tables()`, extensão de `ensure_users_extra_columns()` (+ guardas
+  no bootstrap e nos handlers) e comparação estrita em `applyFilters`.
+- ~~**BAIXO:** SVG de logo sem sanitização; `db()` fora do try/catch; XXE no parse
+  de XML; `proposalBody` reinjetado como HTML; `bootstrapApp()` sem `.catch`.~~
+  ✅ Sanitização do SVG no upload + CSP `sandbox` ao servir; `display_errors=0`
+  no topo; `safe_xml_load()` (rejeita DOCTYPE + `LIBXML_NONET`) em todos os
+  parses; `sanitizeStoredHtml()` no `proposalBody`; `bootstrapApp().catch(...)`.
+
+> **Mantidos por design:** a senha legada em texto puro durante a transição
+> `mustChangePassword` (fluxo documentado de primeiro login); `generatedLink` já
+> validava o esquema `^https?://`.

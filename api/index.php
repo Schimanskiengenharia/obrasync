@@ -9,6 +9,12 @@ date_default_timezone_set('America/Campo_Grande');
 header('Content-Type: application/json; charset=utf-8');
 header('X-Content-Type-Options: nosniff');
 
+// Produção: nunca exibir erros/stack traces na resposta (vazariam DSN, caminhos
+// do servidor e SQL). Tudo vai para o error_log; o cliente recebe JSON genérico
+// pelo try/catch global. Vale também para o caminho antes do try (load_config/db).
+ini_set('display_errors', '0');
+ini_set('log_errors', '1');
+
 const CONFIG_PATH = '/etc/financeiro/config.php';
 // Tempo máximo de inatividade da sessão: igual ao AUTH_TIMEOUT_MS do frontend (30 min).
 const AUTH_IDLE_SECONDS = 1800;
@@ -639,6 +645,7 @@ try {
 
 function handle_agenda_module(PDO $pdo, string $method, array $query): never
 {
+    ensure_agenda_tables($pdo);
     $action = strtolower(trim((string) ($query['action'] ?? '')));
     if ($action === '') {
         if ($method === 'GET') {
@@ -1910,13 +1917,160 @@ function ensure_users_extra_columns(PDO $pdo): void
         $pdo->exec("ALTER TABLE system_users
             ADD COLUMN IF NOT EXISTS cpf VARCHAR(14) NULL,
             ADD COLUMN IF NOT EXISTS data_nascimento DATE NULL,
-            ADD COLUMN IF NOT EXISTS celular VARCHAR(15) NULL");
+            ADD COLUMN IF NOT EXISTS celular VARCHAR(15) NULL,
+            ADD COLUMN IF NOT EXISTS email VARCHAR(160) NOT NULL DEFAULT '',
+            ADD COLUMN IF NOT EXISTS blocked TINYINT(1) NOT NULL DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS mustChangePassword TINYINT(1) NOT NULL DEFAULT 0");
         $pdo->exec('CREATE UNIQUE INDEX IF NOT EXISTS uk_system_users_cpf ON system_users (cpf)');
     } catch (PDOException $error) {
         // Sem permissão de DDL: segue; filter_data_by_columns descarta os campos ausentes.
         error_log('[ObraSync] ensure_users_extra_columns: ' . $error->getMessage());
     }
     $done = true;
+}
+
+// Self-healing das notas/documentos fiscais. A tabela só nascia da migração
+// 2026-06-06-fiscal-documents.sql; sem ela, o POST de NF e a importação NFS-e
+// davam 500. Sem as FKs da migração (a tabela canônica é a do .sql) para não
+// falhar se as tabelas referenciadas variarem de engine/charset.
+function ensure_fiscal_documents_table(PDO $pdo): void
+{
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    try {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS fiscal_documents (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            projectId BIGINT UNSIGNED NULL,
+            supplierId BIGINT UNSIGNED NULL,
+            documentNumber VARCHAR(100) NOT NULL,
+            issueDate DATE NOT NULL,
+            amount DECIMAL(15,2) NOT NULL DEFAULT 0,
+            `type` ENUM('Nota Fiscal de Serviço','Nota Fiscal de Produto','Recibo','Comprovante','Outro') NOT NULL DEFAULT 'Nota Fiscal de Serviço',
+            status ENUM('Pendente','Anexada','Conferida','Cancelada') NOT NULL DEFAULT 'Pendente',
+            payableId BIGINT UNSIGNED NULL,
+            receivableId BIGINT UNSIGNED NULL,
+            saleId BIGINT UNSIGNED NULL,
+            costCenterId BIGINT UNSIGNED NULL,
+            categoryId BIGINT UNSIGNED NULL,
+            pdfPath VARCHAR(500) NULL,
+            xmlPath VARCHAR(500) NULL,
+            notes TEXT,
+            createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updatedAt TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_fiscal_project (projectId),
+            INDEX idx_fiscal_supplier (supplierId),
+            INDEX idx_fiscal_issue (issueDate),
+            INDEX idx_fiscal_status (status)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        $done = true;
+    } catch (Throwable $error) {
+        error_log('[ObraSync] ensure_fiscal_documents_table: ' . $error->getMessage());
+    }
+}
+
+// Self-healing da Agenda. agenda_eventos só vinha da migração 2026-06-09-agenda
+// -kanban.sql (+ enums em 2026-06-10-fix-agenda-enums.sql); sem ela o módulo dava
+// 500. Os ENUMs já incorporam a correção dos enums.
+function ensure_agenda_tables(PDO $pdo): void
+{
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    try {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS agenda_eventos (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            obra_id BIGINT UNSIGNED NULL,
+            cliente_id BIGINT UNSIGNED NULL,
+            usuario_id BIGINT UNSIGNED NULL,
+            titulo VARCHAR(200) NOT NULL,
+            descricao TEXT NULL,
+            tipo ENUM('reuniao','visita','vistoria','entrega','cobranca','projeto','obra','financeiro','comercial','prazo','outro') NOT NULL,
+            data_inicio DATETIME NOT NULL,
+            data_fim DATETIME NULL,
+            dia_todo TINYINT(1) DEFAULT 0,
+            lembrete_minutos INT DEFAULT 60,
+            status ENUM('agendado','em_andamento','realizado','concluido','cancelado') DEFAULT 'agendado',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_agenda_obra (obra_id),
+            INDEX idx_agenda_cliente (cliente_id),
+            INDEX idx_agenda_usuario (usuario_id),
+            INDEX idx_agenda_periodo (data_inicio, data_fim),
+            INDEX idx_agenda_tipo_status (tipo, status)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        $done = true;
+    } catch (Throwable $error) {
+        error_log('[ObraSync] ensure_agenda_tables: ' . $error->getMessage());
+    }
+}
+
+// Self-healing do Kanban (boards/colunas/cards). As FKs são internas (entre as
+// três tabelas criadas aqui), então são seguras.
+function ensure_kanban_tables(PDO $pdo): void
+{
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    try {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS kanban_boards (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            obra_id BIGINT UNSIGNED NULL,
+            nome VARCHAR(100) NOT NULL,
+            tipo ENUM('obra','compras','geral') DEFAULT 'geral',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_kanban_boards_obra (obra_id),
+            INDEX idx_kanban_boards_tipo (tipo)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        $pdo->exec("CREATE TABLE IF NOT EXISTS kanban_colunas (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            board_id BIGINT UNSIGNED NOT NULL,
+            nome VARCHAR(80) NOT NULL,
+            ordem INT DEFAULT 0,
+            cor VARCHAR(7) DEFAULT '#185FA5',
+            limite_cards INT NULL,
+            INDEX idx_kanban_colunas_board (board_id),
+            CONSTRAINT fk_kanban_colunas_board FOREIGN KEY (board_id) REFERENCES kanban_boards(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        $pdo->exec("CREATE TABLE IF NOT EXISTS kanban_cards (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            coluna_id BIGINT UNSIGNED NOT NULL,
+            obra_id BIGINT UNSIGNED NULL,
+            titulo VARCHAR(200) NOT NULL,
+            descricao TEXT NULL,
+            responsavel_id BIGINT UNSIGNED NULL,
+            data_vencimento DATE NULL,
+            prioridade ENUM('baixa','media','alta','urgente') DEFAULT 'media',
+            referencia_tipo VARCHAR(30) NULL,
+            referencia_id BIGINT UNSIGNED NULL,
+            ordem INT DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_kanban_cards_coluna (coluna_id),
+            INDEX idx_kanban_cards_obra (obra_id),
+            INDEX idx_kanban_cards_vencimento (data_vencimento),
+            INDEX idx_kanban_cards_referencia (referencia_tipo, referencia_id),
+            CONSTRAINT fk_kanban_cards_coluna FOREIGN KEY (coluna_id) REFERENCES kanban_colunas(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        $done = true;
+    } catch (Throwable $error) {
+        error_log('[ObraSync] ensure_kanban_tables: ' . $error->getMessage());
+    }
+}
+
+// Carrega XML com hardening de XXE: rejeita DOCTYPE (nenhum XML legítimo do
+// sistema — NFS-e/OFX/XLSX — usa DTD) e desliga acesso à rede (LIBXML_NONET).
+// Devolve SimpleXMLElement ou false, igual ao simplexml_load_string original.
+function safe_xml_load($content)
+{
+    $content = (string) $content;
+    if (preg_match('/<!DOCTYPE/i', $content)) {
+        return false;
+    }
+    return simplexml_load_string($content, 'SimpleXMLElement', LIBXML_NONET);
 }
 
 // Validação de CPF com dígitos verificadores (mesma regra do frontend).
@@ -2074,6 +2228,22 @@ function bootstrap_data(PDO $pdo, array $resources, ?array $authUser = null, boo
         if (resolve_existing_table($pdo, ['accounts_payable'], false)
             && !in_array('recorrencia_id', table_columns($pdo, 'accounts_payable'), true)) {
             ensure_payable_recurrence_columns($pdo);
+        }
+        // Tabelas que antes só existiam via migração manual — auto-cura para evitar
+        // 500 em servidores que não rodaram o .sql correspondente.
+        if (!resolve_existing_table($pdo, ['fiscal_documents'], false)) {
+            ensure_fiscal_documents_table($pdo);
+        }
+        if (!resolve_existing_table($pdo, ['agenda_eventos'], false)) {
+            ensure_agenda_tables($pdo);
+        }
+        if (!resolve_existing_table($pdo, ['kanban_boards'], false)) {
+            ensure_kanban_tables($pdo);
+        }
+        // email/blocked/mustChangePassword em system_users (usados em login/reset).
+        if (resolve_existing_table($pdo, ['system_users'], false)
+            && !in_array('mustChangePassword', table_columns($pdo, 'system_users'), true)) {
+            ensure_users_extra_columns($pdo);
         }
         // Colunas de snapshot do cliente em propostas/contratos.
         if (resolve_existing_table($pdo, ['commercial_proposals'], false)
@@ -2739,6 +2909,14 @@ function handle_company_logo_upload(PDO $pdo, array $config, array $authUser): n
     if ($ext === 'jpg' && $mime !== '' && $mime !== 'image/jpeg') {
         company_settings_respond(false, [], 'Conteúdo do arquivo não corresponde a um JPG.', 415);
     }
+    // SVG é XML executável quando aberto diretamente no navegador. Rejeita
+    // conteúdo ativo (script/handlers/javascript:/entidades) antes de salvar.
+    if ($ext === 'svg') {
+        $svg = (string) file_get_contents($file['tmp_name']);
+        if (preg_match('/<script|<!ENTITY|<foreignObject|on\w+\s*=|javascript:/i', $svg)) {
+            company_settings_respond(false, [], 'SVG com conteúdo ativo não é permitido. Envie um SVG simples ou um PNG/JPG.', 415);
+        }
+    }
 
     $dir = company_logo_dir($config);
     if (!is_dir($dir) && !mkdir($dir, 0755, true) && !is_dir($dir)) {
@@ -2803,6 +2981,11 @@ function handle_company_logo_get(PDO $pdo, array $config): never
     $types = ['png' => 'image/png', 'jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'svg' => 'image/svg+xml'];
     header_remove('Content-Type');
     header('Content-Type: ' . ($types[$ext] ?? 'application/octet-stream'));
+    // Defesa em profundidade: se for SVG, neutraliza qualquer script/recurso
+    // externo ao abrir o arquivo diretamente.
+    if ($ext === 'svg') {
+        header("Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; sandbox");
+    }
     header('Cache-Control: no-cache, max-age=0, must-revalidate');
     header('Content-Length: ' . filesize($file));
     readfile($file);
@@ -4197,7 +4380,7 @@ function parse_ofx_sgml(string $content): array
 function parse_ofx_xml(string $content): array
 {
     $previous = libxml_use_internal_errors(true);
-    $xml = simplexml_load_string($content);
+    $xml = safe_xml_load($content);
     libxml_use_internal_errors($previous);
     if (!$xml) {
         return ['bankId' => '', 'accountId' => '', 'transactions' => []];
@@ -4430,7 +4613,7 @@ function parse_nfse_abrasf(string $xmlContent, string $cnpjEmpresa): array
     $xmlContent = preg_replace('/<(\/?)[A-Za-z0-9_]+:/', '<$1', $xmlContent);
 
     $previous = libxml_use_internal_errors(true);
-    $xml = simplexml_load_string($xmlContent);
+    $xml = safe_xml_load($xmlContent);
     libxml_use_internal_errors($previous);
     if (!$xml) {
         throw new RuntimeException('XML inválido ou mal-formado.');
@@ -5297,6 +5480,7 @@ function handle_nfse_import(PDO $pdo, array $config, array $authUser, array $pay
     if (!$nfses) {
         fail('Nenhuma NFS-e selecionada.', 400);
     }
+    ensure_fiscal_documents_table($pdo);
     // Valida o projectId de cada NF contra projects (com cache) para não estourar
     // a FK; id inexistente vira null em vez de abortar a importação inteira.
     $projectCache = [];
@@ -6320,6 +6504,7 @@ function smtp_send_mail(array $mail, string $from, string $fromName, string $to,
 
 function save_fiscal_document(PDO $pdo, array $meta, array $config, ?int $id = null): array
 {
+    ensure_fiscal_documents_table($pdo);
     $payload = $_POST;
     $data = clean_payload($meta, $payload);
     unset($data['pdfPath'], $data['xmlPath']);
@@ -6968,10 +7153,10 @@ function read_xlsx_sheets(string $path): array
         fail('Não foi possível abrir o arquivo XLSX.', 400);
     }
     $shared = xlsx_shared_strings($zip);
-    $workbook = simplexml_load_string((string) $zip->getFromName('xl/workbook.xml'));
+    $workbook = safe_xml_load((string) $zip->getFromName('xl/workbook.xml'));
     $workbook->registerXPathNamespace('a', 'http://schemas.openxmlformats.org/spreadsheetml/2006/main');
     $workbook->registerXPathNamespace('r', 'http://schemas.openxmlformats.org/officeDocument/2006/relationships');
-    $rels = simplexml_load_string((string) $zip->getFromName('xl/_rels/workbook.xml.rels'));
+    $rels = safe_xml_load((string) $zip->getFromName('xl/_rels/workbook.xml.rels'));
     $rels->registerXPathNamespace('rel', 'http://schemas.openxmlformats.org/package/2006/relationships');
     $relationMap = [];
     foreach ($rels->xpath('//rel:Relationship') as $rel) {
@@ -6983,7 +7168,7 @@ function read_xlsx_sheets(string $path): array
         $rid = (string) $sheet->attributes('http://schemas.openxmlformats.org/officeDocument/2006/relationships')['id'];
         $target = $relationMap[$rid] ?? '';
         $sheetPath = str_starts_with($target, 'xl/') ? $target : 'xl/' . ltrim($target, '/');
-        $xml = simplexml_load_string((string) $zip->getFromName($sheetPath));
+        $xml = safe_xml_load((string) $zip->getFromName($sheetPath));
         $xml->registerXPathNamespace('a', 'http://schemas.openxmlformats.org/spreadsheetml/2006/main');
         $rows = [];
         foreach ($xml->xpath('//a:sheetData/a:row') as $rowNode) {
@@ -7010,7 +7195,7 @@ function xlsx_shared_strings($zip): array
 {
     $xmlText = $zip->getFromName('xl/sharedStrings.xml');
     if ($xmlText === false) return [];
-    $xml = simplexml_load_string((string) $xmlText);
+    $xml = safe_xml_load((string) $xmlText);
     $xml->registerXPathNamespace('a', 'http://schemas.openxmlformats.org/spreadsheetml/2006/main');
     $strings = [];
     foreach ($xml->xpath('//a:si') as $si) {
@@ -7365,6 +7550,7 @@ function automate_approved_purchase_order(PDO $pdo, int $orderId): array
 
 function ensure_project_kanban_boards(PDO $pdo, int $projectId, string $projectName): array
 {
+    ensure_kanban_tables($pdo);
     if (!resolve_existing_table($pdo, ['kanban_boards'], false)) return [];
     $created = [];
     $created['obra'] = ensure_kanban_board($pdo, $projectId, 'Kanban - ' . mb_substr($projectName, 0, 80), 'obra');

@@ -1,6 +1,6 @@
 # STATUS — ObraSync
 
-> **Versão:** `v1.12.0` · **Varredura:** 2026-06-27 · **Ambiente:** produção em `https://schimanskiengenharia.com.br/financeiro`
+> **Versão:** `v1.12.1` · **Varredura:** 2026-06-27 · **Ambiente:** produção em `https://schimanskiengenharia.com.br/financeiro`
 
 ---
 
@@ -33,8 +33,8 @@ corrigidos. Restam pendências de prioridade **MÉDIO/BAIXO** (seção 3).
 | Pedidos de compra | 🟢 Estável | Itens detalhados, condições, impressão com identidade visual |
 | Comercial (propostas, gerador, modelos) | 🟢 Estável | Snapshot de cliente, PDF com identidade visual |
 | Cronograma / Gantt / MS Project | 🟡 Funcional | Aprovação de marco corrigida (era 500 determinístico) |
-| Agenda / Kanban | 🟡 Funcional | Depende da migração; falta `ensure_*` (pendência MÉDIO) |
-| Notas / Documentos fiscais + NFS-e | 🟡 Funcional | `fiscal_documents` sem `ensure_*` (pendência MÉDIO) |
+| Agenda / Kanban | 🟢 Estável | Auto-curado por `ensure_agenda_tables`/`ensure_kanban_tables` (v1.12.1) |
+| Notas / Documentos fiscais + NFS-e | 🟢 Estável | Auto-curado por `ensure_fiscal_documents_table` (v1.12.1) |
 | Contabilidade gerencial (DRE, plano de contas, impostos) | 🟢 Estável | |
 | Qualidade (PBQP-H Nível B) | 🟢 Estável | Auto-curado |
 | Plugins / Seletividade / Viabilidade | 🟢 Estável | |
@@ -58,22 +58,24 @@ corrigidos. Restam pendências de prioridade **MÉDIO/BAIXO** (seção 3).
 | ALTO | Segurança | Diretório `.git` exposto via HTTP | `.htaccess` | `RedirectMatch 404 /\.git` |
 | CRÍTICO | Bug (500) | (rodada anterior) Parcelas recorrentes davam 500 sem as colunas | `api/index.php` | `ensure_payable_recurrence_columns` |
 
-### Pendentes — aguardando aprovação
+### Corrigidos na rodada 3b — v1.12.1 (todos os MÉDIO/BAIXO)
 
-**MÉDIO (corrigir em breve)**
-- **`fiscal_documents` sem `ensure_*`** — POST de NF / importação NFS-e dá 500 em servidor que não rodou `2026-06-06-fiscal-documents.sql`. *Sugestão:* criar `ensure_fiscal_documents_table()` espelhando a migração e chamar no ramo `fiscalDocuments`/NFS-e.
-- **`agenda_eventos` + `kanban_*` sem `ensure_*`** — `?module=agenda` dá 500 sem `2026-06-09-agenda-kanban.sql`. *Sugestão:* `ensure_agenda_tables()`/`ensure_kanban_tables()`.
-- **`system_users` (`email`/`blocked`/`mustChangePassword`) sem `ensure_*`** — `authenticate_request` seleciona `u.blocked` literalmente; banco sem a coluna → 500 em toda request autenticada. *Sugestão:* estender `ensure_users_extra_columns()`.
-- **`applyFilters` deixa passar registro com campo vazio** (`app.js` 2603) — filtros de cliente/status/categoria ficam furados. *Sugestão:* comparação estrita `String(row[key] || "") !== String(filters[key])`.
+**MÉDIO ✅**
+- **`fiscal_documents` agora tem `ensure_fiscal_documents_table()`** — chamado em `save_fiscal_document`, na importação NFS-e e no bootstrap. Não dá mais 500 sem a migração.
+- **`agenda_eventos` + `kanban_*` agora têm `ensure_agenda_tables()`/`ensure_kanban_tables()`** — chamados em `handle_agenda_module`, `ensure_project_kanban_boards` e no bootstrap.
+- **`system_users`:** `ensure_users_extra_columns()` agora cria `email`/`blocked`/`mustChangePassword` (além de `cpf`/`data_nascimento`/`celular`) + guarda no bootstrap.
+- **`applyFilters`** (`app.js`): comparação estrita `String(row[key] || "") !== String(filters[key])` — filtros não deixam mais passar registros com campo vazio.
 
-**BAIXO (defesa em profundidade / polimento)**
-- Upload de logo **SVG** sem sanitização de conteúdo (mitigado pela CSP).
-- Senha **legada em texto puro** aceita durante a transição `mustChangePassword`.
-- `load_config()`/`db()` **fora do try/catch** global (vaza DSN se `display_errors=On`).
-- **XXE**: `simplexml_load_string` sem `LIBXML_NONET` (mitigado pelo PHP 8).
-- `proposalBody` reinjetado como **HTML cru** do banco.
-- `bootstrapApp()` **sem `.catch`** (tela branca se `restoreSession` lançar).
-- `generatedLink` vira `<a href>` sem validar esquema (`javascript:` passa pelo escape).
+**BAIXO ✅**
+- Upload de logo **SVG** rejeita conteúdo ativo (`<script>`/handlers/`javascript:`/`<!ENTITY>`); ao servir SVG envia CSP `sandbox`.
+- `display_errors=0` + `log_errors=1` no topo do `index.php` (nunca vaza DSN/stack trace, mesmo no caminho antes do try/catch).
+- **XXE:** novo `safe_xml_load()` (rejeita DOCTYPE + `LIBXML_NONET`) usado em todos os parses de NFS-e/OFX/XLSX.
+- `proposalBody` agora passa por `sanitizeStoredHtml()` (parse num `<template>` inerte + remoção de script/handlers) antes de ser injetado.
+- `bootstrapApp()` agora tem `.catch` que revela a tela de login em vez de tela branca.
+
+**Aceito por design (não alterado):**
+- Senha **legada em texto puro** durante a transição `mustChangePassword` — é o fluxo documentado de primeiro login (seed → bcrypt no primeiro acesso); remover quebraria a ativação de instalações novas.
+- `generatedLink` **já validava** o esquema (`^https?://`) — nada a fazer.
 
 ### Pontos fortes confirmados (não re-sinalizar)
 Prepared statements em todo SQL (sem SQLi); autorização por rota/perfil após
@@ -87,11 +89,11 @@ detalhados só no `error_log`, cliente recebe mensagem genérica.
 
 ## 4. Próximos passos sugeridos
 
-1. **Fechar as pendências MÉDIO** (todas são `ensure_*` faltando + 1 filtro) — baixo risco, alto valor; elimina 500 em instalações sem migração.
-2. **Rodar as migrações pendentes em produção** (lista no `README.md`) — a auto-cura cobre as principais, mas a migração é o caminho recomendado.
-3. **Itens BAIXO de hardening** conforme janela de manutenção.
-4. **Dívida técnica:** modularizar `app.js`/`index.php` (arquivos únicos muito grandes); camada única de helpers de data/dinheiro/texto seguro.
-5. **Testes mínimos** para login, bootstrap, recorrência, aprovação de marco e importações.
+1. ✅ **Pendências MÉDIO/BAIXO fechadas na v1.12.1** (todos os `ensure_*` faltantes + XXE + SVG + filtros + tela inicial).
+2. **Rodar as migrações pendentes em produção** (lista no `README.md`) — a auto-cura cobre, mas a migração continua sendo o caminho recomendado.
+3. **Dívida técnica:** modularizar `app.js`/`index.php` (arquivos únicos muito grandes); camada única de helpers de data/dinheiro/texto seguro.
+4. **Testes mínimos** para login, bootstrap, recorrência, aprovação de marco e importações.
+5. **Avaliar** mover o token de sessão do `localStorage` para cookie `HttpOnly`/`SameSite` (remove a superfície de roubo via XSS de vez).
 
 ---
 
