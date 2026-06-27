@@ -2099,6 +2099,34 @@ function compose_client_address(array $client): string
     return implode(' - ', $parts);
 }
 
+// Endereço completo da empresa para o cabeçalho de documentos (PDF de proposta):
+// "Rua/logradouro, numero - complemento - bairro · cidade/UF · CEP". Campos
+// vazios são ignorados. company_settings usa `city` para a cidade.
+function compose_company_address(array $company): string
+{
+    $logradouro = trim((string) ($company['address'] ?? ''));
+    $numero = trim((string) ($company['numero'] ?? ''));
+    $line1 = $logradouro;
+    if ($numero !== '') {
+        $line1 .= ($line1 !== '' ? ', ' : '') . $numero;
+    }
+    $street = implode(' - ', array_filter([
+        $line1,
+        trim((string) ($company['complemento'] ?? '')),
+        trim((string) ($company['bairro'] ?? '')),
+    ], static fn ($p) => $p !== ''));
+
+    $cidadeUf = implode('/', array_filter([
+        trim((string) ($company['city'] ?? $company['cidade'] ?? '')),
+        trim((string) ($company['estado'] ?? '')),
+    ], static fn ($p) => $p !== ''));
+
+    $cep = trim((string) ($company['zipCode'] ?? ''));
+    $cepStr = $cep !== '' ? 'CEP ' . $cep : '';
+
+    return implode(' · ', array_filter([$street, $cidadeUf, $cepStr], static fn ($p) => $p !== ''));
+}
+
 // Copia os dados ATUAIS do cliente para as colunas de snapshot da proposta/
 // contrato. Só (re)captura na criação ($before === null), quando o cliente foi
 // trocado, ou quando o snapshot ainda está vazio — assim o registro preserva os

@@ -3633,6 +3633,102 @@ menu {
   line-height: 1.55;
 }
 
+/* Cabeçalho do PDF: empresa (esquerda) + dados do documento (direita) */
+.proposal-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  border-bottom: 3px solid var(--teal);
+  padding-bottom: 16px;
+  margin-bottom: 24px;
+}
+
+.proposal-header-company {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.proposal-logo {
+  max-height: 72px;
+  max-width: 170px;
+  object-fit: contain;
+}
+
+.proposal-company-name {
+  display: block;
+  font-size: 18px;
+  margin-bottom: 4px;
+}
+
+.proposal-company-info p {
+  margin: 1px 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #2a3a37;
+}
+
+.proposal-header-doc {
+  text-align: right;
+  min-width: 200px;
+}
+
+.proposal-doc-title {
+  display: block;
+  text-transform: uppercase;
+  font-weight: 800;
+  letter-spacing: 1px;
+  color: var(--teal-2);
+}
+
+.proposal-doc-number {
+  display: block;
+  font-size: 20px;
+  margin: 4px 0 8px;
+}
+
+.proposal-header-doc p {
+  margin: 1px 0;
+  font-size: 12px;
+}
+
+.proposal-meta-2 {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.proposal-footer {
+  margin-top: 28px;
+  padding-top: 10px;
+  border-top: 1px solid #d8e3df;
+  font-size: 11px;
+  color: #555;
+  text-align: center;
+}
+
+@media print {
+  .proposal-footer {
+    position: fixed;
+    bottom: 6mm;
+    left: 12mm;
+    right: 12mm;
+    margin: 0;
+    background: #fff;
+    border-top: 1px solid #cdd8d4;
+  }
+
+  .proposal-page {
+    padding-bottom: 18mm;
+  }
+
+  @page {
+    @bottom-right {
+      content: "Página " counter(page) " de " counter(pages);
+      font-size: 9px;
+      color: #555;
+    }
+  }
+}
+
 .proposal-items-table {
   min-width: 0;
   font-size: 12px;

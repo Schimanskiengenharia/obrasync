@@ -9871,17 +9871,34 @@ function updateProposalPreview() {
 function proposalDocumentHtml({ budget, project, client, items, model, input, vars }) {
   const value = (field) => renderTemplate(input[field] || "", vars);
   const proposalNumber = vars.numero_proposta;
+  const company = (db.companySettings || [])[0] || {};
+  const addr = companyAddressLines(company);
+  const companyLogo = company.logo || company.logoUrl || "";
   return `
     <article class="proposal-page">
-      <header class="proposal-cover">
-        <span>Proposta Comercial</span>
-        <h1>${svgText(model.name || "Proposta Comercial")}</h1>
-        <p>${svgText(project.name || "")}</p>
-        <strong>${svgText(proposalNumber)}</strong>
+      <header class="proposal-header">
+        <div class="proposal-header-company">
+          ${companyLogo ? `<img class="proposal-logo" src="${escapeHtml(companyLogo)}" alt="Logo da empresa">` : ""}
+          <div class="proposal-company-info">
+            <strong class="proposal-company-name">${svgText(vars.nome_empresa)}</strong>
+            ${vars.cnpj_empresa ? `<p>CNPJ: ${svgText(vars.cnpj_empresa)}</p>` : ""}
+            ${addr.street ? `<p>${svgText(addr.street)}</p>` : ""}
+            ${addr.cityCep ? `<p>${svgText(addr.cityCep)}</p>` : ""}
+            ${vars.telefone_empresa ? `<p>Tel/WhatsApp: ${svgText(vars.telefone_empresa)}</p>` : ""}
+            ${vars.email_empresa ? `<p>${svgText(vars.email_empresa)}</p>` : ""}
+            ${vars.site_empresa ? `<p>${svgText(vars.site_empresa)}</p>` : ""}
+          </div>
+        </div>
+        <div class="proposal-header-doc">
+          <span class="proposal-doc-title">Proposta Comercial</span>
+          <strong class="proposal-doc-number">Nº ${svgText(proposalNumber)}</strong>
+          ${vars.data_proposta ? `<p>Emissão: ${svgText(vars.data_proposta)}</p>` : ""}
+          ${vars.validade_proposta ? `<p>Válida até: ${svgText(vars.validade_proposta)}</p>` : ""}
+          ${vars.responsavel_comercial ? `<p>Responsável: ${svgText(vars.responsavel_comercial)}</p>` : ""}
+        </div>
       </header>
-      <section class="proposal-meta-grid">
-        <div><h3>Empresa</h3><p>${svgText(vars.nome_empresa)}</p><p>${svgText(vars.cnpj_empresa)}</p><p>${svgText(vars.telefone_empresa)} ${svgText(vars.email_empresa)}</p></div>
-        <div><h3>Cliente</h3><p>${svgText(client.name || "")}</p><p>${svgText(client.document || "")}</p><p>${svgText(client.address || "")}</p></div>
+      <section class="proposal-meta-grid proposal-meta-2">
+        <div><h3>Cliente</h3><p>${svgText(client.name || "")}</p><p>${svgText(client.document || "")}</p><p>${svgText(clientFullAddress(client) || client.address || "")}</p></div>
         <div><h3>Obra/Projeto</h3><p>${svgText(project.name || "")}</p><p>${svgText(project.address || "")}</p><p>Orçamento: ${svgText(vars.numero_orcamento)} ${svgText(vars.versao_orcamento)}</p></div>
       </section>
       ${proposalSection("Objeto da proposta", value("proposalObject"))}
@@ -9910,6 +9927,7 @@ function proposalDocumentHtml({ budget, project, client, items, model, input, va
         <div><h2>Aceite da proposta</h2><p>${textToHtml(value("acceptanceText"))}</p><span>Assinatura do cliente</span></div>
         <div><h2>Assinatura da empresa</h2><p>${textToHtml(value("signatureText"))}</p><span>${svgText(vars.nome_empresa)}</span></div>
       </section>
+      <footer class="proposal-footer">${svgText([vars.nome_empresa, vars.cnpj_empresa ? `CNPJ ${vars.cnpj_empresa}` : "", vars.telefone_empresa, vars.email_empresa].filter(Boolean).join(" · "))}</footer>
     </article>
   `;
 }
@@ -9982,6 +10000,10 @@ function proposalVariablesFor({ budget, project, client, items, model, input = {
     cnpj_empresa: company.document || "",
     telefone_empresa: company.phone || "",
     email_empresa: company.email || "",
+    endereco_empresa: composeCompanyAddress(company),
+    cidade_uf_empresa: [company.city || company.cidade, company.estado].filter(Boolean).join(" - "),
+    cep_empresa: company.zipCode ? maskCep(company.zipCode) : "",
+    site_empresa: company.site || company.website || "",
     valor_total: asMoney(totalPrice),
     valor_total_extenso: moneyToWords(totalPrice),
     condicao_pagamento: input.paymentCondition || model.paymentTerms || "",
@@ -10073,6 +10095,23 @@ function addDateStringDays(date, days) {
 
 function companyValue(field) {
   return (db.companySettings || [])[0]?.[field] || "";
+}
+
+// Endereço completo da empresa em duas linhas para o cabeçalho do PDF, ignorando
+// campos vazios. street = "Rua X, 123 - Sala 4 - Centro"; cityCep = "Cidade - UF · CEP".
+function companyAddressLines(company) {
+  const c = company || {};
+  const line1 = [c.address, c.numero].filter((v) => v && String(v).trim()).join(", ");
+  const street = [line1, c.complemento, c.bairro].filter((v) => v && String(v).trim()).join(" - ");
+  const cidadeUf = [c.city || c.cidade, c.estado].filter((v) => v && String(v).trim()).join(" - ");
+  const cep = c.zipCode ? `CEP ${maskCep(c.zipCode)}` : "";
+  const cityCep = [cidadeUf, cep].filter(Boolean).join(" · ");
+  return { street, cityCep };
+}
+
+function composeCompanyAddress(company) {
+  const { street, cityCep } = companyAddressLines(company);
+  return [street, cityCep].filter(Boolean).join(" · ");
 }
 
 function moneyToWords(value) {
