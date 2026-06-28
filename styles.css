@@ -859,8 +859,8 @@ button:disabled {
   font-size: 15px;
   width: 18px;
   flex-shrink: 0;
+  opacity: 0.8;
   transition: transform 0.25s ease, filter 0.25s ease, opacity 0.25s ease;
-  opacity: 0.75;
 }
 .submenu-item:hover .submenu-ic {
   transform: scale(1.25) rotate(-5deg);
@@ -880,23 +880,17 @@ button:disabled {
   100% { transform: scale(1.15); }
 }
 
-/* Entrada dos subitens ao expandir o módulo (escalonada) */
+/* Entrada dos subitens ao expandir o módulo. opacity base = 1 para NUNCA sumir:
+   se a animação não rodar (ex.: a regra global de prefers-reduced-motion zera
+   `animation` com !important), o item continua visível em vez de ficar preso em
+   opacity:0. A animação (quando roda) começa em 0.5 — nunca totalmente invisível. */
 .submenu-item {
-  animation: submenu-slide-in 0.2s ease forwards;
-  opacity: 0;
+  opacity: 1;
+  animation: submenu-slide-in 0.15s ease;
+  animation-fill-mode: both;
 }
-.submenu-item:nth-child(1)  { animation-delay: 0.03s; }
-.submenu-item:nth-child(2)  { animation-delay: 0.06s; }
-.submenu-item:nth-child(3)  { animation-delay: 0.09s; }
-.submenu-item:nth-child(4)  { animation-delay: 0.12s; }
-.submenu-item:nth-child(5)  { animation-delay: 0.15s; }
-.submenu-item:nth-child(6)  { animation-delay: 0.18s; }
-.submenu-item:nth-child(7)  { animation-delay: 0.21s; }
-.submenu-item:nth-child(8)  { animation-delay: 0.24s; }
-.submenu-item:nth-child(9)  { animation-delay: 0.27s; }
-.submenu-item:nth-child(10) { animation-delay: 0.30s; }
 @keyframes submenu-slide-in {
-  from { opacity: 0; transform: translateX(-12px); }
+  from { opacity: 0.5; transform: translateX(-12px); }
   to   { opacity: 1; transform: translateX(0); }
 }
 
