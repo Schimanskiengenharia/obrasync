@@ -1,8 +1,8 @@
 # CLAUDE.md — Guia para agentes de IA no projeto ObraSync
 
-> **Versão atual:** `v1.22.0` · 2026-06-28
+> **Versão atual:** `v1.23.0` · 2026-06-28
 > **Última varredura de código:** 2026-06-27 (3ª rodada — segurança, bugs, performance, qualidade, UX; itens MÉDIO/BAIXO fechados na v1.12.1)
-> **Handoff:** este doc foi atualizado na v1.22.0 (comparador de orçamento IA — Fase A) — confira a seção **Sessão 2026-06-28 — v1.22.0** e **Operação/Deploy (handoff)** abaixo.
+> **Handoff:** este doc foi atualizado na v1.23.0 (de-para multi-aba + grupo) — confira a seção **Sessão 2026-06-28 — v1.23.0** e **Operação/Deploy (handoff)** abaixo.
 
 Este arquivo orienta qualquer agente (ou pessoa) que continue o desenvolvimento.
 Leia também o `README.md` (seção "Para quem está retomando o projeto") e o
@@ -60,6 +60,12 @@ Leia também o `README.md` (seção "Para quem está retomando o projeto") e o
 > Pontos fortes confirmados (não re-sinalizar): prepared statements em todo SQL (sem SQLi), autorização por rota/perfil após `authenticate_request`, sessão com token CSPRNG + SHA-256 + idle/TTL, `password_hash`, rate limit de login/reset, CSRF mitigado por auth via header, uploads fora do docroot, deploy com HMAC + `escapeshellarg`.
 
 ---
+
+## Sessão 2026-06-28 — v1.23.0 (De-para em lote: multi-aba + grupo)
+
+**Ajuste no `iaDepara`:** `deparaUpload` agora lê **todas as abas** do Excel (antes só a 1ª), detectando colunas por aba (`ia_depara_detect_columns`). Abas sem coluna de descrição são puladas e devolvidas em `abasIgnoradas`; as lidas vão em `abasLidas:[{nome,linhas,colunasDetectadas}]`. Retorno do upload: `{jobId, total, colunasDetectadas, abasLidas, abasIgnoradas}` (e `colunasJson` do job agora guarda esse resumo). **Nova coluna `ia_depara_itens.grupoAba VARCHAR(160)`** = nome da aba de origem (migration `2026-06-28-ia-depara-grupo-aba.sql` + `ALTER ... ADD COLUMN IF NOT EXISTS` no `ensure_ia_depara_tables`). CSV = aba única (nome do arquivo).
+
+`deparaItens` passou a retornar `grupoAba` por item + `grupos:[{nome,total}]` e aceita `&grupo=` para filtrar. Export inclui a coluna **Grupo (aba)**. Frontend: resumo de abas pós-upload (`iaDeparaAbasResumoHtml`), coluna **Grupo** na tabela, e seletor de grupo (`iaDeparaGrupoFilterHtml`, aparece com 2+ grupos) que combina com os baldes de situação. Classificação e endpoints inalterados. CSS `.ia-dp-abas`/`.ia-dp-grupo-*`.
 
 ## Sessão 2026-06-28 — v1.22.0 (Comparador de orçamento IA — Fase A)
 

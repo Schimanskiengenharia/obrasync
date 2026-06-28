@@ -6130,6 +6130,41 @@ html[data-theme="dark"] .ia-dp-cotacao { color: #ffa399; }
   cursor: pointer;
 }
 
+/* Resumo das abas + grupo (multi-aba do de-para) */
+.ia-dp-abas { margin: 10px 0 4px; font-size: 0.9rem; display: flex; flex-direction: column; gap: 6px; }
+.ia-dp-abas-ign { color: var(--muted); }
+.ia-dp-aba-tag {
+  display: inline-block;
+  margin: 2px 4px 2px 0;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+.ia-dp-aba-ok { color: #1f5e0f; background: rgba(59, 109, 17, 0.14); }
+.ia-dp-aba-skip { color: var(--muted); background: rgba(120, 120, 120, 0.16); text-decoration: line-through; }
+html[data-theme="dark"] .ia-dp-aba-ok { color: #aee08a; }
+.ia-dp-grupo-filter { margin: 4px 0 12px; }
+.ia-dp-grupo-filter label { display: inline-flex; align-items: center; gap: 8px; font-size: 0.88rem; color: var(--muted); }
+.ia-dp-grupo-filter select {
+  padding: 7px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--field);
+  color: var(--ink);
+  font: inherit;
+}
+.ia-dp-grupo-tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #185fa5;
+  background: rgba(24, 95, 165, 0.12);
+}
+html[data-theme="dark"] .ia-dp-grupo-tag { color: #7db4ec; }
+
 @media (max-width: 700px) {
   .ia-dp-export { margin-left: 0; width: 100%; }
   .ia-dp-arrow { display: none; }

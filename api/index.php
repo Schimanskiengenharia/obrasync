@@ -9093,6 +9093,7 @@ function ensure_ia_depara_tables(PDO $pdo): void
         'CREATE TABLE IF NOT EXISTS ia_depara_itens (
             id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
             jobId VARCHAR(64) NOT NULL,
+            grupoAba VARCHAR(160) NULL,
             linhaPlanilha INT UNSIGNED NULL,
             descricaoOrigem TEXT NOT NULL,
             codigoOrigem VARCHAR(80) NULL,
@@ -9114,6 +9115,11 @@ function ensure_ia_depara_tables(PDO $pdo): void
             KEY idx_job_status (jobId, statusClassificacao)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
     );
+    // Auto-cura para instalações já existentes (multi-aba/grupo — v1.23).
+    try {
+        $pdo->exec('ALTER TABLE ia_depara_itens ADD COLUMN IF NOT EXISTS grupoAba VARCHAR(160) NULL');
+    } catch (Throwable $ignored) {
+    }
     $done = true;
 }
 
@@ -9414,10 +9420,11 @@ function ia_read_json_body(): array
 }
 
 // ── De-para em lote da IA: upload da planilha ───────────────────────────────
-// Recebe um .xlsx/.xls/.csv com um orçamento externo, lê a primeira aba (reusa
+// Recebe um .xlsx/.xls/.csv com um orçamento externo, lê TODAS as abas (reusa
 // read_xlsx_sheets / setReadDataOnly do import SINAPI), detecta as colunas pelo
-// cabeçalho e grava as linhas CRUAS em ia_depara_itens (sem classificar ainda).
-// NÃO inventa dados: só lê o que está na planilha; descrição é obrigatória.
+// cabeçalho de CADA aba e grava as linhas CRUAS em ia_depara_itens (sem classificar
+// ainda), usando o NOME DA ABA como grupo/categoria (grupoAba). Abas sem coluna de
+// descrição (capa/resumo/índice) são puladas. NÃO inventa dados: só lê o que existe.
 function handle_ia_depara_upload(PDO $pdo, array $config, array $authUser): never
 {
     ensure_ia_depara_tables($pdo);
@@ -9442,83 +9449,100 @@ function handle_ia_depara_upload(PDO $pdo, array $config, array $authUser): neve
         'text/plain', 'text/csv', 'application/csv',
     ]);
 
-    // Lê a planilha (primeira aba). CSV é nativo; XLSX/XLS via PhpSpreadsheet.
+    // Lê TODAS as abas. CSV é nativo (aba única, nome = arquivo); XLSX/XLS via PhpSpreadsheet.
     try {
         if (strtolower(pathinfo($path, PATHINFO_EXTENSION)) === 'csv') {
-            $rows = cotacao_parse_csv($path);
+            $sheetName = pathinfo((string) ($file['name'] ?? 'planilha'), PATHINFO_FILENAME) ?: 'Planilha';
+            $sheetsData = [$sheetName => cotacao_parse_csv($path)];
         } else {
             sinapi_require_phpspreadsheet();
-            $sheets = read_xlsx_sheets($path);
-            $rows = $sheets ? (array) reset($sheets) : [];
+            $sheetsData = read_xlsx_sheets($path); // [tituloDaAba => linhas]
         }
     } catch (Throwable $error) {
         @unlink($path);
         sinapi_module_respond(false, [], 'Não foi possível ler a planilha: ' . $error->getMessage(), 400);
     }
-    if (!$rows) {
+    if (!$sheetsData) {
         @unlink($path);
         sinapi_module_respond(false, [], 'A planilha está vazia ou não pôde ser lida.', 400);
     }
 
-    // Detecta a linha de cabeçalho e o mapa de colunas.
-    $detected = ia_depara_detect_columns($rows);
-    if (!$detected['ok']) {
-        @unlink($path);
-        sinapi_module_respond(false, ['amostra' => array_slice($rows, 0, 3)],
-            'Não foi possível identificar a coluna de descrição. A planilha precisa de uma coluna "Descrição" (ou Item/Serviço/Produto). Ajuste o cabeçalho e tente novamente.', 422);
-    }
-    $cols = $detected['cols'];
-    $headerIdx = $detected['headerIdx'];
-
-    // Lê as linhas de dados abaixo do cabeçalho (só o que está na planilha).
+    // Percorre cada aba: detecta colunas (cada aba pode ter cabeçalho próprio) e lê as
+    // linhas válidas, marcando-as com o nome da aba como grupo. Abas sem coluna de
+    // descrição são puladas (capa/resumo/índice) e registradas em $abasIgnoradas.
     $itens = [];
-    $n = count($rows);
-    for ($i = $headerIdx + 1; $i < $n; $i++) {
-        $r = (array) $rows[$i];
-        $desc = trim((string) ($r[$cols['descricao']] ?? ''));
-        if ($desc === '') {
+    $abasLidas = [];
+    $abasIgnoradas = [];
+    $colsUniao = [];
+    foreach ($sheetsData as $sheetName => $rows) {
+        $rows = (array) $rows;
+        $detected = ia_depara_detect_columns($rows);
+        if (!$detected['ok']) {
+            $abasIgnoradas[] = (string) $sheetName;
             continue;
         }
-        $itens[] = [
-            'linha' => $i + 1, // 1-based, como o usuário vê na planilha
-            'descricaoOrigem' => mb_substr($desc, 0, 1000),
-            'codigoOrigem' => isset($cols['codigo']) ? (mb_substr(trim((string) ($r[$cols['codigo']] ?? '')), 0, 80) ?: null) : null,
-            'quantidade' => isset($cols['quantidade']) ? cotacao_num($r[$cols['quantidade']] ?? '') : null,
-            'unidadeOrigem' => isset($cols['unidade']) ? (mb_substr(trim((string) ($r[$cols['unidade']] ?? '')), 0, 40) ?: null) : null,
-            'valorOrigem' => isset($cols['valor']) ? cotacao_num($r[$cols['valor']] ?? '') : null,
-        ];
+        $cols = $detected['cols'];
+        $headerIdx = $detected['headerIdx'];
+        foreach (array_keys($cols) as $cKey) {
+            $colsUniao[$cKey] = true;
+        }
+        $lidasNaAba = 0;
+        $n = count($rows);
+        for ($i = $headerIdx + 1; $i < $n; $i++) {
+            $r = (array) $rows[$i];
+            $desc = trim((string) ($r[$cols['descricao']] ?? ''));
+            if ($desc === '') {
+                continue;
+            }
+            $itens[] = [
+                'grupoAba' => mb_substr((string) $sheetName, 0, 160),
+                'linha' => $i + 1, // 1-based dentro da aba
+                'descricaoOrigem' => mb_substr($desc, 0, 1000),
+                'codigoOrigem' => isset($cols['codigo']) ? (mb_substr(trim((string) ($r[$cols['codigo']] ?? '')), 0, 80) ?: null) : null,
+                'quantidade' => isset($cols['quantidade']) ? cotacao_num($r[$cols['quantidade']] ?? '') : null,
+                'unidadeOrigem' => isset($cols['unidade']) ? (mb_substr(trim((string) ($r[$cols['unidade']] ?? '')), 0, 40) ?: null) : null,
+                'valorOrigem' => isset($cols['valor']) ? cotacao_num($r[$cols['valor']] ?? '') : null,
+            ];
+            $lidasNaAba++;
+        }
+        $abasLidas[] = ['nome' => (string) $sheetName, 'linhas' => $lidasNaAba, 'colunasDetectadas' => array_keys($cols)];
     }
     if (!$itens) {
         @unlink($path);
-        sinapi_module_respond(false, [], 'Nenhuma linha com descrição foi encontrada abaixo do cabeçalho.', 422);
+        $msg = $abasIgnoradas
+            ? 'Nenhuma aba tinha uma coluna de descrição reconhecível. Abas ignoradas: ' . implode(', ', $abasIgnoradas) . '. A planilha precisa de uma coluna "Descrição" (ou Item/Serviço/Produto).'
+            : 'Nenhuma linha com descrição foi encontrada na planilha.';
+        sinapi_module_respond(false, ['abasIgnoradas' => $abasIgnoradas], $msg, 422);
     }
 
     // Cria o job e grava as linhas cruas (classificação só no worker).
     $jobId = uniqid('ia_dp_', true);
-    $colunasDetectadas = array_keys($cols);
+    $colunasDetectadas = array_keys($colsUniao);
     $pdo->prepare('INSERT INTO ia_depara_jobs (id, nomeArquivo, total, processados, status, colunasJson, userId) VALUES (?, ?, ?, 0, ?, ?, ?)')
         ->execute([
             $jobId,
             (string) ($file['name'] ?? basename($path)),
             count($itens),
             'queued',
-            json_encode($colunasDetectadas, JSON_UNESCAPED_UNICODE),
+            json_encode(['colunas' => $colunasDetectadas, 'abasLidas' => $abasLidas, 'abasIgnoradas' => $abasIgnoradas], JSON_UNESCAPED_UNICODE),
             (int) ($authUser['id'] ?? 0) ?: null,
         ]);
-    $ins = $pdo->prepare('INSERT INTO ia_depara_itens (jobId, linhaPlanilha, descricaoOrigem, codigoOrigem, quantidade, unidadeOrigem, valorOrigem) VALUES (?, ?, ?, ?, ?, ?, ?)');
+    $ins = $pdo->prepare('INSERT INTO ia_depara_itens (jobId, grupoAba, linhaPlanilha, descricaoOrigem, codigoOrigem, quantidade, unidadeOrigem, valorOrigem) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
     $pdo->beginTransaction();
     foreach ($itens as $it) {
-        $ins->execute([$jobId, $it['linha'], $it['descricaoOrigem'], $it['codigoOrigem'], $it['quantidade'], $it['unidadeOrigem'], $it['valorOrigem']]);
+        $ins->execute([$jobId, $it['grupoAba'], $it['linha'], $it['descricaoOrigem'], $it['codigoOrigem'], $it['quantidade'], $it['unidadeOrigem'], $it['valorOrigem']]);
     }
     $pdo->commit();
 
     @unlink($path); // os dados já estão no banco; a planilha temporária não é mais necessária
-    server_audit($pdo, $authUser, 'import', 'ia', $jobId, 'De-para IA: upload de planilha (' . count($itens) . ' itens)');
+    server_audit($pdo, $authUser, 'import', 'ia', $jobId, 'De-para IA: upload de planilha (' . count($itens) . ' itens, ' . count($abasLidas) . ' aba(s))');
     sinapi_module_respond(true, [
         'jobId' => $jobId,
         'total' => count($itens),
         'colunasDetectadas' => $colunasDetectadas,
-    ], 'Planilha lida: ' . count($itens) . ' itens prontos para classificar.');
+        'abasLidas' => $abasLidas,
+        'abasIgnoradas' => $abasIgnoradas,
+    ], 'Planilha lida: ' . count($itens) . ' itens em ' . count($abasLidas) . ' aba(s).');
 }
 
 // Normaliza um texto de cabeçalho: minúsculo, sem acento, sem pontuação.
@@ -9671,7 +9695,8 @@ function handle_ia_depara_items(PDO $pdo): never
         sinapi_module_respond(false, [], 'Informe o jobId.', 400);
     }
     $filtro = strtolower((string) ($_GET['situacao'] ?? 'todos'));
-    $sql = 'SELECT id, linhaPlanilha, descricaoOrigem, codigoOrigem, quantidade, unidadeOrigem, valorOrigem,
+    $grupo = (string) ($_GET['grupo'] ?? '');
+    $sql = 'SELECT id, grupoAba, linhaPlanilha, descricaoOrigem, codigoOrigem, quantidade, unidadeOrigem, valorOrigem,
                    statusClassificacao, matchOrigem, matchId, matchCode, matchDescription, matchUnit, matchValor,
                    similaridade, aceito
             FROM ia_depara_itens WHERE jobId = ?';
@@ -9680,6 +9705,10 @@ function handle_ia_depara_items(PDO $pdo): never
         $sql .= ' AND statusClassificacao = ?';
         $params[] = $filtro;
     }
+    if ($grupo !== '' && strtolower($grupo) !== 'todos') {
+        $sql .= ' AND grupoAba = ?';
+        $params[] = $grupo;
+    }
     $sql .= ' ORDER BY id';
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
@@ -9687,6 +9716,7 @@ function handle_ia_depara_items(PDO $pdo): never
     while ($r = $stmt->fetch(PDO::FETCH_ASSOC)) {
         $itens[] = [
             'id' => (int) $r['id'],
+            'grupoAba' => $r['grupoAba'],
             'linhaPlanilha' => $r['linhaPlanilha'] !== null ? (int) $r['linhaPlanilha'] : null,
             'descricaoOrigem' => (string) $r['descricaoOrigem'],
             'codigoOrigem' => $r['codigoOrigem'],
@@ -9707,7 +9737,20 @@ function handle_ia_depara_items(PDO $pdo): never
     sinapi_module_respond(true, [
         'itens' => $itens,
         'counts' => ia_depara_counts($pdo, $jobId),
+        'grupos' => ia_depara_grupos($pdo, $jobId),
     ], 'OK');
+}
+
+// Lista os grupos (nomes de aba) do lote + a contagem de itens de cada um.
+function ia_depara_grupos(PDO $pdo, string $jobId): array
+{
+    $stmt = $pdo->prepare("SELECT COALESCE(grupoAba, '') g, COUNT(*) c FROM ia_depara_itens WHERE jobId = ? GROUP BY grupoAba ORDER BY g");
+    $stmt->execute([$jobId]);
+    $out = [];
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
+        $out[] = ['nome' => (string) $r['g'], 'total' => (int) $r['c']];
+    }
+    return $out;
 }
 
 // Aceita (confirma) ou desmarca o match sugerido para um item.
@@ -9762,7 +9805,7 @@ function handle_ia_depara_export(PDO $pdo): never
     $sheet->setCellValue('A' . $row, 'De-para IA — base SINAPI'); $row++;
     $sheet->setCellValue('A' . $row, 'Arquivo: ' . (string) ($job['nomeArquivo'] ?? '')); $row++;
     $sheet->setCellValue('A' . $row, 'Gerado em ' . date('Y-m-d H:i')); $row += 2;
-    $headers = ['Linha', 'Descrição (origem)', 'Código (origem)', 'Qtd', 'Unid (origem)', 'Valor (origem)',
+    $headers = ['Grupo (aba)', 'Linha', 'Descrição (origem)', 'Código (origem)', 'Qtd', 'Unid (origem)', 'Valor (origem)',
         'Situação', 'Match', 'Código SINAPI', 'Descrição SINAPI', 'Unid SINAPI', 'Valor SINAPI', 'Similaridade %', 'Aceito'];
     $cols = [];
     $c = 'A';
@@ -9772,6 +9815,7 @@ function handle_ia_depara_export(PDO $pdo): never
     $row++;
     foreach ($rows as $r) {
         $vals = [
+            (string) ($r['grupoAba'] ?? ''),
             (int) ($r['linhaPlanilha'] ?? 0),
             (string) $r['descricaoOrigem'],
             (string) ($r['codigoOrigem'] ?? ''),

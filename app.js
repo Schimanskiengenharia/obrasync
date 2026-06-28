@@ -19,9 +19,10 @@ if (APP_ENV === "production" && location.protocol === "http:") {
   location.replace(location.href.replace(/^http:/, "https:"));
 }
 const APP_NAME = "ObraSync";
-const APP_VERSION = "v1.22.0";
+const APP_VERSION = "v1.23.0";
 const APP_VERSION_DATE = "2026-06-28";
 const APP_CHANGELOG = [
+  "De-para em lote: passa a ler TODAS as abas do Excel (não só a primeira), usando o nome de cada aba como grupo/categoria (ex.: Elétrica, Hidráulica, Pavimento 1). Abas sem coluna de descrição reconhecível (capa/resumo/índice) são puladas e listadas no resumo pós-upload. A coluna \"Grupo\" aparece na tabela de resultado e no export, e há um filtro por grupo (aba) além dos baldes de situação (v1.23.0).",
   "Comparador de orçamento com IA (Fase A — análise): nova tela em IA → Comparador de orçamento. Suba um orçamento externo em Excel/CSV; para cada item a IA encontra o equivalente na base SINAPI (por código ou por busca semântica) e COMPARA o preço da planilha com o da SINAPI, indicando qual é mais baixo e a diferença (R$ e %). Classifica em ACHOU, FALTOU IMPORTAR (código SINAPI que não está na nossa base) e COTAÇÃO PRÓPRIA. Relatório com baldes coloridos por situação, resumo de economia/excesso estimado (diferença × quantidade), tabela com valor planilha × valor SINAPI e destaque do mais barato, e exportação em Excel. Fase de análise — ainda não gera orçamento editável (v1.22.0).",
   "De-para em lote da IA: nova tela em IA → De-para em lote. Suba um orçamento externo em Excel/CSV; a IA lê a planilha (detectando automaticamente as colunas de descrição, código, quantidade, unidade e valor), classifica cada item contra a base SINAPI pela mesma busca semântica (cosseno) em ACHOU (alta similaridade ou código SINAPI válido), REVISAR (similaridade média, ou código informado que não existe na base) e COTAÇÃO PRÓPRIA (sem equivalente). A classificação roda em segundo plano com barra de progresso; o resultado vem em baldes coloridos por situação, tabela com o match sugerido (código + descrição + valor SINAPI) e similaridade, botões Aceitar por item e exportação do resultado em Excel (v1.21.0).",
   "Busca semântica da IA na base SINAPI: nova tela em IA → Busca semântica onde você descreve o item em linguagem natural e recebe as composições/insumos SINAPI mais parecidos POR SIGNIFICADO (não por palavra exata). O servidor gera o embedding do texto (Ollama, 384 dims) e ordena por similaridade de cosseno sobre os ~25 mil vetores já indexados, com filtro por origem (todos/composições/insumos), badge de similaridade (verde/amarelo/cinza), código + descrição + unidade e valor do item (v1.20.0).",
@@ -5213,7 +5214,7 @@ function renderIaBuscaResultados(rows) {
 // Fluxo: sobe planilha (.xlsx/.csv) → a IA classifica cada item contra a base
 // SINAPI (mesma busca semântica por cosseno, no worker) em ACHOU/REVISAR/COTAÇÃO
 // PRÓPRIA → o usuário revisa (Aceitar) → exporta o resultado em Excel.
-const iaDeparaState = { jobId: null, total: 0, colunas: [], status: "none", filtro: "todos", counts: null };
+const iaDeparaState = { jobId: null, total: 0, colunas: [], status: "none", filtro: "todos", grupo: "todos", counts: null, grupos: [], abasLidas: [], abasIgnoradas: [] };
 let iaDeparaTimer = null;
 
 const IA_DEPARA_SIT = {
@@ -5224,6 +5225,24 @@ const IA_DEPARA_SIT = {
 
 function iaDeparaColLabel(c) {
   return ({ descricao: "Descrição", codigo: "Código", quantidade: "Quantidade", unidade: "Unidade", valor: "Valor" })[c] || c;
+}
+
+// Resumo das abas lidas/ignoradas (mostrado após o upload, antes de classificar).
+function iaDeparaAbasResumoHtml() {
+  const lidas = iaDeparaState.abasLidas || [];
+  const ign = iaDeparaState.abasIgnoradas || [];
+  if (!lidas.length && !ign.length) return "";
+  const lidasTxt = lidas.length
+    ? lidas.map((a) => `<span class="ia-dp-aba-tag ia-dp-aba-ok">${escapeHtml(a.nome || "(sem nome)")} <span class="muted">(${Number(a.linhas || 0)})</span></span>`).join(" ")
+    : '<span class="muted">nenhuma</span>';
+  const ignTxt = ign.length
+    ? ign.map((nome) => `<span class="ia-dp-aba-tag ia-dp-aba-skip">${escapeHtml(nome || "(sem nome)")}</span>`).join(" ")
+    : "";
+  return `
+    <div class="ia-dp-abas">
+      <div><strong>Abas lidas:</strong> ${lidasTxt}</div>
+      ${ign.length ? `<div class="ia-dp-abas-ign"><strong>Ignoradas</strong> <span class="muted">(sem coluna de descrição)</span>: ${ignTxt}</div>` : ""}
+    </div>`;
 }
 
 function renderIaDepara() {
@@ -5268,8 +5287,12 @@ async function iaDeparaUpload(event) {
     iaDeparaState.jobId = d.jobId;
     iaDeparaState.total = d.total || 0;
     iaDeparaState.colunas = d.colunasDetectadas || [];
+    iaDeparaState.abasLidas = d.abasLidas || [];
+    iaDeparaState.abasIgnoradas = d.abasIgnoradas || [];
     iaDeparaState.status = "uploaded";
     iaDeparaState.filtro = "todos";
+    iaDeparaState.grupo = "todos";
+    iaDeparaState.grupos = [];
     iaDeparaState.counts = null;
     iaDeparaRenderReady();
   } catch (error) {
@@ -5289,6 +5312,7 @@ function iaDeparaRenderReady() {
     <div class="ia-dp-ready">
       <h3>2. Classificar com IA</h3>
       <p><strong>${iaDeparaState.total.toLocaleString("pt-BR")}</strong> itens lidos. Colunas detectadas: ${cols}</p>
+      ${iaDeparaAbasResumoHtml()}
       <p class="field-hint">A IA gera o embedding de cada descrição e compara por significado com a base SINAPI (~1–2s por item; roda em segundo plano, em baixa prioridade). Itens com código SINAPI válido casam direto pelo código.</p>
       <div id="iaDeparaProgress" class="hidden">
         <div class="ia-dp-progress-text muted">Classificando…</div>
@@ -5351,8 +5375,9 @@ async function iaDeparaLoadResults(filtro) {
   if (!box) return;
   box.innerHTML = '<p class="muted">Carregando resultados…</p>';
   try {
-    const data = await apiModuleRequest(`?module=ia&action=deparaItens&job=${encodeURIComponent(iaDeparaState.jobId)}&situacao=${encodeURIComponent(iaDeparaState.filtro)}`);
+    const data = await apiModuleRequest(`?module=ia&action=deparaItens&job=${encodeURIComponent(iaDeparaState.jobId)}&situacao=${encodeURIComponent(iaDeparaState.filtro)}&grupo=${encodeURIComponent(iaDeparaState.grupo || "todos")}`);
     iaDeparaState.counts = data.counts || iaDeparaState.counts;
+    iaDeparaState.grupos = data.grupos || iaDeparaState.grupos;
     iaDeparaRenderResult(data.itens || [], data.counts || {});
   } catch (error) {
     box.innerHTML = `<p style="color:#b42318">Não foi possível carregar os resultados: ${escapeHtml(error.message)}</p>`;
@@ -5378,7 +5403,8 @@ function iaDeparaRenderResult(itens, counts) {
       ${bucket("revisar", "REVISAR", "ia-dp-b-revisar")}
       ${bucket("cotacao_propria", "COTAÇÃO PRÓPRIA", "ia-dp-b-cotacao")}
       <button type="button" class="secondary ia-dp-export" id="iaDeparaExportBtn">⤓ Exportar resultado</button>
-    </div>`;
+    </div>
+    ${iaDeparaGrupoFilterHtml()}`;
   if (!itens.length) {
     box.innerHTML = head + '<p class="empty">Nenhum item nesta situação.</p>';
   } else {
@@ -5386,7 +5412,7 @@ function iaDeparaRenderResult(itens, counts) {
       <div class="ia-dp-table-wrap">
         <table class="ia-dp-table">
           <thead><tr>
-            <th>#</th><th>Descrição (origem)</th><th>Cód.</th><th></th>
+            <th>#</th><th>Grupo</th><th>Descrição (origem)</th><th>Cód.</th><th></th>
             <th>Sim.</th><th>Match SINAPI</th><th>Valor</th><th>Ação</th>
           </tr></thead>
           <tbody>${itens.map(iaDeparaRowHtml).join("")}</tbody>
@@ -5395,13 +5421,30 @@ function iaDeparaRenderResult(itens, counts) {
   }
   box.querySelectorAll("[data-dp-filtro]").forEach((btn) => btn.addEventListener("click", () => iaDeparaLoadResults(btn.dataset.dpFiltro)));
   qs("iaDeparaExportBtn")?.addEventListener("click", iaDeparaExport);
+  qs("iaDeparaGrupoSel")?.addEventListener("change", (e) => { iaDeparaState.grupo = e.target.value || "todos"; iaDeparaLoadResults(iaDeparaState.filtro); });
   box.querySelectorAll("[data-dp-aceitar]").forEach((btn) => btn.addEventListener("click", () => iaDeparaAceitar(Number(btn.dataset.dpAceitar), btn)));
   box.querySelectorAll("[data-dp-criar]").forEach((btn) => btn.addEventListener("click", () => iaDeparaCriarComposicao(btn.dataset.dpCriar)));
+}
+
+// Seletor de grupo (aba) — só aparece quando há mais de um grupo no lote.
+function iaDeparaGrupoFilterHtml() {
+  const grupos = (iaDeparaState.grupos || []).filter((g) => (g.nome || "") !== "");
+  if (grupos.length <= 1) return "";
+  const sel = iaDeparaState.grupo || "todos";
+  const totalTodos = grupos.reduce((acc, g) => acc + Number(g.total || 0), 0);
+  const opts = [`<option value="todos" ${sel === "todos" ? "selected" : ""}>Todos os grupos (${totalTodos})</option>`]
+    .concat(grupos.map((g) => `<option value="${escapeHtml(g.nome)}" ${sel === g.nome ? "selected" : ""}>${escapeHtml(g.nome)} (${Number(g.total || 0)})</option>`))
+    .join("");
+  return `
+    <div class="ia-dp-grupo-filter">
+      <label>Grupo (aba) <select id="iaDeparaGrupoSel">${opts}</select></label>
+    </div>`;
 }
 
 function iaDeparaRowHtml(it) {
   const sit = IA_DEPARA_SIT[it.statusClassificacao] || { label: "—", cls: "" };
   const tag = `<span class="ia-dp-sit ${sit.cls}">${sit.label}</span>`;
+  const grupo = it.grupoAba ? `<span class="ia-dp-grupo-tag">${escapeHtml(it.grupoAba)}</span>` : '<span class="muted">—</span>';
   const codOrigem = it.codigoOrigem ? `<div class="ia-dp-cod">${escapeHtml(it.codigoOrigem)}</div>` : '<span class="muted">—</span>';
   const sim = it.similaridade != null ? iaSimBadge(it.similaridade) : '<span class="muted">—</span>';
   let matchCell = '<span class="muted">—</span>';
@@ -5428,6 +5471,7 @@ function iaDeparaRowHtml(it) {
   return `
     <tr class="ia-dp-tr ${Number(it.aceito) === 1 ? "is-aceito" : ""}">
       <td class="ia-dp-linha">${it.linhaPlanilha ?? ""}</td>
+      <td>${grupo}</td>
       <td class="ia-dp-desc">${tag}<div>${escapeHtml(it.descricaoOrigem || "")}</div>${extras ? `<span class="muted ia-dp-un">${extras}</span>` : ""}</td>
       <td>${codOrigem}</td>
       <td class="ia-dp-arrow">→</td>
