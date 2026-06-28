@@ -8904,6 +8904,17 @@ function handle_ia_module(PDO $pdo, string $method, array $query, array $config,
         }
         handle_ia_index_status($pdo);
     }
+    if ($action === 'buscarsemantica') {
+        if (strtoupper($method) !== 'POST') {
+            sinapi_module_respond(false, [], 'Método não permitido. Use POST.', 405);
+        }
+        $raw = file_get_contents('php://input') ?: '';
+        $payload = json_decode($raw, true);
+        if (!is_array($payload)) {
+            sinapi_module_respond(false, [], 'Corpo da requisição inválido (JSON esperado).', 400);
+        }
+        handle_ia_busca_semantica($pdo, $payload);
+    }
     sinapi_module_respond(false, [], 'Ação de IA não reconhecida.', 404);
 }
 
@@ -9032,6 +9043,147 @@ function handle_ia_index_status(PDO $pdo): never
         'percent' => $percent,
         'error' => $job['errorMessage'] ?? null,
     ], 'OK');
+}
+
+// ── Busca semântica na base SINAPI ──────────────────────────────────────────
+// Recebe um texto em linguagem natural, gera o embedding (Ollama, 384 dims) e o
+// compara por SIMILARIDADE DE COSSENO com os vetores já indexados em ia_embeddings,
+// devolvendo os itens SINAPI mais parecidos POR SIGNIFICADO. Carregar ~25 mil vetores
+// e calcular cosseno em PHP é rápido (floats); se um dia ficar lento, cachear os
+// vetores em memória/APCu. Por ora: carrega, calcula, ordena.
+function handle_ia_busca_semantica(PDO $pdo, array $payload): never
+{
+    ensure_ia_tables($pdo);
+    @set_time_limit(120);
+    @ini_set('memory_limit', '1024M');
+
+    $texto = trim((string) ($payload['texto'] ?? ''));
+    if ($texto === '') {
+        sinapi_module_respond(false, [], 'Informe um texto para a busca semântica.', 400);
+    }
+    if (mb_strlen($texto) > 1000) {
+        $texto = mb_substr($texto, 0, 1000);
+    }
+    $limite = (int) ($payload['limite'] ?? 20);
+    $limite = max(1, min(100, $limite));
+    $origem = strtolower((string) ($payload['origem'] ?? 'todos'));
+    if (!in_array($origem, ['todos', 'composicao', 'insumo'], true)) {
+        $origem = 'todos';
+    }
+
+    // 1) Embedding do texto da busca (server-side; o Ollama nunca é exposto).
+    $emb = ollama_embed($texto);
+    if (!$emb['success']) {
+        sinapi_module_respond(false, [], 'Não foi possível gerar o embedding da busca. O Ollama está disponível? Detalhe: '
+            . ($emb['error'] ?? 'erro desconhecido'), 503);
+    }
+    $queryVec = $emb['embedding'];
+    $dim = count($queryVec);
+    if ($dim === 0) {
+        sinapi_module_respond(false, [], 'O embedding da busca veio vazio. Verifique o modelo de embeddings do Ollama.', 502);
+    }
+    // Norma do vetor da busca (calculada uma única vez).
+    $normQ = 0.0;
+    foreach ($queryVec as $v) {
+        $normQ += $v * $v;
+    }
+    $normQ = sqrt($normQ);
+    if ($normQ <= 0) {
+        sinapi_module_respond(false, [], 'O embedding da busca é nulo (norma zero).', 502);
+    }
+
+    // 2) Varre os vetores indexados e calcula o cosseno de cada um.
+    if ($origem === 'todos') {
+        $stmt = $pdo->query('SELECT origem, origemId, embedding FROM ia_embeddings');
+    } else {
+        $stmt = $pdo->prepare('SELECT origem, origemId, embedding FROM ia_embeddings WHERE origem = ?');
+        $stmt->execute([$origem]);
+    }
+    $scored = [];
+    while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+        $vec = json_decode((string) $row['embedding'], true);
+        if (!is_array($vec) || count($vec) !== $dim) {
+            continue; // vetor corrompido ou de outra dimensão — ignora
+        }
+        $dot = 0.0;
+        $normI = 0.0;
+        for ($i = 0; $i < $dim; $i++) {
+            $b = (float) $vec[$i];
+            $dot += $queryVec[$i] * $b;
+            $normI += $b * $b;
+        }
+        if ($normI <= 0) {
+            continue;
+        }
+        $scored[] = [
+            'origem' => (string) $row['origem'],
+            'origemId' => (int) $row['origemId'],
+            'sim' => $dot / ($normQ * sqrt($normI)),
+        ];
+    }
+    $stmt->closeCursor();
+
+    if (!$scored) {
+        sinapi_module_respond(true, [], 'Nenhum item indexado para buscar. Rode a indexação da base SINAPI primeiro (seção IA → Indexação).');
+    }
+
+    // 3) Ordena por similaridade desc e pega o top N.
+    usort($scored, static fn($a, $b) => $b['sim'] <=> $a['sim']);
+    $top = array_slice($scored, 0, $limite);
+
+    // 4) Busca os dados reais dos itens (em lote por origem) preservando a ordem.
+    $compIds = [];
+    $insIds = [];
+    foreach ($top as $t) {
+        if ($t['origem'] === 'composicao') {
+            $compIds[] = $t['origemId'];
+        } elseif ($t['origem'] === 'insumo') {
+            $insIds[] = $t['origemId'];
+        }
+    }
+    $compData = ia_fetch_sinapi_rows($pdo, 'sinapi_composicoes', 'unitCost', $compIds);
+    $insData = ia_fetch_sinapi_rows($pdo, 'sinapi_insumos', 'unitPrice', $insIds);
+
+    $data = [];
+    foreach ($top as $t) {
+        $src = $t['origem'] === 'composicao'
+            ? ($compData[$t['origemId']] ?? null)
+            : ($insData[$t['origemId']] ?? null);
+        if (!$src) {
+            continue; // item indexado mas removido da base — ignora silenciosamente
+        }
+        $sim = max(0.0, min(1.0, (float) $t['sim']));
+        $data[] = [
+            'origem' => $t['origem'],
+            'code' => (string) $src['code'],
+            'description' => (string) $src['description'],
+            'unit' => (string) ($src['unit'] ?? ''),
+            'valor' => (float) $src['valor'],
+            'similaridade' => round($sim * 100, 1),
+        ];
+    }
+
+    sinapi_module_respond(true, $data, count($data) . ' resultado(s) por similaridade.');
+}
+
+// Busca em lote os dados reais de itens SINAPI por id, retornando um mapa id => linha.
+// $table e $valueColumn são literais controlados pelo chamador (nunca vêm do usuário),
+// então é seguro interpolá-los; os ids vão por placeholders (prepared statement).
+function ia_fetch_sinapi_rows(PDO $pdo, string $table, string $valueColumn, array $ids): array
+{
+    $ids = array_values(array_unique(array_filter(array_map('intval', $ids))));
+    if (!$ids) {
+        return [];
+    }
+    $placeholders = implode(',', array_fill(0, count($ids), '?'));
+    $sql = "SELECT id, code, description, unit, {$valueColumn} AS valor FROM {$table} WHERE id IN ({$placeholders})";
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($ids);
+    $map = [];
+    while ($r = $stmt->fetch(PDO::FETCH_ASSOC)) {
+        $map[(int) $r['id']] = $r;
+    }
+    return $map;
 }
 
 // Dispara o worker CLI de indexação em background, em BAIXA prioridade (nice -n 19)

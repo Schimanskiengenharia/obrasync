@@ -1,8 +1,8 @@
 # CLAUDE.md — Guia para agentes de IA no projeto ObraSync
 
-> **Versão atual:** `v1.19.0` · 2026-06-28
+> **Versão atual:** `v1.20.0` · 2026-06-28
 > **Última varredura de código:** 2026-06-27 (3ª rodada — segurança, bugs, performance, qualidade, UX; itens MÉDIO/BAIXO fechados na v1.12.1)
-> **Handoff:** este doc foi atualizado na v1.19.0 para troca de IA — confira a seção **Sessão 2026-06-28 — v1.19.0** e **Operação/Deploy (handoff)** abaixo.
+> **Handoff:** este doc foi atualizado na v1.20.0 (busca semântica IA) — confira a seção **Sessão 2026-06-28 — v1.20.0** e **Operação/Deploy (handoff)** abaixo.
 
 Este arquivo orienta qualquer agente (ou pessoa) que continue o desenvolvimento.
 Leia também o `README.md` (seção "Para quem está retomando o projeto") e o
@@ -60,6 +60,14 @@ Leia também o `README.md` (seção "Para quem está retomando o projeto") e o
 > Pontos fortes confirmados (não re-sinalizar): prepared statements em todo SQL (sem SQLi), autorização por rota/perfil após `authenticate_request`, sessão com token CSPRNG + SHA-256 + idle/TTL, `password_hash`, rate limit de login/reset, CSRF mitigado por auth via header, uploads fora do docroot, deploy com HMAC + `escapeshellarg`.
 
 ---
+
+## Sessão 2026-06-28 — v1.20.0 (Busca semântica IA na base SINAPI)
+
+**Feature:** nova tela em **IA → Busca semântica** (módulo `iaBusca`). O usuário descreve o item em linguagem natural e recebe as composições/insumos SINAPI mais parecidos **por significado** (não por palavra exata), ordenados por **similaridade de cosseno** sobre os ~25 mil vetores já indexados em `ia_embeddings` (10.378 composições + 14.565 insumos, embeddings JSON de 384 dims).
+
+**Endpoint:** `POST ?module=ia&action=buscarSemantica`, corpo `{ texto, limite?=20 (1–100), origem?='todos'|'composicao'|'insumo' }`. Fluxo em `handle_ia_busca_semantica()` (`api/index.php`, logo após `handle_ia_index_status`): (1) `ollama_embed($texto)` → vetor 384; (2) varre `ia_embeddings` (filtrando por `origem`), calcula cosseno = produto escalar / (normA·normB) — vetores **não** são pré-normalizados, então a norma é calculada no laço; (3) `usort` desc + `array_slice($limite)`; (4) busca os dados reais em lote via `ia_fetch_sinapi_rows()` (`sinapi_composicoes.unitCost` / `sinapi_insumos.unitPrice`); (5) responde `{success, data:[{origem, code, description, unit, valor, similaridade(0–100)}]}` no padrão `sinapi_module_respond`. Itens indexados mas removidos da base são ignorados. **Performance:** carrega tudo em memória (`memory_limit=1024M`, `set_time_limit=120`); se ficar lento, cachear vetores em APCu (TODO).
+
+**Frontend:** `renderIaBusca()` + `runIaBusca()` + `renderIaBuscaResultados()`/`iaSimBadge()` (`app.js`). Módulo `iaBusca` registrado em `moduleNames`, na seção `ia` da sidebar (junto de `iaIndex`/`iaTest`), em `SUBMODULE_ICONS` (`ti-search`) e no roteamento de `render()`. Badge de similaridade: verde >80, amarelo 60–80, cinza <60 (classes `.ia-sim-*` em `styles.css`). Usa `apiModuleRequest`. Sem migration/tabela nova (reaproveita `ia_embeddings`). **De-para em lote (upload de planilha) ainda NÃO existe** — só a busca individual.
 
 ## Sessão 2026-06-28 — v1.19.0 (Importação mensal SINAPI)
 

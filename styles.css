@@ -5937,3 +5937,91 @@ input.cep-loading {
   .nfse-drawer-actions { justify-content: stretch; }
   .nfse-drawer-actions button { flex: 1; }
 }
+
+/* ── IA: busca semântica na base SINAPI (módulo iaBusca) ────────────────────── */
+.ia-busca-form { display: flex; flex-direction: column; gap: 14px; }
+.ia-busca-campo { display: flex; flex-direction: column; gap: 6px; }
+.ia-busca-campo > span { font-weight: 600; color: var(--ink); }
+.ia-busca-campo textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 64px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--field);
+  color: var(--ink);
+  font: inherit;
+  line-height: 1.45;
+}
+.ia-busca-campo textarea:focus {
+  outline: none;
+  border-color: var(--teal);
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.16);
+}
+.ia-busca-controls { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; }
+.ia-busca-controls label { display: flex; flex-direction: column; gap: 4px; font-size: 0.85rem; color: var(--muted); }
+.ia-busca-controls select {
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--field);
+  color: var(--ink);
+  font: inherit;
+}
+.ia-busca-controls .primary { margin-left: auto; }
+
+.ia-busca-resultados { margin-top: 16px; }
+.ia-result-count { margin: 0 0 10px; }
+.ia-result-list { display: flex; flex-direction: column; gap: 8px; }
+.ia-result-row {
+  display: grid;
+  grid-template-columns: 72px 1fr auto;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  transition: border-color 0.15s ease, transform 0.12s ease;
+}
+.ia-result-row:hover { border-color: var(--teal); transform: translateY(-1px); }
+.ia-result-sim { text-align: center; }
+.ia-sim-badge {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.ia-sim-alta { color: #1f5e0f; background: rgba(59, 109, 17, 0.16); }
+.ia-sim-media { color: #855107; background: rgba(133, 79, 11, 0.16); }
+.ia-sim-baixa { color: var(--muted); background: rgba(120, 120, 120, 0.16); }
+html[data-theme="dark"] .ia-sim-alta { color: #aee08a; }
+html[data-theme="dark"] .ia-sim-media { color: #f0c279; }
+
+.ia-result-main { min-width: 0; }
+.ia-result-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 3px; }
+.ia-result-head strong { color: var(--ink); font-variant-numeric: tabular-nums; }
+.ia-result-unit { font-size: 0.8rem; color: var(--muted); }
+.ia-result-desc { color: var(--ink); line-height: 1.4; }
+.ia-tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+.ia-tag-comp { color: #185fa5; background: rgba(24, 95, 165, 0.14); }
+.ia-tag-ins { color: #7a3ba0; background: rgba(122, 59, 160, 0.14); }
+html[data-theme="dark"] .ia-tag-comp { color: #7db4ec; }
+html[data-theme="dark"] .ia-tag-ins { color: #cfa3e6; }
+.ia-result-valor { font-weight: 700; color: var(--ink); white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+@media (max-width: 600px) {
+  .ia-busca-controls .primary { margin-left: 0; width: 100%; }
+  .ia-result-row { grid-template-columns: 60px 1fr; }
+  .ia-result-valor { grid-column: 2; }
+}

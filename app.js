@@ -19,9 +19,10 @@ if (APP_ENV === "production" && location.protocol === "http:") {
   location.replace(location.href.replace(/^http:/, "https:"));
 }
 const APP_NAME = "ObraSync";
-const APP_VERSION = "v1.19.0";
+const APP_VERSION = "v1.20.0";
 const APP_VERSION_DATE = "2026-06-28";
 const APP_CHANGELOG = [
+  "Busca semântica da IA na base SINAPI: nova tela em IA → Busca semântica onde você descreve o item em linguagem natural e recebe as composições/insumos SINAPI mais parecidos POR SIGNIFICADO (não por palavra exata). O servidor gera o embedding do texto (Ollama, 384 dims) e ordena por similaridade de cosseno sobre os ~25 mil vetores já indexados, com filtro por origem (todos/composições/insumos), badge de similaridade (verde/amarelo/cinza), código + descrição + unidade e valor do item (v1.20.0).",
   "Importação mensal SINAPI na Base SINAPI: upload múltiplo dos arquivos oficiais, detecção de competência/tipo, prévia com colunas/amostras/alertas, processamento em fila, reimportação com manter/substituir, histórico por arquivo e referência padrão atual usada pela busca do orçamento (v1.19.0).",
   "Consolidação v1.18.0 (documentação de handoff): README/CLAUDE/STATUS sincronizados com o estado real do projeto, com os nomes reais de tabelas/colunas e o changelog completo da leva (asDate, CEP/autofill/obra, proposta por disciplina/modelos/SINAPI, contrato e exclusão de viabilidade).",
   "Análise de Viabilidade: botão \"Excluir\" em cada análise da lista remove a análise inteira em cascata (grupos, itens e anexos, inclusive os arquivos do disco) numa transação com rollback, após confirmação irreversível (v1.17.1).",
@@ -172,6 +173,7 @@ const modules = [
   ["visibilityRules", "Regras de visualização"],
   ["sinapiSettings", "Configuração SINAPI"],
   ["plugins", "Plugins"],
+  ["iaBusca", "Busca semântica"],
   ["iaIndex", "Indexação SINAPI"],
   ["iaTest", "Teste de IA"],
   ["backupLocal", "Backup local"],
@@ -198,8 +200,8 @@ const sidebarSections = [
   { id: "pluginsLauncher", label: "Plugins", icon: "ti-plug", pluginLauncher: true },
   // IA: seção própria (cresce com busca semântica, de-para, IA Orçamento). Mesma
   // visibilidade de plugins — só papéis que herdam todos os módulos (admin/gerente/
-  // visualizador) a enxergam, pois iaIndex/iaTest não estão nas listas dos demais.
-  { id: "ia", label: "IA", icon: "ti-robot", modules: ["iaIndex", "iaTest"] },
+  // visualizador) a enxergam, pois iaBusca/iaIndex/iaTest não estão nas listas dos demais.
+  { id: "ia", label: "IA", icon: "ti-robot", modules: ["iaBusca", "iaIndex", "iaTest"] },
   { id: "config", label: "Configurações", icon: "ti-settings", modules: ["companySettings", "users", "permissions", "systemVersion", "workTypes", "workStatuses", "standardStages", "standardMilestones", "customFields", "reportModels", "documentTypes", "checklists", "measurementTypes", "paymentMethods", "whatsappTemplates", "visibilityRules", "sinapiSettings", "plugins", "backupLocal", "preferences", "migration", "auditLog", "myProfile"] },
 ];
 
@@ -271,7 +273,7 @@ const SUBMODULE_ICONS = {
   backupLocal: ["ti-database-export", "#5F5E5A"], preferences: ["ti-settings", "#5F5E5A"], migration: ["ti-database-export", "#5F5E5A"],
   auditLog: ["ti-history", "#5F5E5A"], myProfile: ["ti-user-circle", "#5F5E5A"],
   // IA (azul)
-  iaIndex: ["ti-database-cog", "#185FA5"], iaTest: ["ti-plug-connected", "#185FA5"],
+  iaBusca: ["ti-search", "#185FA5"], iaIndex: ["ti-database-cog", "#185FA5"], iaTest: ["ti-plug-connected", "#185FA5"],
 };
 function submenuIconHtml(moduleKey) {
   const [ic, color] = SUBMODULE_ICONS[moduleKey] || ["ti-point", "#8a93a6"];
@@ -2767,6 +2769,7 @@ function render() {
   if (currentModule === "viabilidadeObra") { viabilidadeObraOpenId = null; return renderViabilidadeList(); }
   if (currentModule === "cotacoes") { cotacaoOpenId = null; return renderCotacoes(); }
   if (currentModule === "plugins") return renderPlugins();
+  if (currentModule === "iaBusca") return renderIaBusca();
   if (currentModule === "iaIndex") return renderIaIndex();
   if (currentModule === "iaTest") return renderIaTest();
   if (currentModule === "preferences") return renderPreferences();
@@ -5087,6 +5090,117 @@ async function startIaIndex() {
     alert(`Não foi possível iniciar a indexação: ${error.message}`);
     if (btn) { btn.disabled = false; btn.textContent = "Indexar base para IA"; }
   }
+}
+
+// ── Seção IA: busca semântica na base SINAPI (módulo iaBusca) ────────────────
+// O usuário descreve o item em linguagem natural; o servidor gera o embedding do
+// texto (Ollama, 384 dims) e compara por similaridade de cosseno com os vetores já
+// indexados em ia_embeddings, devolvendo os itens SINAPI mais parecidos POR
+// SIGNIFICADO (não por palavra exata). Mesma sessão/token das demais telas.
+function renderIaBusca() {
+  qs("content").innerHTML = `
+    <section class="module-head">
+      <div>
+        <h2>IA — Busca semântica</h2>
+        <p>Descreva o que procura em linguagem natural e encontre os itens da base SINAPI mais parecidos por significado — não por palavra exata.</p>
+      </div>
+    </section>
+    <section class="panel">
+      ${serverMode ? "" : '<p class="empty">A busca semântica depende da API PHP e do Ollama no servidor. Em modo local não está disponível.</p>'}
+      <form id="iaBuscaForm" class="ia-busca-form" autocomplete="off">
+        <label class="ia-busca-campo">
+          <span>Descreva o item que procura</span>
+          <textarea id="iaBuscaTexto" rows="3" placeholder="Ex.: assentamento de piso cerâmico com argamassa colante em ambiente interno" ${serverMode ? "" : "disabled"}></textarea>
+        </label>
+        <div class="ia-busca-controls">
+          <label>Buscar em
+            <select id="iaBuscaOrigem" ${serverMode ? "" : "disabled"}>
+              <option value="todos">Todos</option>
+              <option value="composicao">Só composições</option>
+              <option value="insumo">Só insumos</option>
+            </select>
+          </label>
+          <label>Resultados
+            <select id="iaBuscaLimite" ${serverMode ? "" : "disabled"}>
+              <option value="10">10</option>
+              <option value="20" selected>20</option>
+              <option value="50">50</option>
+            </select>
+          </label>
+          <button class="primary" type="submit" id="iaBuscaBtn" ${serverMode ? "" : "disabled"}>Buscar</button>
+        </div>
+      </form>
+      <p class="field-hint">A busca leva ~1–2s para gerar o embedding do texto. Requer a base já indexada (seção IA → Indexação SINAPI).</p>
+      <div id="iaBuscaResultados" class="ia-busca-resultados"></div>
+    </section>`;
+  if (!serverMode) return;
+  qs("iaBuscaForm")?.addEventListener("submit", runIaBusca);
+  qs("iaBuscaTexto")?.focus();
+}
+
+async function runIaBusca(event) {
+  event.preventDefault();
+  const box = qs("iaBuscaResultados");
+  if (!box) return;
+  const texto = (qs("iaBuscaTexto")?.value || "").trim();
+  if (!texto) {
+    box.innerHTML = '<p class="empty">Digite uma descrição para buscar.</p>';
+    qs("iaBuscaTexto")?.focus();
+    return;
+  }
+  const origem = qs("iaBuscaOrigem")?.value || "todos";
+  const limite = Number(qs("iaBuscaLimite")?.value || 20);
+  const btn = qs("iaBuscaBtn");
+  if (btn) { btn.disabled = true; btn.textContent = "Buscando…"; }
+  box.innerHTML = '<p class="muted">Buscando itens parecidos por significado… (gerando o embedding do texto)</p>';
+  try {
+    // apiModuleRequest envia a sessão (token) e devolve o data [{origem, code,
+    // description, unit, valor, similaridade}]; se o Ollama estiver fora a API
+    // responde success:false e o apiModuleRequest lança com a mensagem clara.
+    const data = await apiModuleRequest("?module=ia&action=buscarSemantica", {
+      method: "POST",
+      body: JSON.stringify({ texto, origem, limite }),
+    });
+    renderIaBuscaResultados(data || []);
+  } catch (error) {
+    box.innerHTML = `<p style="color:#b42318"><strong>❌ Não foi possível buscar.</strong> ${escapeHtml(error.message || "Erro desconhecido.")}</p>`;
+  } finally {
+    if (btn) { btn.disabled = !serverMode; btn.textContent = "Buscar"; }
+  }
+}
+
+// Badge de % de similaridade: verde >80, amarelo 60–80, cinza <60.
+function iaSimBadge(sim) {
+  const pct = Math.max(0, Math.min(100, Number(sim || 0)));
+  const cls = pct > 80 ? "ia-sim-alta" : (pct >= 60 ? "ia-sim-media" : "ia-sim-baixa");
+  return `<span class="ia-sim-badge ${cls}">${pct.toFixed(1)}%</span>`;
+}
+
+function renderIaBuscaResultados(rows) {
+  const box = qs("iaBuscaResultados");
+  if (!box) return;
+  if (!Array.isArray(rows) || !rows.length) {
+    box.innerHTML = '<p class="empty">Nenhum item encontrado. Verifique se a base SINAPI já foi indexada (seção IA → Indexação SINAPI).</p>';
+    return;
+  }
+  const lines = rows.map((row) => {
+    const isComp = row.origem === "composicao";
+    const tag = isComp
+      ? '<span class="ia-tag ia-tag-comp">COMPOSIÇÃO</span>'
+      : '<span class="ia-tag ia-tag-ins">INSUMO</span>';
+    return `
+      <article class="ia-result-row">
+        <div class="ia-result-sim">${iaSimBadge(row.similaridade)}</div>
+        <div class="ia-result-main">
+          <div class="ia-result-head">${tag}<strong>${escapeHtml(row.code || "")}</strong>${row.unit ? `<span class="ia-result-unit">${escapeHtml(row.unit)}</span>` : ""}</div>
+          <div class="ia-result-desc">${escapeHtml(row.description || "")}</div>
+        </div>
+        <div class="ia-result-valor">${asMoney(row.valor)}</div>
+      </article>`;
+  }).join("");
+  box.innerHTML = `
+    <p class="muted ia-result-count">${rows.length} resultado(s), ordenados por similaridade.</p>
+    <div class="ia-result-list">${lines}</div>`;
 }
 
 function pluginCard(row, index, total, editable) {
