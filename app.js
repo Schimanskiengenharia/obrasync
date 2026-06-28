@@ -19,9 +19,10 @@ if (APP_ENV === "production" && location.protocol === "http:") {
   location.replace(location.href.replace(/^http:/, "https:"));
 }
 const APP_NAME = "ObraSync";
-const APP_VERSION = "v1.15.5";
+const APP_VERSION = "v1.16.0";
 const APP_VERSION_DATE = "2026-06-28";
 const APP_CHANGELOG = [
+  "Proposta por disciplina + modelos + SINAPI: cada orçamento vinculado recebe uma disciplina (Elétrico, Hidráulico, Civil…) e o PDF passa a agrupar o investimento por disciplina com subtotais; \"Salvar como modelo\" e \"Aplicar modelo…\" reutilizam a estrutura da proposta (sem cliente); o PDF mostra código SINAPI + referência (mês/ano/UF) por item e um anexo de composições SINAPI utilizadas; e botão \"Exportar SINAPI (Excel)\" gera a planilha .xlsx da obra agrupada por etapa com subtotais (v1.16.0).",
   "CEP autofill universal: qualquer campo de CEP (em qualquer formulário/modal) preenche endereço/bairro/cidade/UF via ViaCEP com BrasilAPI de fallback (CSP liberado para ambos); preenchimento automático de cadastro de cliente e fornecedor ligado em todos os formulários; e no cadastro de obra o toggle \"A obra fica no mesmo endereço da empresa?\" (quando NÃO, bloco de endereço próprio com CEP) — PDFs usam o endereço próprio quando aplicável (v1.15.5).",
   "Correção: asDate passou a aceitar datetime do MySQL (\"2026-06-28 04:31:10\") e datas inválidas/zeradas sem lançar RangeError — a aba Viabilidade não trava mais ao carregar (v1.15.4).",
   "Modo licitação na proposta: comparativo com a referência SINAPI (custo × BDI de referência) versus o valor ofertado, com o percentual de desconto por item e global (\"Oferta com X% de desconto sobre a referência SINAPI\"), para propostas baseadas em preços SINAPI (v1.15.3).",
@@ -487,6 +488,8 @@ const apiResources = {
   proposalFiles: "proposta-arquivos",
   proposalBudgetLinks: "proposta-orcamento-vinculos",
   proposalVariables: "proposta-variaveis",
+  proposalGroups: "proposta-grupos",
+  proposalTemplates: "proposta-modelos",
   proposalModels: "modelos-propostas",
   proposalAreas: "proposta-areas",
   proposalActionTypes: "proposta-tipos",
@@ -1738,6 +1741,8 @@ const seed = {
   proposalFiles: [],
   proposalBudgetLinks: [],
   proposalVariables: [],
+  proposalGroups: [],
+  proposalTemplates: [],
   sales: [
     { id: "v1", number: "VEN-2026-001", date: "2026-06-02", competenceDate: "2026-06-01", clientId: "c1", projectId: "ob1", costCenterId: "cc1", description: "Contrato software e consultoria", amount: 2780, cost: 1120, status: "Aprovado" },
     { id: "v2", number: "VEN-2026-002", date: "2026-06-04", competenceDate: "2026-06-01", clientId: "c2", projectId: "ob2", costCenterId: "cc2", description: "Implantação contábil", amount: 2200, cost: 900, status: "Aprovado" },
@@ -12397,7 +12402,7 @@ function proposalGroupsCompute() {
       ? roundMoney(Number(budget.totalPrice || 0) || effItems.reduce((s, it) => s + Number(it.totalPrice || 0), 0))
       : roundMoney(effItems.reduce((s, it) => s + Number(it.totalPrice || 0), 0));
     const bdiEff = custo > 0 ? ((venda - custo) / custo) * 100 : (groupBdi || 0);
-    return { budgetId: g.budgetId, nome_grupo: g.nome_grupo || budget.name || `Orçamento ${g.budgetId}`, bdi_grupo: g.bdi_grupo, ordem: idx, budget, items: effItems, custo: roundMoney(custo), venda, bdiEff };
+    return { budgetId: g.budgetId, nome_grupo: g.nome_grupo || budget.name || `Orçamento ${g.budgetId}`, disciplina: g.disciplina || "", bdi_grupo: g.bdi_grupo, ordem: idx, budget, items: effItems, custo: roundMoney(custo), venda, bdiEff };
   });
   const custoTotal = roundMoney(computed.reduce((s, g) => s + g.custo, 0));
   const vendaTotal = roundMoney(computed.reduce((s, g) => s + g.venda, 0));
@@ -12452,12 +12457,14 @@ function renderProposalGroupsPanel() {
       <div class="proposal-groups-head"><strong>Orçamentos vinculados</strong>
         <span class="muted">${calc.grupos.length} orçamento(ns)</span>
       </div>
+      <datalist id="proposalDisciplinas">${["Elétrico", "Hidráulico", "Civil", "Estrutura", "Cobertura", "Energia Solar", "Subestação", "Ar-condicionado", "Instalações"].map((d) => `<option value="${d}"></option>`).join("")}</datalist>
       <table class="proposal-groups-table">
-        <thead><tr><th>Grupo / Orçamento</th><th>Custo</th><th>BDI %</th><th>Venda</th><th></th></tr></thead>
+        <thead><tr><th>Grupo / Orçamento</th><th>Disciplina</th><th>Custo</th><th>BDI %</th><th>Venda</th><th></th></tr></thead>
         <tbody>
           ${calc.grupos.map((g, idx) => `
             <tr>
               <td><input class="pg-nome" data-idx="${idx}" value="${escapeHtml(g.nome_grupo)}"></td>
+              <td><input class="pg-disc" data-idx="${idx}" list="proposalDisciplinas" value="${escapeHtml(g.disciplina || "")}" placeholder="—" style="width:8rem"></td>
               <td>${asMoney(g.custo)}</td>
               ${bdiCell(g, idx)}
               <td>${asMoney(g.venda)}</td>
@@ -12465,8 +12472,8 @@ function renderProposalGroupsPanel() {
             </tr>`).join("")}
         </tbody>
         ${multi ? `<tfoot>
-          <tr class="pg-total"><td>Total</td><td>${asMoney(calc.custoTotal)}</td><td>${asPercent(calc.bdiPonderado)} <span class="muted">pond.</span></td><td>${asMoney(calc.vendaTotal)}</td><td></td></tr>
-          <tr class="pg-margem"><td colspan="5" class="muted">Margem bruta: ${asMoney(margem)} (${asPercent(margemPct)})</td></tr>
+          <tr class="pg-total"><td>Total</td><td></td><td>${asMoney(calc.custoTotal)}</td><td>${asPercent(calc.bdiPonderado)} <span class="muted">pond.</span></td><td>${asMoney(calc.vendaTotal)}</td><td></td></tr>
+          <tr class="pg-margem"><td colspan="6" class="muted">Margem bruta: ${asMoney(margem)} (${asPercent(margemPct)})</td></tr>
         </tfoot>` : ""}
       </table>
       ${available ? `<div class="proposal-groups-add no-print">
@@ -12481,6 +12488,11 @@ function renderProposalGroupsPanel() {
       </div>
       ${!multi ? `<div class="proposal-groups-summary muted">Custo ${asMoney(calc.custoTotal)} · BDI ${asPercent(calc.bdiPonderado)} · Venda ${asMoney(calc.vendaTotal)} · Margem ${asMoney(margem)} (${asPercent(margemPct)})</div>` : ""}
       ${itemTable}
+      <div class="proposal-groups-actions no-print">
+        <button type="button" class="secondary" id="proposalExportSinapi">Exportar SINAPI (Excel)</button>
+        <button type="button" class="secondary" id="proposalSaveTemplate">Salvar como modelo</button>
+        <button type="button" class="secondary" id="proposalApplyTemplate">Aplicar modelo…</button>
+      </div>
     </div>`;
   qs("proposalBdiMode")?.addEventListener("change", (e) => {
     proposalGeneratorState.bdiMode = e.target.value;
@@ -12534,17 +12546,95 @@ function renderProposalGroupsPanel() {
     if (!id) return;
     const b = byId("workBudgets", id);
     if (!b) return;
-    proposalGeneratorState.grupos.push({ budgetId: b.id, nome_grupo: b.name || `Orçamento ${b.id}`, bdi_grupo: "", ordem: proposalGeneratorState.grupos.length });
+    proposalGeneratorState.grupos.push({ budgetId: b.id, nome_grupo: b.name || `Orçamento ${b.id}`, bdi_grupo: "", disciplina: "", ordem: proposalGeneratorState.grupos.length });
     renderProposalGroupsPanel();
     updateProposalPreview();
   });
+  panel.querySelectorAll(".pg-disc").forEach((inp) => inp.addEventListener("change", (e) => {
+    const idx = Number(e.target.dataset.idx);
+    proposalGeneratorState.grupos[idx].disciplina = e.target.value;
+    updateProposalPreview();
+  }));
+  qs("proposalExportSinapi")?.addEventListener("click", () => {
+    const proj = proposalGeneratorState.project || byId("projects", proposalGeneratorState.budget?.projectId) || {};
+    exportSinapiExcel(proj.id || proposalGeneratorState.budget?.projectId, proj.name);
+  });
+  qs("proposalSaveTemplate")?.addEventListener("click", saveProposalAsTemplate);
+  qs("proposalApplyTemplate")?.addEventListener("click", applyProposalTemplate);
+}
+
+// ── Modelos de proposta (proposta_modelos) ────────────────────────────────
+// Serializa a árvore atual (grupos + orçamentos + BDI), sem cliente nem valores
+// finais, preservando referências de orçamento/SINAPI por meio dos budgetIds.
+async function saveProposalAsTemplate() {
+  if (!proposalGeneratorState) return;
+  const nome = prompt("Nome do modelo de proposta:");
+  if (!nome || !nome.trim()) return;
+  const estrutura = {
+    bdiMode: proposalGeneratorState.bdiMode || "auto",
+    bdiGeral: Number(proposalGeneratorState.bdiGeral || 0),
+    modelId: proposalGeneratorState.modelId || "",
+    grupos: (proposalGeneratorState.grupos || []).map((g, i) => ({
+      budgetId: g.budgetId, nome_grupo: g.nome_grupo || "", disciplina: g.disciplina || "",
+      bdi_grupo: g.bdi_grupo === "" || g.bdi_grupo == null ? "" : Number(g.bdi_grupo), ordem: i,
+    })),
+  };
+  const disciplinas = [...new Set(estrutura.grupos.map((g) => g.disciplina).filter(Boolean))].join(", ");
+  try {
+    await createIntegratedRecord("proposalTemplates", {
+      nome: nome.trim(),
+      descricao: `Modelo gerado da proposta (${estrutura.grupos.length} orçamento(s)).`,
+      disciplina: disciplinas,
+      estrutura_json: JSON.stringify(estrutura),
+      ativo: 1,
+    });
+    alert("Modelo de proposta salvo. Reutilize em \"Aplicar modelo…\".");
+  } catch (e) {
+    alert(`Não foi possível salvar o modelo: ${e.message}`);
+  }
+}
+
+// Aplica um modelo ativo à proposta atual: recria os grupos a partir dos orçamentos
+// do modelo (os que ainda existem) e mantém o cliente/obra atuais. Não acopla cliente.
+function applyProposalTemplate() {
+  if (!proposalGeneratorState) return;
+  const modelos = (db.proposalTemplates || []).filter((m) => Number(m.ativo) !== 0);
+  if (!modelos.length) return alert("Nenhum modelo de proposta salvo ainda. Use \"Salvar como modelo\" primeiro.");
+  const lista = modelos.map((m, i) => `${i + 1}) ${m.nome}${m.disciplina ? " — " + m.disciplina : ""}`).join("\n");
+  const escolha = prompt(`Escolha o modelo (número):\n${lista}`);
+  const idx = Number(escolha) - 1;
+  const modelo = modelos[idx];
+  if (!modelo) return;
+  let estrutura;
+  try { estrutura = JSON.parse(modelo.estrutura_json || "{}"); } catch { return alert("Modelo inválido (estrutura corrompida)."); }
+  const grupos = (estrutura.grupos || []).filter((g) => byId("workBudgets", g.budgetId));
+  if (!grupos.length) return alert("Os orçamentos deste modelo não existem mais neste sistema.");
+  proposalGeneratorState.grupos = grupos.map((g, i) => ({ budgetId: g.budgetId, nome_grupo: g.nome_grupo || "", disciplina: g.disciplina || "", bdi_grupo: g.bdi_grupo ?? "", ordem: i }));
+  proposalGeneratorState.bdiMode = estrutura.bdiMode || "auto";
+  proposalGeneratorState.bdiGeral = Number(estrutura.bdiGeral || 0);
+  proposalGeneratorState.itemOverrides = {};
+  renderProposalGroupsPanel();
+  updateProposalPreview();
+  alert(`Modelo "${modelo.nome}" aplicado. Ajuste quantidades/preços e o cliente normalmente.`);
 }
 
 // Bloco "Investimento" do PDF (visão do cliente): com vários grupos vira um resumo por
 // grupo (sem custo) + total geral; com um só, o total simples. Nunca expõe custo/BDI.
 function proposalInvestmentHtml(calc, vars) {
   if (calc && calc.grupos.length > 1) {
-    const rows = calc.grupos.map((g) => `<div><span>${svgText(g.nome_grupo)}</span><strong>${asMoney(g.venda)}</strong></div>`).join("");
+    const temDisc = calc.grupos.some((g) => g.disciplina);
+    let rows;
+    if (temDisc) {
+      const byDisc = {};
+      calc.grupos.forEach((g) => { const k = g.disciplina || "Outros"; (byDisc[k] = byDisc[k] || []).push(g); });
+      rows = Object.entries(byDisc).map(([disc, gs]) => {
+        const sub = gs.reduce((s, g) => s + g.venda, 0);
+        const inner = gs.map((g) => `<div class="pi-sub"><span>${svgText(g.nome_grupo)}</span><strong>${asMoney(g.venda)}</strong></div>`).join("");
+        return `<div class="pi-disc"><div class="pi-disc-head"><span>${svgText(disc)}</span><strong>${asMoney(sub)}</strong></div>${inner}</div>`;
+      }).join("");
+    } else {
+      rows = calc.grupos.map((g) => `<div><span>${svgText(g.nome_grupo)}</span><strong>${asMoney(g.venda)}</strong></div>`).join("");
+    }
     return `
       <section class="proposal-investment">
         <h2>Investimento</h2>
@@ -12591,6 +12681,61 @@ function proposalLicitacaoHtml(calc, refBdi) {
       </table>
       <p><strong>Oferta com ${asPercent(descGlobal)} de desconto sobre a referência SINAPI (BDI de referência ${asPercent(Number(refBdi || 0))}).</strong></p>
     </section>`;
+}
+
+// Info SINAPI de um item da proposta (a partir de sinapi_id): código, descrição,
+// unidade, valor unitário e a referência (mês/ano/UF) da tabela usada.
+function sinapiInfoForItem(item) {
+  const sid = item && (item.sinapi_id || item.sinapiId);
+  if (!sid) return null;
+  const comp = byId("sinapiCompositions", sid);
+  if (!comp) return null;
+  const ref = byId("sinapiReferences", comp.sinapiReferenceId);
+  const refLabel = ref ? `${String(ref.referenceMonth || "").padStart(2, "0")}/${ref.referenceYear || ""} ${ref.uf || ""}`.trim() : "";
+  return { code: comp.code || "", description: comp.description || "", unit: comp.unit || "", unitCost: Number(comp.unitCost || 0), refLabel };
+}
+
+// Anexo do PDF: composições SINAPI utilizadas (sem repetição). Omitido se nenhuma.
+function proposalSinapiAnexoHtml(items) {
+  const seen = new Map();
+  (items || []).forEach((it) => {
+    const info = sinapiInfoForItem(it);
+    if (info && info.code && !seen.has(info.code)) seen.set(info.code, info);
+  });
+  if (!seen.size) return "";
+  const rows = [...seen.values()].map((c) => `<tr><td>${svgText(c.code)}</td><td>${svgText(c.description)}</td><td>${svgText(c.unit)}</td><td>${asMoney(c.unitCost)}</td><td>${svgText(c.refLabel)}</td></tr>`).join("");
+  return `
+    <section class="proposal-section proposal-sinapi-anexo">
+      <h2>Composições SINAPI utilizadas</h2>
+      <table class="proposal-items-table">
+        <thead><tr><th>Código</th><th>Descrição</th><th>Un.</th><th>Valor unit.</th><th>Referência</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </section>`;
+}
+
+// Exporta a tabela SINAPI da obra em .xlsx (download autenticado via blob).
+async function exportSinapiExcel(obraId, label) {
+  if (!obraId) return alert("Selecione uma obra para exportar a tabela SINAPI.");
+  try {
+    const resp = await fetch(`${API_BASE}/sinapi-export-obra?obra_id=${encodeURIComponent(obraId)}`, { headers: authHeaders() });
+    if (!resp.ok) {
+      let msg = `Erro ${resp.status}`;
+      try { const j = await resp.json(); msg = j.error || j.message || msg; } catch { /* corpo não-JSON */ }
+      throw new Error(msg);
+    }
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `SINAPI_${String(label || "obra").replace(/[^A-Za-z0-9_-]+/g, "_")}_${new Date().toISOString().slice(0, 10)}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    alert(`Não foi possível exportar a tabela SINAPI: ${e.message}`);
+  }
 }
 
 function proposalDocumentHtml({ budget, project, client, items, model, input, vars, calc, licitacao, refBdi }) {
@@ -12644,6 +12789,7 @@ function proposalDocumentHtml({ budget, project, client, items, model, input, va
       ${proposalSection("Validade da proposta", asDate(input.validityDate))}
       ${proposalSection("Condições gerais", value("generalConditions"))}
       ${proposalSection("Observações comerciais", value("commercialNotes"))}
+      ${proposalSinapiAnexoHtml(items)}
       <section class="proposal-signatures">
         <div><h2>Aceite da proposta</h2><p>${textToHtml(value("acceptanceText"))}</p><span>Assinatura do cliente</span></div>
         <div><h2>Assinatura da empresa</h2><p>${textToHtml(value("signatureText"))}</p><span>${svgText(vars.nome_empresa)}</span></div>
@@ -12672,7 +12818,7 @@ function proposalItemsHtml(items, mode) {
     <table class="proposal-items-table">
       <thead><tr><th>Item</th>${showCode ? "<th>Código</th>" : ""}<th>Descrição</th><th>Un.</th><th>Qtd.</th>${technical ? "<th>Custo unit.</th><th>BDI</th>" : ""}${showUnitPrice ? "<th>Valor unit.</th>" : ""}<th>Valor total</th></tr></thead>
       <tbody>
-        ${items.map((item, index) => `<tr><td>${index + 1}</td>${showCode ? `<td>${svgText(item.code || "")}</td>` : ""}<td>${svgText(item.description || "")}</td><td>${svgText(item.unit || "")}</td><td>${formatQuantity(item.quantity)}</td>${technical ? `<td>${asMoney(item.unitCost || 0)}</td><td>${asPercent(item.bdiPercent || 0)}</td>` : ""}${showUnitPrice ? `<td>${asMoney(item.unitPrice || 0)}</td>` : ""}<td>${asMoney(item.totalPrice || 0)}</td></tr>`).join("")}
+        ${items.map((item, index) => { const sinapi = sinapiInfoForItem(item); return `<tr><td>${index + 1}</td>${showCode ? `<td>${svgText(item.code || "")}</td>` : ""}<td>${svgText(item.description || "")}${sinapi && sinapi.code ? `<br><small class="proposal-sinapi-tag">SINAPI ${svgText(sinapi.code)}${sinapi.refLabel ? " · ref " + svgText(sinapi.refLabel) : ""}</small>` : ""}</td><td>${svgText(item.unit || "")}</td><td>${formatQuantity(item.quantity)}</td>${technical ? `<td>${asMoney(item.unitCost || 0)}</td><td>${asPercent(item.bdiPercent || 0)}</td>` : ""}${showUnitPrice ? `<td>${asMoney(item.unitPrice || 0)}</td>` : ""}<td>${asMoney(item.totalPrice || 0)}</td></tr>`; }).join("")}
       </tbody>
     </table>
   `;
@@ -13349,6 +13495,7 @@ async function createProposalLinkedRecords(proposal, { budget, project, client, 
       proposalModelId: model.id || "",
       responsibleUserId: currentUser?.id || "",
       nome_grupo: g.nome_grupo || "",
+      disciplina: g.disciplina || "",
       bdi_grupo: (g.bdi_grupo === "" || g.bdi_grupo == null) ? roundMoney(g.bdiEff || 0) : Number(g.bdi_grupo),
       custo_total: roundMoney(g.custo || 0),
       valor_venda: roundMoney(g.venda || 0),

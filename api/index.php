@@ -286,6 +286,13 @@ try {
         respond(['ok' => true, 'data' => $stmt->fetchAll(PDO::FETCH_ASSOC)]);
     }
 
+    // Exporta a tabela SINAPI da obra em .xlsx (download direto).
+    if ($resource === 'sinapi-export-obra') {
+        require_method($method, ['GET']);
+        authorize_request($pdo, $authUser, 'workBudgets', 'view');
+        handle_sinapi_export_obra($pdo);
+    }
+
     if ($resource === 'project-upload') {
         require_method($method, ['POST']);
         authorize_request($pdo, $authUser, 'projectSchedule', 'edit');
@@ -1674,10 +1681,12 @@ function resource_map(): array
         'proposalServiceSubtypes' => r('proposal_service_subtypes', ['proposta-subtipos','subtipos-propostas'], ['actionTypeId','name','description','status'], ['actionTypeId','name']),
         'proposalModels' => r('proposal_models', ['modelos-propostas','modelos-de-propostas'], ['name','areaId','actionTypeId','subtypeId','proposalObject','scope','stages','deliverables','deadline','paymentTerms','includedItems','excludedItems','clientResponsibilities','companyResponsibilities','validityDays','generalConditions','acceptanceText','signatureText','printLayout','status'], ['name']),
         'proposals' => r('commercial_proposals', ['propostas'], ['number','date','clientId','projectId','budgetId','workBudgetId','serviceId','modelId','areaId','actionTypeId','subtypeId','origin','parentProposalId','createdByUserId','commercialUserId','description','amount','proposalBody','itemDisplayMode','paymentCondition','paymentTerms','executionDeadline','deadline','validityDate','technicalResponsible','commercialResponsible','commercialNotes','status','bdi_geral','bdi_tipo','custo_total_orcamentos','valor_bdi_total','modo_licitacao'], ['number']),
-        'proposalItems' => r('proposta_itens', ['proposta-itens','itens-proposta'], ['proposalId','workBudgetItemId','itemNumber','code','description','unit','quantity','unitPrice','totalPrice','groupName','visibleToClient','notes','custo_unitario','bdi_item','orcamento_item_id','sinapi_id'], ['proposalId','itemNumber']),
+        'proposalItems' => r('proposta_itens', ['proposta-itens','itens-proposta'], ['proposalId','workBudgetItemId','itemNumber','code','description','unit','quantity','unitPrice','totalPrice','groupName','visibleToClient','notes','custo_unitario','bdi_item','orcamento_item_id','sinapi_id','grupo_id'], ['proposalId','itemNumber']),
+        'proposalGroups' => r('proposta_grupos', ['proposta-grupos','grupos-proposta'], ['proposalId','parent_id','nivel','ordem','disciplina','nome'], ['proposalId']),
+        'proposalTemplates' => r('proposta_modelos', ['proposta-modelos','modelos-proposta'], ['nome','descricao','disciplina','estrutura_json','ativo'], ['nome']),
         'proposalStatusHistory' => r('proposta_status_historico', ['proposta-status-historico','historico-status-proposta'], ['proposalId','date','userId','previousStatus','newStatus','notes'], ['proposalId','date','newStatus']),
         'proposalFiles' => r('proposta_arquivos', ['proposta-arquivos','arquivos-proposta'], ['proposalId','filePath','type','status','createdByUserId'], ['proposalId','filePath']),
-        'proposalBudgetLinks' => r('proposta_orcamento_vinculos', ['proposta-orcamento-vinculos','vinculos-proposta-orcamento'], ['proposalId','workBudgetId','projectId','clientId','proposalModelId','responsibleUserId','nome_grupo','bdi_grupo','custo_total','valor_venda','ordem'], ['proposalId','workBudgetId']),
+        'proposalBudgetLinks' => r('proposta_orcamento_vinculos', ['proposta-orcamento-vinculos','vinculos-proposta-orcamento'], ['proposalId','workBudgetId','projectId','clientId','proposalModelId','responsibleUserId','nome_grupo','bdi_grupo','custo_total','valor_venda','ordem','grupo_id','disciplina'], ['proposalId','workBudgetId']),
         'proposalVariables' => r('proposta_variaveis', ['proposta-variaveis','variaveis-proposta'], ['proposalId','variableName','variableValue'], ['proposalId','variableName']),
         'sales' => r('sales_contracts', ['vendas','contratos','vendas-contratos'], ['number','date','competenceDate','clientId','projectId','proposalId','costCenterId','description','amount','cost','status'], ['number']),
         'viabilityAnalyses' => r('viability_analyses', ['analises-viabilidade','análises-viabilidade'], ['projectId','proposalId','contractValue','estimatedCost','executionMonths','tmaPercent','grossMargin','marginPercent','estimatedProfit','paybackMonths','npv','irrPercent','autoVerdict','verdict','finalVerdict','verdictJustification','verdictHistory','risks','notes','analysisDate','responsibleUserId','status'], []),
@@ -2349,6 +2358,13 @@ function bootstrap_data(PDO $pdo, array $resources, ?array $authUser = null, boo
             && !in_array('usa_endereco_empresa', table_columns($pdo, 'projects'), true)) {
             ensure_obra_endereco_columns($pdo);
         }
+        // Hierarquia de proposta por disciplina + modelos de proposta.
+        if (!resolve_existing_table($pdo, ['proposta_grupos'], false)
+            || !resolve_existing_table($pdo, ['proposta_modelos'], false)
+            || (resolve_existing_table($pdo, ['proposta_orcamento_vinculos'], false)
+                && !in_array('grupo_id', table_columns($pdo, 'proposta_orcamento_vinculos'), true))) {
+            ensure_proposta_hierarquia($pdo);
+        }
         // email/blocked/mustChangePassword em system_users (usados em login/reset).
         if (resolve_existing_table($pdo, ['system_users'], false)
             && !in_array('mustChangePassword', table_columns($pdo, 'system_users'), true)) {
@@ -2637,6 +2653,136 @@ function ensure_obra_endereco_columns(PDO $pdo): void
     } catch (Throwable $error) {
         error_log('[ObraSync] ensure_obra_endereco_columns: ' . $error->getMessage());
     }
+}
+
+// Auto-cura da hierarquia de proposta (grupos por disciplina) e dos modelos de proposta.
+function ensure_proposta_hierarquia(PDO $pdo): void
+{
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    try {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS proposta_grupos (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            proposalId BIGINT UNSIGNED NOT NULL,
+            parent_id BIGINT UNSIGNED NULL,
+            nivel TINYINT NOT NULL DEFAULT 1,
+            ordem INT NOT NULL DEFAULT 0,
+            disciplina VARCHAR(60) NULL,
+            nome VARCHAR(200) NOT NULL,
+            createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_pg_proposal (proposalId),
+            INDEX idx_pg_parent (parent_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        $pdo->exec("CREATE TABLE IF NOT EXISTS proposta_modelos (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            nome VARCHAR(160) NOT NULL,
+            descricao TEXT NULL,
+            disciplina VARCHAR(60) NULL,
+            estrutura_json LONGTEXT NULL,
+            ativo TINYINT(1) NOT NULL DEFAULT 1,
+            createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updatedAt TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_pm_ativo (ativo)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        $pdo->exec("ALTER TABLE proposta_orcamento_vinculos
+            ADD COLUMN IF NOT EXISTS grupo_id BIGINT UNSIGNED NULL,
+            ADD COLUMN IF NOT EXISTS disciplina VARCHAR(60) NULL");
+        $pdo->exec("ALTER TABLE proposta_itens
+            ADD COLUMN IF NOT EXISTS grupo_id BIGINT UNSIGNED NULL");
+        $done = true;
+    } catch (Throwable $error) {
+        error_log('[ObraSync] ensure_proposta_hierarquia: ' . $error->getMessage());
+    }
+}
+
+// Exporta um .xlsx com todos os itens de origem SINAPI de uma obra (orçamento técnico),
+// agrupados por etapa/disciplina com subtotais e total geral. Cabeçalho com obra/empresa.
+function handle_sinapi_export_obra(PDO $pdo): never
+{
+    $obraId = (int) ($_GET['obra_id'] ?? 0);
+    if ($obraId <= 0) {
+        fail('Informe a obra (obra_id).', 422);
+    }
+    foreach (['/vendor/autoload.php', '/../vendor/autoload.php'] as $rel) {
+        $autoload = __DIR__ . $rel;
+        if (is_file($autoload)) { require_once $autoload; break; }
+    }
+    if (!class_exists('PhpOffice\\PhpSpreadsheet\\Spreadsheet')) {
+        fail('Exportar .xlsx requer a biblioteca PhpSpreadsheet (composer require phpoffice/phpspreadsheet). Veja CLAUDE.md.', 422);
+    }
+    $obraStmt = $pdo->prepare('SELECT * FROM projects WHERE id = ?');
+    $obraStmt->execute([$obraId]);
+    $obra = $obraStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+    $empresa = [];
+    try { $empresa = $pdo->query('SELECT * FROM company_settings LIMIT 1')->fetch(PDO::FETCH_ASSOC) ?: []; } catch (Throwable $e) { $empresa = []; }
+    $sql = "SELECT i.stageName, i.code AS itemCode, i.description, i.unit, i.quantity,
+                   i.quantidade_realizada, i.unitPrice, i.totalPrice,
+                   c.code AS sinapiCode, c.description AS sinapiDesc, c.unit AS sinapiUnit,
+                   r.referenceMonth, r.referenceYear, r.uf
+            FROM orcamento_obra_itens i
+            LEFT JOIN sinapi_composicoes c ON c.id = i.sinapi_id
+            LEFT JOIN sinapi_referencias r ON r.id = c.sinapiReferenceId
+            WHERE i.projectId = ? AND i.sinapi_id IS NOT NULL
+            ORDER BY i.stageName, i.ordem, i.id";
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute([$obraId]);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $ss = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
+    $sheet = $ss->getActiveSheet();
+    $sheet->setTitle('SINAPI');
+    $row = 1;
+    $sheet->setCellValue('A' . $row, (string) ($empresa['name'] ?? 'ObraSync')); $row++;
+    $sheet->setCellValue('A' . $row, 'Obra: ' . (string) ($obra['name'] ?? ('#' . $obraId))); $row++;
+    $sheet->setCellValue('A' . $row, 'Tabela SINAPI por obra — ' . date('Y-m-d')); $row += 2;
+    $headers = ['Etapa/Disciplina', 'Código SINAPI', 'Descrição', 'Unidade', 'Quantidade', 'Qtd Realizada', 'Preço Unitário', 'Preço Total', 'Referência SINAPI'];
+    $cols = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I'];
+    foreach ($headers as $i => $h) { $sheet->setCellValue($cols[$i] . $row, $h); }
+    $sheet->getStyle('A' . $row . ':I' . $row)->getFont()->setBold(true);
+    $row++;
+    $grouped = [];
+    foreach ($rows as $r) { $grouped[($r['stageName'] ?: 'Sem etapa')][] = $r; }
+    $grandTotal = 0.0;
+    foreach ($grouped as $stage => $items) {
+        $subtotal = 0.0;
+        foreach ($items as $it) {
+            $ref = ($it['referenceMonth'] && $it['referenceYear'])
+                ? sprintf('%02d/%d %s', (int) $it['referenceMonth'], (int) $it['referenceYear'], (string) ($it['uf'] ?? ''))
+                : '';
+            $sheet->setCellValue('A' . $row, (string) $stage);
+            $sheet->setCellValue('B' . $row, (string) ($it['sinapiCode'] ?: $it['itemCode']));
+            $sheet->setCellValue('C' . $row, (string) ($it['sinapiDesc'] ?: $it['description']));
+            $sheet->setCellValue('D' . $row, (string) ($it['unit'] ?: $it['sinapiUnit']));
+            $sheet->setCellValue('E' . $row, (float) $it['quantity']);
+            $sheet->setCellValue('F' . $row, (float) ($it['quantidade_realizada'] ?? 0));
+            $sheet->setCellValue('G' . $row, (float) $it['unitPrice']);
+            $sheet->setCellValue('H' . $row, (float) $it['totalPrice']);
+            $sheet->setCellValue('I' . $row, $ref);
+            $subtotal += (float) $it['totalPrice'];
+            $row++;
+        }
+        $sheet->setCellValue('G' . $row, 'Subtotal ' . $stage);
+        $sheet->setCellValue('H' . $row, $subtotal);
+        $sheet->getStyle('G' . $row . ':H' . $row)->getFont()->setBold(true);
+        $row++;
+        $grandTotal += $subtotal;
+    }
+    $sheet->setCellValue('G' . $row, 'TOTAL GERAL');
+    $sheet->setCellValue('H' . $row, $grandTotal);
+    $sheet->getStyle('G' . $row . ':H' . $row)->getFont()->setBold(true);
+    foreach ($cols as $c) { $sheet->getColumnDimension($c)->setAutoSize(true); }
+
+    $obraNome = preg_replace('/[^A-Za-z0-9_-]+/', '_', (string) ($obra['name'] ?? ('obra' . $obraId)));
+    $fileName = 'SINAPI_' . trim($obraNome, '_') . '_' . date('Y-m-d') . '.xlsx';
+    while (ob_get_level() > 0) { ob_end_clean(); }
+    header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    header('Content-Disposition: attachment; filename="' . $fileName . '"');
+    header('Cache-Control: max-age=0');
+    $writer = new \PhpOffice\PhpSpreadsheet\Writer\Xlsx($ss);
+    $writer->save('php://output');
+    exit;
 }
 
 function cotacao_respond(bool $success, mixed $data = [], string $message = '', int $status = 200): never
@@ -7277,6 +7423,8 @@ function permission_module_key(string $key): string
         'proposalStatusHistory' => 'proposals',
         'proposalBudgetLinks' => 'proposals',
         'proposalVariables' => 'proposals',
+        'proposalGroups' => 'proposals',
+        'proposalTemplates' => 'proposals',
         'workBudgetItems' => 'workBudgets',
         'orcamentoEtapas' => 'workBudgets',
         'sinapiCompositionItems' => 'sinapiCompositions',

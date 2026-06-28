@@ -4589,6 +4589,40 @@ input.cep-loading {
   font-size: 0.82rem;
 }
 
+.proposal-groups-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.proposal-sinapi-tag {
+  color: var(--muted);
+  font-size: 0.78em;
+}
+
+.proposal-sinapi-anexo {
+  break-inside: avoid;
+}
+
+.pi-disc {
+  margin: 4px 0;
+}
+
+.pi-disc-head {
+  display: flex;
+  justify-content: space-between;
+  font-weight: 700;
+  border-bottom: 1px solid currentColor;
+}
+
+.pi-sub {
+  display: flex;
+  justify-content: space-between;
+  padding-left: 14px;
+  font-size: 0.95em;
+}
+
 .proposal-preview-toolbar {
   display: flex;
   flex-wrap: wrap;
