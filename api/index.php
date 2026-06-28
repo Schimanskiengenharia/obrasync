@@ -29,6 +29,13 @@ const RESET_MAX_PER_IP = 5;
 // Recorte das tabelas SINAPI no bootstrap; a base completa é consultada sob demanda.
 const SINAPI_BOOTSTRAP_LIMIT = 300;
 
+// Recorrência de contas a pagar. DEFINIDAS NO TOPO de propósito: o roteamento inline
+// (try a partir da linha ~40) chama handle_payable_module e dá exit() antes de a
+// execução alcançar o meio do arquivo — const não é "hoisted", então se ficassem lá
+// embaixo seriam indefinidas em runtime (Undefined constant na criação de parcelas).
+const PAYABLE_RECURRENCE_MAX = 600;          // teto de parcelas (≈50 anos mensais)
+const PAYABLE_RECURRENCE_INDETERMINADO = 24; // horizonte rolante p/ recorrência sem fim
+
 $config = load_config();
 $pdo = db($config);
 $resources = resource_map();
@@ -808,26 +815,15 @@ function clients_get_by_id(PDO $pdo, int $id): ?array
 }
 
 // ─── Contas a pagar recorrentes + quitação antecipada ───────────────────────
-// Teto de segurança para geração de parcelas; recorrência "indeterminada" gera
-// um horizonte rolante padrão (não dá para gerar infinitas linhas).
-const PAYABLE_RECURRENCE_MAX = 360;
-const PAYABLE_RECURRENCE_INDETERMINADO = 24;
-
+// (Constantes PAYABLE_RECURRENCE_MAX / PAYABLE_RECURRENCE_INDETERMINADO foram movidas
+// para o topo do arquivo — precisam estar definidas antes do roteamento inline.)
 function handle_payable_module(PDO $pdo, string $method, array $query, array $authUser): never
 {
     $action = strtolower(trim((string) ($query['action'] ?? '')));
     try {
         if ($action === 'create_recurrence') {
             require_method($method, ['POST']);
-            try {
-                payable_respond(true, payable_create_recurrence($pdo, read_json(), $authUser), 'Parcelas geradas com sucesso.', 201);
-            } catch (Throwable $e) {
-                // DEBUG TEMPORÁRIO: expõe o erro real (PDO/SQL) para diagnóstico da
-                // recorrência em produção. Remover e voltar à mensagem genérica do
-                // catch externo assim que a causa for confirmada.
-                error_log('RECORRENCIA_ERROR: ' . $e->getMessage() . ' em ' . $e->getFile() . ':' . $e->getLine());
-                payable_respond(false, [], 'DEBUG: ' . $e->getMessage(), 500);
-            }
+            payable_respond(true, payable_create_recurrence($pdo, read_json(), $authUser), 'Parcelas geradas com sucesso.', 201);
         }
         if ($action === 'early_settlement') {
             require_method($method, ['POST']);
