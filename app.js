@@ -4410,6 +4410,18 @@ function dashboardAlerts(metrics) {
   if (metrics.project && metrics.realizedCost > metrics.costForecast && metrics.costForecast > 0) alerts.push("Custo realizado acima do previsto para esta obra.");
   const margin = metrics.project ? metrics.realizedMargin : metrics.margin;
   if (margin < 10 && ((metrics.project && metrics.revenueReceived > 0) || (!metrics.project && metrics.revenueTotal > 0))) alerts.push("Margem líquida baixa. Revise custos, preços e despesas.");
+  // Auditoria do dashboard — alertas da empresa (visão geral): propostas expiradas,
+  // obras atrasadas e estouro de orçamento. Campos reais: validityDate (proposta),
+  // endForecast (obra), quantidade_realizada/quantity (item do orçamento).
+  if (!metrics.project) {
+    const hoje = localDateString(new Date());
+    const propostasExpiradas = (db.proposals || []).filter((p) => p.status === "Enviada" && p.validityDate && String(p.validityDate).slice(0, 10) < hoje).length;
+    if (propostasExpiradas > 0) alerts.push(`${propostasExpiradas} proposta(s) enviada(s) com validade vencida — renove ou arquive.`);
+    const obrasAtrasadas = (db.projects || []).filter((o) => ["Em andamento", "Contratada"].includes(o.status) && o.endForecast && String(o.endForecast).slice(0, 10) < hoje).length;
+    if (obrasAtrasadas > 0) alerts.push(`${obrasAtrasadas} obra(s) com previsão de término vencida.`);
+    const itensEstouro = (db.workBudgetItems || []).filter((i) => Number(i.quantity || 0) > 0 && Number(i.quantidade_realizada || 0) > Number(i.quantity || 0)).length;
+    if (itensEstouro > 0) alerts.push(`${itensEstouro} item(ns) do orçamento com quantidade realizada acima da prevista (estouro).`);
+  }
   if (!alerts.length) return "";
   return `<section class="alerts">${alerts.map((message) => `<div class="alert">${message}</div>`).join("")}</section>`;
 }
@@ -4468,8 +4480,8 @@ function kpi(label, value, format = true) {
 
 function resultByCostCenter() {
   return db.costCenters.map((cc) => {
-    const revenue = db.receivable.filter((r) => r.costCenterId === cc.id && r.status !== "Cancelado").reduce((s, r) => s + Number(r.amount || 0), 0);
-    const expense = db.payable.filter((p) => p.costCenterId === cc.id && p.status !== "Cancelado").reduce((s, p) => s + Number(p.amount || 0), 0);
+    const revenue = db.receivable.filter((r) => sameId(r.costCenterId, cc.id) && !isCancelado(r.status)).reduce((s, r) => s + Number(r.amount || 0), 0);
+    const expense = db.payable.filter((p) => sameId(p.costCenterId, cc.id) && !isCancelado(p.status)).reduce((s, p) => s + Number(p.amount || 0), 0);
     return { label: cc.name, value: revenue - expense };
   });
 }
