@@ -19,9 +19,10 @@ if (APP_ENV === "production" && location.protocol === "http:") {
   location.replace(location.href.replace(/^http:/, "https:"));
 }
 const APP_NAME = "ObraSync";
-const APP_VERSION = "v1.15.1";
+const APP_VERSION = "v1.15.2";
 const APP_VERSION_DATE = "2026-06-28";
 const APP_CHANGELOG = [
+  "Formação de preço (BDI) flexível na proposta: BDI geral (%) para todos os itens, BDI por grupo/orçamento, ou venda manual por item com o BDI resultante calculado automaticamente — escolhido no seletor \"Formação do preço (BDI)\" do gerador (v1.15.2).",
   "Proposta com múltiplos orçamentos: vincule vários orçamentos de obra à mesma proposta, cada um como um grupo com BDI próprio (ex.: Cobertura 22%, Elétrica 25%), com totalizador de custo, BDI médio ponderado, valor de venda e margem, e resumo por grupo no PDF para o cliente (v1.15.1).",
   "Fluxo Orçamento → Proposta com base SINAPI: busca instantânea na base SINAPI completa (endpoint dedicado + índice de código) também dentro do orçamento de obra; a proposta passa a registrar o custo do orçamento técnico por item (custo unitário/BDI), com visão interna (custo + BDI + margem) alternável e separada da visão do cliente; estrutura de dados pronta para múltiplos orçamentos vinculados com BDI próprio por grupo (v1.15.0).",
   "Correção do erro 500 ao gerar contas a pagar recorrentes: as constantes PAYABLE_RECURRENCE_MAX/INDETERMINADO foram movidas para o topo do index.php (const não é \"hoisted\" — ficavam indefinidas em runtime após o roteamento) e a geração das parcelas passou a blindar as chaves estrangeiras (fornecedor, obra, categoria, centro de custo, conta) (v1.14.0).",
@@ -11951,6 +11952,11 @@ async function openProposalGenerator(workBudgetId) {
     // bdi_grupo "" = automático (usa o preço do próprio orçamento, com BDI por etapa);
     // um número sobrepõe o BDI de todo o grupo (recalcula os preços a partir do custo).
     grupos: [{ budgetId: budget.id, nome_grupo: budget.name || `Orçamento ${budget.id}`, bdi_grupo: "", ordem: 0 }],
+    // Formação do preço (BDI): auto = preço do orçamento; geral = um BDI p/ tudo (A);
+    // grupo = BDI por orçamento (B); item = venda manual por item, BDI calculado (C/D).
+    bdiMode: "auto",
+    bdiGeral: Number(budget.bdiPercent || 0),
+    itemOverrides: {},
     modelId: model.id || "",
     date: today,
     validityDate,
@@ -12148,6 +12154,9 @@ function updateProposalPreview() {
 function proposalGroupsCompute() {
   const state = proposalGeneratorState;
   if (!state) return { grupos: [], combinedItems: [], custoTotal: 0, vendaTotal: 0, bdiPonderado: 0 };
+  const mode = state.bdiMode || "auto";
+  const geral = Number(state.bdiGeral || 0);
+  const overrides = state.itemOverrides || {};
   const grupos = (state.grupos && state.grupos.length)
     ? state.grupos
     : [{ budgetId: state.budget.id, nome_grupo: state.budget.name, bdi_grupo: "", ordem: 0 }];
@@ -12155,23 +12164,30 @@ function proposalGroupsCompute() {
   const computed = grupos.map((g, idx) => {
     const budget = enrichWorkBudget(byId("workBudgets", g.budgetId) || state.budget || {});
     const items = budgetItemsFor(g.budgetId, false);
-    const override = g.bdi_grupo !== "" && g.bdi_grupo != null && !isNaN(Number(g.bdi_grupo));
     const custo = items.reduce((s, it) => s + Number(it.totalCost || 0), 0);
+    // BDI do grupo conforme o modo. null = sem override (mantém o preço do orçamento).
+    let groupBdi = null;
+    if (mode === "geral") groupBdi = geral;
+    else if (mode === "grupo") groupBdi = (g.bdi_grupo === "" || g.bdi_grupo == null || isNaN(Number(g.bdi_grupo))) ? null : Number(g.bdi_grupo);
     const effItems = items.map((it) => {
       const groupName = multi ? (g.nome_grupo || budget.name || "") : (it.stageName || it.groupName || "");
-      if (!override) return { ...it, stageName: multi ? (g.nome_grupo || budget.name || "") : it.stageName, groupName, _grupoIdx: idx };
       const custoU = Number(it.unitCost || 0);
       const qty = Number(it.quantity || 0);
-      const up = roundMoney(custoU * (1 + Number(g.bdi_grupo) / 100));
-      return { ...it, unitPrice: up, totalPrice: roundMoney(qty * up), bdiPercent: Number(g.bdi_grupo), stageName: multi ? (g.nome_grupo || budget.name || "") : it.stageName, groupName, _grupoIdx: idx };
+      let up = Number(it.unitPrice || 0);
+      let bdiP = Number(it.bdiPercent || 0);
+      if (groupBdi != null) { up = roundMoney(custoU * (1 + groupBdi / 100)); bdiP = groupBdi; }
+      // Modo "item": venda manual por item tem prioridade; BDI vira o resultante.
+      if (mode === "item" && overrides[it.id] != null && overrides[it.id] !== "") {
+        up = roundMoney(Number(overrides[it.id]));
+        bdiP = custoU > 0 ? ((up - custoU) / custoU) * 100 : 0;
+      }
+      return { ...it, unitPrice: up, totalPrice: roundMoney(qty * up), bdiPercent: bdiP, stageName: multi ? (g.nome_grupo || budget.name || "") : it.stageName, groupName, _grupoIdx: idx };
     });
-    // Sem override: usa o total do próprio orçamento (já com desconto/encargos do
-    // enrichWorkBudget), preservando o comportamento anterior. Com override: recalcula
-    // a venda do custo pelo BDI do grupo.
-    const venda = override
-      ? roundMoney(custo * (1 + Number(g.bdi_grupo) / 100))
-      : roundMoney(Number(budget.totalPrice || 0) || items.reduce((s, it) => s + Number(it.totalPrice || 0), 0));
-    const bdiEff = custo > 0 ? ((venda - custo) / custo) * 100 : Number(g.bdi_grupo || 0);
+    // Sem override de BDI nem manual: usa o total do orçamento (já com desconto/encargos).
+    const venda = (groupBdi == null && mode !== "item")
+      ? roundMoney(Number(budget.totalPrice || 0) || effItems.reduce((s, it) => s + Number(it.totalPrice || 0), 0))
+      : roundMoney(effItems.reduce((s, it) => s + Number(it.totalPrice || 0), 0));
+    const bdiEff = custo > 0 ? ((venda - custo) / custo) * 100 : (groupBdi || 0);
     return { budgetId: g.budgetId, nome_grupo: g.nome_grupo || budget.name || `Orçamento ${g.budgetId}`, bdi_grupo: g.bdi_grupo, ordem: idx, budget, items: effItems, custo: roundMoney(custo), venda, bdiEff };
   });
   const custoTotal = roundMoney(computed.reduce((s, g) => s + g.custo, 0));
@@ -12187,6 +12203,7 @@ function proposalGroupsCompute() {
 function renderProposalGroupsPanel() {
   const panel = qs("proposalGroupsPanel");
   if (!panel || !proposalGeneratorState) return;
+  const mode = proposalGeneratorState.bdiMode || "auto";
   const calc = proposalGroupsCompute();
   const linkedIds = new Set((proposalGeneratorState.grupos || []).map((g) => String(g.budgetId)));
   const available = (db.workBudgets || [])
@@ -12196,6 +12213,31 @@ function renderProposalGroupsPanel() {
   const multi = calc.grupos.length > 1;
   const margem = roundMoney(calc.vendaTotal - calc.custoTotal);
   const margemPct = calc.vendaTotal > 0 ? (margem / calc.vendaTotal) * 100 : 0;
+  const bdiCell = (g, idx) => mode === "grupo"
+    ? `<td><input class="pg-bdi" data-idx="${idx}" inputmode="decimal" placeholder="auto (${asPercent(g.bdiEff)})" value="${g.bdi_grupo === "" || g.bdi_grupo == null ? "" : escapeHtml(g.bdi_grupo)}" style="width:5.5rem"></td>`
+    : `<td>${asPercent(g.bdiEff)}</td>`;
+  const modeOptions = [["auto", "Automático (BDI do orçamento)"], ["geral", "BDI geral (%)"], ["grupo", "BDI por grupo"], ["item", "Manual por item"]]
+    .map(([v, l]) => `<option value="${v}" ${v === mode ? "selected" : ""}>${l}</option>`).join("");
+  // Modo "item": tabela editável de venda por item (BDI resultante calculado).
+  const itemTable = mode === "item" ? `
+    <div class="proposal-item-prices">
+      <table class="proposal-groups-table">
+        <thead><tr><th>Item</th><th>Custo unit.</th><th>Qtd.</th><th>Venda unit.</th><th>BDI result.</th></tr></thead>
+        <tbody>
+          ${calc.combinedItems.map((it) => {
+            const custoU = Number(it.unitCost || 0);
+            const bdi = custoU > 0 ? ((Number(it.unitPrice || 0) - custoU) / custoU) * 100 : 0;
+            return `<tr>
+              <td>${svgText((it.code ? it.code + " - " : "") + (it.description || ""))}</td>
+              <td>${asMoney(custoU)}</td>
+              <td>${formatQuantity(it.quantity)}</td>
+              <td><input class="pg-item-price" data-item="${escapeHtml(it.id)}" inputmode="decimal" value="${formatMoneyInput(Number(it.unitPrice || 0))}" style="width:7rem"></td>
+              <td>${asPercent(bdi)}</td>
+            </tr>`;
+          }).join("")}
+        </tbody>
+      </table>
+    </div>` : "";
   panel.innerHTML = `
     <div class="proposal-groups">
       <div class="proposal-groups-head"><strong>Orçamentos vinculados</strong>
@@ -12208,7 +12250,7 @@ function renderProposalGroupsPanel() {
             <tr>
               <td><input class="pg-nome" data-idx="${idx}" value="${escapeHtml(g.nome_grupo)}"></td>
               <td>${asMoney(g.custo)}</td>
-              <td><input class="pg-bdi" data-idx="${idx}" inputmode="decimal" placeholder="auto (${asPercent(g.bdiEff)})" value="${g.bdi_grupo === "" || g.bdi_grupo == null ? "" : escapeHtml(g.bdi_grupo)}" style="width:5.5rem"></td>
+              ${bdiCell(g, idx)}
               <td>${asMoney(g.venda)}</td>
               <td>${calc.grupos.length > 1 ? `<button type="button" class="link-button danger pg-remove" data-idx="${idx}" title="Remover">✕</button>` : ""}</td>
             </tr>`).join("")}
@@ -12222,7 +12264,32 @@ function renderProposalGroupsPanel() {
         <select id="proposalAddBudgetSelect">${available}</select>
         <button type="button" class="secondary" id="proposalAddBudgetBtn">+ Vincular orçamento</button>
       </div>` : `<p class="muted no-print">Todos os orçamentos disponíveis já estão vinculados.</p>`}
+      <div class="proposal-bdi-form no-print">
+        <label>Formação do preço (BDI)<select id="proposalBdiMode">${modeOptions}</select></label>
+        ${mode === "geral" ? `<label>BDI geral (%)<input id="proposalBdiGeral" inputmode="decimal" value="${escapeHtml(proposalGeneratorState.bdiGeral ?? 0)}" style="width:6rem"></label>` : ""}
+      </div>
+      ${!multi ? `<div class="proposal-groups-summary muted">Custo ${asMoney(calc.custoTotal)} · BDI ${asPercent(calc.bdiPonderado)} · Venda ${asMoney(calc.vendaTotal)} · Margem ${asMoney(margem)} (${asPercent(margemPct)})</div>` : ""}
+      ${itemTable}
     </div>`;
+  qs("proposalBdiMode")?.addEventListener("change", (e) => {
+    proposalGeneratorState.bdiMode = e.target.value;
+    renderProposalGroupsPanel();
+    updateProposalPreview();
+  });
+  qs("proposalBdiGeral")?.addEventListener("change", (e) => {
+    const raw = String(e.target.value || "").trim().replace(",", ".");
+    proposalGeneratorState.bdiGeral = raw === "" ? 0 : Number(raw);
+    renderProposalGroupsPanel();
+    updateProposalPreview();
+  });
+  panel.querySelectorAll(".pg-item-price").forEach((inp) => inp.addEventListener("change", (e) => {
+    const id = e.target.dataset.item;
+    proposalGeneratorState.itemOverrides = proposalGeneratorState.itemOverrides || {};
+    const val = parseMoneyInput(e.target.value || "0");
+    proposalGeneratorState.itemOverrides[id] = val;
+    renderProposalGroupsPanel();
+    updateProposalPreview();
+  }));
   panel.querySelectorAll(".pg-bdi").forEach((inp) => inp.addEventListener("change", (e) => {
     const idx = Number(e.target.dataset.idx);
     const raw = String(e.target.value || "").trim().replace(",", ".");
@@ -12964,8 +13031,9 @@ async function saveGeneratedProposal(statusOverride = "") {
   const custoTotalOrcamentos = calc.custoTotal;
   const amountTotal = calc.vendaTotal;
   const valorBdiTotal = Math.max(0, amountTotal - custoTotalOrcamentos);
-  const bdiTipo = calc.grupos.length > 1 ? "misto" : "percentual";
-  const bdiGeral = calc.grupos.length > 1 ? roundMoney(calc.bdiPonderado) : Number(budget.bdiPercent || 0);
+  const bdiModeMap = { auto: "percentual", geral: "percentual", grupo: "misto", item: "por_item" };
+  const bdiTipo = bdiModeMap[proposalGeneratorState.bdiMode || "auto"] || "percentual";
+  const bdiGeral = (proposalGeneratorState.bdiMode === "geral") ? Number(proposalGeneratorState.bdiGeral || 0) : roundMoney(calc.bdiPonderado);
   try {
     const proposal = await createIntegratedRecord("proposals", {
       number: vars.numero_proposta,

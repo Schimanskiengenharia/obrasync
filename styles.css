@@ -4524,6 +4524,36 @@ menu {
   font-size: 1.05em;
 }
 
+.proposal-bdi-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+  margin-top: 10px;
+}
+
+.proposal-bdi-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.85rem;
+}
+
+.proposal-groups-summary {
+  margin-top: 8px;
+  font-size: 0.85rem;
+}
+
+.proposal-item-prices {
+  margin-top: 10px;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.proposal-item-prices table {
+  font-size: 0.82rem;
+}
+
 .proposal-preview-toolbar {
   display: flex;
   flex-wrap: wrap;
