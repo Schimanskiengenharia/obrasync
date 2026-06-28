@@ -5402,6 +5402,7 @@ function renderCrud(key) {
       </div>
       ${editable ? '<button class="primary" type="button" id="newRecord">Novo</button>' : ""}
     </section>
+    ${key === "fiscalDocuments" ? fiscalStatusLegend() : ""}
     ${key === "payable" ? payableGroupsPanelHtml(rows) : ""}
     ${table(config.title, rows, tableFields, editable, key)}
     ${docTitle ? generateDocumentFooter() : ""}
@@ -5434,8 +5435,8 @@ function renderCrud(key) {
 // Campos cujo formatCell devolve HTML intencional (links e badges); todo o resto é escapado.
 const HTML_CELL_FIELDS = new Set(["generatedLink", "hasPdf", "hasXml", "status"]);
 
-function tableCell(field, row) {
-  const content = formatCell(field, row[field], row);
+function tableCell(field, row, moduleKey = "") {
+  const content = formatCell(field, row[field], row, moduleKey);
   return HTML_CELL_FIELDS.has(field) ? content : escapeHtml(content);
 }
 
@@ -5452,7 +5453,7 @@ function table(title, rows, fields, actions = false, actionKey = "") {
           const editBtn = canEdit ? `<button class="secondary" type="button" data-action-key="${actionKey}" data-edit="${row.id}">Editar</button>` : "";
           const delBtn = canDel ? `<button class="danger" type="button" data-action-key="${actionKey}" data-delete="${row.id}">Excluir</button>` : "";
           const noAction = !extra && !canEdit && !canDel ? '<span class="muted">Somente leitura</span>' : "";
-          return `<tr>${fields.map((field) => `<td>${tableCell(field, row)}</td>`).join("")}${actions ? `<td><div class="row-actions">${extra}${editBtn}${delBtn}${noAction}</div></td>` : ""}</tr>`;
+          return `<tr>${fields.map((field) => `<td>${tableCell(field, row, actionKey)}</td>`).join("")}${actions ? `<td><div class="row-actions">${extra}${editBtn}${delBtn}${noAction}</div></td>` : ""}</tr>`;
         }).join("")}
       </tbody>
     </table>
@@ -5571,7 +5572,32 @@ function labelFor(field) {
   return labels[field] || field;
 }
 
-function formatCell(field, value, row = {}) {
+// Notas Fiscais: cada status ganha cor própria via classe nf-status-<slug>.
+// Slug remove acentos e normaliza (Conferida → conferida, Cancelada → cancelada).
+function nfStatusSlug(status) {
+  return String(status || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function nfStatusBadge(status) {
+  const slug = nfStatusSlug(status);
+  return `<span class="nf-status${slug ? ` nf-status-${slug}` : ""}">${escapeHtml(status || "—")}</span>`;
+}
+
+// Legenda de cores exibida no topo da tela de Notas Fiscais.
+function fiscalStatusLegend() {
+  const statuses = (configs.fiscalDocuments.fields.find((f) => f[0] === "status")?.[3]) || ["Pendente", "Anexada", "Conferida", "Cancelada"];
+  return `<div class="nf-status-legend">
+    <span class="nf-status-legend__label">Legenda:</span>
+    ${statuses.map((s) => nfStatusBadge(s)).join("")}
+  </div>`;
+}
+
+function formatCell(field, value, row = {}, moduleKey = "") {
   if (field.endsWith("Date") || field === "date" || field === "endForecast" || field === "data_versao") return asDate(value);
   if (isMoneyField(field)) return asMoney(value);
   if (isPercentField(field)) return asPercent(value);
@@ -5628,6 +5654,7 @@ function formatCell(field, value, row = {}) {
     return match ? match.documentNumber : "";
   }
   if (["chartAccountId", "debitAccountId", "creditAccountId", "parentId"].includes(field)) return nameOf("chartAccounts", value);
+  if (field === "status" && moduleKey === "fiscalDocuments") return nfStatusBadge(value);
   if (field === "status") return `<span class="status ${["Pago", "Recebido", "Aprovado", "Concluída", "Concluído", "Enviado manualmente"].includes(value) ? "success" : ["Vencido", "Atrasada"].includes(value) ? "danger" : ""}">${escapeHtml(value || "")}</span>`;
   return value ?? "";
 }

@@ -3502,6 +3502,65 @@ tbody tr:hover td {
   color: var(--green);
 }
 
+/* Notas Fiscais — cor própria por status (badge na listagem e na legenda). */
+.nf-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: var(--panel-2);
+  color: var(--teal-2);
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.nf-status-pendente {
+  background: #FFF8E1;
+  color: #F57F17;
+  border-color: #F9A825;
+}
+
+.nf-status-conferida {
+  background: #E3F2FD;
+  color: #1565C0;
+  border-color: #1E88E5;
+}
+
+.nf-status-anexada {
+  background: #E8F5E9;
+  color: #2E7D32;
+  border-color: #43A047;
+}
+
+.nf-status-cancelada {
+  background: #FFEBEE;
+  color: #C62828;
+  border-color: #E53935;
+}
+
+.nf-status-rejeitada {
+  background: #FBE9E7;
+  color: #BF360C;
+  border-color: #FF5722;
+}
+
+.nf-status-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 14px;
+}
+
+.nf-status-legend__label {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .row-actions {
   display: flex;
   flex-wrap: wrap;
