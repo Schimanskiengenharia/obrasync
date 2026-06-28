@@ -166,7 +166,7 @@ const sidebarSections = [
   { id: "dashboard", label: "Dashboard", icon: "D", module: "dashboard" },
   { id: "cadastros", label: "Cadastros", icon: "C", modules: ["clients", "suppliers", "products", "services", "categories", "costCenters", "bankAccounts"] },
   { id: "comercial", label: "Comercial", icon: "V", modules: ["budgets", "proposals", "proposalModels", "proposalAreas", "proposalActionTypes", "proposalServiceSubtypes", "sales"] },
-  { id: "viabilidade", label: "Viabilidade", icon: "📋", modules: ["viabilidadeObra", "viabilityAnalyses"] },
+  { id: "viabilidade", label: "Viabilidade", icon: "📋", modules: ["viabilidadeObra"] },
   { id: "obras", label: "Obras/Projetos", icon: "O", modules: ["projects", "projectCosts", "projectRevenues", "fiscalDocuments", "rdo", "projectNotifications", "projectTrackingLinks", "projectReport"] },
   { id: "qualidadePbqph", label: "Qualidade PBQP-H", icon: "✅", modules: ["qualidadeDashboard", "qualidadePolitica", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos", "qualidadeAuditorias"] },
   { id: "orcamentoObra", label: "Orçamento de Obra", icon: "Σ", modules: ["workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "purchaseOrders"] },
