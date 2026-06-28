@@ -854,10 +854,65 @@ button:disabled {
   50% { transform: scale(1.3); }
   100% { transform: scale(1.1); }
 }
-.submenu-item { animation: slide-in 0.2s ease forwards; }
-@keyframes slide-in {
-  from { opacity: 0; transform: translateX(-10px); }
-  to { opacity: 1; transform: translateX(0); }
+/* Ícone do subitem (submenu) — colorido por módulo via style inline */
+.submenu-ic {
+  font-size: 15px;
+  width: 18px;
+  flex-shrink: 0;
+  transition: transform 0.25s ease, filter 0.25s ease, opacity 0.25s ease;
+  opacity: 0.75;
+}
+.submenu-item:hover .submenu-ic {
+  transform: scale(1.25) rotate(-5deg);
+  filter: brightness(1.4) drop-shadow(0 0 4px currentColor);
+  opacity: 1;
+}
+.submenu-item.active .submenu-ic {
+  transform: scale(1.15);
+  filter: brightness(1.3) drop-shadow(0 0 6px currentColor);
+  opacity: 1;
+  animation: icon-bounce 0.4s ease;
+}
+@keyframes icon-bounce {
+  0%   { transform: scale(1); }
+  40%  { transform: scale(1.4) rotate(-8deg); }
+  70%  { transform: scale(1.1) rotate(3deg); }
+  100% { transform: scale(1.15); }
+}
+
+/* Entrada dos subitens ao expandir o módulo (escalonada) */
+.submenu-item {
+  animation: submenu-slide-in 0.2s ease forwards;
+  opacity: 0;
+}
+.submenu-item:nth-child(1)  { animation-delay: 0.03s; }
+.submenu-item:nth-child(2)  { animation-delay: 0.06s; }
+.submenu-item:nth-child(3)  { animation-delay: 0.09s; }
+.submenu-item:nth-child(4)  { animation-delay: 0.12s; }
+.submenu-item:nth-child(5)  { animation-delay: 0.15s; }
+.submenu-item:nth-child(6)  { animation-delay: 0.18s; }
+.submenu-item:nth-child(7)  { animation-delay: 0.21s; }
+.submenu-item:nth-child(8)  { animation-delay: 0.24s; }
+.submenu-item:nth-child(9)  { animation-delay: 0.27s; }
+.submenu-item:nth-child(10) { animation-delay: 0.30s; }
+@keyframes submenu-slide-in {
+  from { opacity: 0; transform: translateX(-12px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+/* Ícone do módulo principal ao ativar */
+.module-icon {
+  transition: transform 0.3s ease, filter 0.3s ease;
+}
+.module-item.active .module-icon {
+  transform: scale(1.1);
+  filter: drop-shadow(0 0 6px currentColor);
+  animation: module-spin-in 0.4s ease;
+}
+@keyframes module-spin-in {
+  0%   { transform: scale(1) rotate(0deg); }
+  50%  { transform: scale(1.3) rotate(-10deg); }
+  100% { transform: scale(1.1) rotate(0deg); }
 }
 
 .nav-label {

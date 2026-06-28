@@ -195,10 +195,62 @@ const MODULE_ICONS = {
   reportSupplier: "ti-chart-bar", reportCostCenter: "ti-chart-bar", reportProject: "ti-chart-bar",
   users: "ti-user-check", sinapiReferences: "ti-database-import",
 };
-// Ícone de um item da sidebar: classe Tabler (ti-*) vira <i>; caractere/emoji legado vira <span>.
+// Ícone do módulo principal (seção/topo): classe Tabler vira <i>; emoji legado vira <span>.
 function sidebarIconHtml(icon) {
-  if (icon && /^ti-/.test(icon)) return `<i class="ti ${icon} sidebar-icon" aria-hidden="true"></i>`;
-  return `<span class="nav-icon sidebar-icon">${icon || ""}</span>`;
+  if (icon && /^ti-/.test(icon)) return `<i class="ti ${icon} sidebar-icon module-icon" aria-hidden="true"></i>`;
+  return `<span class="nav-icon sidebar-icon module-icon">${icon || ""}</span>`;
+}
+
+// Ícone Tabler + cor por SUBmódulo (item do submenu). Sem mapeamento → ícone neutro.
+const SUBMODULE_ICONS = {
+  // Cadastros (roxo)
+  clients: ["ti-users", "#534AB7"], suppliers: ["ti-truck", "#534AB7"], products: ["ti-package", "#7F77DD"],
+  services: ["ti-tool", "#534AB7"], categories: ["ti-category", "#7F77DD"], costCenters: ["ti-building", "#534AB7"],
+  bankAccounts: ["ti-building-bank", "#7F77DD"],
+  // Comercial (verde)
+  budgets: ["ti-calculator", "#3B6D11"], proposals: ["ti-file-text", "#639922"], proposalModels: ["ti-template", "#639922"],
+  proposalAreas: ["ti-sitemap", "#639922"], proposalActionTypes: ["ti-list-details", "#3B6D11"],
+  proposalServiceSubtypes: ["ti-list-check", "#639922"], sales: ["ti-file-certificate", "#3B6D11"],
+  // Viabilidade (teal)
+  viabilidadeObra: ["ti-clipboard-check", "#0F6E56"], viabilityAnalyses: ["ti-coin", "#0F6E56"],
+  // Obras/Projetos + orçamento de obra + SINAPI (azul)
+  projects: ["ti-building-skyscraper", "#185FA5"], cotacoes: ["ti-tag", "#185FA5"], workBudgets: ["ti-calculator", "#378ADD"],
+  workBudgetItems: ["ti-list-details", "#185FA5"], projectCosts: ["ti-coin", "#185FA5"], projectRevenues: ["ti-cash", "#378ADD"],
+  purchaseOrders: ["ti-shopping-cart", "#185FA5"], fiscalDocuments: ["ti-receipt", "#378ADD"],
+  projectSchedule: ["ti-calendar-stats", "#185FA5"], projectMilestones: ["ti-flag", "#378ADD"], abcCurve: ["ti-chart-bar", "#185FA5"],
+  agenda: ["ti-calendar", "#378ADD"], kanban: ["ti-layout-kanban", "#185FA5"], projectNotifications: ["ti-bell", "#378ADD"],
+  projectTrackingLinks: ["ti-link", "#185FA5"], technicalReports: ["ti-file-report", "#378ADD"], projectReport: ["ti-chart-pie", "#185FA5"],
+  rdo: ["ti-clipboard-list", "#378ADD"], sinapiReferences: ["ti-database-import", "#185FA5"], sinapiInputs: ["ti-package", "#378ADD"],
+  sinapiCompositions: ["ti-stack-2", "#185FA5"], sinapiCompositionItems: ["ti-list-details", "#378ADD"], sinapiLabor: ["ti-users", "#185FA5"],
+  sinapiFamilies: ["ti-category", "#378ADD"], sinapiMaintenances: ["ti-tool", "#185FA5"], ownCompositions: ["ti-box", "#378ADD"],
+  quotes: ["ti-tag", "#185FA5"],
+  // Financeiro
+  receivable: ["ti-arrow-up-circle", "#3B6D11"], payable: ["ti-arrow-down-circle", "#A32D2D"], cashMoves: ["ti-cash-banknote", "#854F0B"],
+  cashFlow: ["ti-trending-up", "#854F0B"], reconciliation: ["ti-refresh", "#854F0B"],
+  // Contabilidade (coral)
+  chartAccounts: ["ti-hierarchy", "#993C1D"], journalEntries: ["ti-pencil", "#993C1D"], dre: ["ti-report-analytics", "#993C1D"],
+  taxDocuments: ["ti-file-invoice", "#993C1D"], taxes: ["ti-percentage", "#993C1D"],
+  // Relatórios (teal)
+  reports: ["ti-chart-bar", "#0F6E56"], reportFinancial: ["ti-chart-bar", "#0F6E56"], reportClient: ["ti-user", "#0F6E56"],
+  reportSupplier: ["ti-truck", "#0F6E56"], reportCostCenter: ["ti-building", "#0F6E56"], reportProject: ["ti-building-skyscraper", "#0F6E56"],
+  exports: ["ti-download", "#0F6E56"],
+  // Qualidade PBQP-H (teal/coral)
+  qualidadeDashboard: ["ti-gauge", "#0F6E56"], qualidadePolitica: ["ti-file-text", "#0F6E56"], qualidadePes: ["ti-clipboard-text", "#0F6E56"],
+  qualidadePqo: ["ti-clipboard-check", "#0F6E56"], qualidadeFvs: ["ti-checklist", "#0F6E56"], qualidadeFvm: ["ti-package", "#0F6E56"],
+  qualidadeNc: ["ti-alert-triangle", "#A32D2D"], qualidadeTreinamentos: ["ti-school", "#0F6E56"], qualidadeAuditorias: ["ti-clipboard-check", "#0F6E56"],
+  // Configurações (cinza)
+  companySettings: ["ti-building", "#5F5E5A"], users: ["ti-users", "#5F5E5A"], permissions: ["ti-lock", "#5F5E5A"],
+  systemVersion: ["ti-info-circle", "#5F5E5A"], workTypes: ["ti-list", "#5F5E5A"], workStatuses: ["ti-activity", "#5F5E5A"],
+  standardStages: ["ti-stairs", "#5F5E5A"], standardMilestones: ["ti-flag", "#5F5E5A"], customFields: ["ti-forms", "#5F5E5A"],
+  reportModels: ["ti-template", "#5F5E5A"], documentTypes: ["ti-files", "#5F5E5A"], checklists: ["ti-checklist", "#5F5E5A"],
+  measurementTypes: ["ti-ruler", "#5F5E5A"], paymentMethods: ["ti-credit-card", "#5F5E5A"], whatsappTemplates: ["ti-message", "#5F5E5A"],
+  visibilityRules: ["ti-eye", "#5F5E5A"], sinapiSettings: ["ti-adjustments", "#5F5E5A"], plugins: ["ti-plug", "#5F5E5A"],
+  backupLocal: ["ti-database-export", "#5F5E5A"], preferences: ["ti-settings", "#5F5E5A"], migration: ["ti-database-export", "#5F5E5A"],
+  auditLog: ["ti-history", "#5F5E5A"], myProfile: ["ti-user-circle", "#5F5E5A"],
+};
+function submenuIconHtml(moduleKey) {
+  const [ic, color] = SUBMODULE_ICONS[moduleKey] || ["ti-point", "#8a93a6"];
+  return `<i class="ti ${ic} submenu-ic" style="color:${color}" aria-hidden="true"></i>`;
 }
 
 const roleLabels = {
@@ -2461,7 +2513,7 @@ function renderNav() {
       const open = openNavGroups.has(section.id);
       return `
         <div class="nav-section">
-          <button class="nav-section-toggle sidebar-item" type="button" data-nav-group="${section.id}" aria-expanded="${open}">
+          <button class="nav-section-toggle sidebar-item module-item" type="button" data-nav-group="${section.id}" aria-expanded="${open}">
             ${sidebarIconHtml(section.icon)}
             <span class="nav-label">${section.label}</span>
             <span class="nav-caret">${open ? "−" : "+"}</span>
@@ -2484,7 +2536,7 @@ function renderNav() {
     const open = openNavGroups.has(section.id);
     return `
       <div class="nav-section ${active ? "section-active" : ""}">
-        <button class="nav-section-toggle sidebar-item" type="button" data-nav-group="${section.id}" aria-expanded="${open}">
+        <button class="nav-section-toggle sidebar-item module-item ${active ? "active" : ""}" type="button" data-nav-group="${section.id}" aria-expanded="${open}">
           ${sidebarIconHtml(section.icon)}
           <span class="nav-label">${section.label}</span>
           <span class="nav-caret">${open ? "−" : "+"}</span>
@@ -2499,10 +2551,14 @@ function renderNav() {
 }
 
 function navButton(moduleKey, label, icon, extraClass = "") {
-  const ic = icon || MODULE_ICONS[moduleKey] || "";
+  const isSub = extraClass.includes("submenu-item");
+  const mainIcon = icon || MODULE_ICONS[moduleKey] || "";
+  const iconHtml = isSub
+    ? submenuIconHtml(moduleKey)
+    : (mainIcon ? sidebarIconHtml(mainIcon) : '<span class="nav-dot"></span>');
   return `
-    <button class="nav-link sidebar-item ${extraClass} ${moduleKey === currentModule ? "active" : ""}" type="button" data-module="${moduleKey}">
-      ${ic ? sidebarIconHtml(ic) : '<span class="nav-dot"></span>'}
+    <button class="nav-link sidebar-item ${isSub ? "" : "module-item"} ${extraClass} ${moduleKey === currentModule ? "active" : ""}" type="button" data-module="${moduleKey}">
+      ${iconHtml}
       <span class="nav-label">${label}</span>
     </button>
   `;
