@@ -9333,13 +9333,15 @@ function parse_sinapi_file(string $path, string $fileType, string $sheetName, st
                 $records = array_merge($records, parse_sinapi_inputs_sheet($sheets[$name], $name, $uf));
             }
         }
-        foreach (['CSD','CCD','CSE'] as $name) {
-            if (isset($sheets[$name])) {
-                $records = array_merge($records, parse_sinapi_compositions_sheet($sheets[$name], $name, $uf));
-            }
-        }
+        // As abas CSD/CCD/CSE têm o "Código da Composição" sempre 0 (inútil para
+        // identificar a composição). Em vez de gravá-las como composições, elas
+        // viram um índice de CUSTO por (grupo|descrição|unidade) que enriquece as
+        // composições reais lidas do Analítico.
+        $costIndex = build_sinapi_composition_cost_index($sheets, $uf);
+        // O Analítico tem o código REAL da composição (col B): dele saem TANTO as
+        // composições-cabeçalho (linhas com Tipo Item vazio) quanto os itens.
         if (isset($sheets['Analítico'])) {
-            $records = array_merge($records, parse_sinapi_analytic_sheet($sheets['Analítico'], $defaultReferenceType));
+            $records = array_merge($records, parse_sinapi_analytic_sheet($sheets['Analítico'], $defaultReferenceType, $uf, $costIndex));
         }
         return $records;
     }
@@ -9397,48 +9399,138 @@ function parse_sinapi_inputs_sheet(array $rows, string $sheet, string $uf): arra
     return $records;
 }
 
-function parse_sinapi_compositions_sheet(array $rows, string $sheet, string $uf): array
+// Índice de CUSTO das composições a partir das abas CSD/CCD/CSE. Essas abas têm
+// Custo(R$) e %AS, mas o "Código da Composição" vem sempre 0 — então a chave é
+// (grupo|descrição|unidade), o mesmo critério usado para casar com a aba Analítico.
+// Retorno: [ priceType => [ chave => ['unitCost'=>float, 'percentAS'=>float] ] ].
+function build_sinapi_composition_cost_index(array $sheets, string $uf): array
 {
-    $header = find_header_row($rows, ['Código da Composição', 'Custo']);
-    if ($header === null) return [];
-    $ufRow = $rows[$header - 1] ?? [];
-    $ufIndex = find_column_index($ufRow, $uf);
-    if ($ufIndex === null) return [];
-    $records = [];
-    for ($i = $header + 1; $i < count($rows); $i++) {
-        $row = $rows[$i];
-        $code = cell_at($row, 1);
-        $description = cell_at($row, 2);
-        if ($code === '' || $description === '') continue;
-        $records[] = sinapi_entry('sinapiCompositions', reference_price_type($sheet), $sheet, [
-            'referenceType' => $sheet,
-            'uf' => $uf,
-            'groupName' => cell_at($row, 0),
-            'code' => $code,
-            'description' => $description,
-            'unit' => cell_at($row, 3),
-            'unitCost' => decimal_value(cell_at($row, $ufIndex)),
-            'percentAS' => decimal_value(cell_at($row, $ufIndex + 1)),
-            'type' => 'Composição',
-            'className' => '',
-            'status' => 'Ativo',
-        ]);
+    $index = [];
+    foreach (['CSD', 'CCD', 'CSE'] as $name) {
+        if (empty($sheets[$name])) {
+            continue;
+        }
+        $rows = $sheets[$name];
+        $header = find_header_row($rows, ['Descrição', 'Unidade']) ?? find_header_row($rows, ['Descrição']);
+        if ($header === null) {
+            continue;
+        }
+        $headerRow = $rows[$header];
+        $descIdx = sinapi_col_by_name($headerRow, ['Descrição', 'Descricao']);
+        if ($descIdx === null) {
+            continue;
+        }
+        $groupIdx = sinapi_col_by_name($headerRow, ['Grupo']);
+        $unitIdx = sinapi_col_by_name($headerRow, ['Unidade', 'Unid']);
+        // O custo pode estar numa coluna rotulada "Custo" ou na coluna da UF (rótulo
+        // no próprio cabeçalho ou na linha imediatamente acima, como nas outras abas).
+        $costIdx = sinapi_col_by_name($headerRow, ['Custo']);
+        if ($costIdx === null) {
+            $costIdx = find_column_index($headerRow, $uf) ?? find_column_index($rows[$header - 1] ?? [], $uf);
+        }
+        if ($costIdx === null) {
+            continue;
+        }
+        $asIdx = $costIdx + 1; // %AS fica logo após o custo (layout SINAPI)
+        $priceType = reference_price_type($name);
+        for ($i = $header + 1; $i < count($rows); $i++) {
+            $row = $rows[$i];
+            $description = cell_at($row, $descIdx);
+            if ($description === '') {
+                continue;
+            }
+            $key = sinapi_composition_cost_key(
+                $groupIdx !== null ? cell_at($row, $groupIdx) : '',
+                $description,
+                $unitIdx !== null ? cell_at($row, $unitIdx) : ''
+            );
+            // Primeira ocorrência vence (ignora eventuais linhas de total/rodapé).
+            $index[$priceType][$key] ??= [
+                'unitCost' => decimal_value(cell_at($row, $costIdx)),
+                'percentAS' => decimal_value(cell_at($row, $asIdx)),
+            ];
+        }
     }
-    return $records;
+    return $index;
 }
 
-function parse_sinapi_analytic_sheet(array $rows, string $defaultReferenceType): array
+// Índice da primeira coluna cujo cabeçalho CONTÉM um dos termos (case-insensitive).
+function sinapi_col_by_name(array $headerRow, array $needles): ?int
+{
+    foreach ($headerRow as $idx => $value) {
+        $text = lower_text(trim((string) $value));
+        if ($text === '') {
+            continue;
+        }
+        foreach ($needles as $needle) {
+            if (str_contains($text, lower_text($needle))) {
+                return (int) $idx;
+            }
+        }
+    }
+    return null;
+}
+
+// Chave de casamento entre a composição (aba Analítico) e seu custo (abas CS*).
+function sinapi_composition_cost_key(string $group, string $description, string $unit): string
+{
+    return lower_text(trim($group)) . '|' . lower_text(trim($description)) . '|' . lower_text(trim($unit));
+}
+
+// SINAPI usa "ATIVO"/"DESATIVADO" na coluna Situação; mapeia para o status gravado.
+function sinapi_status_from_situation(string $situation): string
+{
+    $text = lower_text($situation);
+    if (str_contains($text, 'desat') || str_contains($text, 'inativ')) {
+        return 'Desativado';
+    }
+    return 'Ativo';
+}
+
+// A aba Analítico descreve cada composição em blocos: uma linha-CABEÇALHO (col C
+// "Tipo Item" VAZIA) com o código REAL (col B), grupo (A), descrição (E), unidade (F)
+// e situação (H); seguida das linhas de ITEM (col C preenchida com COMPOSICAO/INSUMO).
+// Daqui saem TANTO as composições-cabeçalho (sinapi_composicoes) — antes faltando, o
+// que zerava a tabela — quanto seus itens, NA ORDEM (cabeçalho → itens) para o
+// vínculo por find_sinapi_composition_id funcionar. $costIndex enriquece o custo das
+// abas CS* por (grupo|descrição|unidade); sem casamento, a composição fica sem custo.
+function parse_sinapi_analytic_sheet(array $rows, string $defaultReferenceType, string $uf, array $costIndex = []): array
 {
     $header = find_header_row($rows, ['Código da Composição', 'Tipo Item', 'Coeficiente']);
     if ($header === null) return [];
+    // Custo do tipo de referência padrão (ex.: CSD → "Sem desoneração"); na falta
+    // dele, qualquer aba CS* disponível é melhor do que nenhum custo.
+    $costByKey = $costIndex[$defaultReferenceType] ?? (reset($costIndex) ?: []);
     $records = [];
     for ($i = $header + 1; $i < count($rows); $i++) {
         $row = $rows[$i];
-        $itemType = cell_at($row, 2);
-        $itemCode = cell_at($row, 3);
-        if ($itemType === '' || $itemCode === '') continue;
+        $itemType = cell_at($row, 2); // col C — vazia na composição-cabeçalho
+        $code = cell_at($row, 1);     // col B — código REAL da composição
+        if ($itemType === '') {
+            if ($code === '') continue; // linha sem composição associada: ignora
+            $group = cell_at($row, 0);       // col A
+            $description = cell_at($row, 4); // col E
+            $unit = cell_at($row, 5);        // col F
+            $cost = $costByKey[sinapi_composition_cost_key($group, $description, $unit)] ?? null;
+            $records[] = sinapi_entry('sinapiCompositions', $defaultReferenceType, $defaultReferenceType, [
+                'referenceType' => $defaultReferenceType,
+                'uf' => $uf,
+                'code' => $code,
+                'description' => $description,
+                'unit' => $unit,
+                'unitCost' => $cost['unitCost'] ?? 0.0,
+                'percentAS' => $cost['percentAS'] ?? 0.0,
+                'type' => 'Composição',
+                'groupName' => $group,
+                'className' => '',
+                'status' => sinapi_status_from_situation(cell_at($row, 7)), // col H
+            ]);
+            continue;
+        }
+        $itemCode = cell_at($row, 3); // col D
+        if ($itemCode === '') continue;
         $records[] = sinapi_entry('sinapiCompositionItems', $defaultReferenceType, 'Analítico', [
-            'compositionCode' => cell_at($row, 1),
+            'compositionCode' => $code, // col B — vincula ao cabeçalho pelo código real
             'itemType' => normalize_sinapi_item_type($itemType),
             'itemCode' => $itemCode,
             'itemDescription' => cell_at($row, 4),
