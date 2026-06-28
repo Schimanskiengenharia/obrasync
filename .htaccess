@@ -24,7 +24,9 @@ RedirectMatch 404 /\.git(/|$)
   Header always set Strict-Transport-Security "max-age=31536000"
   # CSP: scripts só do próprio sistema (o tema saiu do inline para theme-init.js);
   # 'unsafe-inline' apenas em style-src por causa dos style="" dos templates.
+  # cdn.jsdelivr.net liberado em style-src (CSS) e font-src (woff2) para a webfont
+  # Tabler Icons (ícones do módulo de viabilidade).
   # Com o token de sessão no localStorage, esta é a defesa em profundidade contra
   # XSS exfiltrar a sessão para fora do domínio.
-  Header always set Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'self'; base-uri 'self'; form-action 'self'; object-src 'none'"
+  Header always set Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; font-src 'self' https://cdn.jsdelivr.net; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'self'; base-uri 'self'; form-action 'self'; object-src 'none'"
 </IfModule>

@@ -3592,7 +3592,7 @@ tbody tr:hover td {
 }
 .viab-card h3 { margin: 0; font-size: 15px; }
 .viab-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.viab-tipo { font-size: 12px; font-weight: 800; color: var(--teal-2); white-space: nowrap; }
+.viab-tipo { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 800; color: var(--teal-2); white-space: nowrap; }
 .viab-card-foot { display: flex; justify-content: space-between; font-size: 12px; }
 .viab-card button { justify-self: start; }
 
@@ -3606,11 +3606,21 @@ tbody tr:hover td {
   font-weight: 800;
   white-space: nowrap;
 }
-.viab-st-andamento, .viab-it-andamento { background: #e3f2fd; color: #1565c0; }
+.viab-st-andamento { background: #e3f2fd; color: #1565c0; }
+.viab-it-andamento { background: #fff8e6; color: #8a6100; }
 .viab-st-aprovada, .viab-it-aprovado, .viab-st-concluida { background: #eaf8f0; color: var(--green); }
 .viab-st-bloqueada, .viab-it-reprovado { background: #fff0ee; color: var(--red); }
 .viab-it-naoiniciado { background: var(--panel-2); color: var(--muted); }
-.viab-it-aguardando { background: #fff8e6; color: #8a6100; }
+.viab-it-aguardando { background: #e3f2fd; color: #1565c0; }
+
+/* Ícones Tabler (ti-*) no módulo de viabilidade */
+.viab-ti { display: inline-block; line-height: 1; vertical-align: -0.15em; }
+.viab-ti-12 { font-size: 12px; }
+.viab-ti-14 { font-size: 14px; }
+.viab-ti-16 { font-size: 16px; }
+.viab-ti-18 { font-size: 18px; }
+.viab-ti-24 { font-size: 24px; }
+.viab-ti-muted { color: var(--muted); }
 
 .viab-progress {
   height: 10px;
@@ -3718,16 +3728,22 @@ tbody tr:hover td {
 .viab-item-title { font-weight: 700; font-size: 14px; }
 .viab-tipo-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
 .viab-tipo-tab {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 96px;
   border: 1px solid var(--line);
   background: var(--panel);
-  border-radius: 999px;
-  padding: 6px 12px;
+  border-radius: 10px;
+  padding: 10px 12px;
   font-size: 12px;
   font-weight: 700;
   cursor: pointer;
   color: var(--muted);
 }
 .viab-tipo-tab.active { background: var(--teal); color: #fff; border-color: var(--teal); }
+.viab-tipo-tab.active .viab-ti { color: #fff; }
 .viab-anexo-box { border: 1px dashed var(--line); border-radius: 8px; padding: 12px; display: grid; gap: 8px; }
 .viab-anexos { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: 13px; }
 .viab-file-label { display: grid; gap: 4px; font-size: 12px; font-weight: 700; color: var(--muted); }

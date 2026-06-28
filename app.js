@@ -10634,15 +10634,16 @@ let viabilidadeObraDetail = null;      // análise completa carregada
 let viabilidadeObraList = [];          // cache da listagem
 const viabilidadeObraFilters = { tipo: "", status: "", periodo: "" };
 
+// 3º elemento = nome do ícone Tabler (ti-<nome>).
 const VIABILIDADE_TIPOS = [
-  ["energia_solar", "Energia Solar", "☀️"],
-  ["obra_civil", "Obra Civil", "🏗️"],
-  ["eletrica", "Instalação Elétrica", "⚡"],
-  ["ar_condicionado", "Ar Condicionado", "❄️"],
-  ["cobertura", "Cobertura e Telhado", "🏠"],
-  ["hidraulica", "Hidráulica", "🚿"],
-  ["manutencao", "Manutenção Predial", "🔧"],
-  ["outro", "Outro", "📋"],
+  ["energia_solar", "Energia Solar", "sun"],
+  ["obra_civil", "Obra Civil", "building-skyscraper"],
+  ["eletrica", "Instalação Elétrica", "bolt"],
+  ["ar_condicionado", "Ar Condicionado", "wind"],
+  ["cobertura", "Cobertura e Telhado", "home"],
+  ["hidraulica", "Hidráulica", "droplet"],
+  ["manutencao", "Manutenção Predial", "tool"],
+  ["outro", "Outro", "dots-circle-horizontal"],
 ];
 const VIABILIDADE_STATUS = {
   em_andamento: ["Em andamento", "viab-st-andamento"],
@@ -10650,23 +10651,76 @@ const VIABILIDADE_STATUS = {
   bloqueada: ["Bloqueada", "viab-st-bloqueada"],
   concluida: ["Concluída", "viab-st-concluida"],
 };
-// Ícones por status de item: check verde, relógio azul, ampulheta, X vermelho, quadrado cinza.
+// Status do item: [label, ícone Tabler, classe de cor]. Cores (CSS): aprovado verde,
+// em andamento amarelo, aguardando azul, reprovado vermelho, não iniciado cinza.
 const VIABILIDADE_ITEM_STATUS = {
-  nao_iniciado: ["Não iniciado", "◻️", "viab-it-naoiniciado"],
-  em_andamento: ["Em andamento", "🕐", "viab-it-andamento"],
-  aguardando_terceiro: ["Aguardando terceiro", "⏳", "viab-it-aguardando"],
-  aprovado: ["Aprovado", "✅", "viab-it-aprovado"],
-  reprovado: ["Reprovado", "❌", "viab-it-reprovado"],
+  nao_iniciado: ["Não iniciado", "circle", "viab-it-naoiniciado"],
+  em_andamento: ["Em andamento", "clock", "viab-it-andamento"],
+  aguardando_terceiro: ["Aguardando terceiro", "hourglass", "viab-it-aguardando"],
+  aprovado: ["Aprovado", "circle-check", "viab-it-aprovado"],
+  reprovado: ["Reprovado", "circle-x", "viab-it-reprovado"],
 };
+// Ícone Tabler por tipo de grupo de viabilidade.
+const VIABILIDADE_GRUPO_ICONS = {
+  tecnica: "tool",
+  financeira: "currency-dollar",
+  legal: "file-certificate",
+  ambiental: "leaf",
+  concessionaria: "building-community",
+  operacional: "settings",
+  mercado: "trending-up",
+  risco: "alert-triangle",
+};
+// Ícone pequeno por conteúdo do item (1ª regra cujo padrão casa com a descrição).
+const VIABILIDADE_ITEM_ICON_RULES = [
+  [/estrutural|telhado/, "building"],
+  [/sombreamento/, "shadow"],
+  [/dimensionamento/, "ruler"],
+  [/capacidade.*el[eé]tric|instala[cç][aã]o el[eé]tric/, "plug"],
+  [/inversor/, "cpu"],
+  [/solicita[cç][aã]o|acesso à rede/, "send"],
+  [/aprova[cç][aã]o.*(concession|conex)|vistoria da concession/, "check"],
+  [/medidor/, "replace"],
+  [/payback/, "calendar-stats"],
+  [/pagamento|financiamento/, "credit-card"],
+  [/or[cç]amento/, "receipt"],
+  [/\bart\b|\brrt\b/, "file-text"],
+  [/alvar[aá]|licen[cç]a/, "license"],
+  [/condom[ií]nio|autoriza[cç][aã]o/, "building-community"],
+  [/solo|terreno|sondagem/, "layers"],
+  [/topografia/, "map"],
+  [/projeto aprovado|aprovado na prefeitura/, "file-check"],
+  [/t[eé]rmica/, "temperature"],
+  [/drenagem|pluvial|reservat[oó]rio|press[aã]o|tubula[cç]|esgoto/, "droplet"],
+  [/laudo|diagn[oó]stico/, "clipboard-list"],
+  [/vistoria/, "eye"],
+  [/pbqp/, "award"],
+  [/iso ?9001/, "certificate"],
+  [/qualidade/, "shield-check"],
+];
 
 function viabilidadeTipoMeta(tipo) {
-  return VIABILIDADE_TIPOS.find(([v]) => v === tipo) || ["outro", "Outro", "📋"];
+  return VIABILIDADE_TIPOS.find(([v]) => v === tipo) || ["outro", "Outro", "dots-circle-horizontal"];
 }
 function viabilidadeStatusMeta(status) {
   return VIABILIDADE_STATUS[status] || VIABILIDADE_STATUS.em_andamento;
 }
 function viabilidadeItemStatusMeta(status) {
   return VIABILIDADE_ITEM_STATUS[status] || VIABILIDADE_ITEM_STATUS.nao_iniciado;
+}
+function viabilidadeGrupoIcon(tipo) {
+  return VIABILIDADE_GRUPO_ICONS[String(tipo || "").toLowerCase()] || "checklist";
+}
+function viabilidadeItemIcon(descricao) {
+  const s = String(descricao || "").toLowerCase();
+  for (const [re, ic] of VIABILIDADE_ITEM_ICON_RULES) {
+    if (re.test(s)) return ic;
+  }
+  return "point";
+}
+// Ícone Tabler (webfont ti-*). aria-hidden: decorativo — o texto ao lado dá o significado.
+function tiIcon(name, sizeClass = "viab-ti-16") {
+  return `<i class="ti ti-${name} viab-ti ${sizeClass}" aria-hidden="true"></i>`;
 }
 function viabilidadeStatusBadge(status) {
   const [label, cls] = viabilidadeStatusMeta(status);
@@ -10741,7 +10795,7 @@ async function renderViabilidadeList() {
     return true;
   });
   const tipoOptions = ['<option value="">Todos os tipos</option>']
-    .concat(VIABILIDADE_TIPOS.map(([v, l, ic]) => `<option value="${v}" ${v === viabilidadeObraFilters.tipo ? "selected" : ""}>${ic} ${l}</option>`)).join("");
+    .concat(VIABILIDADE_TIPOS.map(([v, l]) => `<option value="${v}" ${v === viabilidadeObraFilters.tipo ? "selected" : ""}>${l}</option>`)).join("");
   const statusOptions = ['<option value="">Todos os status</option>']
     .concat(Object.entries(VIABILIDADE_STATUS).map(([v, [l]]) => `<option value="${v}" ${v === viabilidadeObraFilters.status ? "selected" : ""}>${l}</option>`)).join("");
   const periodoOptions = [["", "Todo o período"], ["30", "Últimos 30 dias"], ["90", "Últimos 90 dias"], ["365", "Este ano"]]
@@ -10752,7 +10806,7 @@ async function renderViabilidadeList() {
     return `
       <article class="viab-card" data-open="${escapeHtml(a.id)}">
         <header class="viab-card-head">
-          <span class="viab-tipo">${tipoIcon} ${svgText(tipoLabel)}</span>
+          <span class="viab-tipo">${tiIcon(tipoIcon)} ${svgText(tipoLabel)}</span>
           ${viabilidadeStatusBadge(a.status)}
         </header>
         <h3>${svgText(a.nome || "Sem nome")}</h3>
@@ -10827,6 +10881,7 @@ function renderViabilidadeDetail() {
   const grupos = (a.grupos || []).map((g) => {
     const itensHtml = (g.itens || []).map((i) => {
       const [stLabel, stIcon, stCls] = viabilidadeItemStatusMeta(i.status);
+      const contentIcon = viabilidadeItemIcon(i.descricao);
       const detalhe = [
         i.status === "aguardando_terceiro" && i.prazo ? `prazo ${asDate(i.prazo)}` : "",
         i.terceiro_nome ? svgText(i.terceiro_nome) : "",
@@ -10834,13 +10889,13 @@ function renderViabilidadeDetail() {
       ].filter(Boolean).join(" · ");
       return `
         <li class="viab-item">
-          <span class="viab-item-icon" title="${stLabel}">${stIcon}</span>
+          <span class="viab-item-icon" title="${svgText(stLabel)}">${tiIcon(contentIcon, "viab-ti-14 viab-ti-muted")}</span>
           <span class="viab-item-desc">
             ${svgText(i.descricao)}
             ${Number(i.obrigatorio) === 1 ? '<span class="viab-mini-tag">obrigatório</span>' : ""}
             ${detalhe ? `<small class="muted">${detalhe}</small>` : ""}
           </span>
-          <span class="viab-badge ${stCls}">${stLabel}</span>
+          <span class="viab-badge ${stCls}">${tiIcon(stIcon, "viab-ti-12")} ${stLabel}</span>
           ${editable ? `<button class="secondary" type="button" data-item="${escapeHtml(i.id)}">Atualizar</button>` : ""}
         </li>`;
     }).join("");
@@ -10848,7 +10903,7 @@ function renderViabilidadeDetail() {
       <section class="viab-grupo">
         <header class="viab-grupo-head">
           <div>
-            <h3>${svgText(g.nome)}</h3>
+            <h3>${tiIcon(viabilidadeGrupoIcon(g.tipo), "viab-ti-18")} ${svgText(g.nome)}</h3>
             <span class="viab-mini-tag ${Number(g.obrigatorio) === 1 ? "viab-tag-obrig" : "viab-tag-opc"}">${Number(g.obrigatorio) === 1 ? "Obrigatório" : "Opcional"}</span>
           </div>
           <div class="viab-grupo-prog">${viabilidadeProgressBar(g.progresso)}<span class="muted">${Number(g.progresso || 0).toFixed(0)}%</span></div>
@@ -10863,7 +10918,7 @@ function renderViabilidadeDetail() {
       <div>
         <button class="secondary" type="button" id="viabVoltar">← Voltar</button>
         <h2>${svgText(a.nome)}</h2>
-        <p><span class="viab-tipo">${tipoIcon} ${svgText(tipoLabel)}</span> ${viabilidadeStatusBadge(a.status)} ${a.obra_id ? "· Obra: " + svgText(nameOf("projects", a.obra_id) || "—") : ""}</p>
+        <p><span class="viab-tipo">${tiIcon(tipoIcon)} ${svgText(tipoLabel)}</span> ${viabilidadeStatusBadge(a.status)} ${a.obra_id ? "· Obra: " + svgText(nameOf("projects", a.obra_id) || "—") : ""}</p>
       </div>
       <div class="viab-detail-actions">
         ${editable ? '<button class="secondary" type="button" id="viabEditar">Editar</button>' : ""}
@@ -10912,7 +10967,7 @@ function openViabilidadeCreate(prefill = {}) {
     .concat((db.clients || []).map((c) => `<option value="${escapeHtml(c.id)}" ${sameId(c.id, prefill.cliente_id) ? "selected" : ""}>${escapeHtml(c.name)}</option>`)).join("");
   const propOptions = ['<option value="">— Sem proposta —</option>']
     .concat((db.proposals || []).map((p) => `<option value="${escapeHtml(p.id)}" ${sameId(p.id, prefill.proposta_id) ? "selected" : ""}>${escapeHtml(p.number || p.id)}</option>`)).join("");
-  const tabs = VIABILIDADE_TIPOS.map(([v, l, ic]) => `<button type="button" class="viab-tipo-tab ${v === tipoSel ? "active" : ""}" data-tipo="${v}">${ic} ${l}</button>`).join("");
+  const tabs = VIABILIDADE_TIPOS.map(([v, l, ic]) => `<button type="button" class="viab-tipo-tab ${v === tipoSel ? "active" : ""}" data-tipo="${v}">${tiIcon(ic, "viab-ti-24")}<span>${l}</span></button>`).join("");
   const { close, q, dialog } = viabilidadeDialog(`
     <div class="viab-modal">
       <header class="viab-modal-head"><h3>Nova análise de viabilidade</h3><button type="button" class="viab-x" data-close aria-label="Fechar">✕</button></header>
