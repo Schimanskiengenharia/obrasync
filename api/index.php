@@ -8941,6 +8941,11 @@ function handle_sinapi_module(PDO $pdo, string $method, array $query, array $con
         require_admin($authUser);
         handle_sinapi_activate_reference($pdo, read_json(), $authUser);
     }
+    if ($action === 'recalcularcustos') {
+        require_method($method, ['POST']);
+        require_admin($authUser);
+        handle_sinapi_recalc_costs($pdo, read_json());
+    }
     sinapi_module_respond(false, [], 'Ação SINAPI inválida.', 400);
 }
 
@@ -8949,6 +8954,189 @@ function sinapi_module_respond(bool $success, mixed $data = [], string $message 
     http_response_code($status);
     echo json_encode(['success' => $success, 'data' => $data, 'message' => $message], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit;
+}
+
+// ── Recálculo de custos das composições SINAPI ──────────────────────────────
+// Pós-processamento idempotente: as composições e itens são importados com os
+// COEFICIENTES corretos, mas sem preço (unitPrice/totalCost/unitCost = 0). Aqui
+// cruzamos cada item com o preço do insumo (sinapi_insumos) ou com o custo de outra
+// composição (composição auxiliar), em PASSADAS para resolver composições aninhadas.
+function handle_sinapi_recalc_costs(PDO $pdo, array $payload): never
+{
+    @set_time_limit(600);
+    @ini_set('memory_limit', '512M');
+    $referenceId = (int) ($payload['referenceId'] ?? $payload['id'] ?? 0);
+    $referenceIds = $referenceId > 0 ? [$referenceId] : sinapi_reference_ids_with_compositions($pdo);
+    if (!$referenceIds) {
+        sinapi_module_respond(false, [], 'Nenhuma referência com composições para recalcular.', 404);
+    }
+    $results = [];
+    foreach ($referenceIds as $refId) {
+        $results[] = sinapi_recalc_reference_costs($pdo, (int) $refId);
+    }
+    $agg = ['references' => count($results), 'compositions' => 0, 'items' => 0, 'itemsPriced' => 0, 'itemsWithoutPrice' => 0];
+    foreach ($results as $r) {
+        $agg['compositions'] += $r['compositions'];
+        $agg['items'] += $r['items'];
+        $agg['itemsPriced'] += $r['itemsPriced'];
+        $agg['itemsWithoutPrice'] += $r['itemsWithoutPrice'];
+    }
+    sinapi_module_respond(true, ['references' => $results, 'summary' => $agg], 'Custos das composições recalculados.');
+}
+
+function sinapi_reference_ids_with_compositions(PDO $pdo): array
+{
+    $ids = $pdo->query('SELECT DISTINCT sinapiReferenceId FROM sinapi_composicoes WHERE sinapiReferenceId IS NOT NULL')->fetchAll(PDO::FETCH_COLUMN);
+    return array_map('intval', $ids);
+}
+
+// Recalcula uma referência: carrega preços/itens em memória, resolve em passadas e
+// grava em lotes. Idempotente — recomeça do zero a partir dos preços dos insumos.
+function sinapi_recalc_reference_costs(PDO $pdo, int $referenceId): array
+{
+    // 1. Preços dos insumos desta referência (code → unitPrice). Os itens de
+    //    composição e os insumos ficam sob o MESMO sinapiReferenceId (ex.: ISD e o
+    //    Analítico "Sem desoneração" compartilham a referência), então casa por id.
+    $insumoPrice = [];
+    $stmt = $pdo->prepare('SELECT code, unitPrice FROM sinapi_insumos WHERE sinapiReferenceId = ?');
+    $stmt->execute([$referenceId]);
+    foreach ($stmt as $row) {
+        $insumoPrice[(string) $row['code']] = (float) $row['unitPrice'];
+    }
+
+    // 2. Composições desta referência (code → id + bucket de itens). unitCost zera
+    //    para recomeçar o cálculo (idempotência).
+    $comps = [];
+    $compById = [];
+    $stmt = $pdo->prepare('SELECT id, code, unitCost FROM sinapi_composicoes WHERE sinapiReferenceId = ?');
+    $stmt->execute([$referenceId]);
+    foreach ($stmt as $row) {
+        $code = (string) $row['code'];
+        $comps[$code] = ['id' => (int) $row['id'], 'unitCost' => 0.0, 'itemIdx' => []];
+        $compById[(int) $row['id']] = $code;
+    }
+
+    // 3. Itens desta referência, anexados ao bucket da composição-pai (por
+    //    compositionCode; se vazio, pelo sinapiCompositionId).
+    $items = [];
+    $stmt = $pdo->prepare('SELECT id, itemCode, itemType, coefficient, sinapiCompositionId, compositionCode FROM sinapi_composicao_itens WHERE sinapiReferenceId = ?');
+    $stmt->execute([$referenceId]);
+    foreach ($stmt as $row) {
+        $parentCode = (string) ($row['compositionCode'] ?? '');
+        if ($parentCode === '' && isset($compById[(int) $row['sinapiCompositionId']])) {
+            $parentCode = $compById[(int) $row['sinapiCompositionId']];
+        }
+        $idx = count($items);
+        $items[$idx] = [
+            'id' => (int) $row['id'],
+            'itemCode' => (string) $row['itemCode'],
+            'itemType' => (string) $row['itemType'],
+            'coefficient' => (float) $row['coefficient'],
+            'unitPrice' => 0.0,
+            'totalCost' => 0.0,
+        ];
+        if ($parentCode !== '' && isset($comps[$parentCode])) {
+            $comps[$parentCode]['itemIdx'][] = $idx;
+        }
+    }
+
+    // 4. Resolve preços/custos em passadas (composições aninhadas).
+    $passesUsed = sinapi_compute_costs($insumoPrice, $comps, $items);
+
+    // 5. Cobertura: itens com código mas sem preço encontrado.
+    $itemsWithoutPrice = 0;
+    $missingSample = [];
+    foreach ($items as $item) {
+        if ($item['itemCode'] !== '' && $item['unitPrice'] <= 0.0) {
+            $itemsWithoutPrice++;
+            if (count($missingSample) < 15) {
+                $missingSample[$item['itemCode'] . ' (' . $item['itemType'] . ')'] = true;
+            }
+        }
+    }
+
+    // 6. Persiste em lotes (transação, commit a cada 1000).
+    sinapi_persist_recalc($pdo, $items, $comps);
+
+    return [
+        'referenceId' => $referenceId,
+        'compositions' => count($comps),
+        'items' => count($items),
+        'itemsPriced' => count($items) - $itemsWithoutPrice,
+        'itemsWithoutPrice' => $itemsWithoutPrice,
+        'passes' => $passesUsed,
+        'missingSample' => array_keys($missingSample),
+    ];
+}
+
+// Núcleo PURO do recálculo (sem banco): preço de cada item (insumo direto, ou custo
+// de composição auxiliar) e custo de cada composição = Σ(coeficiente × preço). Itera
+// até estabilizar (composições aninhadas) ou atingir $maxPasses. Retorna nº de passadas.
+function sinapi_compute_costs(array $insumoPrice, array &$comps, array &$items, int $maxPasses = 5): int
+{
+    $epsilon = 0.005;
+    $passesUsed = 0;
+    for ($pass = 1; $pass <= $maxPasses; $pass++) {
+        $passesUsed = $pass;
+        foreach ($items as &$item) {
+            $code = $item['itemCode'];
+            if ($code === '') {
+                $price = 0.0;
+            } elseif ($item['itemType'] === 'Composição auxiliar') {
+                // Aux aponta para OUTRA composição; se não houver, tenta insumo.
+                $price = isset($comps[$code]) ? (float) $comps[$code]['unitCost'] : (float) ($insumoPrice[$code] ?? 0.0);
+            } else {
+                $price = (float) ($insumoPrice[$code] ?? 0.0);
+            }
+            $item['unitPrice'] = round($price, 4);
+            $item['totalCost'] = round($item['coefficient'] * $price, 4);
+        }
+        unset($item);
+
+        $changed = false;
+        foreach ($comps as &$comp) {
+            $sum = 0.0;
+            foreach ($comp['itemIdx'] as $idx) {
+                $sum += $items[$idx]['totalCost'];
+            }
+            $sum = round($sum, 4);
+            if (abs($sum - $comp['unitCost']) > $epsilon) {
+                $comp['unitCost'] = $sum;
+                $changed = true;
+            }
+        }
+        unset($comp);
+        if (!$changed) {
+            break;
+        }
+    }
+    return $passesUsed;
+}
+
+function sinapi_persist_recalc(PDO $pdo, array $items, array $comps): void
+{
+    $batch = 1000;
+    $itemStmt = $pdo->prepare('UPDATE sinapi_composicao_itens SET unitPrice = ?, totalCost = ? WHERE id = ?');
+    $compStmt = $pdo->prepare('UPDATE sinapi_composicoes SET unitCost = ? WHERE id = ?');
+    $n = 0;
+    $pdo->beginTransaction();
+    foreach ($items as $item) {
+        $itemStmt->execute([$item['unitPrice'], $item['totalCost'], $item['id']]);
+        if (++$n % $batch === 0) {
+            $pdo->commit();
+            $pdo->beginTransaction();
+        }
+    }
+    foreach ($comps as $comp) {
+        $compStmt->execute([$comp['unitCost'], $comp['id']]);
+        if (++$n % $batch === 0) {
+            $pdo->commit();
+            $pdo->beginTransaction();
+        }
+    }
+    if ($pdo->inTransaction()) {
+        $pdo->commit();
+    }
 }
 
 function sinapi_uploaded_files(string $field = 'files'): array

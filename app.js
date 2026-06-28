@@ -9660,7 +9660,8 @@ function renderSinapiReferenceHistory(data) {
         <td>${Number(ref.totalComposicoes || 0).toLocaleString("pt-BR")} comp. / ${Number(ref.totalInsumos || 0).toLocaleString("pt-BR")} ins.</td>
         <td>${svgText(ref.status || "")}</td>
         <td>${Number(ref.isDefault || 0) ? "Sim" : "Não"}</td>
-        <td>${Number(ref.isDefault || 0) ? "" : `<button class="secondary" type="button" data-sinapi-default="${escapeHtml(ref.id)}">Definir padrão</button>`}</td>
+        <td>${Number(ref.isDefault || 0) ? "" : `<button class="secondary" type="button" data-sinapi-default="${escapeHtml(ref.id)}">Definir padrão</button>`}
+          <button class="secondary" type="button" data-sinapi-recalc="${escapeHtml(ref.id)}">Recalcular custos</button></td>
       </tr>`).join("") || '<tr><td colspan="8">Nenhuma referência importada.</td></tr>'}
     </tbody></table></div>
     <h4>Fila e tentativas recentes</h4>
@@ -9670,6 +9671,35 @@ function renderSinapiReferenceHistory(data) {
   box.querySelectorAll("[data-sinapi-default]").forEach((button) => {
     button.addEventListener("click", () => activateSinapiReference(button.dataset.sinapiDefault));
   });
+  box.querySelectorAll("[data-sinapi-recalc]").forEach((button) => {
+    button.addEventListener("click", () => recalcSinapiCosts(button.dataset.sinapiRecalc, button));
+  });
+}
+
+// Pós-processamento: cruza os itens das composições com os preços dos insumos (e o
+// custo das composições auxiliares) e grava unitPrice/totalCost/unitCost. Idempotente.
+async function recalcSinapiCosts(id, button) {
+  if (!id || !confirm("Recalcular o custo das composições desta referência cruzando os itens com os preços dos insumos? Pode levar alguns minutos.")) return;
+  const original = button ? button.textContent : "";
+  if (button) { button.disabled = true; button.textContent = "Recalculando…"; }
+  try {
+    const data = await apiModuleRequest("?module=sinapi&action=recalcularCustos", { method: "POST", body: JSON.stringify({ referenceId: id }) });
+    const r = (data.references && data.references[0]) || data.summary || {};
+    const sample = (r.missingSample || []).slice(0, 10).join(", ");
+    alert(
+      `Custos recalculados.\n\n` +
+      `Composições: ${Number(r.compositions || 0).toLocaleString("pt-BR")}\n` +
+      `Itens precificados: ${Number(r.itemsPriced || 0).toLocaleString("pt-BR")}\n` +
+      `Itens sem preço: ${Number(r.itemsWithoutPrice || 0).toLocaleString("pt-BR")}\n` +
+      `Passadas: ${Number(r.passes || 0)}` +
+      (sample ? `\n\nSem preço (amostra): ${sample}` : "")
+    );
+    await loadSinapiReferenceHistory();
+  } catch (error) {
+    alert(`Não foi possível recalcular os custos: ${error.message}`);
+  } finally {
+    if (button) { button.disabled = false; button.textContent = original; }
+  }
 }
 
 async function activateSinapiReference(id) {
