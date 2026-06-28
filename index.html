@@ -12,8 +12,8 @@
     <link rel="icon" type="image/png" href="assets/favicon.png" />
     <!-- Tema antes do primeiro paint; arquivo separado para o CSP sem 'unsafe-inline'. -->
     <script src="theme-init.js?v=1722"></script>
-    <!-- Webfont Tabler Icons (ti-*) — ícones do módulo de viabilidade. CSP libera cdn.jsdelivr.net em style-src/font-src no .htaccess. -->
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css">
+    <!-- Webfont Tabler Icons (ti-*) servida localmente (assets/fonts) — evita bloqueio por CSP/Tracking Prevention de CDN. -->
+    <link rel="stylesheet" href="assets/fonts/tabler-icons.min.css">
     <link rel="stylesheet" href="styles.css?v=1749" />
   </head>
   <body>
