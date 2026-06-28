@@ -19,9 +19,10 @@ if (APP_ENV === "production" && location.protocol === "http:") {
   location.replace(location.href.replace(/^http:/, "https:"));
 }
 const APP_NAME = "ObraSync";
-const APP_VERSION = "v1.15.0";
+const APP_VERSION = "v1.15.1";
 const APP_VERSION_DATE = "2026-06-28";
 const APP_CHANGELOG = [
+  "Proposta com múltiplos orçamentos: vincule vários orçamentos de obra à mesma proposta, cada um como um grupo com BDI próprio (ex.: Cobertura 22%, Elétrica 25%), com totalizador de custo, BDI médio ponderado, valor de venda e margem, e resumo por grupo no PDF para o cliente (v1.15.1).",
   "Fluxo Orçamento → Proposta com base SINAPI: busca instantânea na base SINAPI completa (endpoint dedicado + índice de código) também dentro do orçamento de obra; a proposta passa a registrar o custo do orçamento técnico por item (custo unitário/BDI), com visão interna (custo + BDI + margem) alternável e separada da visão do cliente; estrutura de dados pronta para múltiplos orçamentos vinculados com BDI próprio por grupo (v1.15.0).",
   "Correção do erro 500 ao gerar contas a pagar recorrentes: as constantes PAYABLE_RECURRENCE_MAX/INDETERMINADO foram movidas para o topo do index.php (const não é \"hoisted\" — ficavam indefinidas em runtime após o roteamento) e a geração das parcelas passou a blindar as chaves estrangeiras (fornecedor, obra, categoria, centro de custo, conta) (v1.14.0).",
   "Dashboard revisado: Lucro Gerencial vs Caixa Real recalculado (lucro = todas as contas com vencimento no período, exceto canceladas; caixa = recebido − pago por data efetiva; A Receber Líquido = lucro − caixa), gráfico de evolução mensal com recorte por obra, cards dinâmicos e alertas (vencidos, etapas atrasadas, propostas expiradas, obras atrasadas, itens em estouro) (v1.14.0).",
@@ -11946,6 +11947,10 @@ async function openProposalGenerator(workBudgetId) {
     project,
     client,
     items,
+    // Grupos = orçamentos vinculados à proposta. O primeiro é o orçamento de origem.
+    // bdi_grupo "" = automático (usa o preço do próprio orçamento, com BDI por etapa);
+    // um número sobrepõe o BDI de todo o grupo (recalcula os preços a partir do custo).
+    grupos: [{ budgetId: budget.id, nome_grupo: budget.name || `Orçamento ${budget.id}`, bdi_grupo: "", ordem: 0 }],
     modelId: model.id || "",
     date: today,
     validityDate,
@@ -12096,13 +12101,10 @@ function renderProposalGeneratorFields(model = {}) {
         <label class="full">Assinatura<textarea name="signatureText" rows="3">${template(model.signatureText || "{{nome_empresa}}")}</textarea></label>
         <label>Gerar como rascunho<select name="draftStatus"><option value="Rascunho">Sim</option><option value="Gerada">Não, finalizar como gerada</option></select></label>
       </div>
-      <div class="proposal-budget-summary">
-        <strong>Resumo do orçamento</strong>
-        <span>${svgText(budget.name || "")} ${budget.version ? `- ${svgText(budget.version)}` : ""}</span>
-        <span>${state.items.length} item(ns) - ${asMoney(budget.totalPrice || 0)}</span>
-      </div>
+      <div id="proposalGroupsPanel"></div>
     </section>
   `;
+  renderProposalGroupsPanel();
   qs("proposalModelSelect")?.addEventListener("change", (event) => {
     const nextModel = byId("proposalModels", event.target.value) || {};
     proposalGeneratorState.modelId = nextModel.id || "";
@@ -12133,11 +12135,145 @@ function updateProposalPreview() {
   const model = byId("proposalModels", input.modelId || proposalGeneratorState.modelId) || {};
   const project = byId("projects", input.projectId) || proposalGeneratorState.project;
   const client = byId("clients", input.clientId) || proposalGeneratorState.client;
-  const vars = proposalVariablesFor({ ...proposalGeneratorState, model, project, client, input });
-  qs("proposalPreview").innerHTML = proposalDocumentHtml({ ...proposalGeneratorState, model, project, client, input, vars });
+  const calc = proposalGroupsCompute();
+  const budgetForVars = { ...proposalGeneratorState.budget, totalPrice: calc.vendaTotal };
+  const vars = proposalVariablesFor({ ...proposalGeneratorState, budget: budgetForVars, items: calc.combinedItems, model, project, client, input });
+  qs("proposalPreview").innerHTML = proposalDocumentHtml({ ...proposalGeneratorState, budget: budgetForVars, items: calc.combinedItems, calc, model, project, client, input, vars });
 }
 
-function proposalDocumentHtml({ budget, project, client, items, model, input, vars }) {
+// Calcula os grupos (orçamentos vinculados) da proposta: custo, venda e BDI efetivo
+// de cada um, a lista combinada de itens (com preço efetivo por grupo) e os totais
+// com BDI ponderado. bdi_grupo "" = automático (mantém o preço do orçamento, com BDI
+// por etapa); número = sobrepõe o BDI do grupo inteiro recalculando do custo.
+function proposalGroupsCompute() {
+  const state = proposalGeneratorState;
+  if (!state) return { grupos: [], combinedItems: [], custoTotal: 0, vendaTotal: 0, bdiPonderado: 0 };
+  const grupos = (state.grupos && state.grupos.length)
+    ? state.grupos
+    : [{ budgetId: state.budget.id, nome_grupo: state.budget.name, bdi_grupo: "", ordem: 0 }];
+  const multi = grupos.length > 1;
+  const computed = grupos.map((g, idx) => {
+    const budget = enrichWorkBudget(byId("workBudgets", g.budgetId) || state.budget || {});
+    const items = budgetItemsFor(g.budgetId, false);
+    const override = g.bdi_grupo !== "" && g.bdi_grupo != null && !isNaN(Number(g.bdi_grupo));
+    const custo = items.reduce((s, it) => s + Number(it.totalCost || 0), 0);
+    const effItems = items.map((it) => {
+      const groupName = multi ? (g.nome_grupo || budget.name || "") : (it.stageName || it.groupName || "");
+      if (!override) return { ...it, stageName: multi ? (g.nome_grupo || budget.name || "") : it.stageName, groupName, _grupoIdx: idx };
+      const custoU = Number(it.unitCost || 0);
+      const qty = Number(it.quantity || 0);
+      const up = roundMoney(custoU * (1 + Number(g.bdi_grupo) / 100));
+      return { ...it, unitPrice: up, totalPrice: roundMoney(qty * up), bdiPercent: Number(g.bdi_grupo), stageName: multi ? (g.nome_grupo || budget.name || "") : it.stageName, groupName, _grupoIdx: idx };
+    });
+    // Sem override: usa o total do próprio orçamento (já com desconto/encargos do
+    // enrichWorkBudget), preservando o comportamento anterior. Com override: recalcula
+    // a venda do custo pelo BDI do grupo.
+    const venda = override
+      ? roundMoney(custo * (1 + Number(g.bdi_grupo) / 100))
+      : roundMoney(Number(budget.totalPrice || 0) || items.reduce((s, it) => s + Number(it.totalPrice || 0), 0));
+    const bdiEff = custo > 0 ? ((venda - custo) / custo) * 100 : Number(g.bdi_grupo || 0);
+    return { budgetId: g.budgetId, nome_grupo: g.nome_grupo || budget.name || `Orçamento ${g.budgetId}`, bdi_grupo: g.bdi_grupo, ordem: idx, budget, items: effItems, custo: roundMoney(custo), venda, bdiEff };
+  });
+  const custoTotal = roundMoney(computed.reduce((s, g) => s + g.custo, 0));
+  const vendaTotal = roundMoney(computed.reduce((s, g) => s + g.venda, 0));
+  const combinedItems = computed.flatMap((g) => g.items);
+  const bdiPonderado = custoTotal > 0 ? ((vendaTotal - custoTotal) / custoTotal) * 100 : 0;
+  return { grupos: computed, combinedItems, custoTotal, vendaTotal, bdiPonderado };
+}
+
+// Painel interno (no gerador) dos orçamentos vinculados: custo, BDI editável por grupo,
+// venda e totalizador com BDI ponderado. Atualiza só o próprio nó + a prévia — não
+// re-renderiza o formulário inteiro (preserva o que o usuário digitou nos textos).
+function renderProposalGroupsPanel() {
+  const panel = qs("proposalGroupsPanel");
+  if (!panel || !proposalGeneratorState) return;
+  const calc = proposalGroupsCompute();
+  const linkedIds = new Set((proposalGeneratorState.grupos || []).map((g) => String(g.budgetId)));
+  const available = (db.workBudgets || [])
+    .filter((b) => !linkedIds.has(String(b.id)))
+    .map((b) => `<option value="${escapeHtml(b.id)}">${escapeHtml((b.name || `Orçamento ${b.id}`) + (b.version ? " - " + b.version : ""))}</option>`)
+    .join("");
+  const multi = calc.grupos.length > 1;
+  const margem = roundMoney(calc.vendaTotal - calc.custoTotal);
+  const margemPct = calc.vendaTotal > 0 ? (margem / calc.vendaTotal) * 100 : 0;
+  panel.innerHTML = `
+    <div class="proposal-groups">
+      <div class="proposal-groups-head"><strong>Orçamentos vinculados</strong>
+        <span class="muted">${calc.grupos.length} orçamento(ns)</span>
+      </div>
+      <table class="proposal-groups-table">
+        <thead><tr><th>Grupo / Orçamento</th><th>Custo</th><th>BDI %</th><th>Venda</th><th></th></tr></thead>
+        <tbody>
+          ${calc.grupos.map((g, idx) => `
+            <tr>
+              <td><input class="pg-nome" data-idx="${idx}" value="${escapeHtml(g.nome_grupo)}"></td>
+              <td>${asMoney(g.custo)}</td>
+              <td><input class="pg-bdi" data-idx="${idx}" inputmode="decimal" placeholder="auto (${asPercent(g.bdiEff)})" value="${g.bdi_grupo === "" || g.bdi_grupo == null ? "" : escapeHtml(g.bdi_grupo)}" style="width:5.5rem"></td>
+              <td>${asMoney(g.venda)}</td>
+              <td>${calc.grupos.length > 1 ? `<button type="button" class="link-button danger pg-remove" data-idx="${idx}" title="Remover">✕</button>` : ""}</td>
+            </tr>`).join("")}
+        </tbody>
+        ${multi ? `<tfoot>
+          <tr class="pg-total"><td>Total</td><td>${asMoney(calc.custoTotal)}</td><td>${asPercent(calc.bdiPonderado)} <span class="muted">pond.</span></td><td>${asMoney(calc.vendaTotal)}</td><td></td></tr>
+          <tr class="pg-margem"><td colspan="5" class="muted">Margem bruta: ${asMoney(margem)} (${asPercent(margemPct)})</td></tr>
+        </tfoot>` : ""}
+      </table>
+      ${available ? `<div class="proposal-groups-add no-print">
+        <select id="proposalAddBudgetSelect">${available}</select>
+        <button type="button" class="secondary" id="proposalAddBudgetBtn">+ Vincular orçamento</button>
+      </div>` : `<p class="muted no-print">Todos os orçamentos disponíveis já estão vinculados.</p>`}
+    </div>`;
+  panel.querySelectorAll(".pg-bdi").forEach((inp) => inp.addEventListener("change", (e) => {
+    const idx = Number(e.target.dataset.idx);
+    const raw = String(e.target.value || "").trim().replace(",", ".");
+    proposalGeneratorState.grupos[idx].bdi_grupo = raw === "" ? "" : Number(raw);
+    renderProposalGroupsPanel();
+    updateProposalPreview();
+  }));
+  panel.querySelectorAll(".pg-nome").forEach((inp) => inp.addEventListener("change", (e) => {
+    const idx = Number(e.target.dataset.idx);
+    proposalGeneratorState.grupos[idx].nome_grupo = e.target.value;
+    updateProposalPreview();
+  }));
+  panel.querySelectorAll(".pg-remove").forEach((btn) => btn.addEventListener("click", (e) => {
+    const idx = Number(e.target.dataset.idx);
+    proposalGeneratorState.grupos.splice(idx, 1);
+    renderProposalGroupsPanel();
+    updateProposalPreview();
+  }));
+  qs("proposalAddBudgetBtn")?.addEventListener("click", () => {
+    const id = qs("proposalAddBudgetSelect")?.value;
+    if (!id) return;
+    const b = byId("workBudgets", id);
+    if (!b) return;
+    proposalGeneratorState.grupos.push({ budgetId: b.id, nome_grupo: b.name || `Orçamento ${b.id}`, bdi_grupo: "", ordem: proposalGeneratorState.grupos.length });
+    renderProposalGroupsPanel();
+    updateProposalPreview();
+  });
+}
+
+// Bloco "Investimento" do PDF (visão do cliente): com vários grupos vira um resumo por
+// grupo (sem custo) + total geral; com um só, o total simples. Nunca expõe custo/BDI.
+function proposalInvestmentHtml(calc, vars) {
+  if (calc && calc.grupos.length > 1) {
+    const rows = calc.grupos.map((g) => `<div><span>${svgText(g.nome_grupo)}</span><strong>${asMoney(g.venda)}</strong></div>`).join("");
+    return `
+      <section class="proposal-investment">
+        <h2>Investimento</h2>
+        ${rows}
+        <div class="proposal-investment-total"><span>Valor total</span><strong>${asMoney(calc.vendaTotal)}</strong></div>
+        <p>${svgText(vars.valor_total_extenso)}</p>
+      </section>`;
+  }
+  return `
+      <section class="proposal-investment">
+        <h2>Investimento</h2>
+        <div><span>Valor total</span><strong>${asMoney(calc ? calc.vendaTotal : 0)}</strong></div>
+        <p>${svgText(vars.valor_total_extenso)}</p>
+      </section>`;
+}
+
+function proposalDocumentHtml({ budget, project, client, items, model, input, vars, calc }) {
   const value = (field) => renderTemplate(input[field] || "", vars);
   const proposalNumber = vars.numero_proposta;
   const company = (db.companySettings || [])[0] || {};
@@ -12177,11 +12313,7 @@ function proposalDocumentHtml({ budget, project, client, items, model, input, va
         <h2>Itens do orçamento</h2>
         ${proposalItemsHtml(items, input.itemDisplayMode || "Tabela resumida")}
       </section>
-      <section class="proposal-investment">
-        <h2>Investimento</h2>
-        <div><span>Valor total</span><strong>${asMoney(budget.totalPrice || 0)}</strong></div>
-        <p>${svgText(vars.valor_total_extenso)}</p>
-      </section>
+      ${proposalInvestmentHtml(calc || { grupos: [], vendaTotal: Number(budget.totalPrice || 0) }, vars)}
       ${proposalSection("Condições de pagamento", value("paymentCondition"))}
       ${proposalSection("Prazo de execução", value("executionDeadline"))}
       ${proposalSection("Itens inclusos", value("includedItems"))}
@@ -12822,14 +12954,18 @@ async function saveGeneratedProposal(statusOverride = "") {
   const project = byId("projects", input.projectId) || proposalGeneratorState.project;
   const client = byId("clients", input.clientId) || proposalGeneratorState.client;
   const model = byId("proposalModels", input.modelId) || {};
-  const items = proposalGeneratorState.items;
-  const vars = proposalVariablesFor({ ...proposalGeneratorState, project, client, model, input });
+  // Base de custo vinda do(s) orçamento(s) técnico(s): custo, venda e BDI por grupo.
+  const calc = proposalGroupsCompute();
+  const items = calc.combinedItems;
+  const budgetForVars = { ...budget, totalPrice: calc.vendaTotal };
+  const vars = proposalVariablesFor({ ...proposalGeneratorState, budget: budgetForVars, items, project, client, model, input });
   const status = statusOverride || input.draftStatus || "Rascunho";
   const body = qs("proposalPreview").innerHTML;
-  // Base de custo vinda do orçamento técnico: custo direto, BDI embutido e tipo.
-  const custoTotalOrcamentos = items.reduce((sumVal, it) => sumVal + Number(it.totalCost || 0), 0);
-  const amountTotal = Number(budget.totalPrice || 0);
+  const custoTotalOrcamentos = calc.custoTotal;
+  const amountTotal = calc.vendaTotal;
   const valorBdiTotal = Math.max(0, amountTotal - custoTotalOrcamentos);
+  const bdiTipo = calc.grupos.length > 1 ? "misto" : "percentual";
+  const bdiGeral = calc.grupos.length > 1 ? roundMoney(calc.bdiPonderado) : Number(budget.bdiPercent || 0);
   try {
     const proposal = await createIntegratedRecord("proposals", {
       number: vars.numero_proposta,
@@ -12848,7 +12984,7 @@ async function saveGeneratedProposal(statusOverride = "") {
       createdByUserId: currentUser?.id || "",
       commercialUserId: currentUser?.role === "comercial" ? currentUser.id : project.commercialUserId || currentUser?.id || "",
       description: input.proposalObject || `Proposta gerada a partir do orçamento ${budget.name || budget.id}.`,
-      amount: Number(budget.totalPrice || 0),
+      amount: roundMoney(amountTotal),
       proposalBody: body,
       itemDisplayMode: input.itemDisplayMode || "Tabela resumida",
       paymentCondition: input.paymentCondition || "",
@@ -12860,13 +12996,13 @@ async function saveGeneratedProposal(statusOverride = "") {
       commercialResponsible: input.commercialResponsible || "",
       commercialNotes: input.commercialNotes || "",
       status,
-      bdi_geral: Number(budget.bdiPercent || 0),
-      bdi_tipo: "percentual",
+      bdi_geral: bdiGeral,
+      bdi_tipo: bdiTipo,
       custo_total_orcamentos: roundMoney(custoTotalOrcamentos),
       valor_bdi_total: roundMoney(valorBdiTotal),
       modo_licitacao: "Não",
     });
-    await createProposalLinkedRecords(proposal, { budget, project, client, model, items, vars, status, custoTotalOrcamentos, valorBdiTotal, amountTotal });
+    await createProposalLinkedRecords(proposal, { budget, project, client, model, items, vars, status, calc });
     alert(status === "Rascunho" ? "Rascunho de proposta salvo." : "Proposta gerada e finalizada.");
     qs("proposalGeneratorDialog").close();
     proposalGeneratorState = null;
@@ -12877,20 +13013,26 @@ async function saveGeneratedProposal(statusOverride = "") {
   }
 }
 
-async function createProposalLinkedRecords(proposal, { budget, project, client, model, items, vars, status, custoTotalOrcamentos = 0, valorBdiTotal = 0, amountTotal = 0 }) {
-  await createIntegratedRecord("proposalBudgetLinks", {
-    proposalId: proposal.id,
-    workBudgetId: budget.id,
-    projectId: project.id || "",
-    clientId: client.id || "",
-    proposalModelId: model.id || "",
-    responsibleUserId: currentUser?.id || "",
-    nome_grupo: budget.name || "",
-    bdi_grupo: Number(budget.bdiPercent || 0),
-    custo_total: roundMoney(custoTotalOrcamentos),
-    valor_venda: roundMoney(amountTotal || Number(budget.totalPrice || 0)),
-    ordem: 0,
-  });
+async function createProposalLinkedRecords(proposal, { budget, project, client, model, items, vars, status, calc }) {
+  // Um vínculo por orçamento (grupo). Cada um guarda nome, BDI, custo e venda do grupo.
+  const grupos = (calc && calc.grupos && calc.grupos.length)
+    ? calc.grupos
+    : [{ budgetId: budget.id, nome_grupo: budget.name || "", bdi_grupo: Number(budget.bdiPercent || 0), custo: 0, venda: Number(budget.totalPrice || 0), bdiEff: Number(budget.bdiPercent || 0), ordem: 0 }];
+  for (const g of grupos) {
+    await createIntegratedRecord("proposalBudgetLinks", {
+      proposalId: proposal.id,
+      workBudgetId: g.budgetId,
+      projectId: project.id || "",
+      clientId: client.id || "",
+      proposalModelId: model.id || "",
+      responsibleUserId: currentUser?.id || "",
+      nome_grupo: g.nome_grupo || "",
+      bdi_grupo: (g.bdi_grupo === "" || g.bdi_grupo == null) ? roundMoney(g.bdiEff || 0) : Number(g.bdi_grupo),
+      custo_total: roundMoney(g.custo || 0),
+      valor_venda: roundMoney(g.venda || 0),
+      ordem: g.ordem || 0,
+    });
+  }
   await createIntegratedRecord("proposalStatusHistory", {
     proposalId: proposal.id,
     date: new Date().toISOString().slice(0, 10),
@@ -12910,7 +13052,7 @@ async function createProposalLinkedRecords(proposal, { budget, project, client, 
       quantity: Number(item.quantity || 0),
       unitPrice: Number(item.unitPrice || 0),
       totalPrice: Number(item.totalPrice || 0),
-      groupName: item.stageName || "",
+      groupName: item.groupName || item.stageName || "",
       visibleToClient: "Sim",
       notes: "",
       custo_unitario: Number(item.unitCost || 0),

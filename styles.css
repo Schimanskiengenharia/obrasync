@@ -4461,6 +4461,69 @@ menu {
   border-color: var(--accent, #185fa5);
 }
 
+.proposal-groups {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+
+.proposal-groups-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.proposal-groups-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.proposal-groups-table th,
+.proposal-groups-table td {
+  padding: 4px 6px;
+  text-align: left;
+  border-bottom: 1px solid var(--border, #2a2a2a);
+}
+
+.proposal-groups-table th:nth-child(2),
+.proposal-groups-table th:nth-child(4),
+.proposal-groups-table td:nth-child(2),
+.proposal-groups-table td:nth-child(4) {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.proposal-groups-table input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.proposal-groups-table tfoot .pg-total td {
+  font-weight: 700;
+  border-top: 2px solid var(--border, #2a2a2a);
+}
+
+.proposal-groups-add {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.proposal-groups-add select {
+  flex: 1;
+}
+
+.proposal-investment-total {
+  border-top: 2px solid currentColor;
+  margin-top: 6px;
+  padding-top: 6px;
+  font-size: 1.05em;
+}
+
 .proposal-preview-toolbar {
   display: flex;
   flex-wrap: wrap;
