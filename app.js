@@ -19,9 +19,10 @@ if (APP_ENV === "production" && location.protocol === "http:") {
   location.replace(location.href.replace(/^http:/, "https:"));
 }
 const APP_NAME = "ObraSync";
-const APP_VERSION = "v1.17.0";
+const APP_VERSION = "v1.17.1";
 const APP_VERSION_DATE = "2026-06-28";
 const APP_CHANGELOG = [
+  "Análise de Viabilidade: botão \"Excluir\" em cada análise da lista remove a análise inteira em cascata (grupos, itens e anexos, inclusive os arquivos do disco) numa transação com rollback, após confirmação irreversível (v1.17.1).",
   "Contrato a partir da proposta: botão \"Gerar contrato\" na proposta cria/atualiza o contrato com snapshot do cliente, valor e objeto consolidado por disciplina; \"Contrato (PDF)\" gera o documento no template de Prestação de Serviços Técnicos com 13 cláusulas (cabeçalho/rodapé da empresa, campos faltantes como placeholders); e \"Anexos\" permite enviar a proposta assinada e o contrato assinado (PDF), marcando o contrato como assinado (v1.17.0).",
   "Proposta por disciplina + modelos + SINAPI: cada orçamento vinculado recebe uma disciplina (Elétrico, Hidráulico, Civil…) e o PDF passa a agrupar o investimento por disciplina com subtotais; \"Salvar como modelo\" e \"Aplicar modelo…\" reutilizam a estrutura da proposta (sem cliente); o PDF mostra código SINAPI + referência (mês/ano/UF) por item e um anexo de composições SINAPI utilizadas; e botão \"Exportar SINAPI (Excel)\" gera a planilha .xlsx da obra agrupada por etapa com subtotais (v1.16.0).",
   "CEP autofill universal: qualquer campo de CEP (em qualquer formulário/modal) preenche endereço/bairro/cidade/UF via ViaCEP com BrasilAPI de fallback (CSP liberado para ambos); preenchimento automático de cadastro de cliente e fornecedor ligado em todos os formulários; e no cadastro de obra o toggle \"A obra fica no mesmo endereço da empresa?\" (quando NÃO, bloco de endereço próprio com CEP) — PDFs usam o endereço próprio quando aplicável (v1.15.5).",
@@ -11840,7 +11841,10 @@ async function renderViabilidadeList() {
           <span class="muted">${Number(a.progresso_geral || 0).toFixed(0)}% concluído</span>
           <span class="muted">${asDate(a.created_at)}</span>
         </div>
-        <button class="secondary" type="button" data-open="${escapeHtml(a.id)}">Abrir</button>
+        <div class="viab-card-actions">
+          <button class="secondary" type="button" data-open="${escapeHtml(a.id)}">Abrir</button>
+          ${editable ? `<button class="secondary viab-del-btn" type="button" data-del="${escapeHtml(a.id)}" title="Excluir análise">${tiIcon("trash")} Excluir</button>` : ""}
+        </div>
       </article>`;
   }).join("");
   content.innerHTML = `
@@ -11857,6 +11861,20 @@ async function renderViabilidadeList() {
   qs("viabFiltroStatus")?.addEventListener("change", (e) => { viabilidadeObraFilters.status = e.target.value; renderViabilidadeList(); });
   qs("viabFiltroPeriodo")?.addEventListener("change", (e) => { viabilidadeObraFilters.periodo = e.target.value; renderViabilidadeList(); });
   content.querySelectorAll("[data-open]").forEach((el) => el.addEventListener("click", () => openViabilidadeAnalise(el.dataset.open)));
+  content.querySelectorAll("[data-del]").forEach((el) => el.addEventListener("click", (e) => { e.stopPropagation(); excluirViabilidadeAnalise(el.dataset.del); }));
+}
+
+// Exclui a análise inteira (cascata grupos/itens/anexos + arquivos), após confirmação.
+async function excluirViabilidadeAnalise(id) {
+  if (!id) return;
+  if (!confirm("Excluir esta análise de viabilidade?\n\nEsta ação é IRREVERSÍVEL e remove todos os grupos, itens e anexos (inclusive os arquivos enviados) desta análise.")) return;
+  try {
+    await viabilidadeApi("delete", { method: "POST", body: JSON.stringify({ id }) });
+    if (typeof showToast === "function") showToast("Análise excluída.");
+    await renderViabilidadeList();
+  } catch (error) {
+    if (typeof showToast === "function") showToast(error.message || "Não foi possível excluir a análise."); else alert(error.message);
+  }
 }
 
 async function openViabilidadeAnalise(id) {

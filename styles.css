@@ -3676,6 +3676,9 @@ tbody tr:hover td {
 .viab-tipo { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 800; color: var(--teal-2); white-space: nowrap; }
 .viab-card-foot { display: flex; justify-content: space-between; font-size: 12px; }
 .viab-card button { justify-self: start; }
+.viab-card-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.viab-del-btn { color: #b91c1c; border-color: rgba(185, 28, 28, 0.4); }
+.viab-del-btn:hover { background: rgba(185, 28, 28, 0.1); }
 
 .viab-badge {
   display: inline-flex;

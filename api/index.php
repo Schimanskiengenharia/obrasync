@@ -4325,6 +4325,54 @@ function handle_viabilidade_module(PDO $pdo, string $method, array $query, array
             viabilidade_respond(true, viabilidade_get_full($pdo, (int) $item['analise_id']), 'Item removido.');
         }
 
+        // Exclui a ANÁLISE inteira (grupos + itens + anexos, registros e arquivos).
+        if ($action === 'delete') {
+            require_method($method, ['DELETE', 'POST']);
+            $id = (int) ($query['id'] ?? 0);
+            if ($id <= 0) {
+                $id = (int) (read_json()['id'] ?? 0);
+            }
+            if ($id <= 0) {
+                viabilidade_respond(false, [], 'Informe o id da análise.', 400);
+            }
+            $exists = $pdo->prepare('SELECT id FROM viabilidade_analises WHERE id = ?');
+            $exists->execute([$id]);
+            if (!$exists->fetch()) {
+                viabilidade_respond(false, [], 'Análise não encontrada.', 404);
+            }
+            // 1) Caminhos dos arquivos ANTES de deletar (apaga do disco só após o commit).
+            $pathStmt = $pdo->prepare('SELECT an.caminho FROM viabilidade_anexos an JOIN viabilidade_itens it ON it.id = an.item_id WHERE it.analise_id = ?');
+            $pathStmt->execute([$id]);
+            $caminhos = array_column($pathStmt->fetchAll(), 'caminho');
+            // 2-5) Cascata em transação, com rollback em erro.
+            $pdo->beginTransaction();
+            try {
+                $pdo->prepare('DELETE an FROM viabilidade_anexos an JOIN viabilidade_itens it ON it.id = an.item_id WHERE it.analise_id = ?')->execute([$id]);
+                $pdo->prepare('DELETE FROM viabilidade_itens WHERE analise_id = ?')->execute([$id]);
+                $pdo->prepare('DELETE FROM viabilidade_grupos WHERE analise_id = ?')->execute([$id]);
+                $pdo->prepare('DELETE FROM viabilidade_analises WHERE id = ?')->execute([$id]);
+                $pdo->commit();
+            } catch (Throwable $txError) {
+                if ($pdo->inTransaction()) {
+                    $pdo->rollBack();
+                }
+                throw $txError;
+            }
+            // Só DEPOIS do commit: apaga os arquivos físicos, restritos a uploads/ (anti path traversal).
+            $uploadRoot = realpath(rtrim($config['upload_dir'] ?? '/var/lib/financeiro/uploads', '/')) ?: rtrim($config['upload_dir'] ?? '/var/lib/financeiro/uploads', '/');
+            foreach ($caminhos as $caminho) {
+                if (empty($caminho)) {
+                    continue;
+                }
+                $real = realpath($caminho);
+                if ($real && strpos($real, $uploadRoot . DIRECTORY_SEPARATOR) === 0 && is_file($real)) {
+                    @unlink($real);
+                }
+            }
+            server_audit($pdo, $authUser, 'delete', 'viabilidade_analise', $id, '');
+            viabilidade_respond(true, [], 'Análise excluída');
+        }
+
         if ($action === 'upload_anexo') {
             require_method($method, ['POST']);
             $itemId = (int) ($_POST['item_id'] ?? 0);
