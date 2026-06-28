@@ -36,6 +36,14 @@ const SINAPI_BOOTSTRAP_LIMIT = 300;
 const PAYABLE_RECURRENCE_MAX = 600;          // teto de parcelas (≈50 anos mensais)
 const PAYABLE_RECURRENCE_INDETERMINADO = 24; // horizonte rolante p/ recorrência sem fim
 
+// Integração com o Ollama local (geração + embeddings). Toda chamada é server-side
+// de 127.0.0.1 para 127.0.0.1 — o Ollama NUNCA é exposto à internet. Definidas no
+// topo (como as demais) para estarem disponíveis no roteamento inline e nas funções.
+const OLLAMA_URL = 'http://127.0.0.1:11434';
+const OLLAMA_GEN_MODEL = 'llama3.2:3b';
+const OLLAMA_EMBED_MODEL = 'all-minilm';
+const OLLAMA_TIMEOUT = 120; // segundos
+
 $config = load_config();
 $pdo = db($config);
 $resources = resource_map();
@@ -186,6 +194,13 @@ try {
     if (in_array($module, ['sinapi', 'base-sinapi'], true)) {
         authorize_request($pdo, $authUser, 'sinapiReferences', action_for_method($method));
         handle_sinapi_module($pdo, $method, $_GET, $config, $authUser);
+    }
+
+    // Integração com IA local (Ollama). Por ora só a fundação + ping de teste:
+    //   GET ?module=ia&action=ping → valida geração e embeddings server-side.
+    if ($module === 'ia') {
+        authorize_request($pdo, $authUser, 'ia', action_for_method($method));
+        handle_ia_module($pdo, $method, $_GET);
     }
 
     if ($resource === '' || $resource === 'bootstrap') {
@@ -8777,6 +8792,118 @@ function handle_sinapi_import_status(PDO $pdo): never
     $job['summary'] = !empty($job['summaryJson']) ? json_decode((string) $job['summaryJson'], true) : null;
     unset($job['paramsJson'], $job['summaryJson']);
     respond(['ok' => true, 'job' => $job]);
+}
+
+// ── Integração com IA local (Ollama) ───────────────────────────────────────
+// Fundação da integração: chamadas server-side de 127.0.0.1 → 127.0.0.1. O Ollama
+// NUNCA é exposto à internet. Erros de conexão/timeout NÃO são fatais: as funções
+// retornam ['success' => false, ...] para o chamador decidir o que fazer.
+
+function ollama_post(string $endpoint, array $body): array
+{
+    $ch = curl_init(OLLAMA_URL . $endpoint);
+    curl_setopt_array($ch, [
+        CURLOPT_POST => true,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT => OLLAMA_TIMEOUT,
+        CURLOPT_CONNECTTIMEOUT => 5, // falha rápido se o serviço estiver fora
+        CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+        CURLOPT_POSTFIELDS => json_encode($body, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+    ]);
+    $raw = curl_exec($ch);
+    if ($raw === false) {
+        $error = curl_error($ch) ?: 'Falha ao conectar ao Ollama.';
+        curl_close($ch);
+        return ['ok' => false, 'error' => $error, 'data' => null];
+    }
+    $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+    curl_close($ch);
+    if ($status >= 400) {
+        return ['ok' => false, 'error' => "Ollama respondeu HTTP {$status}.", 'data' => null];
+    }
+    $decoded = json_decode((string) $raw, true);
+    if (!is_array($decoded)) {
+        return ['ok' => false, 'error' => 'Resposta do Ollama não é JSON válido.', 'data' => null];
+    }
+    return ['ok' => true, 'error' => null, 'data' => $decoded];
+}
+
+// Geração de texto. $opts é mesclado no corpo (ex.: 'format' => 'json' para forçar
+// saída JSON, 'system' => '...' para instrução de sistema).
+function ollama_generate(string $prompt, array $opts = []): array
+{
+    $body = array_merge([
+        'model' => OLLAMA_GEN_MODEL,
+        'prompt' => $prompt,
+        'stream' => false,
+    ], $opts);
+    $result = ollama_post('/api/generate', $body);
+    if (!$result['ok']) {
+        return ['success' => false, 'response' => '', 'error' => $result['error']];
+    }
+    return [
+        'success' => true,
+        'response' => (string) ($result['data']['response'] ?? ''),
+        'error' => null,
+    ];
+}
+
+// Embedding de um texto. Retorna o vetor (float[]) para indexação/busca semântica.
+function ollama_embed(string $text): array
+{
+    $result = ollama_post('/api/embeddings', [
+        'model' => OLLAMA_EMBED_MODEL,
+        'prompt' => $text,
+    ]);
+    if (!$result['ok']) {
+        return ['success' => false, 'embedding' => [], 'error' => $result['error']];
+    }
+    $embedding = $result['data']['embedding'] ?? [];
+    if (!is_array($embedding)) {
+        $embedding = [];
+    }
+    return [
+        'success' => true,
+        'embedding' => array_map('floatval', $embedding),
+        'error' => null,
+    ];
+}
+
+function handle_ia_module(PDO $pdo, string $method, array $query): never
+{
+    $action = strtolower((string) ($query['action'] ?? ''));
+    if ($action === 'ping') {
+        require_method($method, ['GET']);
+        handle_ia_ping();
+    }
+    fail('Ação de IA não reconhecida.', 404);
+}
+
+// Valida a integração ponta a ponta sem construir nada por cima: faz uma geração e
+// um embedding reais. Se ambos falharem, o Ollama está fora — responde claro, sem
+// pendurar a requisição (o curl tem CONNECTTIMEOUT/TIMEOUT).
+function handle_ia_ping(): never
+{
+    $gen = ollama_generate('Responda apenas: OK');
+    $embed = ollama_embed('teste');
+
+    if (!$gen['success'] && !$embed['success']) {
+        respond([
+            'success' => false,
+            'message' => 'Ollama indisponível em ' . OLLAMA_URL . '. Verifique se o serviço está ativo. '
+                . 'Detalhe: ' . ($gen['error'] ?? $embed['error'] ?? 'erro desconhecido'),
+        ]);
+    }
+
+    respond([
+        'success' => true,
+        'data' => [
+            'gen_ok' => $gen['success'],
+            'gen_response' => trim($gen['response']),
+            'embed_ok' => $embed['success'],
+            'embed_dim' => count($embed['embedding']),
+        ],
+    ]);
 }
 
 function handle_sinapi_module(PDO $pdo, string $method, array $query, array $config, array $authUser): never
