@@ -4924,9 +4924,9 @@ function setupViabilityFormPreview() {
 
 // ─── Centros de Custo: tipo, orientação de uso, exemplos e histórico ────────
 const COST_CENTER_TIPOS = [
-  ["operacional", "Operacional"],
   ["administrativo", "Administrativo"],
   ["tecnico", "Técnico"],
+  ["operacional", "Operacional"],
   ["financeiro", "Financeiro"],
   ["fiscal_tributario", "Fiscal / Tributário"],
 ];
