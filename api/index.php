@@ -256,6 +256,36 @@ try {
         handle_sinapi_reprocess_job($pdo, $config, read_json(), $authUser);
     }
 
+    // Busca instantânea na base SINAPI para autocomplete (orçamento/proposta).
+    // Casa código por prefixo e descrição por LIKE; prioriza código exato → prefixo →
+    // demais; teto de 20 resultados (rápido mesmo na base completa). Só consulta.
+    if ($resource === 'sinapi-buscar') {
+        require_method($method, ['GET']);
+        authorize_request($pdo, $authUser, 'sinapiCompositions', 'view');
+        $term = trim((string) ($_GET['q'] ?? ''));
+        if (mb_strlen($term) < 2) {
+            respond(['ok' => true, 'data' => []]);
+        }
+        $prefix = $term . '%';
+        $contains = '%' . $term . '%';
+        $params = [':exact' => $term, ':prefix' => $prefix, ':contains' => $contains];
+        $ufFilter = '';
+        if (!empty($_GET['uf'])) {
+            $ufFilter = ' AND c.uf = :uf';
+            $params[':uf'] = strtoupper(substr((string) $_GET['uf'], 0, 2));
+        }
+        $sql = "SELECT c.id, c.code, c.description, c.unit, c.unitCost, c.uf, c.referenceType,
+                       c.sinapiReferenceId, c.groupName
+                FROM sinapi_composicoes c
+                WHERE (c.status IS NULL OR c.status = 'Ativo')
+                  AND (c.code LIKE :prefix OR c.description LIKE :contains){$ufFilter}
+                ORDER BY (c.code = :exact) DESC, (c.code LIKE :prefix) DESC, c.code ASC
+                LIMIT 20";
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+        respond(['ok' => true, 'data' => $stmt->fetchAll(PDO::FETCH_ASSOC)]);
+    }
+
     if ($resource === 'project-upload') {
         require_method($method, ['POST']);
         authorize_request($pdo, $authUser, 'projectSchedule', 'edit');
@@ -1643,11 +1673,11 @@ function resource_map(): array
         'proposalActionTypes' => r('proposal_action_types', ['proposta-tipos','tipos-propostas'], ['areaId','name','description','status'], ['areaId','name']),
         'proposalServiceSubtypes' => r('proposal_service_subtypes', ['proposta-subtipos','subtipos-propostas'], ['actionTypeId','name','description','status'], ['actionTypeId','name']),
         'proposalModels' => r('proposal_models', ['modelos-propostas','modelos-de-propostas'], ['name','areaId','actionTypeId','subtypeId','proposalObject','scope','stages','deliverables','deadline','paymentTerms','includedItems','excludedItems','clientResponsibilities','companyResponsibilities','validityDays','generalConditions','acceptanceText','signatureText','printLayout','status'], ['name']),
-        'proposals' => r('commercial_proposals', ['propostas'], ['number','date','clientId','projectId','budgetId','workBudgetId','serviceId','modelId','areaId','actionTypeId','subtypeId','origin','parentProposalId','createdByUserId','commercialUserId','description','amount','proposalBody','itemDisplayMode','paymentCondition','paymentTerms','executionDeadline','deadline','validityDate','technicalResponsible','commercialResponsible','commercialNotes','status'], ['number']),
-        'proposalItems' => r('proposta_itens', ['proposta-itens','itens-proposta'], ['proposalId','workBudgetItemId','itemNumber','code','description','unit','quantity','unitPrice','totalPrice','groupName','visibleToClient','notes'], ['proposalId','itemNumber']),
+        'proposals' => r('commercial_proposals', ['propostas'], ['number','date','clientId','projectId','budgetId','workBudgetId','serviceId','modelId','areaId','actionTypeId','subtypeId','origin','parentProposalId','createdByUserId','commercialUserId','description','amount','proposalBody','itemDisplayMode','paymentCondition','paymentTerms','executionDeadline','deadline','validityDate','technicalResponsible','commercialResponsible','commercialNotes','status','bdi_geral','bdi_tipo','custo_total_orcamentos','valor_bdi_total','modo_licitacao'], ['number']),
+        'proposalItems' => r('proposta_itens', ['proposta-itens','itens-proposta'], ['proposalId','workBudgetItemId','itemNumber','code','description','unit','quantity','unitPrice','totalPrice','groupName','visibleToClient','notes','custo_unitario','bdi_item','orcamento_item_id','sinapi_id'], ['proposalId','itemNumber']),
         'proposalStatusHistory' => r('proposta_status_historico', ['proposta-status-historico','historico-status-proposta'], ['proposalId','date','userId','previousStatus','newStatus','notes'], ['proposalId','date','newStatus']),
         'proposalFiles' => r('proposta_arquivos', ['proposta-arquivos','arquivos-proposta'], ['proposalId','filePath','type','status','createdByUserId'], ['proposalId','filePath']),
-        'proposalBudgetLinks' => r('proposta_orcamento_vinculos', ['proposta-orcamento-vinculos','vinculos-proposta-orcamento'], ['proposalId','workBudgetId','projectId','clientId','proposalModelId','responsibleUserId'], ['proposalId','workBudgetId']),
+        'proposalBudgetLinks' => r('proposta_orcamento_vinculos', ['proposta-orcamento-vinculos','vinculos-proposta-orcamento'], ['proposalId','workBudgetId','projectId','clientId','proposalModelId','responsibleUserId','nome_grupo','bdi_grupo','custo_total','valor_venda','ordem'], ['proposalId','workBudgetId']),
         'proposalVariables' => r('proposta_variaveis', ['proposta-variaveis','variaveis-proposta'], ['proposalId','variableName','variableValue'], ['proposalId','variableName']),
         'sales' => r('sales_contracts', ['vendas','contratos','vendas-contratos'], ['number','date','competenceDate','clientId','projectId','proposalId','costCenterId','description','amount','cost','status'], ['number']),
         'viabilityAnalyses' => r('viability_analyses', ['analises-viabilidade','análises-viabilidade'], ['projectId','proposalId','contractValue','estimatedCost','executionMonths','tmaPercent','grossMargin','marginPercent','estimatedProfit','paybackMonths','npv','irrPercent','autoVerdict','verdict','finalVerdict','verdictJustification','verdictHistory','risks','notes','analysisDate','responsibleUserId','status'], []),
@@ -2309,6 +2339,11 @@ function bootstrap_data(PDO $pdo, array $resources, ?array $authUser = null, boo
         if (!resolve_existing_table($pdo, ['cotacao_fornecedor'], false)) {
             ensure_cotacao_import_tables($pdo);
         }
+        // Colunas de custo/BDI no fluxo Orçamento → Proposta (base SINAPI).
+        if (resolve_existing_table($pdo, ['proposta_itens'], false)
+            && !in_array('custo_unitario', table_columns($pdo, 'proposta_itens'), true)) {
+            ensure_proposal_cost_columns($pdo);
+        }
         // email/blocked/mustChangePassword em system_users (usados em login/reset).
         if (resolve_existing_table($pdo, ['system_users'], false)
             && !in_array('mustChangePassword', table_columns($pdo, 'system_users'), true)) {
@@ -2526,6 +2561,54 @@ function ensure_cotacao_import_tables(PDO $pdo): void
         $done = true;
     } catch (Throwable $error) {
         error_log('[ObraSync] ensure_cotacao_import_tables: ' . $error->getMessage());
+    }
+}
+
+// Auto-cura das colunas do fluxo Orçamento → Proposta com base SINAPI (v1.15.0):
+// custo/BDI por item na proposta, BDI flexível no cabeçalho, grupos com BDI próprio
+// no vínculo de orçamentos e índices de busca rápida na base SINAPI. Idempotente —
+// evita 500 em servidor que não rodou a migração 2026-06-28-orcamento-proposta-sinapi.sql.
+function ensure_proposal_cost_columns(PDO $pdo): void
+{
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    try {
+        $pdo->exec(
+            "ALTER TABLE commercial_proposals
+                ADD COLUMN IF NOT EXISTS bdi_geral DECIMAL(8,4) DEFAULT 0,
+                ADD COLUMN IF NOT EXISTS bdi_tipo ENUM('percentual','valor_fixo','por_item','misto') DEFAULT 'percentual',
+                ADD COLUMN IF NOT EXISTS custo_total_orcamentos DECIMAL(15,2) DEFAULT 0,
+                ADD COLUMN IF NOT EXISTS valor_bdi_total DECIMAL(15,2) DEFAULT 0,
+                ADD COLUMN IF NOT EXISTS modo_licitacao ENUM('Não','Sim') NOT NULL DEFAULT 'Não'"
+        );
+        $pdo->exec(
+            "ALTER TABLE proposta_itens
+                ADD COLUMN IF NOT EXISTS custo_unitario DECIMAL(15,4) NULL,
+                ADD COLUMN IF NOT EXISTS bdi_item DECIMAL(8,4) NULL,
+                ADD COLUMN IF NOT EXISTS orcamento_item_id BIGINT UNSIGNED NULL,
+                ADD COLUMN IF NOT EXISTS sinapi_id BIGINT UNSIGNED NULL"
+        );
+        $pdo->exec(
+            "ALTER TABLE proposta_orcamento_vinculos
+                ADD COLUMN IF NOT EXISTS nome_grupo VARCHAR(200) NULL,
+                ADD COLUMN IF NOT EXISTS bdi_grupo DECIMAL(8,4) NULL,
+                ADD COLUMN IF NOT EXISTS custo_total DECIMAL(15,2) DEFAULT 0,
+                ADD COLUMN IF NOT EXISTS valor_venda DECIMAL(15,2) DEFAULT 0,
+                ADD COLUMN IF NOT EXISTS ordem INT DEFAULT 0"
+        );
+        $done = true;
+    } catch (Throwable $error) {
+        error_log('[ObraSync] ensure_proposal_cost_columns: ' . $error->getMessage());
+    }
+    // Índices de busca rápida na base SINAPI (separados: ADD INDEX IF NOT EXISTS é
+    // MariaDB; num MySQL antigo falha sem bloquear as colunas acima).
+    try {
+        $pdo->exec("ALTER TABLE sinapi_composicoes ADD INDEX IF NOT EXISTS idx_comp_code (code)");
+        $pdo->exec("ALTER TABLE sinapi_insumos ADD INDEX IF NOT EXISTS idx_insumo_code (code)");
+    } catch (Throwable $error) {
+        error_log('[ObraSync] ensure_proposal_cost_columns(index): ' . $error->getMessage());
     }
 }
 

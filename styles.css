@@ -4449,6 +4449,18 @@ menu {
   color: var(--ink);
 }
 
+.proposal-view-toggle {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.proposal-view-toggle button.active {
+  background: var(--accent, #185fa5);
+  color: #fff;
+  border-color: var(--accent, #185fa5);
+}
+
 .proposal-preview-toolbar {
   display: flex;
   flex-wrap: wrap;

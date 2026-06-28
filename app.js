@@ -19,9 +19,10 @@ if (APP_ENV === "production" && location.protocol === "http:") {
   location.replace(location.href.replace(/^http:/, "https:"));
 }
 const APP_NAME = "ObraSync";
-const APP_VERSION = "v1.14.0";
+const APP_VERSION = "v1.15.0";
 const APP_VERSION_DATE = "2026-06-28";
 const APP_CHANGELOG = [
+  "Fluxo Orçamento → Proposta com base SINAPI: busca instantânea na base SINAPI completa (endpoint dedicado + índice de código) também dentro do orçamento de obra; a proposta passa a registrar o custo do orçamento técnico por item (custo unitário/BDI), com visão interna (custo + BDI + margem) alternável e separada da visão do cliente; estrutura de dados pronta para múltiplos orçamentos vinculados com BDI próprio por grupo (v1.15.0).",
   "Correção do erro 500 ao gerar contas a pagar recorrentes: as constantes PAYABLE_RECURRENCE_MAX/INDETERMINADO foram movidas para o topo do index.php (const não é \"hoisted\" — ficavam indefinidas em runtime após o roteamento) e a geração das parcelas passou a blindar as chaves estrangeiras (fornecedor, obra, categoria, centro de custo, conta) (v1.14.0).",
   "Dashboard revisado: Lucro Gerencial vs Caixa Real recalculado (lucro = todas as contas com vencimento no período, exceto canceladas; caixa = recebido − pago por data efetiva; A Receber Líquido = lucro − caixa), gráfico de evolução mensal com recorte por obra, cards dinâmicos e alertas (vencidos, etapas atrasadas, propostas expiradas, obras atrasadas, itens em estouro) (v1.14.0).",
   "Importação e comparação de cotações de fornecedores por PDF e Excel/CSV: leitura nativa de CSV, PhpSpreadsheet para .xlsx/.xls e pdftotext para PDF, com comparação automática contra o orçamento da obra por similaridade de descrição e classificação abaixo/igual/acima (v1.14.0).",
@@ -8803,7 +8804,31 @@ function openBudgetItemModal(budget, etapaId) {
     dialog.querySelector("#biQtd")?.addEventListener("input", recompute);
     dialog.querySelector("#biVu")?.addEventListener("input", recompute);
     const search = dialog.querySelector("#biSearch");
-    if (search) search.addEventListener("input", () => { dialog.querySelector("#biResults").innerHTML = resultsHtml(search.value); wirePick(); });
+    if (search) {
+      let biSearchTimer = null;
+      search.addEventListener("input", () => {
+        const q = search.value;
+        dialog.querySelector("#biResults").innerHTML = resultsHtml(q);
+        wirePick();
+        // O cache local traz só uma amostra (bootstrap). Para a aba SINAPI, busca a
+        // base COMPLETA no servidor (endpoint instantâneo) e mescla os resultados.
+        if (tab === "sinapi" && q.trim().length >= 2) {
+          clearTimeout(biSearchTimer);
+          biSearchTimer = setTimeout(async () => {
+            try {
+              const payload = await apiRequest(`sinapi-buscar?q=${encodeURIComponent(q.trim())}`);
+              const rows = payload?.data || [];
+              if (rows.length) {
+                db.sinapiCompositions = db.sinapiCompositions || [];
+                const known = new Set(db.sinapiCompositions.map((r) => String(r.id)));
+                rows.forEach((r) => { if (!known.has(String(r.id))) db.sinapiCompositions.push(r); });
+                if (search.value === q) { dialog.querySelector("#biResults").innerHTML = resultsHtml(q); wirePick(); }
+              }
+            } catch { /* mantém os resultados locais se o servidor falhar */ }
+          }, 300);
+        }
+      });
+    }
     wirePick();
     recompute();
   };
@@ -11937,6 +11962,8 @@ function openSavedProposalPreview(proposalId) {
   if (!proposal?.proposalBody) return alert("Esta proposta ainda não possui pré-visualização gerada.");
   proposalGeneratorState = null;
   setProposalDialogMode("preview");
+  // Visão interna (custo + BDI + margem) só para perfis internos. O cliente nunca vê custo.
+  const canSeeInternal = ["admin", "financeiro", "engenharia", "gestor_obra"].includes(currentUser?.role);
   qs("proposalGeneratorFields").innerHTML = `
     <section class="proposal-generator-form no-print">
       <div class="proposal-budget-summary">
@@ -11944,10 +11971,64 @@ function openSavedProposalPreview(proposalId) {
         <span>${svgText(nameOf("clients", proposal.clientId) || "")}</span>
         <span>${asMoney(proposal.amount || 0)} - ${svgText(proposal.status || "")}</span>
       </div>
+      ${canSeeInternal ? `<div class="proposal-view-toggle no-print">
+        <button type="button" class="secondary active" id="proposalViewClient">Visão cliente</button>
+        <button type="button" class="secondary" id="proposalViewInternal">Visão interna</button>
+      </div>` : ""}
     </section>
   `;
-  qs("proposalPreview").innerHTML = sanitizeStoredHtml(proposal.proposalBody);
+  const showClient = () => {
+    qs("proposalPreview").innerHTML = sanitizeStoredHtml(proposal.proposalBody);
+    qs("proposalViewClient")?.classList.add("active");
+    qs("proposalViewInternal")?.classList.remove("active");
+  };
+  showClient();
+  if (canSeeInternal) {
+    qs("proposalViewClient")?.addEventListener("click", showClient);
+    qs("proposalViewInternal")?.addEventListener("click", () => {
+      qs("proposalPreview").innerHTML = savedProposalInternalHtml(proposal);
+      qs("proposalViewInternal")?.classList.add("active");
+      qs("proposalViewClient")?.classList.remove("active");
+    });
+  }
   qs("proposalGeneratorDialog").showModal();
+}
+
+// Visão interna de uma proposta salva: tabela de custos/margem a partir dos itens
+// persistidos (custo_unitario/bdi_item). Cai para o resumo do cabeçalho quando os
+// itens não têm custo registrado (propostas geradas antes da v1.15.0). Uso interno.
+function savedProposalInternalHtml(proposal) {
+  const its = (db.proposalItems || []).filter((i) => sameId(i.proposalId, proposal.id));
+  const vendaTotal = Number(proposal.amount || 0) || its.reduce((s, i) => s + Number(i.totalPrice || 0), 0);
+  const custoTotal = Number(proposal.custo_total_orcamentos || 0)
+    || its.reduce((s, i) => s + Number(i.custo_unitario || 0) * Number(i.quantity || 0), 0);
+  const bdiTotal = Number(proposal.valor_bdi_total || 0) || Math.max(0, vendaTotal - custoTotal);
+  const margemPct = vendaTotal > 0 ? (bdiTotal / vendaTotal) * 100 : 0;
+  const rows = its.map((i, idx) => {
+    const custoU = Number(i.custo_unitario || 0);
+    const qtd = Number(i.quantity || 0);
+    const custoT = custoU * qtd;
+    const vendaT = Number(i.totalPrice || 0);
+    const bdiPct = i.bdi_item != null && i.bdi_item !== "" ? Number(i.bdi_item) : (custoT > 0 ? ((vendaT - custoT) / custoT) * 100 : 0);
+    return `<tr><td>${idx + 1}</td><td>${svgText(i.description || "")}</td><td>${svgText(i.unit || "")}</td><td>${formatQuantity(i.quantity)}</td><td>${asMoney(custoU)}</td><td>${asMoney(custoT)}</td><td>${asPercent(bdiPct)}</td><td>${asMoney(Number(i.unitPrice || 0))}</td><td>${asMoney(vendaT)}</td><td>${i.visibleToClient === "Não" ? "oculto" : "visível"}</td></tr>`;
+  }).join("");
+  return `<article class="proposal-page">
+    <section class="proposal-section">
+      <h2>Visão interna — custos e margem</h2>
+      <p class="muted no-print">Uso interno. Não compartilhe esta visão com o cliente.</p>
+      ${its.length ? `<table class="proposal-items-table">
+        <thead><tr><th>Item</th><th>Descrição</th><th>Un.</th><th>Qtd.</th><th>Custo unit.</th><th>Custo total</th><th>BDI</th><th>Valor unit.</th><th>Valor total</th><th>Cliente</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>` : `<p class="muted">Itens detalhados sem custo registrado (proposta anterior à v1.15.0). Mostrando apenas o resumo.</p>`}
+    </section>
+    <section class="proposal-investment">
+      <h2>Resumo financeiro interno</h2>
+      <div><span>Custo total</span><strong>${asMoney(custoTotal)}</strong></div>
+      <div><span>BDI / margem total</span><strong>${asMoney(bdiTotal)}</strong></div>
+      <div><span>Valor de venda</span><strong>${asMoney(vendaTotal)}</strong></div>
+      <div><span>Margem sobre venda</span><strong>${asPercent(margemPct)}</strong></div>
+    </section>
+  </article>`;
 }
 
 // Defesa em profundidade: o corpo da proposta é HTML gerado com campos já
@@ -12745,6 +12826,10 @@ async function saveGeneratedProposal(statusOverride = "") {
   const vars = proposalVariablesFor({ ...proposalGeneratorState, project, client, model, input });
   const status = statusOverride || input.draftStatus || "Rascunho";
   const body = qs("proposalPreview").innerHTML;
+  // Base de custo vinda do orçamento técnico: custo direto, BDI embutido e tipo.
+  const custoTotalOrcamentos = items.reduce((sumVal, it) => sumVal + Number(it.totalCost || 0), 0);
+  const amountTotal = Number(budget.totalPrice || 0);
+  const valorBdiTotal = Math.max(0, amountTotal - custoTotalOrcamentos);
   try {
     const proposal = await createIntegratedRecord("proposals", {
       number: vars.numero_proposta,
@@ -12775,8 +12860,13 @@ async function saveGeneratedProposal(statusOverride = "") {
       commercialResponsible: input.commercialResponsible || "",
       commercialNotes: input.commercialNotes || "",
       status,
+      bdi_geral: Number(budget.bdiPercent || 0),
+      bdi_tipo: "percentual",
+      custo_total_orcamentos: roundMoney(custoTotalOrcamentos),
+      valor_bdi_total: roundMoney(valorBdiTotal),
+      modo_licitacao: "Não",
     });
-    await createProposalLinkedRecords(proposal, { budget, project, client, model, items, vars, status });
+    await createProposalLinkedRecords(proposal, { budget, project, client, model, items, vars, status, custoTotalOrcamentos, valorBdiTotal, amountTotal });
     alert(status === "Rascunho" ? "Rascunho de proposta salvo." : "Proposta gerada e finalizada.");
     qs("proposalGeneratorDialog").close();
     proposalGeneratorState = null;
@@ -12787,7 +12877,7 @@ async function saveGeneratedProposal(statusOverride = "") {
   }
 }
 
-async function createProposalLinkedRecords(proposal, { budget, project, client, model, items, vars, status }) {
+async function createProposalLinkedRecords(proposal, { budget, project, client, model, items, vars, status, custoTotalOrcamentos = 0, valorBdiTotal = 0, amountTotal = 0 }) {
   await createIntegratedRecord("proposalBudgetLinks", {
     proposalId: proposal.id,
     workBudgetId: budget.id,
@@ -12795,6 +12885,11 @@ async function createProposalLinkedRecords(proposal, { budget, project, client, 
     clientId: client.id || "",
     proposalModelId: model.id || "",
     responsibleUserId: currentUser?.id || "",
+    nome_grupo: budget.name || "",
+    bdi_grupo: Number(budget.bdiPercent || 0),
+    custo_total: roundMoney(custoTotalOrcamentos),
+    valor_venda: roundMoney(amountTotal || Number(budget.totalPrice || 0)),
+    ordem: 0,
   });
   await createIntegratedRecord("proposalStatusHistory", {
     proposalId: proposal.id,
@@ -12818,6 +12913,10 @@ async function createProposalLinkedRecords(proposal, { budget, project, client, 
       groupName: item.stageName || "",
       visibleToClient: "Sim",
       notes: "",
+      custo_unitario: Number(item.unitCost || 0),
+      bdi_item: item.bdiPercent != null && item.bdiPercent !== "" ? Number(item.bdiPercent) : null,
+      orcamento_item_id: item.id || "",
+      sinapi_id: item.sinapi_id || "",
     });
   }
   for (const [variableName, variableValue] of Object.entries(vars)) {
