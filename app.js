@@ -172,6 +172,7 @@ const modules = [
   ["visibilityRules", "Regras de visualização"],
   ["sinapiSettings", "Configuração SINAPI"],
   ["plugins", "Plugins"],
+  ["iaTest", "Teste de IA"],
   ["backupLocal", "Backup local"],
   ["preferences", "Preferências do sistema"],
   ["migration", "Migração para banco"],
@@ -194,7 +195,7 @@ const sidebarSections = [
   { id: "relatorios", label: "Relatórios", icon: "ti-chart-dots", modules: ["reports", "reportFinancial", "reportClient", "reportSupplier", "reportCostCenter", "reportProject", "exports"] },
   // Lançador de plugins: itens dinâmicos vindos de db.plugins, abertos em nova aba.
   { id: "pluginsLauncher", label: "Plugins", icon: "ti-plug", pluginLauncher: true },
-  { id: "config", label: "Configurações", icon: "ti-settings", modules: ["companySettings", "users", "permissions", "systemVersion", "workTypes", "workStatuses", "standardStages", "standardMilestones", "customFields", "reportModels", "documentTypes", "checklists", "measurementTypes", "paymentMethods", "whatsappTemplates", "visibilityRules", "sinapiSettings", "plugins", "backupLocal", "preferences", "migration", "auditLog", "myProfile"] },
+  { id: "config", label: "Configurações", icon: "ti-settings", modules: ["companySettings", "users", "permissions", "systemVersion", "workTypes", "workStatuses", "standardStages", "standardMilestones", "customFields", "reportModels", "documentTypes", "checklists", "measurementTypes", "paymentMethods", "whatsappTemplates", "visibilityRules", "sinapiSettings", "plugins", "iaTest", "backupLocal", "preferences", "migration", "auditLog", "myProfile"] },
 ];
 
 // Ícones Tabler (ti-*) por módulo, usados nos itens da sidebar. Sem mapeamento → bolinha.
@@ -210,7 +211,7 @@ const MODULE_ICONS = {
   reconciliation: "ti-refresh", agenda: "ti-calendar", kanban: "ti-layout-kanban",
   reports: "ti-chart-bar", reportFinancial: "ti-chart-bar", reportClient: "ti-chart-bar",
   reportSupplier: "ti-chart-bar", reportCostCenter: "ti-chart-bar", reportProject: "ti-chart-bar",
-  users: "ti-user-check", sinapiReferences: "ti-database-import",
+  users: "ti-user-check", sinapiReferences: "ti-database-import", iaTest: "ti-robot",
 };
 // Ícone do módulo principal (seção/topo): classe Tabler vira <i>; emoji legado vira <span>.
 function sidebarIconHtml(icon) {
@@ -2759,6 +2760,7 @@ function render() {
   if (currentModule === "viabilidadeObra") { viabilidadeObraOpenId = null; return renderViabilidadeList(); }
   if (currentModule === "cotacoes") { cotacaoOpenId = null; return renderCotacoes(); }
   if (currentModule === "plugins") return renderPlugins();
+  if (currentModule === "iaTest") return renderIaTest();
   if (currentModule === "preferences") return renderPreferences();
   if (currentModule === "sinapiReferences") return renderSinapiReferences();
   if (currentModule === "sinapiSettings") return renderSinapiSettingsModule();
@@ -9443,6 +9445,55 @@ function sinapiDefaultSettings() {
     showUnitPriceInProposal: "Sim",
     showGlobalOnlyInProposal: "Não",
   };
+}
+
+// Tela de teste da integração com a IA local (Ollama). Autenticada como as demais:
+// a chamada parte desta página logada (apiModuleRequest envia o token da sessão) e
+// bate no endpoint ?module=ia&action=ping, que internamente chama ollama_generate e
+// ollama_embed no servidor. O Ollama nunca é exposto à internet (127.0.0.1).
+function renderIaTest() {
+  const content = qs("content");
+  content.innerHTML = `
+    <section class="panel">
+      <h3>Teste de Conexão IA (Ollama)</h3>
+      <p class="field-hint">Valida a integração local com o Ollama — geração de texto (llama3.2:3b) e embeddings (all-minilm, dimensão esperada 384). A chamada é feita server-side, de 127.0.0.1 para 127.0.0.1; o Ollama nunca é exposto à internet.</p>
+      ${serverMode ? "" : '<p class="empty">A IA local depende da API PHP no servidor. Em modo local (sem servidor) o teste não está disponível.</p>'}
+      <div class="actions">
+        <button class="primary" type="button" id="iaPingBtn" ${serverMode ? "" : "disabled"}>Testar conexão IA</button>
+      </div>
+      <div id="iaPingResult" class="hidden" style="margin-top:14px"></div>
+    </section>`;
+  qs("iaPingBtn")?.addEventListener("click", testIaConnection);
+}
+
+async function testIaConnection() {
+  const btn = qs("iaPingBtn");
+  const box = qs("iaPingResult");
+  if (!btn || !box) return;
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Testando…";
+  box.classList.remove("hidden");
+  box.innerHTML = '<p class="muted">Consultando o Ollama…</p>';
+  try {
+    // apiModuleRequest envia a sessão (token) e devolve o data {gen_ok, gen_response,
+    // embed_ok, embed_dim}; se o Ollama estiver fora, a API responde success:false e
+    // o apiModuleRequest lança com a mensagem clara (sem pendurar — curl tem timeout).
+    const data = await apiModuleRequest("?module=ia&action=ping");
+    const genOk = !!data.gen_ok;
+    const embedOk = !!data.embed_ok;
+    const dim = Number(data.embed_dim || 0);
+    box.innerHTML = `
+      <p><strong>Geração de texto:</strong> ${genOk ? "✅ OK" : "❌ falhou"}</p>
+      ${genOk ? `<p class="muted">Resposta do modelo: ${escapeHtml(String(data.gen_response || "(vazia)"))}</p>` : ""}
+      <p><strong>Embeddings:</strong> ${embedOk ? "✅ OK" : "❌ falhou"}</p>
+      ${embedOk ? `<p class="muted">Dimensão do vetor: <strong>${dim}</strong> ${dim === 384 ? "(esperado: 384 ✅)" : "(esperado: 384 ⚠️)"}</p>` : ""}`;
+  } catch (error) {
+    box.innerHTML = `<p style="color:#b42318"><strong>❌ Ollama indisponível.</strong> ${escapeHtml(error.message || "Não foi possível conectar ao serviço de IA local.")}</p>`;
+  } finally {
+    btn.disabled = !serverMode;
+    btn.textContent = original;
+  }
 }
 
 function renderSinapiReferences() {
