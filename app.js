@@ -3314,15 +3314,30 @@ function rdoPdfHtml(d, fotos) {
   `;
 }
 
+// ─── Status financeiro tolerante a maiúsc/minúsc/espaços ────────────────────
+// Dados importados (OFX/NFS-e) ou editados direto no banco podem gravar
+// "recebido"/"pago"/"aberto" em vez de "Recebido"/"Pago"/"Aberto". Comparar com
+// === quebraria silenciosamente os KPIs e o gráfico Lucro x Caixa (tudo viraria
+// "em aberto", caixa zerado). Estes helpers normalizam antes de comparar.
+function normFinStatus(status) {
+  return String(status || "").trim().toLowerCase();
+}
+function isRecebido(status) { return normFinStatus(status) === "recebido"; }
+function isPago(status) { return normFinStatus(status) === "pago"; }
+function isCancelado(status) { return normFinStatus(status) === "cancelado"; }
+// Em aberto = não liquidado e não cancelado (cobre Aberto/Vencido/Parcial).
+function isReceberAberto(status) { return !isRecebido(status) && !isCancelado(status); }
+function isPagarAberto(status) { return !isPago(status) && !isCancelado(status); }
+
 function totals() {
   const receivable = applyFilters(db.receivable);
   const payable = applyFilters(db.payable);
   const moves = applyFilters(db.cashMoves);
   const sales = applyFilters(db.sales);
-  const received = receivable.filter((r) => r.status === "Recebido").reduce((sum, r) => sum + Number(r.amount || 0), 0);
-  const openReceivable = receivable.filter((r) => r.status !== "Recebido" && r.status !== "Cancelado").reduce((sum, r) => sum + Number(r.amount || 0), 0);
-  const paid = payable.filter((p) => p.status === "Pago").reduce((sum, p) => sum + Number(p.amount || 0), 0);
-  const openPayable = payable.filter((p) => p.status !== "Pago" && p.status !== "Cancelado").reduce((sum, p) => sum + Number(p.amount || 0), 0);
+  const received = receivable.filter((r) => isRecebido(r.status)).reduce((sum, r) => sum + Number(r.amount || 0), 0);
+  const openReceivable = receivable.filter((r) => isReceberAberto(r.status)).reduce((sum, r) => sum + Number(r.amount || 0), 0);
+  const paid = payable.filter((p) => isPago(p.status)).reduce((sum, p) => sum + Number(p.amount || 0), 0);
+  const openPayable = payable.filter((p) => isPagarAberto(p.status)).reduce((sum, p) => sum + Number(p.amount || 0), 0);
   const bankBalance = moves.reduce((sum, m) => sum + (m.type === "Saída" ? -Number(m.amount || 0) : Number(m.amount || 0)), 0);
   const profit = sales.reduce((sum, s) => sum + Number(s.amount || 0) - Number(s.cost || 0), 0);
   return { received, openReceivable, paid, openPayable, bankBalance, profit };
@@ -3387,7 +3402,7 @@ function scheduleMetrics(projectId, rows = scheduleRowsForProject(projectId)) {
   ].filter((row) => row.name);
   const completedMilestone = milestones.filter((row) => row.completed).sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")))[0];
   const nextMilestone = milestones.filter((row) => !row.completed).sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")))[0];
-  const receivable = (db.receivable || []).filter((row) => sameId(row.projectId, projectId) && row.status === "Recebido").reduce((total, row) => total + Number(row.amount || 0), 0);
+  const receivable = (db.receivable || []).filter((row) => sameId(row.projectId, projectId) && isRecebido(row.status)).reduce((total, row) => total + Number(row.amount || 0), 0);
   const balance = receivable - actualFinancial;
   return {
     plannedPhysical,
@@ -3429,17 +3444,17 @@ function dashboardMetrics() {
   const schedule = dashboardRows("projectSchedule");
   const scheduleInfo = scheduleMetrics(activeDashboardProjectId(), schedule);
   const revenueTotal = sum(receivable, "amount");
-  const revenueReceived = receivable.filter((row) => row.status === "Recebido").reduce((total, row) => total + Number(row.amount || 0), 0);
-  const revenuePending = receivable.filter((row) => row.status !== "Recebido").reduce((total, row) => total + Number(row.amount || 0), 0);
+  const revenueReceived = receivable.filter((row) => isRecebido(row.status)).reduce((total, row) => total + Number(row.amount || 0), 0);
+  const revenuePending = receivable.filter((row) => !isRecebido(row.status) && !isCancelado(row.status)).reduce((total, row) => total + Number(row.amount || 0), 0);
   const expensesTotal = sum(payable, "amount");
   const currentBalance = (activeDashboardProjectId() ? 0 : bankOpeningBalance()) + moves.reduce((total, row) => total + signedCashAmount(row), 0);
-  const openReceivable = receivable.filter((row) => ["Aberto", "Vencido", "Parcial"].includes(row.status)).reduce((total, row) => total + Number(row.amount || 0), 0);
-  const openPayable = payable.filter((row) => ["Aberto", "Vencido", "Parcial"].includes(row.status)).reduce((total, row) => total + Number(row.amount || 0), 0);
+  const openReceivable = receivable.filter((row) => isReceberAberto(row.status)).reduce((total, row) => total + Number(row.amount || 0), 0);
+  const openPayable = payable.filter((row) => isPagarAberto(row.status)).reduce((total, row) => total + Number(row.amount || 0), 0);
   const overdue = receivable.filter((row) => isOverdue(row, "receivable")).reduce((total, row) => total + Number(row.amount || 0), 0)
     + payable.filter((row) => isOverdue(row, "payable")).reduce((total, row) => total + Number(row.amount || 0), 0);
   const grossProfit = sales.reduce((total, row) => total + Number(row.amount || 0) - Number(row.cost || 0), 0);
   const netProfit = revenueTotal - expensesTotal;
-  const paidExpenses = payable.filter((row) => row.status === "Pago").reduce((total, row) => total + Number(row.amount || 0), 0);
+  const paidExpenses = payable.filter((row) => isPago(row.status)).reduce((total, row) => total + Number(row.amount || 0), 0);
   const realizedCost = paidExpenses + Math.abs(moves.filter((row) => signedCashAmount(row) < 0).reduce((total, row) => total + signedCashAmount(row), 0));
   const servicesSold = sales.filter((row) => normalizedText(row.description).includes("servic")).reduce((total, row) => total + Number(row.amount || 0), 0);
   const productsSold = sales.filter((row) => normalizedText(row.description).includes("produto") || normalizedText(row.description).includes("software")).reduce((total, row) => total + Number(row.amount || 0), 0);
@@ -3538,8 +3553,8 @@ function sumRowsByMonth(rows, field, dateFields, month) {
 }
 
 function isOverdue(row, type) {
-  if (row.status === "Vencido") return true;
-  if (["Recebido", "Pago", "Cancelado"].includes(row.status)) return false;
+  if (normFinStatus(row.status) === "vencido") return true;
+  if (isRecebido(row.status) || isPago(row.status) || isCancelado(row.status)) return false;
   const dueDate = row.dueDate;
   if (!dueDate) return false;
   return dueDate < new Date().toISOString().slice(0, 10) && (type === "receivable" ? !row.receivedDate : !row.paidDate);
@@ -3721,12 +3736,14 @@ function lucroCaixaCompute(start, end, projectId = "") {
   const total = (rows) => rows.reduce((acc, row) => acc + Number(row.amount || 0), 0);
   const receivable = (db.receivable || []).filter(matchProject);
   const payable = (db.payable || []).filter(matchProject);
-  const abertaR = (r) => r.status !== "Recebido" && r.status !== "Cancelado";
-  const abertaP = (p) => p.status !== "Pago" && p.status !== "Cancelado";
+  const abertaR = (r) => isReceberAberto(r.status);
+  const abertaP = (p) => isPagarAberto(p.status);
 
-  // Caixa real: recebido/pago pela data efetiva (receivedDate/paidDate).
-  const recebidas = total(receivable.filter((r) => r.status === "Recebido" && inRange(r.receivedDate || r.dueDate)));
-  const pagas = total(payable.filter((p) => p.status === "Pago" && inRange(p.paidDate || p.dueDate)));
+  // Caixa real: recebido/pago pela data efetiva (receivedDate/paidDate). Status
+  // comparado de forma case-insensitive (isRecebido/isPago) — senão dados com
+  // "recebido"/"pago" minúsculo zeram o caixa e jogam tudo para o lucro.
+  const recebidas = total(receivable.filter((r) => isRecebido(r.status) && inRange(r.receivedDate || r.dueDate)));
+  const pagas = total(payable.filter((p) => isPago(p.status) && inRange(p.paidDate || p.dueDate)));
   // Em aberto pela competência (vencimento no período).
   const abertasReceber = total(receivable.filter((r) => abertaR(r) && inRange(r.dueDate)));
   const abertasPagar = total(payable.filter((p) => abertaP(p) && inRange(p.dueDate)));
@@ -3747,17 +3764,25 @@ function lucroCaixaIndicators(periodKey, projectId = "") {
 }
 
 // Série mensal (lucro gerencial x caixa real) para o gráfico de evolução.
-function lucroCaixaMonthlyRows(projectId = "", monthsCount = 6) {
+// Período "anoAtual" → meses corridos do ano (Jan → mês atual). Demais → janela
+// móvel de N meses terminando no mês atual. Assim o filtro de período afeta o eixo X.
+function lucroCaixaMonthlyRows(projectId = "", periodKey = "ultimos6Meses") {
   const now = new Date();
-  const rows = [];
-  for (let i = monthsCount - 1; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const start = lucroCaixaFmtDate(new Date(d.getFullYear(), d.getMonth(), 1));
-    const end = lucroCaixaFmtDate(new Date(d.getFullYear(), d.getMonth() + 1, 0));
-    const ind = lucroCaixaCompute(start, end, projectId);
-    rows.push({ month: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`, lucro: ind.lucroGerencial, caixa: ind.resultadoCaixa });
+  const y = now.getFullYear();
+  const m = now.getMonth();
+  const buckets = [];
+  if (periodKey === "anoAtual") {
+    for (let mm = 0; mm <= m; mm++) buckets.push([y, mm]);
+  } else {
+    const count = ({ ultimos6Meses: 6, ultimos3Meses: 3, ultimoMes: 2, mesAtual: 6 })[periodKey] || 6;
+    for (let i = count - 1; i >= 0; i--) { const d = new Date(y, m - i, 1); buckets.push([d.getFullYear(), d.getMonth()]); }
   }
-  return rows;
+  return buckets.map(([yy, mm]) => {
+    const start = lucroCaixaFmtDate(new Date(yy, mm, 1));
+    const end = lucroCaixaFmtDate(new Date(yy, mm + 1, 0));
+    const ind = lucroCaixaCompute(start, end, projectId);
+    return { month: `${yy}-${String(mm + 1).padStart(2, "0")}`, lucro: ind.lucroGerencial, caixa: ind.resultadoCaixa };
+  });
 }
 
 function lucroCaixaMonthsForPeriod(periodKey) {
@@ -3765,20 +3790,20 @@ function lucroCaixaMonthsForPeriod(periodKey) {
 }
 
 function lucroCaixaChart(periodKey, projectId = "") {
-  const rows = lucroCaixaMonthlyRows(projectId, lucroCaixaMonthsForPeriod(periodKey));
+  const rows = lucroCaixaMonthlyRows(projectId, periodKey);
   const labels = rows.map((r) => monthLabel(r.month));
   // Tooltip combinado por mês: lucro gerencial, caixa real e a diferença
   // (= a receber líquido = lucro − caixa). Mostra as duas séries mesmo quando
   // as linhas coincidem (sem contas em aberto no mês → lucro = caixa).
   const tooltips = rows.map((r) =>
-    `${monthLabel(r.month)}\nLucro gerencial: ${compactMoney(r.lucro)}\nCaixa real: ${compactMoney(r.caixa)}\nDiferença (a receber líquido): ${compactMoney(r.lucro - r.caixa)}`
+    `${monthLabel(r.month)}\nLucro Gerencial: ${compactMoney(r.lucro)}\nCaixa Real: ${compactMoney(r.caixa)}\nDiferença: ${compactMoney(r.lucro - r.caixa)}\n(ainda não recebido)`
   );
   return chartPanel(
     "Evolução: lucro gerencial x caixa",
     `Resultado por competência e caixa real por mês${projectId ? " · " + svgText(nameOf("projects", projectId) || "obra") : ""}`,
     lineChart([
-      { label: "Lucro gerencial", color: "#2563eb", values: rows.map((r) => r.lucro) },
-      { label: "Saldo em caixa", color: "#147a47", values: rows.map((r) => r.caixa) },
+      { label: "Lucro Gerencial (competência)", color: "#185FA5", values: rows.map((r) => r.lucro) },
+      { label: "Caixa Real (regime de caixa)", color: "#3B6D11", values: rows.map((r) => r.caixa) },
     ], labels, tooltips)
   );
 }
@@ -3790,8 +3815,8 @@ function lucroCaixaOverdue30(projectId = "") {
   const matchProject = (row) => !projectId || sameId(row.projectId, projectId);
   const overdue = (row) => { const d = String(row.dueDate || "").slice(0, 10); return d && d < cutoff; };
   const total = (rows) => rows.reduce((acc, row) => acc + Number(row.amount || 0), 0);
-  const receber = total((db.receivable || []).filter((r) => matchProject(r) && r.status !== "Recebido" && r.status !== "Cancelado" && overdue(r)));
-  const pagar = total((db.payable || []).filter((p) => matchProject(p) && p.status !== "Pago" && p.status !== "Cancelado" && overdue(p)));
+  const receber = total((db.receivable || []).filter((r) => matchProject(r) && isReceberAberto(r.status) && overdue(r)));
+  const pagar = total((db.payable || []).filter((p) => matchProject(p) && isPagarAberto(p.status) && overdue(p)));
   return { receber, pagar, total: receber + pagar };
 }
 
@@ -3830,19 +3855,19 @@ function lucroCaixaPanel(periodKey, projectId = "") {
       </div>
       <div class="lucro-caixa-cards">
         <article class="lc-card ${tone(ind.lucroGerencial)}">
-          <span class="lc-label">Lucro gerencial</span>
-          <strong class="lc-value">${asMoney(ind.lucroGerencial)}</strong>
+          <span class="lc-label">Lucro Gerencial</span>
+          <strong class="lc-value ${ind.lucroGerencial < 0 ? "lc-neg" : "lc-blue"}">${asMoney(ind.lucroGerencial)}</strong>
           <span class="lc-sub">Receitas − Custos (competência)</span>
         </article>
         <article class="lc-card ${tone(ind.resultadoCaixa)}">
-          <span class="lc-label">Saldo em caixa</span>
-          <strong class="lc-value">${asMoney(ind.resultadoCaixa)}</strong>
-          <span class="lc-sub">Dinheiro efetivamente recebido</span>
+          <span class="lc-label">Caixa Real</span>
+          <strong class="lc-value ${ind.resultadoCaixa < 0 ? "lc-neg" : "lc-green"}">${asMoney(ind.resultadoCaixa)}</strong>
+          <span class="lc-sub">Recebido − Pago (regime de caixa)</span>
         </article>
         <article class="lc-card ${tone(ind.aReceberLiquido)}">
           <span class="lc-label">A receber líquido <span class="lc-info" tabindex="0" title="Este valor está no lucro mas ainda não entrou no caixa — são contas a receber em aberto menos contas a pagar em aberto">ⓘ</span></span>
-          <strong class="lc-value">${asMoney(ind.aReceberLiquido)}</strong>
-          <span class="lc-sub">Lucro gerencial ainda não recebido</span>
+          <strong class="lc-value lc-amber">${asMoney(ind.aReceberLiquido)}</strong>
+          <span class="lc-sub">Está no lucro mas ainda não entrou no caixa</span>
         </article>
       </div>
       ${alerts.length ? `<div class="lucro-caixa-alerts">${alerts.join("")}</div>` : ""}

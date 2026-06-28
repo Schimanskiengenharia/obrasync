@@ -1641,8 +1641,12 @@ html[data-theme="dark"] .alert-warning {
   color: var(--ink);
 }
 
-.lc-card.positive .lc-value { color: var(--green); }
-.lc-card.negative .lc-value { color: var(--red); }
+/* Cor do valor por card (spec): lucro azul, caixa verde, a receber líquido âmbar;
+   vermelho quando negativo. Substitui a regra antiga baseada só em positivo/negativo. */
+.lc-value.lc-blue { color: #185FA5; }
+.lc-value.lc-green { color: #3B6D11; }
+.lc-value.lc-amber { color: #b7791f; }
+.lc-value.lc-neg { color: var(--red); }
 
 .lc-sub { font-size: 12px; color: var(--muted); }
 
