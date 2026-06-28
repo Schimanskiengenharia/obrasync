@@ -172,6 +172,7 @@ const modules = [
   ["visibilityRules", "Regras de visualização"],
   ["sinapiSettings", "Configuração SINAPI"],
   ["plugins", "Plugins"],
+  ["iaIndex", "Indexação SINAPI"],
   ["iaTest", "Teste de IA"],
   ["backupLocal", "Backup local"],
   ["preferences", "Preferências do sistema"],
@@ -195,7 +196,11 @@ const sidebarSections = [
   { id: "relatorios", label: "Relatórios", icon: "ti-chart-dots", modules: ["reports", "reportFinancial", "reportClient", "reportSupplier", "reportCostCenter", "reportProject", "exports"] },
   // Lançador de plugins: itens dinâmicos vindos de db.plugins, abertos em nova aba.
   { id: "pluginsLauncher", label: "Plugins", icon: "ti-plug", pluginLauncher: true },
-  { id: "config", label: "Configurações", icon: "ti-settings", modules: ["companySettings", "users", "permissions", "systemVersion", "workTypes", "workStatuses", "standardStages", "standardMilestones", "customFields", "reportModels", "documentTypes", "checklists", "measurementTypes", "paymentMethods", "whatsappTemplates", "visibilityRules", "sinapiSettings", "plugins", "iaTest", "backupLocal", "preferences", "migration", "auditLog", "myProfile"] },
+  // IA: seção própria (cresce com busca semântica, de-para, IA Orçamento). Mesma
+  // visibilidade de plugins — só papéis que herdam todos os módulos (admin/gerente/
+  // visualizador) a enxergam, pois iaIndex/iaTest não estão nas listas dos demais.
+  { id: "ia", label: "IA", icon: "ti-robot", modules: ["iaIndex", "iaTest"] },
+  { id: "config", label: "Configurações", icon: "ti-settings", modules: ["companySettings", "users", "permissions", "systemVersion", "workTypes", "workStatuses", "standardStages", "standardMilestones", "customFields", "reportModels", "documentTypes", "checklists", "measurementTypes", "paymentMethods", "whatsappTemplates", "visibilityRules", "sinapiSettings", "plugins", "backupLocal", "preferences", "migration", "auditLog", "myProfile"] },
 ];
 
 // Ícones Tabler (ti-*) por módulo, usados nos itens da sidebar. Sem mapeamento → bolinha.
@@ -265,6 +270,8 @@ const SUBMODULE_ICONS = {
   visibilityRules: ["ti-eye", "#5F5E5A"], sinapiSettings: ["ti-adjustments", "#5F5E5A"], plugins: ["ti-plug", "#5F5E5A"],
   backupLocal: ["ti-database-export", "#5F5E5A"], preferences: ["ti-settings", "#5F5E5A"], migration: ["ti-database-export", "#5F5E5A"],
   auditLog: ["ti-history", "#5F5E5A"], myProfile: ["ti-user-circle", "#5F5E5A"],
+  // IA (azul)
+  iaIndex: ["ti-database-cog", "#185FA5"], iaTest: ["ti-plug-connected", "#185FA5"],
 };
 function submenuIconHtml(moduleKey) {
   const [ic, color] = SUBMODULE_ICONS[moduleKey] || ["ti-point", "#8a93a6"];
@@ -2760,6 +2767,7 @@ function render() {
   if (currentModule === "viabilidadeObra") { viabilidadeObraOpenId = null; return renderViabilidadeList(); }
   if (currentModule === "cotacoes") { cotacaoOpenId = null; return renderCotacoes(); }
   if (currentModule === "plugins") return renderPlugins();
+  if (currentModule === "iaIndex") return renderIaIndex();
   if (currentModule === "iaTest") return renderIaTest();
   if (currentModule === "preferences") return renderPreferences();
   if (currentModule === "sinapiReferences") return renderSinapiReferences();
@@ -4975,7 +4983,6 @@ function renderPlugins() {
       </div>
       ${editable ? '<button class="primary" type="button" id="newPlugin">Novo plugin</button>' : ""}
     </section>
-    ${iaIndexCardHtml()}
     ${rows.length
       ? `<section class="plugins-grid">${rows.map((row, index) => pluginCard(row, index, rows.length, editable)).join("")}</section>`
       : '<div class="empty">Nenhum plugin cadastrado.</div>'}
@@ -4988,10 +4995,25 @@ function renderPlugins() {
     const [id, direction] = button.dataset.movePlugin.split(":");
     movePlugin(id, direction);
   }));
+}
+
+// ── Seção IA: tela de indexação (módulo iaIndex) ────────────────────────────
+// Casa dedicada da IA no menu. Hoje só a indexação; preparada para crescer (busca
+// semântica, de-para, IA Orçamento) — basta adicionar novos módulos à seção "ia" do
+// menu + seus render*(), ou abas internas aqui dentro.
+function renderIaIndex() {
+  qs("content").innerHTML = `
+    <section class="module-head">
+      <div>
+        <h2>IA — Indexação</h2>
+        <p>Geração dos vetores de busca semântica (embeddings) da base SINAPI. Primeira etapa da IA local; a busca semântica e os demais recursos virão nesta seção.</p>
+      </div>
+    </section>
+    ${iaIndexCardHtml()}`;
   wireIaIndexCard();
 }
 
-// ── IA: card de indexação da base SINAPI (aba Plugins) ──────────────────────
+// ── IA: card de indexação da base SINAPI (usado pela seção IA) ──────────────
 // Mesma autenticação/sessão das outras telas: apiModuleRequest envia o token e bate
 // em ?module=ia&action=startIndex|indexStatus (worker em background no servidor).
 let iaIndexTimer = null;
