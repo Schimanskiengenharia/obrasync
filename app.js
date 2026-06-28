@@ -3890,7 +3890,7 @@ function lucroCaixaChart(periodKey, projectId = "") {
     "Evolução: lucro gerencial x caixa",
     `Resultado por competência e caixa real por mês${projectId ? " · " + svgText(nameOf("projects", projectId) || "obra") : ""}`,
     lineChart([
-      { label: "Lucro Gerencial (competência)", color: "#378ADD", values: rows.map((r) => r.lucro) },
+      { label: "Lucro Gerencial (competência)", color: "#185FA5", values: rows.map((r) => r.lucro) },
       { label: "Caixa Real (regime de caixa)", color: "#3B6D11", values: rows.map((r) => r.caixa) },
     ], labels, tooltips, { strokeWidth: 2, dotRadius: 4 })
   );
