@@ -3739,6 +3739,12 @@ tbody tr:hover td {
 .q-subhead { margin: 14px 0 6px; font-size: 13px; font-weight: 800; color: var(--teal-2); }
 .q-pes-pdf { margin: 12px 0; padding: 12px; border: 1px dashed var(--line); border-radius: 8px; display: grid; gap: 8px; }
 .sq-chk { flex-direction: row; align-items: center; gap: 6px; }
+
+/* Cotações — edição de itens */
+.viab-dialog-lg { width: min(880px, calc(100vw - 24px)); }
+.cot-edit-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.cot-edit-table th, .cot-edit-table td { padding: 4px; border-bottom: 1px solid var(--line); text-align: left; }
+.cot-edit-table input { width: 100%; box-sizing: border-box; }
 .viab-block-label { display: grid; gap: 4px; font-size: 12px; font-weight: 700; color: var(--muted); }
 .viab-item-title { font-weight: 700; font-size: 14px; }
 .viab-tipo-tabs { display: flex; flex-wrap: wrap; gap: 6px; }

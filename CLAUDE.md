@@ -111,3 +111,22 @@ Leia também o `README.md` (seção "Para quem está retomando o projeto") e o
 2. Para features novas, crie a migração **e** um `ensure_*` correspondente (auto-cura).
 3. Atualize `APP_VERSION`/`APP_CHANGELOG` em `app.js`, o `?v=` em `index.html`, o cabeçalho do `README.md` e este arquivo.
 4. Commit local; o `git push` é manual quando o usuário pedir. Após o push, o usuário roda `cd /var/www/financeiro && git pull origin main` no servidor.
+
+---
+
+## Dependências do módulo de Cotações (importação PDF/Excel)
+
+`?module=cotacoes&action=importar|comparar|salvarItens|exportarCsv` (tabelas `cotacao_fornecedor`/`cotacao_itens`, auto-curadas por `ensure_cotacao_import_tables`).
+
+- **CSV**: lido nativamente (`fgetcsv`) — **sem dependência**. Detecta cabeçalho (descrição/unidade/qtd/valor unit./total/marca/prazo) e separador `;`/`,`.
+- **.xlsx/.xls**: exigem **PhpSpreadsheet** no servidor. Sem ela, o endpoint retorna 422 orientando. Instalar:
+  ```
+  cd /var/www/financeiro && composer require phpoffice/phpspreadsheet
+  ```
+  O loader procura `vendor/autoload.php` automaticamente.
+- **PDF**: exige **pdftotext** (pacote `poppler-utils`). Sem ele, retorna 422. Instalar:
+  ```
+  sudo apt install poppler-utils
+  ```
+  Extração por regex é heurística (revisar itens antes de comparar).
+- **Comparação** com o orçamento usa `orcamento_obra_itens` (`description`, `unitPrice`) por similaridade de descrição; classifica em abaixo/igual/acima/muito_acima e calcula o score.

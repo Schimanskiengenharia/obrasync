@@ -166,6 +166,13 @@ try {
         handle_pes_pdf_upload($pdo, $config, $authUser);
     }
 
+    // Importação e comparação de cotações de fornecedores (PDF/Excel/CSV).
+    //   POST ?module=cotacoes&action=importar|salvarItens|comparar   GET …=list|get|exportarCsv
+    if (in_array($module, ['cotacoes', 'cotacao', 'cotacoes-importacao'], true)) {
+        authorize_request($pdo, $authUser, 'purchaseOrders', action_for_method($method));
+        handle_cotacoes_module($pdo, $method, $_GET, $config, $authUser);
+    }
+
     if ($resource === '' || $resource === 'bootstrap') {
         require_method($method, ['GET']);
         respond(['ok' => true, 'data' => bootstrap_data($pdo, $resources, $authUser)]);
@@ -2272,6 +2279,10 @@ function bootstrap_data(PDO $pdo, array $resources, ?array $authUser = null, boo
         if (!resolve_existing_table($pdo, ['viabilidade_analises'], false)) {
             ensure_viabilidade_tables($pdo);
         }
+        // Tabelas de importação/comparação de cotações de fornecedores.
+        if (!resolve_existing_table($pdo, ['cotacao_fornecedor'], false)) {
+            ensure_cotacao_import_tables($pdo);
+        }
         // email/blocked/mustChangePassword em system_users (usados em login/reset).
         if (resolve_existing_table($pdo, ['system_users'], false)
             && !in_array('mustChangePassword', table_columns($pdo, 'system_users'), true)) {
@@ -2439,6 +2450,510 @@ function ensure_pes_arquivo_columns(PDO $pdo): void
         );
     } catch (Throwable $error) {
         error_log('[ObraSync] ensure_pes_arquivo_columns: ' . $error->getMessage());
+    }
+}
+
+// ─── Importação e comparação de cotações de fornecedores (PDF/Excel/CSV) ────
+function ensure_cotacao_import_tables(PDO $pdo): void
+{
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    try {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS cotacao_fornecedor (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            obra_id BIGINT UNSIGNED NULL,
+            purchase_order_id BIGINT UNSIGNED NULL,
+            fornecedor_id BIGINT UNSIGNED NULL,
+            fornecedor_nome VARCHAR(200) NOT NULL,
+            data_cotacao DATE NULL,
+            validade_cotacao DATE NULL,
+            arquivo_original VARCHAR(500) NULL,
+            arquivo_nome VARCHAR(200) NULL,
+            arquivo_tipo VARCHAR(10) NULL,
+            status ENUM('importada','comparada','aprovada','reprovada') DEFAULT 'importada',
+            score DECIMAL(5,2) NULL,
+            observacoes TEXT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_cf_obra (obra_id),
+            INDEX idx_cf_pedido (purchase_order_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        $pdo->exec("CREATE TABLE IF NOT EXISTS cotacao_itens (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            cotacao_id BIGINT UNSIGNED NOT NULL,
+            descricao VARCHAR(500) NOT NULL,
+            unidade VARCHAR(20) NULL,
+            quantidade DECIMAL(15,4) NULL,
+            valor_unitario DECIMAL(15,4) NULL,
+            valor_total DECIMAL(15,4) NULL,
+            marca VARCHAR(100) NULL,
+            prazo_entrega VARCHAR(100) NULL,
+            observacao VARCHAR(300) NULL,
+            orcamento_item_id BIGINT UNSIGNED NULL,
+            diferenca_percentual DECIMAL(8,2) NULL,
+            status_comparacao ENUM('nao_comparado','abaixo','igual','acima','muito_acima') DEFAULT 'nao_comparado',
+            INDEX idx_cotacao (cotacao_id),
+            INDEX idx_orcamento_item (orcamento_item_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        $done = true;
+    } catch (Throwable $error) {
+        error_log('[ObraSync] ensure_cotacao_import_tables: ' . $error->getMessage());
+    }
+}
+
+function cotacao_respond(bool $success, mixed $data = [], string $message = '', int $status = 200): never
+{
+    http_response_code($status);
+    echo json_encode(['success' => $success, 'data' => $data, 'message' => $message], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
+// Mapeia um cabeçalho de planilha para o campo correspondente (variações PT/EN).
+function cotacao_map_header(string $h): ?string
+{
+    $h = mb_strtolower(trim(preg_replace('/\s+/', ' ', $h)));
+    $map = [
+        'descricao' => ['descricao', 'descrição', 'description', 'item', 'produto', 'material', 'especificacao', 'especificação', 'discriminacao'],
+        'unidade' => ['unidade', 'unid', 'und', 'medida', 'unit'],
+        'quantidade' => ['quantidade', 'qtd', 'qty', 'qtde', 'quant'],
+        'valor_unitario' => ['valor unit', 'preco unit', 'preço unit', 'v.unit', 'unit price', 'valor_unitario', 'preco_unitario', 'vlr unit', 'unitario', 'unitário'],
+        'valor_total' => ['valor total', 'total', 'subtotal', 'v.total', 'vlr total'],
+        'marca' => ['marca', 'fabricante', 'brand'],
+        'prazo_entrega' => ['prazo', 'entrega', 'delivery'],
+    ];
+    foreach ($map as $field => $variants) {
+        foreach ($variants as $v) {
+            if ($h === $v || str_contains($h, $v)) {
+                return $field;
+            }
+        }
+    }
+    return null;
+}
+
+// Converte texto numérico (1.234,56 ou 1234.56) em float.
+function cotacao_num($v): ?float
+{
+    $s = trim((string) $v);
+    if ($s === '') {
+        return null;
+    }
+    $s = preg_replace('/[^\d,.\-]/', '', $s);
+    if (strpos($s, ',') !== false) {
+        $s = str_replace('.', '', $s);
+        $s = str_replace(',', '.', $s);
+    }
+    return is_numeric($s) ? (float) $s : null;
+}
+
+function cotacao_detect_delim(string $path): string
+{
+    $line = '';
+    if (($fh = fopen($path, 'r')) !== false) {
+        $line = (string) fgets($fh);
+        fclose($fh);
+    }
+    return substr_count($line, ';') > substr_count($line, ',') ? ';' : ',';
+}
+
+// Lê CSV nativamente (sem PhpSpreadsheet). Retorna matriz de linhas.
+function cotacao_parse_csv(string $path): array
+{
+    $rows = [];
+    if (($fh = fopen($path, 'r')) !== false) {
+        $delim = cotacao_detect_delim($path);
+        while (($data = fgetcsv($fh, 0, $delim)) !== false) {
+            $rows[] = $data;
+        }
+        fclose($fh);
+    }
+    return $rows;
+}
+
+// Lê XLSX/XLS via PhpSpreadsheet se disponível; senão lança erro orientando instalação.
+function cotacao_parse_xlsx(string $path): array
+{
+    foreach (['/vendor/autoload.php', '/../vendor/autoload.php'] as $rel) {
+        $autoload = __DIR__ . $rel;
+        if (is_file($autoload)) {
+            require_once $autoload;
+            break;
+        }
+    }
+    if (!class_exists('PhpOffice\\PhpSpreadsheet\\IOFactory')) {
+        fail('Leitura de .xlsx/.xls requer a biblioteca PhpSpreadsheet (composer require phpoffice/phpspreadsheet). Para arquivos simples, exporte como .csv. Veja CLAUDE.md.', 422);
+    }
+    $sheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($path)->getActiveSheet();
+    return $sheet->toArray(null, true, false, false);
+}
+
+// Extrai itens de uma matriz de linhas (planilha/CSV) detectando o cabeçalho.
+function cotacao_itens_de_linhas(array $rows): array
+{
+    $headerIdx = -1;
+    $cols = [];
+    foreach ($rows as $i => $r) {
+        $m = [];
+        foreach ((array) $r as $ci => $cell) {
+            $f = cotacao_map_header((string) $cell);
+            if ($f && !isset($m[$f])) {
+                $m[$f] = $ci;
+            }
+        }
+        if (count($m) >= 2 && isset($m['descricao'])) {
+            $headerIdx = $i;
+            $cols = $m;
+            break;
+        }
+    }
+    if ($headerIdx < 0) {
+        return ['detectado' => false, 'itens' => [], 'preview' => array_slice($rows, 0, 3)];
+    }
+    $itens = [];
+    $n = count($rows);
+    for ($i = $headerIdx + 1; $i < $n; $i++) {
+        $r = (array) $rows[$i];
+        $desc = trim((string) ($r[$cols['descricao']] ?? ''));
+        if ($desc === '') {
+            continue;
+        }
+        $qt = isset($cols['quantidade']) ? cotacao_num($r[$cols['quantidade']] ?? '') : null;
+        $vu = isset($cols['valor_unitario']) ? cotacao_num($r[$cols['valor_unitario']] ?? '') : null;
+        $vt = isset($cols['valor_total']) ? cotacao_num($r[$cols['valor_total']] ?? '') : null;
+        if ($vu === null && $vt !== null && $qt) {
+            $vu = $vt / $qt;
+        }
+        if ($vt === null && $vu !== null && $qt) {
+            $vt = $vu * $qt;
+        }
+        $itens[] = [
+            'descricao' => mb_substr($desc, 0, 500),
+            'unidade' => isset($cols['unidade']) ? mb_substr(trim((string) ($r[$cols['unidade']] ?? '')), 0, 20) : null,
+            'quantidade' => $qt,
+            'valor_unitario' => $vu,
+            'valor_total' => $vt,
+            'marca' => isset($cols['marca']) ? mb_substr(trim((string) ($r[$cols['marca']] ?? '')), 0, 100) : null,
+            'prazo_entrega' => isset($cols['prazo_entrega']) ? mb_substr(trim((string) ($r[$cols['prazo_entrega']] ?? '')), 0, 100) : null,
+        ];
+    }
+    return ['detectado' => true, 'itens' => $itens, 'preview' => array_slice($rows, 0, 3)];
+}
+
+// Extrai itens do texto de um PDF (pdftotext -layout). Heurístico — para revisão.
+function cotacao_itens_de_pdf(string $path): array
+{
+    $bin = trim((string) @shell_exec('command -v pdftotext 2>/dev/null'));
+    if ($bin === '') {
+        fail('Extração de PDF requer o pdftotext (pacote poppler-utils no Debian: sudo apt install poppler-utils). Veja CLAUDE.md.', 422);
+    }
+    $out = $path . '.txt';
+    @shell_exec('pdftotext -layout ' . escapeshellarg($path) . ' ' . escapeshellarg($out) . ' 2>/dev/null');
+    $texto = is_file($out) ? (string) file_get_contents($out) : '';
+    @unlink($out);
+    $itens = [];
+    foreach (preg_split('/\r?\n/', $texto) as $linha) {
+        $l = trim($linha);
+        if (mb_strlen($l) < 6) {
+            continue;
+        }
+        if (!preg_match('/(\d{1,3}(?:\.\d{3})*,\d{2}|\d+,\d{2})/', $l)) {
+            continue;
+        }
+        preg_match_all('/(\d{1,3}(?:\.\d{3})*,\d{2}|\d+,\d{2})/', $l, $vals);
+        $nums = array_values(array_filter(array_map('cotacao_num', $vals[0]), fn ($x) => $x !== null));
+        $unidade = preg_match('/\b(un|und|pe?ç?a?s?|m2|m3|m²|m³|ml|m|kg|vb|cj|pc|l|sc|t|h)\b/i', $l, $um) ? $um[1] : null;
+        $desc = trim(preg_replace('/\s{2,}.*$/', '', $l));
+        if (mb_strlen($desc) < 3) {
+            continue;
+        }
+        $itens[] = [
+            'descricao' => mb_substr($desc, 0, 500),
+            'unidade' => $unidade,
+            'quantidade' => null,
+            'valor_unitario' => $nums[0] ?? null,
+            'valor_total' => count($nums) > 1 ? end($nums) : null,
+            'marca' => null,
+            'prazo_entrega' => null,
+        ];
+    }
+    return ['detectado' => count($itens) > 0, 'itens' => $itens, 'preview' => []];
+}
+
+function cotacao_normalizar_desc(string $s): string
+{
+    $s = ' ' . mb_strtolower($s) . ' ';
+    $s = preg_replace('/[^a-z0-9çãõáéíóúâêôà\s]/u', ' ', $s);
+    $s = preg_replace('/\s+/', ' ', $s);
+    $s = str_replace([' de ', ' da ', ' do ', ' e ', ' com ', ' para ', ' a ', ' o ', ' em ', ' dos ', ' das ', ' no ', ' na '], ' ', $s);
+    return trim(preg_replace('/\s+/', ' ', $s));
+}
+
+function cotacao_similaridade(string $a, string $b): float
+{
+    $a = cotacao_normalizar_desc($a);
+    $b = cotacao_normalizar_desc($b);
+    if ($a === '' || $b === '') {
+        return 0.0;
+    }
+    if ($a === $b) {
+        return 1.0;
+    }
+    $wa = array_unique(array_filter(explode(' ', $a), fn ($w) => mb_strlen($w) > 2));
+    $wb = array_unique(array_filter(explode(' ', $b), fn ($w) => mb_strlen($w) > 2));
+    if (!$wa || !$wb) {
+        return 0.0;
+    }
+    $inter = count(array_intersect($wa, $wb));
+    $union = count(array_unique(array_merge($wa, $wb)));
+    return $union ? $inter / $union : 0.0;
+}
+
+function cotacao_classificar(float $diffPercent): string
+{
+    if ($diffPercent <= -5) {
+        return 'abaixo';
+    }
+    if ($diffPercent <= 5) {
+        return 'igual';
+    }
+    if ($diffPercent <= 20) {
+        return 'acima';
+    }
+    return 'muito_acima';
+}
+
+function cotacao_get_full(PDO $pdo, int $id): ?array
+{
+    $c = $pdo->prepare('SELECT * FROM cotacao_fornecedor WHERE id = ?');
+    $c->execute([$id]);
+    $cot = $c->fetch();
+    if (!$cot) {
+        return null;
+    }
+    $it = $pdo->prepare('SELECT * FROM cotacao_itens WHERE cotacao_id = ? ORDER BY id');
+    $it->execute([$id]);
+    $cot['itens'] = $it->fetchAll();
+    return $cot;
+}
+
+function handle_cotacoes_module(PDO $pdo, string $method, array $query, array $config, array $authUser): never
+{
+    ensure_cotacao_import_tables($pdo);
+    $action = strtolower(trim((string) ($query['action'] ?? '')));
+    $intOrNull = static fn ($v) => ($v === null || $v === '') ? null : (int) $v;
+    try {
+        if ($action === 'list') {
+            require_method($method, ['GET']);
+            $where = [];
+            $params = [];
+            if (!empty($query['obra_id'])) { $where[] = 'obra_id = ?'; $params[] = (int) $query['obra_id']; }
+            if (!empty($query['purchase_order_id'])) { $where[] = 'purchase_order_id = ?'; $params[] = (int) $query['purchase_order_id']; }
+            if (!empty($query['status'])) { $where[] = 'status = ?'; $params[] = (string) $query['status']; }
+            $sql = 'SELECT c.*, (SELECT COUNT(*) FROM cotacao_itens i WHERE i.cotacao_id = c.id) AS total_itens FROM cotacao_fornecedor c'
+                . ($where ? ' WHERE ' . implode(' AND ', $where) : '') . ' ORDER BY c.created_at DESC, c.id DESC';
+            $stmt = $pdo->prepare($sql);
+            $stmt->execute($params);
+            cotacao_respond(true, $stmt->fetchAll());
+        }
+
+        if ($action === 'get') {
+            require_method($method, ['GET']);
+            $full = cotacao_get_full($pdo, (int) ($query['id'] ?? 0));
+            if (!$full) {
+                cotacao_respond(false, [], 'Cotação não encontrada.', 404);
+            }
+            cotacao_respond(true, $full);
+        }
+
+        if ($action === 'importarexcel' || $action === 'importarpdf' || $action === 'importar') {
+            require_method($method, ['POST']);
+            $file = $_FILES['file'] ?? $_FILES['arquivo'] ?? null;
+            if (!$file || empty($file['tmp_name'])) {
+                cotacao_respond(false, [], 'Arquivo não informado.', 400);
+            }
+            if ((int) ($file['size'] ?? 0) > 20 * 1024 * 1024) {
+                cotacao_respond(false, [], 'Arquivo acima de 20 MB.', 413);
+            }
+            $fornecedor = trim((string) ($_POST['fornecedor_nome'] ?? ''));
+            if ($fornecedor === '') {
+                cotacao_respond(false, [], 'Informe o nome do fornecedor.', 400);
+            }
+            $ext = strtolower(pathinfo((string) ($file['name'] ?? ''), PATHINFO_EXTENSION));
+            $uploadDir = rtrim($config['upload_dir'] ?? '/var/lib/financeiro/uploads', '/') . '/cotacoes';
+            if (!is_dir($uploadDir)) {
+                mkdir($uploadDir, 0755, true);
+            }
+            $path = store_upload($file, $uploadDir, ['pdf', 'xlsx', 'xls', 'csv'], []);
+            if ($ext === 'csv') {
+                $parsed = cotacao_itens_de_linhas(cotacao_parse_csv($path));
+            } elseif ($ext === 'xlsx' || $ext === 'xls') {
+                $parsed = cotacao_itens_de_linhas(cotacao_parse_xlsx($path));
+            } else {
+                $parsed = cotacao_itens_de_pdf($path);
+            }
+            $cotId = insert_dynamic($pdo, 'cotacao_fornecedor', [
+                'obra_id' => $intOrNull($_POST['obra_id'] ?? null),
+                'purchase_order_id' => $intOrNull($_POST['purchase_order_id'] ?? null),
+                'fornecedor_id' => $intOrNull($_POST['fornecedor_id'] ?? null),
+                'fornecedor_nome' => mb_substr($fornecedor, 0, 200),
+                'data_cotacao' => ($_POST['data_cotacao'] ?? '') ?: null,
+                'validade_cotacao' => ($_POST['validade_cotacao'] ?? '') ?: null,
+                'arquivo_original' => $path,
+                'arquivo_nome' => mb_substr((string) ($file['name'] ?? ''), 0, 200),
+                'arquivo_tipo' => $ext,
+                'status' => 'importada',
+            ]);
+            foreach ($parsed['itens'] as $item) {
+                insert_dynamic($pdo, 'cotacao_itens', [
+                    'cotacao_id' => $cotId,
+                    'descricao' => $item['descricao'],
+                    'unidade' => $item['unidade'],
+                    'quantidade' => $item['quantidade'],
+                    'valor_unitario' => $item['valor_unitario'],
+                    'valor_total' => $item['valor_total'],
+                    'marca' => $item['marca'],
+                    'prazo_entrega' => $item['prazo_entrega'],
+                ]);
+            }
+            server_audit($pdo, $authUser, 'create', 'cotacoes', $cotId, $fornecedor);
+            $full = cotacao_get_full($pdo, $cotId);
+            $full['detectado'] = $parsed['detectado'];
+            $full['preview'] = $parsed['preview'] ?? [];
+            cotacao_respond(true, $full, count($parsed['itens']) . ' item(ns) importado(s). Revise antes de comparar.', 201);
+        }
+
+        if ($action === 'salvaritens') {
+            require_method($method, ['POST']);
+            $payload = read_json();
+            $cotId = (int) ($payload['cotacao_id'] ?? 0);
+            if ($cotId <= 0 || !cotacao_get_full($pdo, $cotId)) {
+                cotacao_respond(false, [], 'Cotação não encontrada.', 404);
+            }
+            $pdo->prepare('DELETE FROM cotacao_itens WHERE cotacao_id = ?')->execute([$cotId]);
+            foreach ((array) ($payload['itens'] ?? []) as $item) {
+                $desc = trim((string) ($item['descricao'] ?? ''));
+                if ($desc === '') {
+                    continue;
+                }
+                insert_dynamic($pdo, 'cotacao_itens', [
+                    'cotacao_id' => $cotId,
+                    'descricao' => mb_substr($desc, 0, 500),
+                    'unidade' => mb_substr((string) ($item['unidade'] ?? ''), 0, 20) ?: null,
+                    'quantidade' => cotacao_num($item['quantidade'] ?? ''),
+                    'valor_unitario' => cotacao_num($item['valor_unitario'] ?? ''),
+                    'valor_total' => cotacao_num($item['valor_total'] ?? ''),
+                    'marca' => mb_substr((string) ($item['marca'] ?? ''), 0, 100) ?: null,
+                    'prazo_entrega' => mb_substr((string) ($item['prazo_entrega'] ?? ''), 0, 100) ?: null,
+                ]);
+            }
+            server_audit($pdo, $authUser, 'update', 'cotacoes', $cotId, 'itens');
+            cotacao_respond(true, cotacao_get_full($pdo, $cotId), 'Itens salvos.');
+        }
+
+        if ($action === 'comparar') {
+            require_method($method, ['POST']);
+            $payload = read_json();
+            $cotId = (int) ($payload['cotacao_id'] ?? 0);
+            $cot = cotacao_get_full($pdo, $cotId);
+            if (!$cot) {
+                cotacao_respond(false, [], 'Cotação não encontrada.', 404);
+            }
+            $obraId = (int) ($payload['obra_id'] ?? $cot['obra_id'] ?? 0);
+            $orc = [];
+            if ($obraId && resolve_existing_table($pdo, ['orcamento_obra_itens'], false)) {
+                $stmt = $pdo->prepare('SELECT id, description, unitPrice FROM orcamento_obra_itens WHERE projectId = ?');
+                $stmt->execute([$obraId]);
+                $orc = $stmt->fetchAll();
+            }
+            $upd = $pdo->prepare('UPDATE cotacao_itens SET orcamento_item_id = ?, diferenca_percentual = ?, status_comparacao = ? WHERE id = ?');
+            $okCount = 0;
+            $comparaveis = 0;
+            foreach ($cot['itens'] as $item) {
+                $best = null;
+                $bestSim = 0.0;
+                foreach ($orc as $o) {
+                    $sim = cotacao_similaridade($item['descricao'], (string) ($o['description'] ?? ''));
+                    if ($sim > $bestSim) {
+                        $bestSim = $sim;
+                        $best = $o;
+                    }
+                }
+                if ($best && $bestSim >= 0.4 && (float) $best['unitPrice'] > 0 && $item['valor_unitario'] !== null) {
+                    $diff = ((float) $item['valor_unitario'] - (float) $best['unitPrice']) / (float) $best['unitPrice'] * 100;
+                    $classe = cotacao_classificar($diff);
+                    $upd->execute([(int) $best['id'], round($diff, 2), $classe, (int) $item['id']]);
+                    $comparaveis++;
+                    if (in_array($classe, ['abaixo', 'igual'], true)) {
+                        $okCount++;
+                    }
+                } else {
+                    $upd->execute([null, null, 'nao_comparado', (int) $item['id']]);
+                }
+            }
+            $score = $comparaveis ? round($okCount / $comparaveis * 100, 2) : null;
+            $pdo->prepare('UPDATE cotacao_fornecedor SET status = ?, score = ? WHERE id = ?')->execute(['comparada', $score, $cotId]);
+            server_audit($pdo, $authUser, 'update', 'cotacoes', $cotId, 'comparacao');
+            cotacao_respond(true, cotacao_get_full($pdo, $cotId), $comparaveis ? "Comparados $comparaveis item(ns). Score: " . ($score ?? 0) . '%.' : 'Nenhum item correspondente no orçamento desta obra.');
+        }
+
+        if ($action === 'exportarcsv') {
+            require_method($method, ['GET']);
+            $cot = cotacao_get_full($pdo, (int) ($query['id'] ?? 0));
+            if (!$cot) {
+                fail('Cotação não encontrada.', 404);
+            }
+            $orcPreco = [];
+            $ids = array_filter(array_map(fn ($i) => (int) ($i['orcamento_item_id'] ?? 0), $cot['itens']));
+            if ($ids) {
+                $in = implode(',', array_fill(0, count($ids), '?'));
+                $stmt = $pdo->prepare("SELECT id, unitPrice FROM orcamento_obra_itens WHERE id IN ($in)");
+                $stmt->execute(array_values($ids));
+                foreach ($stmt->fetchAll() as $o) {
+                    $orcPreco[(int) $o['id']] = (float) $o['unitPrice'];
+                }
+            }
+            header_remove('Content-Type');
+            header('Content-Type: text/csv; charset=utf-8');
+            header('Content-Disposition: attachment; filename="comparativo-cotacao-' . (int) $cot['id'] . '.csv"');
+            $out = fopen('php://output', 'w');
+            fwrite($out, "\xEF\xBB\xBF");
+            fputcsv($out, ['Descricao', 'Unidade', 'Qtd', 'Valor Orcado', 'Valor Cotado', 'Diferenca %', 'Situacao'], ';');
+            foreach ($cot['itens'] as $i) {
+                fputcsv($out, [
+                    $i['descricao'],
+                    $i['unidade'],
+                    $i['quantidade'],
+                    isset($orcPreco[(int) ($i['orcamento_item_id'] ?? 0)]) ? number_format($orcPreco[(int) $i['orcamento_item_id']], 2, ',', '.') : '',
+                    $i['valor_unitario'] !== null ? number_format((float) $i['valor_unitario'], 2, ',', '.') : '',
+                    $i['diferenca_percentual'],
+                    $i['status_comparacao'],
+                ], ';');
+            }
+            fclose($out);
+            exit;
+        }
+
+        if ($action === 'delete') {
+            require_method($method, ['DELETE', 'POST']);
+            $id = (int) ($query['id'] ?? 0);
+            $cot = cotacao_get_full($pdo, $id);
+            if ($cot) {
+                if (!empty($cot['arquivo_original']) && is_file($cot['arquivo_original'])) {
+                    @unlink($cot['arquivo_original']);
+                }
+                $pdo->prepare('DELETE FROM cotacao_itens WHERE cotacao_id = ?')->execute([$id]);
+                $pdo->prepare('DELETE FROM cotacao_fornecedor WHERE id = ?')->execute([$id]);
+                server_audit($pdo, $authUser, 'delete', 'cotacoes', $id, '');
+            }
+            cotacao_respond(true, [], 'Cotação removida.');
+        }
+
+        cotacao_respond(false, [], 'Ação de cotação inválida.', 400);
+    } catch (Throwable $e) {
+        error_log('[ObraSync cotacoes] ' . $e->getMessage() . ' em ' . $e->getFile() . ':' . $e->getLine());
+        cotacao_respond(false, [], 'Erro ao processar a cotação.', 500);
     }
 }
 

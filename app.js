@@ -112,6 +112,7 @@ const modules = [
   ["sales", "Vendas/Contratos"],
   ["viabilityAnalyses", "Viabilidade Financeira"],
   ["viabilidadeObra", "Análise de Viabilidade"],
+  ["cotacoes", "Cotações"],
   ["purchaseOrders", "Pedidos de compra"],
   ["projectSchedule", "Cronograma Físico-Financeiro"],
   ["projectMilestones", "Marcos da obra"],
@@ -167,7 +168,7 @@ const sidebarSections = [
   { id: "cadastros", label: "Cadastros", icon: "C", modules: ["clients", "suppliers", "products", "services", "categories", "costCenters", "bankAccounts"] },
   { id: "comercial", label: "Comercial", icon: "V", modules: ["budgets", "proposals", "proposalModels", "proposalAreas", "proposalActionTypes", "proposalServiceSubtypes", "sales"] },
   { id: "viabilidade", label: "Viabilidade", icon: "📋", modules: ["viabilidadeObra"] },
-  { id: "obras", label: "Obras/Projetos", icon: "O", modules: ["projects", "projectCosts", "projectRevenues", "fiscalDocuments", "rdo", "projectNotifications", "projectTrackingLinks", "projectReport"] },
+  { id: "obras", label: "Obras/Projetos", icon: "O", modules: ["projects", "cotacoes", "projectCosts", "projectRevenues", "fiscalDocuments", "rdo", "projectNotifications", "projectTrackingLinks", "projectReport"] },
   { id: "qualidadePbqph", label: "Qualidade PBQP-H", icon: "✅", modules: ["qualidadeDashboard", "qualidadePolitica", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos", "qualidadeAuditorias"] },
   { id: "orcamentoObra", label: "Orçamento de Obra", icon: "Σ", modules: ["workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "purchaseOrders"] },
   { id: "planejamento", label: "Planejamento", icon: "P", modules: ["projectSchedule", "projectMilestones", "agenda", "kanban", "technicalReports"] },
@@ -204,14 +205,14 @@ const roleModules = {
     "reports", "reportFinancial", "reportClient", "reportSupplier", "reportCostCenter", "reportProject", "exports", "systemVersion", "qualidadeDashboard",
   ],
   comercial: ["dashboard", "clients", "projects", "projectSchedule", "agenda", "kanban", "workBudgets", "abcCurve", "viabilityAnalyses", "viabilidadeObra", "budgets", "proposals", "proposalModels", "sales", "reportClient", "systemVersion"],
-  engenharia: ["dashboard", "rdo", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "viabilityAnalyses", "viabilidadeObra", "purchaseOrders", "fiscalDocuments", "technicalReports", "projectReport", "proposals", "reportProject", "systemVersion", "qualidadeDashboard", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
-  gestor_obra: ["dashboard", "rdo", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "viabilityAnalyses", "viabilidadeObra", "purchaseOrders", "fiscalDocuments", "technicalReports", "projectReport", "proposals", "reportProject", "systemVersion", "qualidadeDashboard", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
+  engenharia: ["dashboard", "rdo", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "viabilityAnalyses", "viabilidadeObra", "purchaseOrders", "cotacoes", "fiscalDocuments", "technicalReports", "projectReport", "proposals", "reportProject", "systemVersion", "qualidadeDashboard", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
+  gestor_obra: ["dashboard", "rdo", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "viabilityAnalyses", "viabilidadeObra", "purchaseOrders", "cotacoes", "fiscalDocuments", "technicalReports", "projectReport", "proposals", "reportProject", "systemVersion", "qualidadeDashboard", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
   equipe_campo: ["dashboard", "projectReport", "systemVersion"],
   cliente_obra: ["dashboard", "projectReport", "projectSchedule", "technicalReports", "systemVersion"],
   fornecedor_terceiro: ["dashboard", "systemVersion"],
   consulta: ["dashboard", "projectReport", "cashFlow", "dre", "reports", "reportFinancial", "reportClient", "reportSupplier", "reportCostCenter", "reportProject", "exports", "qualidadeDashboard"],
   gerente: modules.map(([key]) => key).filter((k) => !["users", "permissions"].includes(k)),
-  operador: ["dashboard", "rdo", "clients", "suppliers", "products", "services", "categories", "costCenters", "bankAccounts", "projects", "projectCosts", "projectRevenues", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "ownCompositions", "quotes", "abcCurve", "fiscalDocuments", "receivable", "payable", "cashMoves", "cashFlow", "reconciliation", "budgets", "proposals", "sales", "purchaseOrders", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectReport", "reports", "reportFinancial", "reportClient", "reportSupplier", "reportCostCenter", "reportProject", "myProfile", "qualidadeDashboard", "qualidadeFvs", "qualidadeFvm", "qualidadeNc"],
+  operador: ["dashboard", "rdo", "clients", "suppliers", "products", "services", "categories", "costCenters", "bankAccounts", "projects", "projectCosts", "projectRevenues", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "ownCompositions", "quotes", "abcCurve", "fiscalDocuments", "receivable", "payable", "cashMoves", "cashFlow", "reconciliation", "budgets", "proposals", "sales", "purchaseOrders", "cotacoes", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectReport", "reports", "reportFinancial", "reportClient", "reportSupplier", "reportCostCenter", "reportProject", "myProfile", "qualidadeDashboard", "qualidadeFvs", "qualidadeFvm", "qualidadeNc"],
   visualizador: modules.map(([key]) => key),
 };
 
@@ -221,10 +222,10 @@ const roleModules = {
 const EDITABLE_BY_ROLE = {
   financeiro: ["fiscalDocuments", "receivable", "payable", "cashMoves", "cashFlow", "reconciliation", "categories", "costCenters", "bankAccounts", "chartAccounts", "journalEntries", "taxDocuments", "taxes", "exports", "projectSchedule", "agenda", "kanban", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "sinapiSettings", "quotes", "sales", "viabilityAnalyses", "viabilidadeObra"],
   comercial: ["clients", "budgets", "proposals", "agenda", "kanban", "viabilityAnalyses", "viabilidadeObra"],
-  engenharia: ["rdo", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "purchaseOrders", "fiscalDocuments", "technicalReports", "viabilidadeObra", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
-  gestor_obra: ["rdo", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "purchaseOrders", "fiscalDocuments", "technicalReports", "viabilidadeObra", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
+  engenharia: ["rdo", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "purchaseOrders", "cotacoes", "fiscalDocuments", "technicalReports", "viabilidadeObra", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
+  gestor_obra: ["rdo", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "purchaseOrders", "cotacoes", "fiscalDocuments", "technicalReports", "viabilidadeObra", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
   gerente: modules.map(([k]) => k).filter((k) => !["users", "permissions"].includes(k)),
-  operador: ["rdo", "clients", "suppliers", "products", "services", "categories", "costCenters", "bankAccounts", "projects", "projectCosts", "projectRevenues", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "ownCompositions", "quotes", "fiscalDocuments", "receivable", "payable", "cashMoves", "reconciliation", "budgets", "proposals", "sales", "purchaseOrders", "projectSchedule", "projectMilestones", "agenda", "kanban", "qualidadeFvs", "qualidadeFvm", "qualidadeNc"],
+  operador: ["rdo", "clients", "suppliers", "products", "services", "categories", "costCenters", "bankAccounts", "projects", "projectCosts", "projectRevenues", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "ownCompositions", "quotes", "fiscalDocuments", "receivable", "payable", "cashMoves", "reconciliation", "budgets", "proposals", "sales", "purchaseOrders", "cotacoes", "projectSchedule", "projectMilestones", "agenda", "kanban", "qualidadeFvs", "qualidadeFvm", "qualidadeNc"],
 };
 
 const moduleLabels = Object.fromEntries(modules);
@@ -2646,6 +2647,7 @@ function render() {
   if (currentModule === "workBudgets") return renderWorkBudgets();
   if (currentModule === "viabilityAnalyses") return renderViability();
   if (currentModule === "viabilidadeObra") { viabilidadeObraOpenId = null; return renderViabilidadeList(); }
+  if (currentModule === "cotacoes") { cotacaoOpenId = null; return renderCotacoes(); }
   if (currentModule === "plugins") return renderPlugins();
   if (currentModule === "preferences") return renderPreferences();
   if (currentModule === "sinapiReferences") return renderSinapiReferences();
@@ -5472,6 +5474,13 @@ function renderCrud(key) {
   qs("content").querySelectorAll("[data-create-receivable]").forEach((button) => button.addEventListener("click", () => createReceivableFromSale(button.dataset.createReceivable)));
   qs("content").querySelectorAll("[data-print-po]").forEach((button) => button.addEventListener("click", () => openPurchaseOrderPrint(button.dataset.printPo)));
   qs("content").querySelectorAll("[data-po-fvm]").forEach((button) => button.addEventListener("click", () => abrirFvmDoPedido(button.dataset.poFvm)));
+  qs("content").querySelectorAll("[data-po-cotacao]").forEach((button) => button.addEventListener("click", () => {
+    const po = byId("purchaseOrders", button.dataset.poCotacao);
+    currentModule = "cotacoes";
+    cotacaoOpenId = null;
+    render();
+    setTimeout(() => openCotacaoImport({ obra_id: po?.projectId || "", purchase_order_id: po?.id || "" }), 60);
+  }));
   qs("content").querySelectorAll("[data-supplier-qual]").forEach((button) => button.addEventListener("click", () => openSupplierQualificationForm(button.dataset.supplierQual)));
   qs("content").querySelectorAll("[data-generate-proposal]").forEach((button) => button.addEventListener("click", () => openProposalGenerator(button.dataset.generateProposal)));
   qs("content").querySelectorAll("[data-add-budget-item]").forEach((button) => button.addEventListener("click", () => {
@@ -5532,7 +5541,7 @@ function extraRowActions(actionKey, row) {
     return exists ? "" : `<button class="secondary" type="button" data-create-receivable="${row.id}">Gerar conta</button>`;
   }
   if (actionKey === "purchaseOrders") {
-    return `<button class="secondary" type="button" data-print-po="${row.id}">Imprimir / Gerar PDF</button><button class="secondary" type="button" data-po-fvm="${row.id}">Registrar recebimento (FVM)</button>`;
+    return `<button class="secondary" type="button" data-print-po="${row.id}">Imprimir / Gerar PDF</button><button class="secondary" type="button" data-po-fvm="${row.id}">Registrar recebimento (FVM)</button><button class="secondary" type="button" data-po-cotacao="${row.id}">Importar cotação</button>`;
   }
   if (actionKey === "suppliers") {
     return `<button class="secondary" type="button" data-supplier-qual="${row.id}">Qualificação PBQP-H</button>`;
@@ -10851,6 +10860,271 @@ function parseCsv(text) {
 
 function canGenerateProposalForBudget(budget) {
   return ["rascunho", "em analise", "aprovado"].includes(normalizedText(budget?.status || ""));
+}
+
+// ─── Módulo de importação e comparação de cotações de fornecedores ──────────
+let cotacaoOpenId = null;
+let cotacaoDetail = null;
+let cotacaoList = [];
+const COTACAO_STATUS = { importada: ["Importada", "cinza"], comparada: ["Comparada", "amarelo"], aprovada: ["Aprovada", "verde"], reprovada: ["Reprovada", "vermelho"] };
+const COTACAO_COMPARA = { nao_comparado: ["Sem correspondência", "cinza"], abaixo: ["Abaixo do orçado", "verde"], igual: ["Equivalente", "amarelo"], acima: ["Acima 5-20%", "laranja"], muito_acima: ["Muito acima >20%", "vermelho"] };
+function cotacaoBadge(meta, key) {
+  const [label, cls] = meta[key] || Object.values(meta)[0];
+  return `<span class="sup-qual sup-qual-${cls}">${label}</span>`;
+}
+async function cotacaoApi(action, options = {}, extra = "") {
+  return apiModuleRequest(`?module=cotacoes&action=${action}${extra}`, options);
+}
+
+function renderCotacoes() {
+  if (cotacaoOpenId) return renderCotacaoDetalhe();
+  return renderCotacaoLista();
+}
+
+async function renderCotacaoLista() {
+  const content = qs("content");
+  const editable = canEditModule("cotacoes");
+  const head = `
+    <section class="module-head">
+      <div><h2>Cotações de Fornecedores</h2><p>Importe orçamentos em PDF, Excel (.xlsx/.xls) ou CSV e compare automaticamente com o orçamento da obra.</p></div>
+      ${editable ? '<button class="primary" type="button" id="cotNova">+ Importar cotação</button>' : ""}
+    </section>`;
+  if (!serverMode) {
+    content.innerHTML = head + '<div class="empty">O módulo de cotações requer conexão com o servidor.</div>';
+    qs("cotNova")?.addEventListener("click", () => openCotacaoImport());
+    return;
+  }
+  content.innerHTML = head + '<div class="empty">Carregando cotações…</div>';
+  qs("cotNova")?.addEventListener("click", () => openCotacaoImport());
+  let list;
+  try {
+    list = await cotacaoApi("list") || [];
+  } catch (error) {
+    content.innerHTML = head + `<div class="empty">Não foi possível carregar: ${svgText(error.message)}</div>`;
+    qs("cotNova")?.addEventListener("click", () => openCotacaoImport());
+    return;
+  }
+  if (currentModule !== "cotacoes" || cotacaoOpenId) return;
+  cotacaoList = list;
+  const vencendo = list.filter((c) => { if (!c.validade_cotacao) return false; const d = Math.ceil((new Date(c.validade_cotacao) - new Date()) / 86400000); return d >= 0 && d <= 7; });
+  const rows = list.map((c) => `
+    <tr>
+      <td>${svgText(c.fornecedor_nome)}</td>
+      <td>${c.obra_id ? svgText(nameOf("projects", c.obra_id) || "") : "—"}</td>
+      <td>${svgText((c.arquivo_tipo || "").toUpperCase())}</td>
+      <td>${Number(c.total_itens || 0)}</td>
+      <td>${c.score != null ? Number(c.score).toFixed(0) + "%" : "—"}</td>
+      <td>${cotacaoBadge(COTACAO_STATUS, c.status)}</td>
+      <td>${asDate(c.created_at)}</td>
+      <td><button class="secondary" type="button" data-open="${escapeHtml(c.id)}">Abrir</button></td>
+    </tr>`).join("");
+  content.innerHTML = `
+    ${head}
+    ${vencendo.length ? `<div class="alert alert-warning">⚠️ ${vencendo.length} cotação(ões) vencendo em até 7 dias.</div>` : ""}
+    ${list.length
+      ? `<section class="table-wrap"><table><thead><tr><th>Fornecedor</th><th>Obra</th><th>Tipo</th><th>Itens</th><th>Score</th><th>Status</th><th>Importada</th><th>Ações</th></tr></thead><tbody>${rows}</tbody></table></section>`
+      : '<div class="empty">Nenhuma cotação importada. Clique em "+ Importar cotação".</div>'}`;
+  qs("cotNova")?.addEventListener("click", () => openCotacaoImport());
+  content.querySelectorAll("[data-open]").forEach((el) => el.addEventListener("click", () => abrirCotacao(el.dataset.open)));
+}
+
+async function abrirCotacao(id) {
+  cotacaoOpenId = id;
+  cotacaoDetail = null;
+  qs("content").innerHTML = '<div class="empty">Carregando cotação…</div>';
+  try {
+    cotacaoDetail = await cotacaoApi("get", {}, `&id=${encodeURIComponent(id)}`);
+  } catch (error) {
+    qs("content").innerHTML = `<div class="empty">Erro: ${svgText(error.message)}</div>`;
+    return;
+  }
+  if (currentModule === "cotacoes") renderCotacaoDetalhe();
+}
+
+function renderCotacaoDetalhe() {
+  const c = cotacaoDetail;
+  if (!c) return renderCotacaoLista();
+  const editable = canEditModule("cotacoes");
+  const itens = c.itens || [];
+  const totalCotado = itens.reduce((s, i) => s + Number(i.valor_total || (Number(i.valor_unitario || 0) * Number(i.quantidade || 0)) || 0), 0);
+  const linhas = itens.map((i) => `
+    <tr>
+      <td>${svgText(i.descricao)}</td>
+      <td>${svgText(i.unidade || "")}</td>
+      <td>${i.quantidade != null ? Number(i.quantidade).toLocaleString("pt-BR") : ""}</td>
+      <td>${i.valor_unitario != null ? asMoney(i.valor_unitario) : "—"}</td>
+      <td>${i.diferenca_percentual != null ? Number(i.diferenca_percentual).toFixed(1) + "%" : "—"}</td>
+      <td>${cotacaoBadge(COTACAO_COMPARA, i.status_comparacao)}</td>
+    </tr>`).join("");
+  qs("content").innerHTML = `
+    <section class="module-head">
+      <div>
+        <button class="secondary" type="button" id="cotVoltar">← Voltar</button>
+        <h2>Cotação — ${svgText(c.fornecedor_nome)}</h2>
+        <p>${c.obra_id ? "Obra: " + svgText(nameOf("projects", c.obra_id) || "—") + " · " : ""}${cotacaoBadge(COTACAO_STATUS, c.status)} · ${itens.length} itens · Total ${asMoney(totalCotado)}${c.score != null ? " · Score " + Number(c.score).toFixed(0) + "%" : ""}</p>
+      </div>
+      <div class="viab-detail-actions">
+        ${editable ? '<button class="secondary" type="button" id="cotEditar">Editar itens</button>' : ""}
+        ${editable ? '<button class="primary" type="button" id="cotComparar">Comparar com orçamento</button>' : ""}
+        <button class="secondary" type="button" id="cotCsv">Exportar CSV</button>
+        <button class="secondary" type="button" id="cotPdf">Imprimir comparativo</button>
+      </div>
+    </section>
+    ${itens.length
+      ? `<section class="table-wrap"><table><thead><tr><th>Descrição</th><th>Unid.</th><th>Qtd</th><th>Valor cotado</th><th>Dif. %</th><th>Situação</th></tr></thead><tbody>${linhas}</tbody></table></section>`
+      : '<div class="empty">Nenhum item. Edite os itens (útil para PDFs com extração imprecisa).</div>'}`;
+  qs("cotVoltar").addEventListener("click", () => { cotacaoOpenId = null; cotacaoDetail = null; renderCotacaoLista(); });
+  qs("cotEditar")?.addEventListener("click", () => openCotacaoEditarItens());
+  qs("cotComparar")?.addEventListener("click", () => cotacaoComparar());
+  qs("cotCsv").addEventListener("click", () => cotacaoExportarCsv(c.id));
+  qs("cotPdf").addEventListener("click", () => cotacaoImprimir());
+}
+
+function openCotacaoImport(prefill = {}) {
+  if (!canEditModule("cotacoes")) return;
+  if (!serverMode) return alert("Requer conexão com o servidor.");
+  const projOpts = ['<option value="">— Sem obra —</option>'].concat((db.projects || []).map((p) => `<option value="${escapeHtml(p.id)}" ${sameId(p.id, prefill.obra_id) ? "selected" : ""}>${escapeHtml(p.name)}</option>`)).join("");
+  const poOpts = ['<option value="">— Sem pedido —</option>'].concat((db.purchaseOrders || []).map((p) => `<option value="${escapeHtml(p.id)}" ${sameId(p.id, prefill.purchase_order_id) ? "selected" : ""}>${escapeHtml(p.number || p.id)}</option>`)).join("");
+  const supOpts = (db.suppliers || []).map((s) => `<option value="${escapeHtml(s.name)}">`).join("");
+  const { close, q } = viabilidadeDialog(`
+    <div class="viab-modal">
+      <header class="viab-modal-head"><h3>Importar cotação</h3><button type="button" class="viab-x" data-close>✕</button></header>
+      <div class="viab-modal-body">
+        <div class="form-grid">
+          <label>Obra<select id="cotObra">${projOpts}</select></label>
+          <label>Pedido de compra (opcional)<select id="cotPedido">${poOpts}</select></label>
+          <label>Fornecedor<input id="cotForn" list="cotFornSug" placeholder="Nome do fornecedor"><datalist id="cotFornSug">${supOpts}</datalist></label>
+          <label>Data da cotação<input type="date" id="cotData"></label>
+          <label>Validade<input type="date" id="cotValidade"></label>
+          <label>Arquivo (PDF, XLSX, XLS, CSV — máx 20MB)<input type="file" id="cotFile" accept=".pdf,.xlsx,.xls,.csv"></label>
+        </div>
+        <p class="muted">CSV é lido nativamente. .xlsx/.xls exigem a lib PhpSpreadsheet no servidor; PDF exige pdftotext (poppler-utils). Itens importados podem ser revisados antes de comparar.</p>
+      </div>
+      <footer class="viab-modal-foot"><button type="button" class="secondary" data-close>Cancelar</button><button type="button" class="primary" data-save>Importar</button></footer>
+    </div>`, "viab-dialog-md");
+  q("[data-save]").addEventListener("click", async () => {
+    const file = q("#cotFile").files?.[0];
+    const forn = q("#cotForn").value.trim();
+    if (!forn) return alert("Informe o fornecedor.");
+    if (!file) return alert("Selecione um arquivo.");
+    if (file.size > 20 * 1024 * 1024) return alert("Arquivo acima de 20 MB.");
+    const btn = q("[data-save]");
+    btn.disabled = true;
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("fornecedor_nome", forn);
+      if (q("#cotObra").value) form.append("obra_id", q("#cotObra").value);
+      if (q("#cotPedido").value) form.append("purchase_order_id", q("#cotPedido").value);
+      if (q("#cotData").value) form.append("data_cotacao", q("#cotData").value);
+      if (q("#cotValidade").value) form.append("validade_cotacao", q("#cotValidade").value);
+      const res = await fetchForm("?module=cotacoes&action=importar", form);
+      const data = res?.data ?? res;
+      close();
+      showToast(res?.message || "Cotação importada.");
+      if (data?.id) { cotacaoOpenId = data.id; cotacaoDetail = data; renderCotacoes(); }
+      else renderCotacaoLista();
+    } catch (error) {
+      btn.disabled = false;
+      alert(`Falha na importação: ${error.message}`);
+    }
+  });
+}
+
+function openCotacaoEditarItens() {
+  if (!cotacaoDetail || !canEditModule("cotacoes")) return;
+  const linhaInputs = (it = {}) => `
+    <tr class="cot-edit-row">
+      <td><input value="${escapeHtml(it.descricao || "")}" data-f="descricao"></td>
+      <td><input value="${escapeHtml(it.unidade || "")}" data-f="unidade" size="5"></td>
+      <td><input value="${escapeHtml(it.quantidade || "")}" data-f="quantidade" size="6"></td>
+      <td><input value="${escapeHtml(it.valor_unitario || "")}" data-f="valor_unitario" size="8"></td>
+      <td><input value="${escapeHtml(it.marca || "")}" data-f="marca" size="8"></td>
+      <td><button type="button" class="danger cot-del-row">✕</button></td>
+    </tr>`;
+  const { close, q, dialog } = viabilidadeDialog(`
+    <div class="viab-modal">
+      <header class="viab-modal-head"><h3>Revisar itens da cotação</h3><button type="button" class="viab-x" data-close>✕</button></header>
+      <div class="viab-modal-body">
+        <table class="cot-edit-table"><thead><tr><th>Descrição</th><th>Un.</th><th>Qtd</th><th>V. unit.</th><th>Marca</th><th></th></tr></thead>
+          <tbody id="cotEditBody">${(cotacaoDetail.itens || []).map(linhaInputs).join("") || linhaInputs()}</tbody></table>
+        <button type="button" class="secondary" id="cotAddRow">+ Adicionar item</button>
+      </div>
+      <footer class="viab-modal-foot"><button type="button" class="secondary" data-close>Cancelar</button><button type="button" class="primary" data-save>Salvar itens</button></footer>
+    </div>`, "viab-dialog-lg");
+  const wire = () => dialog.querySelectorAll(".cot-del-row").forEach((b) => b.onclick = () => { b.closest("tr").remove(); });
+  wire();
+  q("#cotAddRow").addEventListener("click", () => { q("#cotEditBody").insertAdjacentHTML("beforeend", linhaInputs()); wire(); });
+  q("[data-save]").addEventListener("click", async () => {
+    const itens = [...dialog.querySelectorAll(".cot-edit-row")].map((tr) => {
+      const o = {};
+      tr.querySelectorAll("[data-f]").forEach((inp) => o[inp.dataset.f] = inp.value);
+      return o;
+    }).filter((o) => (o.descricao || "").trim());
+    try {
+      const data = await cotacaoApi("salvarItens", { method: "POST", body: JSON.stringify({ cotacao_id: cotacaoDetail.id, itens }) });
+      cotacaoDetail = data;
+      close();
+      showToast("Itens salvos.");
+      renderCotacaoDetalhe();
+    } catch (error) {
+      alert(`Erro: ${error.message}`);
+    }
+  });
+}
+
+async function cotacaoComparar() {
+  if (!cotacaoDetail) return;
+  let obraId = cotacaoDetail.obra_id;
+  if (!obraId) {
+    const nome = prompt("Comparar com o orçamento de qual obra? Digite parte do nome:");
+    if (!nome) return;
+    const proj = (db.projects || []).find((p) => (p.name || "").toLowerCase().includes(nome.toLowerCase()));
+    if (!proj) return alert("Obra não encontrada.");
+    obraId = proj.id;
+  }
+  try {
+    const data = await cotacaoApi("comparar", { method: "POST", body: JSON.stringify({ cotacao_id: cotacaoDetail.id, obra_id: obraId }) });
+    cotacaoDetail = data;
+    showToast("Comparação concluída.");
+    renderCotacaoDetalhe();
+  } catch (error) {
+    alert(`Erro na comparação: ${error.message}`);
+  }
+}
+
+async function cotacaoExportarCsv(id) {
+  try {
+    const resp = await fetch(`${API_BASE}/?module=cotacoes&action=exportarCsv&id=${encodeURIComponent(id)}`, { headers: authHeaders() });
+    if (!resp.ok) throw new Error("Falha ao exportar.");
+    const url = URL.createObjectURL(await resp.blob());
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `comparativo-cotacao-${id}.csv`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+function cotacaoImprimir() {
+  const c = cotacaoDetail;
+  if (!c) return;
+  const obra = c.obra_id ? nameOf("projects", c.obra_id) : "";
+  const linhas = (c.itens || []).map((i) => {
+    const [sit] = COTACAO_COMPARA[i.status_comparacao] || COTACAO_COMPARA.nao_comparado;
+    return `<tr><td>${svgText(i.descricao)}</td><td>${svgText(i.unidade || "")}</td><td>${i.quantidade != null ? Number(i.quantidade).toLocaleString("pt-BR") : ""}</td><td>${i.valor_unitario != null ? asMoney(i.valor_unitario) : "—"}</td><td>${i.diferenca_percentual != null ? Number(i.diferenca_percentual).toFixed(1) + "%" : "—"}</td><td>${svgText(sit)}</td></tr>`;
+  }).join("");
+  const html = `
+    <article class="doc-sheet">
+      ${generateDocumentHeader("COMPARATIVO DE COTAÇÕES", [obra, c.fornecedor_nome, asDate(c.created_at)].filter(Boolean).join(" · "))}
+      <section class="doc-block">
+        <table class="doc-table"><thead><tr><th>Descrição</th><th>Un.</th><th>Qtd</th><th>Valor cotado</th><th>Dif. %</th><th>Situação</th></tr></thead><tbody>${linhas}</tbody></table>
+      </section>
+      ${generateDocumentFooter()}
+    </article>`;
+  openPrintDialog(html);
 }
 
 // ─── Módulo de Análise de Viabilidade por tipo de obra (frontend) ───────────
