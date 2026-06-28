@@ -3816,25 +3816,31 @@ function lucroCaixaCompute(start, end, projectId = "") {
   const total = (rows) => rows.reduce((acc, row) => acc + Number(row.amount || 0), 0);
   const receivable = (db.receivable || []).filter(matchProject);
   const payable = (db.payable || []).filter(matchProject);
-  const abertaR = (r) => isReceberAberto(r.status);
-  const abertaP = (p) => isPagarAberto(p.status);
 
-  // Caixa real: recebido/pago pela data efetiva (receivedDate/paidDate). Status
-  // comparado de forma case-insensitive (isRecebido/isPago) — senão dados com
-  // "recebido"/"pago" minúsculo zeram o caixa e jogam tudo para o lucro.
+  // LUCRO GERENCIAL (competência): TODAS as contas com vencimento (dueDate) no
+  // período, qualquer status exceto Cancelado — recebidas + em aberto. Conta cada
+  // título uma vez pelo vencimento, mesmo que já tenha sido recebido/pago numa data
+  // de outro período (isso fechava o gap em que um título já recebido sumia do lucro).
+  const receitasTotais = total(receivable.filter((r) => !isCancelado(r.status) && inRange(r.dueDate)));
+  const custosTotais = total(payable.filter((p) => !isCancelado(p.status) && inRange(p.dueDate)));
+
+  // CAIXA REAL (regime de caixa): só o efetivamente recebido/pago no período, pela
+  // data efetiva (receivedDate/paidDate). Status case-insensitive (isRecebido/isPago).
+  // Pode SUPERAR o lucro quando entram recebimentos de competências anteriores ou há
+  // mais contas a pagar em aberto do que a receber — então a diferença pode ser negativa.
   const recebidas = total(receivable.filter((r) => isRecebido(r.status) && inRange(r.receivedDate || r.dueDate)));
   const pagas = total(payable.filter((p) => isPago(p.status) && inRange(p.paidDate || p.dueDate)));
-  // Em aberto pela competência (vencimento no período).
-  const abertasReceber = total(receivable.filter((r) => abertaR(r) && inRange(r.dueDate)));
-  const abertasPagar = total(payable.filter((p) => abertaP(p) && inRange(p.dueDate)));
+  // Em aberto pela competência (apoio à reconciliação/relatório).
+  const abertasReceber = total(receivable.filter((r) => isReceberAberto(r.status) && inRange(r.dueDate)));
+  const abertasPagar = total(payable.filter((p) => isPagarAberto(p.status) && inRange(p.dueDate)));
 
-  const receitasTotais = recebidas + abertasReceber;
-  const custosTotais = pagas + abertasPagar;
+  const lucroGerencial = receitasTotais - custosTotais;
+  const resultadoCaixa = recebidas - pagas;
   return {
     start, end, recebidas, pagas, abertasReceber, abertasPagar, receitasTotais, custosTotais,
-    lucroGerencial: receitasTotais - custosTotais,
-    resultadoCaixa: recebidas - pagas,
-    aReceberLiquido: abertasReceber - abertasPagar, // = lucroGerencial - resultadoCaixa
+    lucroGerencial,
+    resultadoCaixa,
+    aReceberLiquido: lucroGerencial - resultadoCaixa,
   };
 }
 
@@ -3875,16 +3881,18 @@ function lucroCaixaChart(periodKey, projectId = "") {
   // Tooltip combinado por mês: lucro gerencial, caixa real e a diferença
   // (= a receber líquido = lucro − caixa). Mostra as duas séries mesmo quando
   // as linhas coincidem (sem contas em aberto no mês → lucro = caixa).
-  const tooltips = rows.map((r) =>
-    `${monthLabel(r.month)}\nLucro Gerencial: ${compactMoney(r.lucro)}\nCaixa Real: ${compactMoney(r.caixa)}\nDiferença: ${compactMoney(r.lucro - r.caixa)}\n(ainda não recebido)`
-  );
+  const tooltips = rows.map((r) => {
+    const diff = r.lucro - r.caixa;
+    const hint = diff > 0 ? "(lucro ainda não recebido)" : diff < 0 ? "(caixa acima do lucro — recebimentos de outros períodos ou contas a pagar em aberto)" : "(lucro e caixa sincronizados)";
+    return `${monthLabel(r.month)}\nLucro Gerencial: ${compactMoney(r.lucro)}\nCaixa Real: ${compactMoney(r.caixa)}\nDiferença: ${compactMoney(diff)}\n${hint}`;
+  });
   return chartPanel(
     "Evolução: lucro gerencial x caixa",
     `Resultado por competência e caixa real por mês${projectId ? " · " + svgText(nameOf("projects", projectId) || "obra") : ""}`,
     lineChart([
-      { label: "Lucro Gerencial (competência)", color: "#185FA5", values: rows.map((r) => r.lucro) },
+      { label: "Lucro Gerencial (competência)", color: "#378ADD", values: rows.map((r) => r.lucro) },
       { label: "Caixa Real (regime de caixa)", color: "#3B6D11", values: rows.map((r) => r.caixa) },
-    ], labels, tooltips)
+    ], labels, tooltips, { strokeWidth: 2, dotRadius: 4 })
   );
 }
 
@@ -3947,7 +3955,11 @@ function lucroCaixaPanel(periodKey, projectId = "") {
         <article class="lc-card ${tone(ind.aReceberLiquido)}">
           <span class="lc-label">A receber líquido <span class="lc-info" tabindex="0" title="Este valor está no lucro mas ainda não entrou no caixa — são contas a receber em aberto menos contas a pagar em aberto">ⓘ</span></span>
           <strong class="lc-value lc-amber">${asMoney(ind.aReceberLiquido)}</strong>
-          <span class="lc-sub">Está no lucro mas ainda não entrou no caixa</span>
+          <span class="lc-sub">${ind.aReceberLiquido > 0
+            ? "Está no lucro mas ainda não entrou no caixa"
+            : ind.aReceberLiquido < 0
+              ? "Caixa real acima do lucro — recebimentos de períodos anteriores ou mais contas a pagar em aberto do que a receber"
+              : "Lucro e caixa estão sincronizados"}</span>
         </article>
       </div>
       ${alerts.length ? `<div class="lucro-caixa-alerts">${alerts.join("")}</div>` : ""}
@@ -3969,11 +3981,11 @@ function lucroCaixaReconcSection(periodKey, projectId = "") {
       </div>
       <p class="muted">Por que o lucro de competência difere do dinheiro em caixa no período (${asDate(ind.start)} a ${asDate(ind.end)})${scope}.</p>
       ${table("Reconciliação Lucro x Caixa", [
-        { line: "Lucro gerencial do período", amount: ind.lucroGerencial },
-        { line: "(−) Receitas não recebidas", amount: -ind.abertasReceber },
-        { line: "(+) Despesas não pagas", amount: ind.abertasPagar },
-        { line: "(=) Resultado de caixa", amount: ind.resultadoCaixa },
-        { line: "Diferença explicada (a receber líquido)", amount: ind.aReceberLiquido },
+        { line: "Lucro gerencial (competência)", amount: ind.lucroGerencial },
+        { line: "Caixa real (regime de caixa)", amount: ind.resultadoCaixa },
+        { line: "Diferença (a receber líquido)", amount: ind.aReceberLiquido },
+        { line: "Receitas em aberto no período", amount: ind.abertasReceber },
+        { line: "Despesas em aberto no período", amount: ind.abertasPagar },
       ], ["line", "amount"])}
       ${alerts.length ? `<div class="lucro-caixa-alerts">${alerts.join("")}</div>` : ""}
     </section>`;
@@ -4553,7 +4565,9 @@ function escapeHtml(value) {
 // Alias histórico: vários templates antigos chamam svgText.
 const svgText = escapeHtml;
 
-function lineChart(series, labels, columnTooltips = null) {
+function lineChart(series, labels, columnTooltips = null, opts = {}) {
+  const strokeW = opts.strokeWidth || 1.5;
+  const dotR = opts.dotRadius || 2.5;
   const values = series.flatMap((item) => item.values);
   if (!labels.length || !hasValues(values)) return emptyChart();
   const width = 760;
@@ -4571,9 +4585,9 @@ function lineChart(series, labels, columnTooltips = null) {
   }).join("");
   const paths = series.map((item) => {
     const points = item.values.map((value, index) => `${x(index)},${y(value)}`).join(" ");
-    return `<polyline points="${points}" fill="none" stroke="${item.color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></polyline>`;
+    return `<polyline points="${points}" fill="none" stroke="${item.color}" stroke-width="${strokeW}" stroke-linecap="round" stroke-linejoin="round"></polyline>`;
   }).join("");
-  const dots = series.map((item) => item.values.map((value, index) => `<circle cx="${x(index)}" cy="${y(value)}" r="2.5" fill="${item.color}"><title>${svgText(item.label)}: ${compactMoney(value)}</title></circle>`).join("")).join("");
+  const dots = series.map((item) => item.values.map((value, index) => `<circle cx="${x(index)}" cy="${y(value)}" r="${dotR}" fill="${item.color}"><title>${svgText(item.label)}: ${compactMoney(value)}</title></circle>`).join("")).join("");
   const axisLabels = labels.map((label, index) => `<text x="${x(index)}" y="${height - 14}" text-anchor="middle" class="chart-axis">${svgText(label)}</text>`).join("");
   // Faixa transparente por coluna: tooltip combinado (todas as séries do mês) ao
   // passar o mouse. Fica por cima de tudo para capturar o hover. Opcional —
