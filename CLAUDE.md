@@ -1,6 +1,6 @@
 # CLAUDE.md — Guia para agentes de IA no projeto ObraSync
 
-> **Versão atual:** `v1.13.0` · 2026-06-27
+> **Versão atual:** `v1.14.0` · 2026-06-28
 > **Última varredura de código:** 2026-06-27 (3ª rodada — segurança, bugs, performance, qualidade, UX; itens MÉDIO/BAIXO fechados na v1.12.1)
 
 Este arquivo orienta qualquer agente (ou pessoa) que continue o desenvolvimento.
@@ -21,7 +21,7 @@ Leia também o `README.md` (seção "Para quem está retomando o projeto") e o
 - **Antes de salvar:** valide a sintaxe — `php -l api/index.php` e `node --check app.js`.
 - **Backend:** respostas REST via `respond(['ok' => true, 'data' => ...])` e erros via `fail($msg, $status)`; módulos `?module=` respondem `{success, data, message}`. Auditoria via `server_audit()`. Tabelas/colunas novas devem ter **`ensure_*`** no `index.php` (não só migração) para auto-cura em produção.
 - **Frontend:** chamadas autenticadas via `apiRequest()` / `apiModuleRequest()`; uploads via `fetchForm()`; toasts via `showToast()`. **Sempre** escape de dados do banco em `innerHTML` com `svgText()` / `escapeHtml()`. IDs novos via `crypto.randomUUID()` (não existe `uid()`).
-- **Cache busting:** ao mudar `app.js`/`styles.css`, incremente `?v=NNNN` em `index.html` (hoje `app.js?v=1742`, `styles.css?v=1742`) e a constante `APP_VERSION` no topo de `app.js`.
+- **Cache busting:** ao mudar `app.js`/`styles.css`, incremente `?v=NNNN` em `index.html` (hoje `app.js?v=1759`, `styles.css?v=1759`) e a constante `APP_VERSION` no topo de `app.js`.
 - **Deploy:** push na `main` → webhook GitHub → `deploy.php` roda `git pull` + backup pré-deploy. Em produção, rode as migrations novas manualmente. **Nunca** toque em `/etc/financeiro/config.php`, uploads, backups ou banco.
 - **Commits:** use a mensagem exata pedida pelo usuário. Não faça `git push` sem solicitação. Não inclua `.claude/settings.local.json` nos commits.
 
@@ -60,6 +60,20 @@ Leia também o `README.md` (seção "Para quem está retomando o projeto") e o
 
 ---
 
+## Sessão 2026-06-28 — v1.14.0 (cotações, PBQP-H Fase 1, viabilidade, dashboard, fix do 500)
+
+**Features novas**
+- **Cotações (importar/comparar)** — `?module=cotacoes&action=importar|comparar|salvarItens|exportarCsv`; tabelas `cotacao_fornecedor`/`cotacao_itens` (`ensure_cotacao_import_tables`; migration `2026-06-27-cotacao-importacao.sql`). CSV nativo; **.xlsx/.xls** exigem **PhpSpreadsheet**; **PDF** exige **pdftotext/poppler-utils** (ver seção "Dependências do módulo de Cotações"). Comparação por similaridade de descrição contra `orcamento_obra_itens`.
+- **PBQP-H Fase 1** — qualificação de fornecedores de materiais controlados, rastreabilidade por lote, vínculo **FVM ↔ pedido de compra**, **PDF no PES** (migrations `2026-06-27-pbqph-fase1.sql`, `2026-06-27-qualificacao-fornecedores.sql`).
+- **Análise de Viabilidade por tipo de obra** — checklist com grupos/itens padrão, progresso automático, anexos, PDF e **bloqueio de proposta** com item obrigatório reprovado (migration `2026-06-27-viabilidade-modulo.sql`). Módulo independente, sem duplicata no Comercial.
+- **Ícones Tabler locais** — webfont v2.47.0 self-hosted (`assets/fonts/tabler-icons.min.css` + `.woff2`); CSP `font-src 'self'`. Subitens da sidebar com ícones coloridos + animação corrigida. **Atenção:** nem todo nome existe na v2.47 (`ti-steps`→`ti-stairs`, `ti-layers`→`ti-stack-2`); confirme o nome antes de usar.
+
+**Dashboard — Lucro Gerencial vs Caixa Real**
+- **Lucro** = todas as contas com vencimento no período (qualquer status exceto cancelada), por `dueDate`. **Caixa** = `receivedDate` recebidas − `paidDate` pagas. **A Receber Líquido = Lucro − Caixa** (pode ser legitimamente negativo). Cores das séries: `#185FA5` (lucro) / `#3B6D11` (caixa). Helpers de status são case-insensitive (`normFinStatus`/`isRecebido`/`isPago`/...).
+
+**Correção crítica — 500 em contas a pagar recorrentes**
+- Raiz: `const PAYABLE_RECURRENCE_MAX`/`PAYABLE_RECURRENCE_INDETERMINADO` estavam **no meio** do `index.php`. O roteamento é **inline** (`try` ~linha 40 até o `catch`) e dá `exit` antes de alcançá-las; **`const` em PHP não é "hoisted"** → ficavam **indefinidas em runtime**. Movidas para o **topo** (junto de `AUTH_*`/`LOGIN_*`/`SINAPI_*`, antes do roteamento). `MAX=600` (≈50 anos mensais), `INDETERMINADO=24`. Também há blindagem de FK na geração das parcelas. **Lição:** toda constante usada pelo código alcançado durante o roteamento DEVE ser definida antes da linha ~40.
+
 ## Estado atual dos módulos
 
 | Módulo | Estado |
@@ -73,8 +87,9 @@ Leia também o `README.md` (seção "Para quem está retomando o projeto") e o
 | Cronograma / Gantt / MS Project | ✅ Estável; aprovação de marco corrigida (era 500). |
 | Agenda / Kanban | ✅ Estável; auto-curado por `ensure_agenda_tables`/`ensure_kanban_tables`. |
 | Notas/Documentos fiscais + NFS-e | ✅ Estável; auto-curado por `ensure_fiscal_documents_table`. |
-| Qualidade (PBQP-H) | ✅ Estável (auto-curado por `ensure_qualidade_tables`). |
-| Plugins / Viabilidade / SINAPI | ✅ Estável. |
+| Qualidade (PBQP-H) | ✅ Estável (auto-curado por `ensure_qualidade_tables`). **Fase 1:** qualificação de fornecedores, rastreabilidade por lote, FVM↔pedido, PDF no PES. |
+| Cotações (importação/comparação) | ✅ PDF/Excel/CSV → comparação com o orçamento. Excel exige PhpSpreadsheet; PDF exige pdftotext. |
+| Plugins / Viabilidade / SINAPI | ✅ Estável. Viabilidade por tipo de obra com checklist e bloqueio de proposta. |
 | RDO | ✅ Com cabeçalho/rodapé da empresa. |
 
 ---

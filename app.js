@@ -20,8 +20,14 @@ if (APP_ENV === "production" && location.protocol === "http:") {
 }
 const APP_NAME = "ObraSync";
 const APP_VERSION = "v1.14.0";
-const APP_VERSION_DATE = "2026-06-27";
+const APP_VERSION_DATE = "2026-06-28";
 const APP_CHANGELOG = [
+  "Correção do erro 500 ao gerar contas a pagar recorrentes: as constantes PAYABLE_RECURRENCE_MAX/INDETERMINADO foram movidas para o topo do index.php (const não é \"hoisted\" — ficavam indefinidas em runtime após o roteamento) e a geração das parcelas passou a blindar as chaves estrangeiras (fornecedor, obra, categoria, centro de custo, conta) (v1.14.0).",
+  "Dashboard revisado: Lucro Gerencial vs Caixa Real recalculado (lucro = todas as contas com vencimento no período, exceto canceladas; caixa = recebido − pago por data efetiva; A Receber Líquido = lucro − caixa), gráfico de evolução mensal com recorte por obra, cards dinâmicos e alertas (vencidos, etapas atrasadas, propostas expiradas, obras atrasadas, itens em estouro) (v1.14.0).",
+  "Importação e comparação de cotações de fornecedores por PDF e Excel/CSV: leitura nativa de CSV, PhpSpreadsheet para .xlsx/.xls e pdftotext para PDF, com comparação automática contra o orçamento da obra por similaridade de descrição e classificação abaixo/igual/acima (v1.14.0).",
+  "PBQP-H Fase 1: qualificação de fornecedores (materiais controlados), rastreabilidade por lote, vínculo FVM↔pedido de compra e geração de PDF no PES (v1.14.0).",
+  "Ícones Tabler servidos localmente (sem CDN, compatível com a CSP) e subitens da sidebar com ícones coloridos e animação de entrada corrigida (v1.14.0).",
+  "Cores por status nas notas/documentos fiscais e gráficos do dashboard mais finos e proporcionais (v1.14.0).",
   "Módulo de Análise de Viabilidade por tipo de obra: checklist com grupos/itens padrão (energia solar, obra civil, elétrica, ar-condicionado, cobertura, hidráulica, manutenção), progresso automático, itens aguardando terceiro, anexos, relatório PDF e bloqueio da proposta quando há item obrigatório reprovado (v1.14.0).",
   "Controle interno de versão e instruções de atualização segura.",
   "Perfis e permissões preparados por módulo e ação.",

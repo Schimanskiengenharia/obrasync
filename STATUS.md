@@ -1,6 +1,6 @@
 # STATUS — ObraSync
 
-> **Versão:** `v1.12.1` · **Varredura:** 2026-06-27 · **Ambiente:** produção em `https://schimanskiengenharia.com.br/financeiro`
+> **Versão:** `v1.14.0` · 2026-06-28 · **Varredura:** 2026-06-27 · **Ambiente:** produção em `https://schimanskiengenharia.com.br/financeiro`
 
 ---
 
@@ -11,12 +11,17 @@ contabilidade gerencial para a Schimanski Engenharia. SPA em JavaScript puro
 (`app.js`), API única em PHP (`api/index.php`), banco MariaDB/MySQL. Sem
 frameworks e sem etapa de build.
 
-O sistema está **em produção e estável**. Nesta sessão (v1.12.0) o Orçamento de
-Obra foi reestruturado para nível profissional (etapas, tipos de custo, visões,
-BDI por etapa), foi adicionado o painel de execução de obras no Dashboard, e foi
-feita uma **varredura completa de segurança/bugs**. Todos os itens
-**CRÍTICOS e ALTOS de segurança** e os **bugs que quebravam fluxos** foram
-corrigidos. Restam pendências de prioridade **MÉDIO/BAIXO** (seção 3).
+O sistema está **em produção e estável**. A sessão **v1.14.0 (2026-06-28)**
+entregou **cotações** (importação/comparação por PDF/Excel/CSV contra o
+orçamento), **PBQP-H Fase 1** (qualificação de fornecedores, rastreabilidade por
+lote, vínculo FVM↔pedido, PDF no PES), o **módulo de Viabilidade** por tipo de
+obra (checklist com bloqueio de proposta), o **dashboard Lucro Gerencial vs Caixa
+Real** recalculado e a **correção do erro 500** nas contas a pagar recorrentes
+(constante `PAYABLE_RECURRENCE_MAX` que ficava indefinida em runtime). A base
+herda a v1.12.0 (Orçamento de Obra profissional + dashboard de execução) e a
+**varredura completa de segurança/bugs**: todos os itens **CRÍTICOS/ALTOS** e os
+**bugs que quebravam fluxos** estão corrigidos; as pendências **MÉDIO/BAIXO**
+foram fechadas na v1.12.1.
 
 ---
 
@@ -24,11 +29,11 @@ corrigidos. Restam pendências de prioridade **MÉDIO/BAIXO** (seção 3).
 
 | Módulo | Status | Observação |
 |---|---|---|
-| Dashboard (geral + por obra) | 🟢 Estável | Novo painel de execução de obras (endpoint + tooltip combinado) |
+| Dashboard (geral + por obra) | 🟢 Estável | Painel de execução de obras (endpoint + tooltip combinado); Lucro Gerencial vs Caixa Real recalculado + alertas (v1.14.0) |
 | Cadastros (clientes, fornecedores, produtos, serviços, categorias, centros de custo, contas) | 🟢 Estável | Preenchimento automático de cliente, ViaCEP, endereço completo |
 | Orçamento de Obra | 🟢 Estável | Reestruturado: etapas/tipos/4 visões/BDI por etapa/CSV + Realizado vs Orçado |
-| SINAPI / composições / cotações / Curva ABC | 🟢 Estável | Importador XLSX/CSV + assíncrono |
-| Financeiro (a pagar, a receber, caixa, fluxo) | 🟢 Estável | Recorrentes, quitação antecipada, anti dupla contagem |
+| SINAPI / composições / cotações / Curva ABC | 🟢 Estável | Importador XLSX/CSV + assíncrono; cotações por PDF/Excel/CSV comparadas ao orçamento (v1.14.0) |
+| Financeiro (a pagar, a receber, caixa, fluxo) | 🟢 Estável | Recorrentes (500 corrigido na v1.14.0), quitação antecipada, anti dupla contagem |
 | Conciliação OFX | 🟢 Estável | Match automático por FITID |
 | Pedidos de compra | 🟢 Estável | Itens detalhados, condições, impressão com identidade visual |
 | Comercial (propostas, gerador, modelos) | 🟢 Estável | Snapshot de cliente, PDF com identidade visual |
@@ -36,8 +41,8 @@ corrigidos. Restam pendências de prioridade **MÉDIO/BAIXO** (seção 3).
 | Agenda / Kanban | 🟢 Estável | Auto-curado por `ensure_agenda_tables`/`ensure_kanban_tables` (v1.12.1) |
 | Notas / Documentos fiscais + NFS-e | 🟢 Estável | Auto-curado por `ensure_fiscal_documents_table` (v1.12.1) |
 | Contabilidade gerencial (DRE, plano de contas, impostos) | 🟢 Estável | |
-| Qualidade (PBQP-H Nível B) | 🟢 Estável | Auto-curado |
-| Plugins / Seletividade / Viabilidade | 🟢 Estável | |
+| Qualidade (PBQP-H Nível B) | 🟢 Estável | Auto-curado; Fase 1: qualificação de fornecedores, rastreabilidade por lote, FVM↔pedido, PDF no PES (v1.14.0) |
+| Plugins / Seletividade / Viabilidade | 🟢 Estável | Viabilidade por tipo de obra com checklist e bloqueio de proposta (v1.14.0) |
 | RDO | 🟢 Estável | Cabeçalho/rodapé da empresa |
 | Configurações / RBAC / Usuários / Backup / Auditoria | 🟢 Estável | |
 
@@ -46,6 +51,18 @@ corrigidos. Restam pendências de prioridade **MÉDIO/BAIXO** (seção 3).
 ---
 
 ## 3. Problemas conhecidos e pendentes
+
+### Entregue / corrigido na v1.14.0 (2026-06-28)
+
+| Tipo | Item | Arquivo | Detalhe |
+|---|---|---|---|
+| Bug (500) | Contas a pagar recorrentes davam 500 ao gerar parcelas | `api/index.php` (`PAYABLE_RECURRENCE_MAX`/`_INDETERMINADO`, `payable_create_recurrence`) | Constantes estavam no meio do arquivo; o roteamento inline dá `exit` antes de alcançá-las e `const` PHP não é "hoisted" → indefinidas em runtime. **Movidas para o topo** (antes do roteamento) + blindagem de FK na geração das parcelas. |
+| Feature | Importação/comparação de cotações (PDF/Excel/CSV) | `api/index.php`, `app.js`, migration `2026-06-27-cotacao-importacao.sql` | `cotacao_fornecedor`/`cotacao_itens`; PhpSpreadsheet (.xlsx) e pdftotext (PDF) opcionais; comparação por similaridade com o orçamento. |
+| Feature | PBQP-H Fase 1 | migrations `2026-06-27-pbqph-fase1.sql`, `…-qualificacao-fornecedores.sql` | Qualificação de fornecedores, rastreabilidade por lote, FVM↔pedido, PDF no PES. |
+| Feature | Análise de Viabilidade por tipo de obra | migration `2026-06-27-viabilidade-modulo.sql` | Checklist com grupos/itens, progresso, anexos, PDF e bloqueio de proposta. |
+| Correção | Dashboard Lucro Gerencial vs Caixa Real | `app.js` (`lucroCaixaCompute`/`lucroCaixaChart`) | Lucro = vencimentos do período (exceto cancelados); Caixa = recebido−pago efetivos; A Receber Líquido = Lucro−Caixa. Alertas (vencidos/atrasos/propostas/obras/estouro). |
+| UX | Ícones Tabler locais (sem CDN) + subitens da sidebar visíveis | `index.html`, `styles.css`, `assets/fonts/` | Webfont v2.47.0 self-hosted (CSP `font-src 'self'`); animação corrigida (não ficam mais invisíveis). |
+| UX | Cores por status em notas fiscais; gráficos do dashboard mais finos | `app.js`, `styles.css` | |
 
 ### Corrigidos nesta varredura (v1.12.0)
 

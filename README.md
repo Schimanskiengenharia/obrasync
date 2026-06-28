@@ -1,6 +1,6 @@
 # ObraSync
 
-> Versão `v1.13.0` · 2026-06-27
+> Versão `v1.14.0` · 2026-06-28
 
 ObraSync é uma aplicação web em HTML, CSS, JavaScript puro, PHP e MariaDB/MySQL para gestão integrada de obras, financeiro, comercial e contabilidade gerencial. O frontend fica em `/var/www/financeiro`, a URL pública é `https://schimanskiengenharia.com.br/financeiro`, os dados persistentes ficam no banco e os arquivos de dados ficam fora da pasta pública.
 
@@ -12,9 +12,9 @@ Antes de atualizar em produção, faça backup do banco e de `/var/lib/financeir
 
 Esta seção orienta qualquer pessoa — ou outra IA — que precise continuar o trabalho sem se perder.
 
-- **Versão atual:** `v1.12.1` (2026-06-27). A versão fica em **dois lugares que devem andar juntos**: a constante `APP_VERSION`/`APP_VERSION_DATE` no topo de `app.js` (com `APP_CHANGELOG`) e o cabeçalho deste README. O painel "Versão" em Configurações lê de `APP_VERSION`.
-- **Cache busting:** sempre que `app.js` ou `styles.css` mudarem, **incremente o `?v=NNNN`** das tags correspondentes em `index.html` (hoje `app.js?v=1743`, `styles.css?v=1743`). Sem isso o navegador serve a versão velha.
-- **Estado de saúde (2026-06-27):** varredura completa de segurança/bugs concluída e **todas as pendências MÉDIO/BAIXO fechadas na v1.12.1** — ver `STATUS.md` na raiz e a seção **Auditoria de Código — 2026-06-27** no fim deste README.
+- **Versão atual:** `v1.14.0` (2026-06-28). A versão fica em **dois lugares que devem andar juntos**: a constante `APP_VERSION`/`APP_VERSION_DATE` no topo de `app.js` (com `APP_CHANGELOG`) e o cabeçalho deste README. O painel "Versão" em Configurações lê de `APP_VERSION`.
+- **Cache busting:** sempre que `app.js` ou `styles.css` mudarem, **incremente o `?v=NNNN`** das tags correspondentes em `index.html` (hoje `app.js?v=1759`, `styles.css?v=1759`). Sem isso o navegador serve a versão velha.
+- **Estado de saúde (2026-06-28):** varredura completa de segurança/bugs concluída e **todas as pendências MÉDIO/BAIXO fechadas na v1.12.1**; a v1.14.0 (2026-06-28) entregou cotações (PDF/Excel), PBQP-H Fase 1, módulo de Viabilidade, dashboard Lucro Gerencial vs Caixa Real e correção do 500 das contas recorrentes — ver `STATUS.md` na raiz e a seção **Auditoria de Código — 2026-06-27** no fim deste README.
 - **Arquitetura:** SPA sem build. Todo o frontend está em `app.js` (arquivo único, ~10 mil linhas) + `index.html` (shell) + `styles.css`. Todo o backend está em `api/index.php` (arquivo único). O banco é MariaDB/MySQL.
 - **Convenções do backend (siga-as):** respostas via `respond(['ok' => true, 'data' => ...])` e erros via `fail($msg, $status)`; INSERT/UPDATE genéricos via `insert_dynamic()`/`update_dynamic()` (descartam colunas inexistentes — toleram diferenças de schema); auditoria via `server_audit()`. Muitas tabelas novas são criadas sob demanda por funções `ensure_*` no próprio `index.php` (além das migrations).
 - **Convenções do frontend:** chamadas autenticadas via `apiRequest()`; uploads via `fetchForm()`; toasts via `showToast()`; escape de HTML via `svgText()`/`escapeHtml()`. O token de sessão vai no header `Authorization: Bearer`.
@@ -26,6 +26,16 @@ Esta seção orienta qualquer pessoa — ou outra IA — que precise continuar o
 ## Histórico de Versões
 
 Mapa de cada marco do produto, do mais novo ao mais antigo, com as features e as tabelas/arquivos envolvidos. Use-o para entender *o que existe e por quê* antes de mexer.
+
+### v1.14.0 — 2026-06-28 · Cotações, PBQP-H Fase 1, Viabilidade, dashboard Lucro×Caixa e correções
+- **Importação e comparação de cotações** (migration `2026-06-27-cotacao-importacao.sql`; tabelas `cotacao_fornecedor`/`cotacao_itens`; `ensure_cotacao_import_tables`; `?module=cotacoes&action=importar|comparar|salvarItens|exportarCsv`): CSV nativo (`fgetcsv`), **.xlsx/.xls via PhpSpreadsheet** e **PDF via pdftotext** (poppler-utils), com comparação automática contra o orçamento da obra por similaridade de descrição e classificação abaixo/igual/acima/muito_acima. Dependências documentadas no `CLAUDE.md`.
+- **PBQP-H Fase 1** (migrations `2026-06-27-pbqph-fase1.sql`, `2026-06-27-qualificacao-fornecedores.sql`): qualificação de fornecedores de materiais controlados, **rastreabilidade por lote**, vínculo **FVM ↔ pedido de compra** e geração de **PDF no PES**. Antecedido pela análise de integração PBQP-H/SiNAT (`docs`).
+- **Módulo de Análise de Viabilidade por tipo de obra** (migration `2026-06-27-viabilidade-modulo.sql`): checklist com grupos/itens padrão (solar, obra civil, elétrica, ar-condicionado, cobertura, hidráulica, manutenção), progresso automático, itens aguardando terceiro, anexos, relatório PDF e **bloqueio da proposta** quando há item obrigatório reprovado. Disponível como módulo independente (sem duplicata no Comercial).
+- **Dashboard — Lucro Gerencial vs Caixa Real corrigido:** Lucro = todas as contas com **vencimento no período** (exceto canceladas, por `dueDate`); Caixa = **recebido − pago** por data efetiva (`receivedDate`/`paidDate`); **A Receber Líquido = Lucro − Caixa** (pode ser legitimamente negativo). Gráfico de evolução mensal com recorte por obra, cards dinâmicos e alertas (vencidos, etapas atrasadas, propostas expiradas, obras atrasadas, itens em estouro).
+- **Ícones Tabler servidos localmente** (`assets/fonts/tabler-icons.min.css` + `.woff2`, sem CDN — compatível com a CSP `font-src 'self'`); subitens da sidebar com **ícones coloridos e animação de entrada corrigida** (antes ficavam invisíveis por `opacity:0` + `prefers-reduced-motion`).
+- **Cores por status nas notas/documentos fiscais** e **gráficos do dashboard mais finos** e proporcionais.
+- **Correção do erro 500 nas contas a pagar recorrentes:** as constantes `PAYABLE_RECURRENCE_MAX`/`PAYABLE_RECURRENCE_INDETERMINADO` foram movidas para o topo de `api/index.php` (PHP **não faz hoisting de `const`** — ficavam indefinidas em runtime, pois o roteamento inline dá `exit` antes de alcançá-las) e a geração das parcelas passou a **blindar as chaves estrangeiras** (fornecedor/obra/categoria/centro de custo/conta).
+- **Inclui também** (consolidação dos marcos intermediários não versionados no histórico): centros de custo com tipo **Fiscal / Tributário** e lista padrão de 25 centros (v1.13.0); fechamento das pendências MÉDIO/BAIXO da varredura — `ensure_*` faltantes, hardening XXE, sanitização de logo SVG e filtros corrigidos (v1.12.1).
 
 ### v1.12.0 — 2026-06-27 · Orçamento profissional, dashboard de execução e varredura de segurança
 - **Refatoração do Orçamento de Obra** (migration `2026-06-09-orcamento-estrutura-completa.sql`; tabela `orcamento_etapas` + colunas `codigo`/`tipo`/`etapa_id`/`sinapi_id`/`composicao_propria_id`/`ordem` em `orcamento_obra_itens`; `ensure_budget_structure`). Estrutura por **etapas/subitens**, **tipos de custo** (material, mão de obra, equipamento, subempreiteiro, outros), código hierárquico, **BDI por etapa** e quatro visões: **Por Etapa**, **Por Centro de Custo**, **Por Tipo de Custo** e **Previsto vs Realizado**. Modal de inclusão em 3 abas (SINAPI/Composição própria/Manual), totalizadores, impressão e exportação CSV.
