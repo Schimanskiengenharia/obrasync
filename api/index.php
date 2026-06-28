@@ -50,6 +50,13 @@ const OLLAMA_GEN_MODEL = 'llama3.2:3b';
 const OLLAMA_EMBED_MODEL = 'all-minilm';
 const OLLAMA_TIMEOUT = 120; // segundos
 
+// De-para em lote da IA: limiares de classificação por similaridade de cosseno
+// (0–1). Sem código na planilha: top1 >= ACHOU → ACHOU; entre REVISAR e ACHOU →
+// REVISAR; abaixo de REVISAR → COTAÇÃO PRÓPRIA. Ajustáveis aqui sem mexer no worker.
+const IA_DEPARA_ACHOU_MIN = 0.80;
+const IA_DEPARA_REVISAR_MIN = 0.60;
+const IA_DEPARA_COMMIT_EVERY = 25; // commit/progresso a cada N itens classificados
+
 $config = load_config();
 $pdo = db($config);
 $resources = resource_map();
@@ -8908,12 +8915,44 @@ function handle_ia_module(PDO $pdo, string $method, array $query, array $config,
         if (strtoupper($method) !== 'POST') {
             sinapi_module_respond(false, [], 'Método não permitido. Use POST.', 405);
         }
-        $raw = file_get_contents('php://input') ?: '';
-        $payload = json_decode($raw, true);
-        if (!is_array($payload)) {
-            sinapi_module_respond(false, [], 'Corpo da requisição inválido (JSON esperado).', 400);
+        handle_ia_busca_semantica($pdo, ia_read_json_body());
+    }
+    // ── De-para em lote: upload de planilha → classificação → revisão → export ──
+    if ($action === 'deparaupload') {
+        if (strtoupper($method) !== 'POST') {
+            sinapi_module_respond(false, [], 'Método não permitido. Use POST.', 405);
         }
-        handle_ia_busca_semantica($pdo, $payload);
+        handle_ia_depara_upload($pdo, $config, $authUser);
+    }
+    if ($action === 'deparastart') {
+        if (strtoupper($method) !== 'POST') {
+            sinapi_module_respond(false, [], 'Método não permitido. Use POST.', 405);
+        }
+        handle_ia_depara_start($pdo, $config, ia_read_json_body(), $authUser);
+    }
+    if ($action === 'deparastatus') {
+        if (strtoupper($method) !== 'GET') {
+            sinapi_module_respond(false, [], 'Método não permitido. Use GET.', 405);
+        }
+        handle_ia_depara_status($pdo);
+    }
+    if ($action === 'deparaitens') {
+        if (strtoupper($method) !== 'GET') {
+            sinapi_module_respond(false, [], 'Método não permitido. Use GET.', 405);
+        }
+        handle_ia_depara_items($pdo);
+    }
+    if ($action === 'deparaaceitar') {
+        if (strtoupper($method) !== 'POST') {
+            sinapi_module_respond(false, [], 'Método não permitido. Use POST.', 405);
+        }
+        handle_ia_depara_accept($pdo, ia_read_json_body(), $authUser);
+    }
+    if ($action === 'deparaexport') {
+        if (strtoupper($method) !== 'GET') {
+            sinapi_module_respond(false, [], 'Método não permitido. Use GET.', 405);
+        }
+        handle_ia_depara_export($pdo);
     }
     sinapi_module_respond(false, [], 'Ação de IA não reconhecida.', 404);
 }
@@ -8980,6 +9019,71 @@ function ensure_ia_tables(PDO $pdo): void
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
     );
     $done = true;
+}
+
+// Auto-cura das tabelas do de-para em lote (mesma estratégia ensure_*_table do resto
+// do arquivo + migração migrations/2026-06-28-ia-depara-lote.sql).
+function ensure_ia_depara_tables(PDO $pdo): void
+{
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    $pdo->exec(
+        'CREATE TABLE IF NOT EXISTS ia_depara_jobs (
+            id VARCHAR(64) PRIMARY KEY,
+            nomeArquivo VARCHAR(255) NULL,
+            total INT UNSIGNED NOT NULL DEFAULT 0,
+            processados INT UNSIGNED NOT NULL DEFAULT 0,
+            status ENUM(\'queued\',\'running\',\'done\',\'error\') NOT NULL DEFAULT \'queued\',
+            colunasJson TEXT NULL,
+            errorMessage TEXT NULL,
+            createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            startedAt TIMESTAMP NULL DEFAULT NULL,
+            finishedAt TIMESTAMP NULL DEFAULT NULL,
+            userId BIGINT UNSIGNED NULL,
+            KEY idx_status (status)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+    );
+    $pdo->exec(
+        'CREATE TABLE IF NOT EXISTS ia_depara_itens (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            jobId VARCHAR(64) NOT NULL,
+            linhaPlanilha INT UNSIGNED NULL,
+            descricaoOrigem TEXT NOT NULL,
+            codigoOrigem VARCHAR(80) NULL,
+            quantidade DECIMAL(15,4) NULL,
+            unidadeOrigem VARCHAR(40) NULL,
+            valorOrigem DECIMAL(15,4) NULL,
+            statusClassificacao ENUM(\'achou\',\'revisar\',\'cotacao_propria\') NULL,
+            matchOrigem ENUM(\'composicao\',\'insumo\') NULL,
+            matchId BIGINT UNSIGNED NULL,
+            matchCode VARCHAR(80) NULL,
+            matchDescription TEXT NULL,
+            matchUnit VARCHAR(40) NULL,
+            matchValor DECIMAL(15,4) NULL,
+            similaridade DECIMAL(5,2) NULL,
+            top3Json TEXT NULL,
+            aceito TINYINT NOT NULL DEFAULT 0,
+            createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            KEY idx_job (jobId),
+            KEY idx_job_status (jobId, statusClassificacao)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+    );
+    $done = true;
+}
+
+// Marca como erro lotes de de-para presos (worker que não subiu ou morreu sem fechar).
+function expire_stale_ia_depara_jobs(PDO $pdo): void
+{
+    $pdo->exec(
+        "UPDATE ia_depara_jobs
+            SET status = 'error',
+                errorMessage = 'Lote abandonado: o worker não iniciou ou parou de responder.',
+                finishedAt = NOW()
+          WHERE (status = 'queued' AND COALESCE(startedAt, createdAt) < DATE_SUB(NOW(), INTERVAL 10 MINUTE))
+             OR (status = 'running' AND COALESCE(startedAt, createdAt) < DATE_SUB(NOW(), INTERVAL 2 HOUR))"
+    );
 }
 
 // Marca como erro jobs presos (worker que não subiu ou morreu sem fechar o job).
@@ -9184,6 +9288,457 @@ function ia_fetch_sinapi_rows(PDO $pdo, string $table, string $valueColumn, arra
         $map[(int) $r['id']] = $r;
     }
     return $map;
+}
+
+// Lê o corpo JSON das actions POST do módulo de IA, respondendo no padrão
+// {success,data,message} (read_json usa o formato {ok,error} do REST).
+function ia_read_json_body(): array
+{
+    $raw = file_get_contents('php://input') ?: '';
+    $payload = json_decode($raw, true);
+    if (!is_array($payload)) {
+        sinapi_module_respond(false, [], 'Corpo da requisição inválido (JSON esperado).', 400);
+    }
+    return $payload;
+}
+
+// ── De-para em lote da IA: upload da planilha ───────────────────────────────
+// Recebe um .xlsx/.xls/.csv com um orçamento externo, lê a primeira aba (reusa
+// read_xlsx_sheets / setReadDataOnly do import SINAPI), detecta as colunas pelo
+// cabeçalho e grava as linhas CRUAS em ia_depara_itens (sem classificar ainda).
+// NÃO inventa dados: só lê o que está na planilha; descrição é obrigatória.
+function handle_ia_depara_upload(PDO $pdo, array $config, array $authUser): never
+{
+    ensure_ia_depara_tables($pdo);
+    @ini_set('memory_limit', '1024M');
+    @set_time_limit(300);
+
+    $files = sinapi_uploaded_files('file');
+    if (!$files) {
+        $files = sinapi_uploaded_files('files');
+    }
+    if (!$files) {
+        sinapi_module_respond(false, [], 'Envie uma planilha (.xlsx, .xls ou .csv).', 400);
+    }
+    $file = $files[0];
+    $uploadDir = rtrim($config['upload_dir'] ?? '/var/lib/financeiro/uploads', '/') . '/ia_depara';
+    if (!is_dir($uploadDir) && !@mkdir($uploadDir, 0750, true)) {
+        sinapi_module_respond(false, [], 'Não foi possível criar a pasta de uploads do de-para. Verifique as permissões do usuário do Apache.', 500);
+    }
+    $path = store_upload($file, $uploadDir, ['xlsx', 'xls', 'csv'], [
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'application/vnd.ms-excel', 'application/zip', 'application/octet-stream',
+        'text/plain', 'text/csv', 'application/csv',
+    ]);
+
+    // Lê a planilha (primeira aba). CSV é nativo; XLSX/XLS via PhpSpreadsheet.
+    try {
+        if (strtolower(pathinfo($path, PATHINFO_EXTENSION)) === 'csv') {
+            $rows = cotacao_parse_csv($path);
+        } else {
+            sinapi_require_phpspreadsheet();
+            $sheets = read_xlsx_sheets($path);
+            $rows = $sheets ? (array) reset($sheets) : [];
+        }
+    } catch (Throwable $error) {
+        @unlink($path);
+        sinapi_module_respond(false, [], 'Não foi possível ler a planilha: ' . $error->getMessage(), 400);
+    }
+    if (!$rows) {
+        @unlink($path);
+        sinapi_module_respond(false, [], 'A planilha está vazia ou não pôde ser lida.', 400);
+    }
+
+    // Detecta a linha de cabeçalho e o mapa de colunas.
+    $detected = ia_depara_detect_columns($rows);
+    if (!$detected['ok']) {
+        @unlink($path);
+        sinapi_module_respond(false, ['amostra' => array_slice($rows, 0, 3)],
+            'Não foi possível identificar a coluna de descrição. A planilha precisa de uma coluna "Descrição" (ou Item/Serviço/Produto). Ajuste o cabeçalho e tente novamente.', 422);
+    }
+    $cols = $detected['cols'];
+    $headerIdx = $detected['headerIdx'];
+
+    // Lê as linhas de dados abaixo do cabeçalho (só o que está na planilha).
+    $itens = [];
+    $n = count($rows);
+    for ($i = $headerIdx + 1; $i < $n; $i++) {
+        $r = (array) $rows[$i];
+        $desc = trim((string) ($r[$cols['descricao']] ?? ''));
+        if ($desc === '') {
+            continue;
+        }
+        $itens[] = [
+            'linha' => $i + 1, // 1-based, como o usuário vê na planilha
+            'descricaoOrigem' => mb_substr($desc, 0, 1000),
+            'codigoOrigem' => isset($cols['codigo']) ? (mb_substr(trim((string) ($r[$cols['codigo']] ?? '')), 0, 80) ?: null) : null,
+            'quantidade' => isset($cols['quantidade']) ? cotacao_num($r[$cols['quantidade']] ?? '') : null,
+            'unidadeOrigem' => isset($cols['unidade']) ? (mb_substr(trim((string) ($r[$cols['unidade']] ?? '')), 0, 40) ?: null) : null,
+            'valorOrigem' => isset($cols['valor']) ? cotacao_num($r[$cols['valor']] ?? '') : null,
+        ];
+    }
+    if (!$itens) {
+        @unlink($path);
+        sinapi_module_respond(false, [], 'Nenhuma linha com descrição foi encontrada abaixo do cabeçalho.', 422);
+    }
+
+    // Cria o job e grava as linhas cruas (classificação só no worker).
+    $jobId = uniqid('ia_dp_', true);
+    $colunasDetectadas = array_keys($cols);
+    $pdo->prepare('INSERT INTO ia_depara_jobs (id, nomeArquivo, total, processados, status, colunasJson, userId) VALUES (?, ?, ?, 0, ?, ?, ?)')
+        ->execute([
+            $jobId,
+            (string) ($file['name'] ?? basename($path)),
+            count($itens),
+            'queued',
+            json_encode($colunasDetectadas, JSON_UNESCAPED_UNICODE),
+            (int) ($authUser['id'] ?? 0) ?: null,
+        ]);
+    $ins = $pdo->prepare('INSERT INTO ia_depara_itens (jobId, linhaPlanilha, descricaoOrigem, codigoOrigem, quantidade, unidadeOrigem, valorOrigem) VALUES (?, ?, ?, ?, ?, ?, ?)');
+    $pdo->beginTransaction();
+    foreach ($itens as $it) {
+        $ins->execute([$jobId, $it['linha'], $it['descricaoOrigem'], $it['codigoOrigem'], $it['quantidade'], $it['unidadeOrigem'], $it['valorOrigem']]);
+    }
+    $pdo->commit();
+
+    @unlink($path); // os dados já estão no banco; a planilha temporária não é mais necessária
+    server_audit($pdo, $authUser, 'import', 'ia', $jobId, 'De-para IA: upload de planilha (' . count($itens) . ' itens)');
+    sinapi_module_respond(true, [
+        'jobId' => $jobId,
+        'total' => count($itens),
+        'colunasDetectadas' => $colunasDetectadas,
+    ], 'Planilha lida: ' . count($itens) . ' itens prontos para classificar.');
+}
+
+// Normaliza um texto de cabeçalho: minúsculo, sem acento, sem pontuação.
+function ia_depara_norm(string $s): string
+{
+    $s = mb_strtolower(trim($s));
+    $from = ['á','à','â','ã','ä','é','ê','è','ë','í','ì','î','ï','ó','ô','õ','ò','ö','ú','ù','û','ü','ç','ñ'];
+    $to   = ['a','a','a','a','a','e','e','e','e','i','i','i','i','o','o','o','o','o','u','u','u','u','c','n'];
+    $s = str_replace($from, $to, $s);
+    $s = preg_replace('/[^a-z0-9 ]+/', ' ', $s);
+    return trim(preg_replace('/\s+/', ' ', $s));
+}
+
+// Mapeia um cabeçalho normalizado para um campo conhecido. Variantes curtas (<4
+// chars: un, cod, qtd, ref) exigem match exato; as longas casam por substring.
+function ia_depara_map_header(string $h): ?string
+{
+    $h = ia_depara_norm($h);
+    if ($h === '') {
+        return null;
+    }
+    $map = [
+        'descricao' => ['descricao', 'description', 'item', 'servico', 'servicos', 'produto', 'material', 'especificacao', 'discriminacao', 'insumo', 'composicao'],
+        'codigo' => ['codigo', 'cod', 'code', 'cd', 'codigo sinapi', 'cod sinapi'],
+        'quantidade' => ['quantidade', 'qtd', 'qty', 'qtde', 'quant'],
+        'unidade' => ['unidade', 'unid', 'und', 'un', 'medida'],
+        'valor' => ['valor', 'preco', 'valor unitario', 'preco unitario', 'valor unit', 'preco unit', 'unitario', 'custo', 'vlr'],
+    ];
+    foreach ($map as $field => $variants) {
+        foreach ($variants as $v) {
+            if ($h === $v) {
+                return $field;
+            }
+            if (mb_strlen($v) >= 4 && str_contains($h, $v)) {
+                return $field;
+            }
+        }
+    }
+    return null;
+}
+
+// Procura, nas primeiras linhas, a linha de cabeçalho (a que contém ao menos a
+// coluna de descrição) e devolve o mapa campo => índice de coluna.
+function ia_depara_detect_columns(array $rows): array
+{
+    $headerIdx = -1;
+    $cols = [];
+    $scan = min(count($rows), 15);
+    for ($i = 0; $i < $scan; $i++) {
+        $m = [];
+        foreach ((array) $rows[$i] as $ci => $cell) {
+            $f = ia_depara_map_header((string) $cell);
+            if ($f && !isset($m[$f])) {
+                $m[$f] = $ci;
+            }
+        }
+        if (isset($m['descricao'])) {
+            $headerIdx = $i;
+            $cols = $m;
+            break;
+        }
+    }
+    return ['ok' => $headerIdx >= 0, 'headerIdx' => $headerIdx, 'cols' => $cols];
+}
+
+// Dispara a classificação do lote em background (worker CLI nohup + nice -19).
+function handle_ia_depara_start(PDO $pdo, array $config, array $payload, array $authUser): never
+{
+    ensure_ia_depara_tables($pdo);
+    expire_stale_ia_depara_jobs($pdo);
+    $jobId = trim((string) ($payload['jobId'] ?? ''));
+    if ($jobId === '') {
+        sinapi_module_respond(false, [], 'Informe o jobId do lote.', 400);
+    }
+    $stmt = $pdo->prepare('SELECT * FROM ia_depara_jobs WHERE id = ? LIMIT 1');
+    $stmt->execute([$jobId]);
+    $job = $stmt->fetch();
+    if (!$job) {
+        sinapi_module_respond(false, [], 'Lote não encontrado.', 404);
+    }
+    if ($job['status'] === 'running') {
+        sinapi_module_respond(false, [], 'Este lote já está sendo classificado.', 409);
+    }
+    // A classificação depende da base já indexada (ia_embeddings).
+    ensure_ia_tables($pdo);
+    $temVetores = (int) $pdo->query('SELECT COUNT(*) FROM ia_embeddings')->fetchColumn();
+    if ($temVetores === 0) {
+        sinapi_module_respond(false, [], 'A base SINAPI ainda não foi indexada. Rode a indexação primeiro em IA → Indexação SINAPI.', 400);
+    }
+    // (Re)inicia o lote: zera os resultados anteriores para reclassificar do zero.
+    $pdo->prepare("UPDATE ia_depara_jobs SET status='queued', processados=0, errorMessage=NULL, startedAt=NOW(), finishedAt=NULL WHERE id=?")->execute([$jobId]);
+    $pdo->prepare('UPDATE ia_depara_itens SET statusClassificacao=NULL, matchOrigem=NULL, matchId=NULL, matchCode=NULL, matchDescription=NULL, matchUnit=NULL, matchValor=NULL, similaridade=NULL, top3Json=NULL, aceito=0 WHERE jobId=?')->execute([$jobId]);
+    spawn_ia_depara_worker($pdo, $config, $jobId);
+    server_audit($pdo, $authUser, 'index', 'ia', $jobId, 'De-para IA: classificação iniciada (' . (int) $job['total'] . ' itens)');
+    sinapi_module_respond(true, ['jobId' => $jobId, 'total' => (int) $job['total']], 'Classificação iniciada em segundo plano.');
+}
+
+// Status do lote para o polling do frontend (+ contagem por situação).
+function handle_ia_depara_status(PDO $pdo): never
+{
+    ensure_ia_depara_tables($pdo);
+    expire_stale_ia_depara_jobs($pdo);
+    $jobId = trim((string) ($_GET['job'] ?? $_GET['jobId'] ?? ''));
+    if ($jobId === '') {
+        sinapi_module_respond(false, [], 'Informe o jobId.', 400);
+    }
+    $stmt = $pdo->prepare('SELECT * FROM ia_depara_jobs WHERE id = ? LIMIT 1');
+    $stmt->execute([$jobId]);
+    $job = $stmt->fetch();
+    if (!$job) {
+        sinapi_module_respond(true, ['status' => 'none', 'total' => 0, 'processados' => 0, 'percent' => 0], 'Lote não encontrado.');
+    }
+    $total = (int) $job['total'];
+    $proc = (int) $job['processados'];
+    $percent = $total > 0 ? (int) floor($proc * 100 / $total) : (($job['status'] === 'done') ? 100 : 0);
+    sinapi_module_respond(true, [
+        'jobId' => $job['id'],
+        'total' => $total,
+        'processados' => $proc,
+        'status' => (string) $job['status'],
+        'percent' => $percent,
+        'error' => $job['errorMessage'] ?? null,
+        'counts' => ia_depara_counts($pdo, $jobId),
+    ], 'OK');
+}
+
+// Contagem por situação (baldes do frontend).
+function ia_depara_counts(PDO $pdo, string $jobId): array
+{
+    $counts = ['achou' => 0, 'revisar' => 0, 'cotacao_propria' => 0, 'total' => 0, 'classificados' => 0];
+    $stmt = $pdo->prepare('SELECT statusClassificacao s, COUNT(*) c FROM ia_depara_itens WHERE jobId = ? GROUP BY statusClassificacao');
+    $stmt->execute([$jobId]);
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
+        $c = (int) $r['c'];
+        $counts['total'] += $c;
+        if ($r['s'] !== null && isset($counts[$r['s']])) {
+            $counts[$r['s']] = $c;
+            $counts['classificados'] += $c;
+        }
+    }
+    return $counts;
+}
+
+// Lista os itens do lote (opcionalmente filtrados por situação) + as contagens.
+function handle_ia_depara_items(PDO $pdo): never
+{
+    ensure_ia_depara_tables($pdo);
+    $jobId = trim((string) ($_GET['job'] ?? $_GET['jobId'] ?? ''));
+    if ($jobId === '') {
+        sinapi_module_respond(false, [], 'Informe o jobId.', 400);
+    }
+    $filtro = strtolower((string) ($_GET['situacao'] ?? 'todos'));
+    $sql = 'SELECT id, linhaPlanilha, descricaoOrigem, codigoOrigem, quantidade, unidadeOrigem, valorOrigem,
+                   statusClassificacao, matchOrigem, matchId, matchCode, matchDescription, matchUnit, matchValor,
+                   similaridade, aceito
+            FROM ia_depara_itens WHERE jobId = ?';
+    $params = [$jobId];
+    if (in_array($filtro, ['achou', 'revisar', 'cotacao_propria'], true)) {
+        $sql .= ' AND statusClassificacao = ?';
+        $params[] = $filtro;
+    }
+    $sql .= ' ORDER BY id';
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    $itens = [];
+    while ($r = $stmt->fetch(PDO::FETCH_ASSOC)) {
+        $itens[] = [
+            'id' => (int) $r['id'],
+            'linhaPlanilha' => $r['linhaPlanilha'] !== null ? (int) $r['linhaPlanilha'] : null,
+            'descricaoOrigem' => (string) $r['descricaoOrigem'],
+            'codigoOrigem' => $r['codigoOrigem'],
+            'quantidade' => $r['quantidade'] !== null ? (float) $r['quantidade'] : null,
+            'unidadeOrigem' => $r['unidadeOrigem'],
+            'valorOrigem' => $r['valorOrigem'] !== null ? (float) $r['valorOrigem'] : null,
+            'statusClassificacao' => $r['statusClassificacao'],
+            'matchOrigem' => $r['matchOrigem'],
+            'matchId' => $r['matchId'] !== null ? (int) $r['matchId'] : null,
+            'matchCode' => $r['matchCode'],
+            'matchDescription' => $r['matchDescription'],
+            'matchUnit' => $r['matchUnit'],
+            'matchValor' => $r['matchValor'] !== null ? (float) $r['matchValor'] : null,
+            'similaridade' => $r['similaridade'] !== null ? (float) $r['similaridade'] : null,
+            'aceito' => (int) $r['aceito'],
+        ];
+    }
+    sinapi_module_respond(true, [
+        'itens' => $itens,
+        'counts' => ia_depara_counts($pdo, $jobId),
+    ], 'OK');
+}
+
+// Aceita (confirma) ou desmarca o match sugerido para um item.
+function handle_ia_depara_accept(PDO $pdo, array $payload, array $authUser): never
+{
+    ensure_ia_depara_tables($pdo);
+    $itemId = (int) ($payload['itemId'] ?? $payload['id'] ?? 0);
+    if ($itemId <= 0) {
+        sinapi_module_respond(false, [], 'Informe o item.', 400);
+    }
+    // Sem a flag explícita assume aceitar; com aceito=false desmarca.
+    $aceito = array_key_exists('aceito', $payload) ? (!empty($payload['aceito']) ? 1 : 0) : 1;
+    $chk = $pdo->prepare('SELECT id FROM ia_depara_itens WHERE id = ?');
+    $chk->execute([$itemId]);
+    if (!$chk->fetchColumn()) {
+        sinapi_module_respond(false, [], 'Item não encontrado.', 404);
+    }
+    $pdo->prepare('UPDATE ia_depara_itens SET aceito = ? WHERE id = ?')->execute([$aceito, $itemId]);
+    sinapi_module_respond(true, ['itemId' => $itemId, 'aceito' => $aceito], $aceito ? 'Item aceito.' : 'Item desmarcado.');
+}
+
+// Exporta o resultado do lote em .xlsx (todas as linhas + classificação + match).
+function handle_ia_depara_export(PDO $pdo): never
+{
+    ensure_ia_depara_tables($pdo);
+    $jobId = trim((string) ($_GET['job'] ?? $_GET['jobId'] ?? ''));
+    if ($jobId === '') {
+        fail('Informe o jobId.', 422);
+    }
+    foreach (['/vendor/autoload.php', '/../vendor/autoload.php'] as $rel) {
+        $autoload = __DIR__ . $rel;
+        if (is_file($autoload)) { require_once $autoload; break; }
+    }
+    if (!class_exists('PhpOffice\\PhpSpreadsheet\\Spreadsheet')) {
+        fail('Exportar .xlsx requer a biblioteca PhpSpreadsheet (composer require phpoffice/phpspreadsheet). Veja CLAUDE.md.', 422);
+    }
+    $jstmt = $pdo->prepare('SELECT * FROM ia_depara_jobs WHERE id = ?');
+    $jstmt->execute([$jobId]);
+    $job = $jstmt->fetch(PDO::FETCH_ASSOC);
+    if (!$job) {
+        fail('Lote não encontrado.', 404);
+    }
+    $stmt = $pdo->prepare('SELECT * FROM ia_depara_itens WHERE jobId = ? ORDER BY id');
+    $stmt->execute([$jobId]);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $labels = ['achou' => 'ACHOU', 'revisar' => 'REVISAR', 'cotacao_propria' => 'COTAÇÃO PRÓPRIA'];
+    $ss = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
+    $sheet = $ss->getActiveSheet();
+    $sheet->setTitle('De-para IA');
+    $row = 1;
+    $sheet->setCellValue('A' . $row, 'De-para IA — base SINAPI'); $row++;
+    $sheet->setCellValue('A' . $row, 'Arquivo: ' . (string) ($job['nomeArquivo'] ?? '')); $row++;
+    $sheet->setCellValue('A' . $row, 'Gerado em ' . date('Y-m-d H:i')); $row += 2;
+    $headers = ['Linha', 'Descrição (origem)', 'Código (origem)', 'Qtd', 'Unid (origem)', 'Valor (origem)',
+        'Situação', 'Match', 'Código SINAPI', 'Descrição SINAPI', 'Unid SINAPI', 'Valor SINAPI', 'Similaridade %', 'Aceito'];
+    $cols = [];
+    $c = 'A';
+    foreach ($headers as $h) { $cols[] = $c; $c++; }
+    foreach ($headers as $i => $h) { $sheet->setCellValue($cols[$i] . $row, $h); }
+    $sheet->getStyle('A' . $row . ':' . end($cols) . $row)->getFont()->setBold(true);
+    $row++;
+    foreach ($rows as $r) {
+        $vals = [
+            (int) ($r['linhaPlanilha'] ?? 0),
+            (string) $r['descricaoOrigem'],
+            (string) ($r['codigoOrigem'] ?? ''),
+            $r['quantidade'] !== null ? (float) $r['quantidade'] : '',
+            (string) ($r['unidadeOrigem'] ?? ''),
+            $r['valorOrigem'] !== null ? (float) $r['valorOrigem'] : '',
+            $labels[$r['statusClassificacao']] ?? '',
+            (string) ($r['matchOrigem'] ?? ''),
+            (string) ($r['matchCode'] ?? ''),
+            (string) ($r['matchDescription'] ?? ''),
+            (string) ($r['matchUnit'] ?? ''),
+            $r['matchValor'] !== null ? (float) $r['matchValor'] : '',
+            $r['similaridade'] !== null ? (float) $r['similaridade'] : '',
+            !empty($r['aceito']) ? 'Sim' : '',
+        ];
+        foreach ($vals as $i => $v) { $sheet->setCellValue($cols[$i] . $row, $v); }
+        $row++;
+    }
+    foreach ($cols as $col) { $sheet->getColumnDimension($col)->setAutoSize(true); }
+
+    $fileName = 'DeParaIA_' . trim(preg_replace('/[^A-Za-z0-9_-]+/', '_', pathinfo((string) ($job['nomeArquivo'] ?? 'lote'), PATHINFO_FILENAME)), '_') . '_' . date('Y-m-d') . '.xlsx';
+    while (ob_get_level() > 0) { ob_end_clean(); }
+    header_remove('Content-Type');
+    header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    header('Content-Disposition: attachment; filename="' . $fileName . '"');
+    header('Cache-Control: max-age=0');
+    $writer = new \PhpOffice\PhpSpreadsheet\Writer\Xlsx($ss);
+    $writer->save('php://output');
+    exit;
+}
+
+// Dispara o worker CLI de classificação do de-para em background, em BAIXA
+// prioridade (nice -n 19). Espelha spawn_ia_index_worker.
+function spawn_ia_depara_worker(PDO $pdo, array $config, string $jobId): void
+{
+    $worker = dirname(__DIR__) . '/scripts/ia_depara_worker.php';
+    if (!is_file($worker)) {
+        sinapi_module_respond(false, [], 'Worker não encontrado em scripts/ia_depara_worker.php — confira o deploy.', 500);
+    }
+    $logDir = dirname(rtrim($config['upload_dir'] ?? '/var/lib/financeiro/uploads', '/')) . '/ia_jobs';
+    if (!is_dir($logDir) && !@mkdir($logDir, 0750, true)) {
+        sinapi_module_respond(false, [], "Não foi possível criar a pasta de logs em {$logDir}. Verifique as permissões do usuário do Apache.", 500);
+    }
+    if (!is_writable($logDir)) {
+        sinapi_module_respond(false, [], "Sem permissão de escrita em {$logDir} — o log do worker não poderia ser gravado.", 500);
+    }
+    $php = null;
+    $candidates = [
+        PHP_BINDIR . '/php',
+        '/usr/bin/php',
+        '/usr/local/bin/php',
+        '/usr/bin/php8.4',
+        '/usr/bin/php8.3',
+        '/usr/bin/php8.2',
+        '/usr/bin/php8.1',
+        '/usr/bin/php8',
+        trim((string) shell_exec('command -v php 2>/dev/null')),
+    ];
+    foreach ($candidates as $candidate) {
+        if ($candidate !== null && $candidate !== '' && @is_executable($candidate)) {
+            $php = $candidate;
+            break;
+        }
+    }
+    if (!$php) {
+        sinapi_module_respond(false, [], 'Binário PHP CLI não encontrado no servidor. Instale o pacote php-cli.', 500);
+    }
+    $nice = trim((string) shell_exec('command -v nice 2>/dev/null'));
+    $prefix = $nice !== '' ? escapeshellarg($nice) . ' -n 19 ' : '';
+    $logFile = $logDir . '/' . preg_replace('/[^A-Za-z0-9_.-]/', '', $jobId) . '.log';
+    exec(sprintf(
+        'nohup %s%s %s --job %s >> %s 2>&1 &',
+        $prefix,
+        escapeshellarg($php),
+        escapeshellarg($worker),
+        escapeshellarg($jobId),
+        escapeshellarg($logFile)
+    ));
 }
 
 // Dispara o worker CLI de indexação em background, em BAIXA prioridade (nice -n 19)

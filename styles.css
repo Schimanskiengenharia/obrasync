@@ -6025,3 +6025,113 @@ html[data-theme="dark"] .ia-tag-ins { color: #cfa3e6; }
   .ia-result-row { grid-template-columns: 60px 1fr; }
   .ia-result-valor { grid-column: 2; }
 }
+
+/* ── IA: de-para em lote (módulo iaDepara) ──────────────────────────────────── */
+.ia-dp-upload-form { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 6px; }
+.ia-dp-upload-form input[type="file"] {
+  flex: 1 1 280px;
+  padding: 10px 12px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  background: var(--field);
+  color: var(--ink);
+}
+.ia-dp-ready { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+.ia-dp-chip-col {
+  display: inline-block;
+  padding: 2px 9px;
+  margin: 2px 2px 0 0;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #185fa5;
+  background: rgba(24, 95, 165, 0.12);
+}
+.ia-dp-bar { height: 10px; background: var(--line); border-radius: 5px; overflow: hidden; margin: 8px 0 4px; }
+.ia-dp-bar > div { height: 100%; background: #185fa5; transition: width 0.3s; }
+.ia-dp-progress-text { font-size: 0.9rem; }
+
+.ia-dp-buckets { display: flex; flex-wrap: wrap; align-items: stretch; gap: 10px; margin: 20px 0 12px; }
+.ia-dp-bucket {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 96px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
+}
+.ia-dp-bucket:hover { transform: translateY(-1px); box-shadow: var(--shadow); }
+.ia-dp-bucket.active { border-width: 2px; }
+.ia-dp-bucket-num { font-size: 1.35rem; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; }
+.ia-dp-bucket-lbl { font-size: 0.7rem; font-weight: 700; letter-spacing: 0.03em; color: var(--muted); }
+.ia-dp-b-achou .ia-dp-bucket-num { color: #1f5e0f; }
+.ia-dp-b-achou.active { border-color: #3b6d11; }
+.ia-dp-b-revisar .ia-dp-bucket-num { color: #855107; }
+.ia-dp-b-revisar.active { border-color: #855107; }
+.ia-dp-b-cotacao .ia-dp-bucket-num { color: #b42318; }
+.ia-dp-b-cotacao.active { border-color: #b42318; }
+.ia-dp-b-todos.active { border-color: #185fa5; }
+html[data-theme="dark"] .ia-dp-b-achou .ia-dp-bucket-num { color: #aee08a; }
+html[data-theme="dark"] .ia-dp-b-revisar .ia-dp-bucket-num { color: #f0c279; }
+html[data-theme="dark"] .ia-dp-b-cotacao .ia-dp-bucket-num { color: #ffa399; }
+.ia-dp-export { margin-left: auto; align-self: center; }
+
+.ia-dp-table-wrap { overflow-x: auto; }
+.ia-dp-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+.ia-dp-table thead th {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 2px solid var(--line);
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.ia-dp-table td { padding: 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.ia-dp-tr.is-aceito { background: rgba(59, 109, 17, 0.06); }
+.ia-dp-linha { color: var(--muted); font-variant-numeric: tabular-nums; }
+.ia-dp-desc { max-width: 360px; }
+.ia-dp-desc > div { margin-top: 3px; }
+.ia-dp-un { display: inline-block; margin-top: 3px; font-size: 0.78rem; }
+.ia-dp-cod { font-weight: 600; font-variant-numeric: tabular-nums; }
+.ia-dp-arrow { color: var(--muted); text-align: center; }
+.ia-dp-match { max-width: 320px; }
+.ia-dp-match strong { font-variant-numeric: tabular-nums; }
+.ia-dp-match-desc { margin-top: 2px; color: var(--ink); line-height: 1.35; }
+.ia-dp-valor { white-space: nowrap; font-weight: 600; font-variant-numeric: tabular-nums; }
+.ia-dp-sit {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 6px;
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+}
+.ia-dp-achou { color: #1f5e0f; background: rgba(59, 109, 17, 0.16); }
+.ia-dp-revisar { color: #855107; background: rgba(133, 79, 11, 0.16); }
+.ia-dp-cotacao { color: #b42318; background: rgba(180, 35, 24, 0.14); }
+html[data-theme="dark"] .ia-dp-achou { color: #aee08a; }
+html[data-theme="dark"] .ia-dp-revisar { color: #f0c279; }
+html[data-theme="dark"] .ia-dp-cotacao { color: #ffa399; }
+.ia-dp-mini { padding: 5px 10px; font-size: 0.82rem; white-space: nowrap; }
+.ia-dp-aceito {
+  background: #3b6d11;
+  color: #fff;
+  border: 1px solid #3b6d11;
+  border-radius: 8px;
+  padding: 5px 10px;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+@media (max-width: 700px) {
+  .ia-dp-export { margin-left: 0; width: 100%; }
+  .ia-dp-arrow { display: none; }
+  .ia-dp-desc, .ia-dp-match { max-width: none; }
+}

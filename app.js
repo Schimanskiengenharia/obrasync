@@ -19,9 +19,10 @@ if (APP_ENV === "production" && location.protocol === "http:") {
   location.replace(location.href.replace(/^http:/, "https:"));
 }
 const APP_NAME = "ObraSync";
-const APP_VERSION = "v1.20.0";
+const APP_VERSION = "v1.21.0";
 const APP_VERSION_DATE = "2026-06-28";
 const APP_CHANGELOG = [
+  "De-para em lote da IA: nova tela em IA → De-para em lote. Suba um orçamento externo em Excel/CSV; a IA lê a planilha (detectando automaticamente as colunas de descrição, código, quantidade, unidade e valor), classifica cada item contra a base SINAPI pela mesma busca semântica (cosseno) em ACHOU (alta similaridade ou código SINAPI válido), REVISAR (similaridade média, ou código informado que não existe na base) e COTAÇÃO PRÓPRIA (sem equivalente). A classificação roda em segundo plano com barra de progresso; o resultado vem em baldes coloridos por situação, tabela com o match sugerido (código + descrição + valor SINAPI) e similaridade, botões Aceitar por item e exportação do resultado em Excel (v1.21.0).",
   "Busca semântica da IA na base SINAPI: nova tela em IA → Busca semântica onde você descreve o item em linguagem natural e recebe as composições/insumos SINAPI mais parecidos POR SIGNIFICADO (não por palavra exata). O servidor gera o embedding do texto (Ollama, 384 dims) e ordena por similaridade de cosseno sobre os ~25 mil vetores já indexados, com filtro por origem (todos/composições/insumos), badge de similaridade (verde/amarelo/cinza), código + descrição + unidade e valor do item (v1.20.0).",
   "Importação mensal SINAPI na Base SINAPI: upload múltiplo dos arquivos oficiais, detecção de competência/tipo, prévia com colunas/amostras/alertas, processamento em fila, reimportação com manter/substituir, histórico por arquivo e referência padrão atual usada pela busca do orçamento (v1.19.0).",
   "Consolidação v1.18.0 (documentação de handoff): README/CLAUDE/STATUS sincronizados com o estado real do projeto, com os nomes reais de tabelas/colunas e o changelog completo da leva (asDate, CEP/autofill/obra, proposta por disciplina/modelos/SINAPI, contrato e exclusão de viabilidade).",
@@ -174,6 +175,7 @@ const modules = [
   ["sinapiSettings", "Configuração SINAPI"],
   ["plugins", "Plugins"],
   ["iaBusca", "Busca semântica"],
+  ["iaDepara", "De-para em lote"],
   ["iaIndex", "Indexação SINAPI"],
   ["iaTest", "Teste de IA"],
   ["backupLocal", "Backup local"],
@@ -200,8 +202,8 @@ const sidebarSections = [
   { id: "pluginsLauncher", label: "Plugins", icon: "ti-plug", pluginLauncher: true },
   // IA: seção própria (cresce com busca semântica, de-para, IA Orçamento). Mesma
   // visibilidade de plugins — só papéis que herdam todos os módulos (admin/gerente/
-  // visualizador) a enxergam, pois iaBusca/iaIndex/iaTest não estão nas listas dos demais.
-  { id: "ia", label: "IA", icon: "ti-robot", modules: ["iaBusca", "iaIndex", "iaTest"] },
+  // visualizador) a enxergam, pois iaBusca/iaDepara/iaIndex/iaTest não estão nas listas dos demais.
+  { id: "ia", label: "IA", icon: "ti-robot", modules: ["iaBusca", "iaDepara", "iaIndex", "iaTest"] },
   { id: "config", label: "Configurações", icon: "ti-settings", modules: ["companySettings", "users", "permissions", "systemVersion", "workTypes", "workStatuses", "standardStages", "standardMilestones", "customFields", "reportModels", "documentTypes", "checklists", "measurementTypes", "paymentMethods", "whatsappTemplates", "visibilityRules", "sinapiSettings", "plugins", "backupLocal", "preferences", "migration", "auditLog", "myProfile"] },
 ];
 
@@ -273,7 +275,7 @@ const SUBMODULE_ICONS = {
   backupLocal: ["ti-database-export", "#5F5E5A"], preferences: ["ti-settings", "#5F5E5A"], migration: ["ti-database-export", "#5F5E5A"],
   auditLog: ["ti-history", "#5F5E5A"], myProfile: ["ti-user-circle", "#5F5E5A"],
   // IA (azul)
-  iaBusca: ["ti-search", "#185FA5"], iaIndex: ["ti-database-cog", "#185FA5"], iaTest: ["ti-plug-connected", "#185FA5"],
+  iaBusca: ["ti-search", "#185FA5"], iaDepara: ["ti-arrows-exchange", "#185FA5"], iaIndex: ["ti-database-cog", "#185FA5"], iaTest: ["ti-plug-connected", "#185FA5"],
 };
 function submenuIconHtml(moduleKey) {
   const [ic, color] = SUBMODULE_ICONS[moduleKey] || ["ti-point", "#8a93a6"];
@@ -2770,6 +2772,7 @@ function render() {
   if (currentModule === "cotacoes") { cotacaoOpenId = null; return renderCotacoes(); }
   if (currentModule === "plugins") return renderPlugins();
   if (currentModule === "iaBusca") return renderIaBusca();
+  if (currentModule === "iaDepara") return renderIaDepara();
   if (currentModule === "iaIndex") return renderIaIndex();
   if (currentModule === "iaTest") return renderIaTest();
   if (currentModule === "preferences") return renderPreferences();
@@ -5201,6 +5204,290 @@ function renderIaBuscaResultados(rows) {
   box.innerHTML = `
     <p class="muted ia-result-count">${rows.length} resultado(s), ordenados por similaridade.</p>
     <div class="ia-result-list">${lines}</div>`;
+}
+
+// ── Seção IA: de-para em lote (módulo iaDepara) ─────────────────────────────
+// Fluxo: sobe planilha (.xlsx/.csv) → a IA classifica cada item contra a base
+// SINAPI (mesma busca semântica por cosseno, no worker) em ACHOU/REVISAR/COTAÇÃO
+// PRÓPRIA → o usuário revisa (Aceitar) → exporta o resultado em Excel.
+const iaDeparaState = { jobId: null, total: 0, colunas: [], status: "none", filtro: "todos", counts: null };
+let iaDeparaTimer = null;
+
+const IA_DEPARA_SIT = {
+  achou: { label: "ACHOU", cls: "ia-dp-achou" },
+  revisar: { label: "REVISAR", cls: "ia-dp-revisar" },
+  cotacao_propria: { label: "COTAÇÃO PRÓPRIA", cls: "ia-dp-cotacao" },
+};
+
+function iaDeparaColLabel(c) {
+  return ({ descricao: "Descrição", codigo: "Código", quantidade: "Quantidade", unidade: "Unidade", valor: "Valor" })[c] || c;
+}
+
+function renderIaDepara() {
+  if (iaDeparaTimer) { clearTimeout(iaDeparaTimer); iaDeparaTimer = null; }
+  qs("content").innerHTML = `
+    <section class="module-head">
+      <div>
+        <h2>IA — De-para em lote</h2>
+        <p>Suba um orçamento externo em Excel; a IA compara cada item com a base SINAPI e o classifica em ACHOU, REVISAR ou COTAÇÃO PRÓPRIA. Depois você revisa e exporta o resultado.</p>
+      </div>
+    </section>
+    <section class="panel">
+      ${serverMode ? "" : '<p class="empty">O de-para em lote depende da API PHP e do Ollama no servidor. Em modo local não está disponível.</p>'}
+      <div id="iaDeparaUploadBox" class="${serverMode ? "" : "hidden"}">
+        <h3>1. Enviar planilha</h3>
+        <p class="field-hint">Aceita .xlsx, .xls ou .csv. A planilha precisa de uma coluna de <strong>descrição</strong> (ou Item/Serviço/Produto). Detectadas automaticamente quando existirem: código (SINAPI), quantidade, unidade e valor. Nada é inventado — só lemos o que está na planilha.</p>
+        <form id="iaDeparaForm" class="ia-dp-upload-form">
+          <input type="file" id="iaDeparaFile" accept=".xlsx,.xls,.csv" required ${serverMode ? "" : "disabled"}>
+          <button class="primary" type="submit" ${serverMode ? "" : "disabled"}>Enviar planilha</button>
+        </form>
+      </div>
+      <div id="iaDeparaArea"></div>
+    </section>`;
+  if (!serverMode) return;
+  qs("iaDeparaForm")?.addEventListener("submit", iaDeparaUpload);
+}
+
+async function iaDeparaUpload(event) {
+  event.preventDefault();
+  const file = qs("iaDeparaFile")?.files?.[0];
+  const area = qs("iaDeparaArea");
+  if (!file) { alert("Selecione uma planilha."); return; }
+  const btn = qs("iaDeparaForm")?.querySelector('button[type="submit"]');
+  if (btn) { btn.disabled = true; btn.textContent = "Enviando…"; }
+  if (area) area.innerHTML = '<p class="muted">Lendo a planilha e detectando as colunas…</p>';
+  try {
+    const fd = new FormData();
+    fd.append("file", file);
+    const payload = await fetchForm("?module=ia&action=deparaUpload", fd);
+    const d = payload?.data ?? payload;
+    if (!d || !d.jobId) throw new Error((payload && payload.message) || "Falha ao ler a planilha.");
+    iaDeparaState.jobId = d.jobId;
+    iaDeparaState.total = d.total || 0;
+    iaDeparaState.colunas = d.colunasDetectadas || [];
+    iaDeparaState.status = "uploaded";
+    iaDeparaState.filtro = "todos";
+    iaDeparaState.counts = null;
+    iaDeparaRenderReady();
+  } catch (error) {
+    if (area) area.innerHTML = `<p style="color:#b42318"><strong>❌ ${escapeHtml(error.message || "Não foi possível ler a planilha.")}</strong></p>`;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "Enviar planilha"; }
+  }
+}
+
+function iaDeparaRenderReady() {
+  const area = qs("iaDeparaArea");
+  if (!area) return;
+  const cols = iaDeparaState.colunas.length
+    ? iaDeparaState.colunas.map((c) => `<span class="ia-dp-chip-col">${escapeHtml(iaDeparaColLabel(c))}</span>`).join(" ")
+    : '<span class="muted">nenhuma além da descrição</span>';
+  area.innerHTML = `
+    <div class="ia-dp-ready">
+      <h3>2. Classificar com IA</h3>
+      <p><strong>${iaDeparaState.total.toLocaleString("pt-BR")}</strong> itens lidos. Colunas detectadas: ${cols}</p>
+      <p class="field-hint">A IA gera o embedding de cada descrição e compara por significado com a base SINAPI (~1–2s por item; roda em segundo plano, em baixa prioridade). Itens com código SINAPI válido casam direto pelo código.</p>
+      <div id="iaDeparaProgress" class="hidden">
+        <div class="ia-dp-progress-text muted">Classificando…</div>
+        <div class="ia-dp-bar"><div id="iaDeparaBar" style="width:0%"></div></div>
+      </div>
+      <div class="actions"><button class="primary" type="button" id="iaDeparaStartBtn">Classificar com IA</button></div>
+    </div>
+    <div id="iaDeparaResult"></div>`;
+  qs("iaDeparaStartBtn")?.addEventListener("click", iaDeparaStart);
+}
+
+async function iaDeparaStart() {
+  if (!iaDeparaState.jobId) return;
+  const btn = qs("iaDeparaStartBtn");
+  if (btn) { btn.disabled = true; btn.textContent = "Iniciando…"; }
+  try {
+    await apiModuleRequest("?module=ia&action=deparaStart", { method: "POST", body: JSON.stringify({ jobId: iaDeparaState.jobId }) });
+    qs("iaDeparaProgress")?.classList.remove("hidden");
+    iaDeparaPoll();
+  } catch (error) {
+    alert(`Não foi possível iniciar a classificação: ${error.message}`);
+    if (btn) { btn.disabled = false; btn.textContent = "Classificar com IA"; }
+  }
+}
+
+async function iaDeparaPoll() {
+  if (!iaDeparaState.jobId) return;
+  try {
+    const d = await apiModuleRequest(`?module=ia&action=deparaStatus&job=${encodeURIComponent(iaDeparaState.jobId)}`);
+    const pct = Math.max(0, Math.min(100, Number(d.percent || 0)));
+    const bar = qs("iaDeparaBar");
+    const txt = document.querySelector("#iaDeparaProgress .ia-dp-progress-text");
+    if (bar) bar.style.width = `${pct}%`;
+    if (txt) {
+      const label = { queued: "na fila", running: "classificando…", done: "concluído ✅", error: "erro", none: "—" }[d.status] || d.status;
+      txt.textContent = `${Number(d.processados || 0).toLocaleString("pt-BR")} de ${Number(d.total || 0).toLocaleString("pt-BR")} (${pct}%) — ${label}`
+        + (d.status === "error" && d.error ? ` · ${d.error}` : "");
+    }
+    iaDeparaState.status = d.status;
+    iaDeparaState.counts = d.counts || iaDeparaState.counts;
+    if (d.status === "running" || d.status === "queued") {
+      iaDeparaTimer = setTimeout(() => { iaDeparaTimer = null; if (currentModule === "iaDepara" && qs("iaDeparaBar")) iaDeparaPoll(); }, 2500);
+    } else if (d.status === "done") {
+      const startBtn = qs("iaDeparaStartBtn");
+      if (startBtn) { startBtn.disabled = false; startBtn.textContent = "Reclassificar"; }
+      iaDeparaLoadResults("todos");
+    } else {
+      const startBtn = qs("iaDeparaStartBtn");
+      if (startBtn) { startBtn.disabled = false; startBtn.textContent = "Tentar novamente"; }
+    }
+  } catch (error) {
+    const txt = document.querySelector("#iaDeparaProgress .ia-dp-progress-text");
+    if (txt) txt.textContent = `Não foi possível obter o status: ${error.message}`;
+  }
+}
+
+async function iaDeparaLoadResults(filtro) {
+  iaDeparaState.filtro = filtro || "todos";
+  const box = qs("iaDeparaResult");
+  if (!box) return;
+  box.innerHTML = '<p class="muted">Carregando resultados…</p>';
+  try {
+    const data = await apiModuleRequest(`?module=ia&action=deparaItens&job=${encodeURIComponent(iaDeparaState.jobId)}&situacao=${encodeURIComponent(iaDeparaState.filtro)}`);
+    iaDeparaState.counts = data.counts || iaDeparaState.counts;
+    iaDeparaRenderResult(data.itens || [], data.counts || {});
+  } catch (error) {
+    box.innerHTML = `<p style="color:#b42318">Não foi possível carregar os resultados: ${escapeHtml(error.message)}</p>`;
+  }
+}
+
+function iaDeparaRenderResult(itens, counts) {
+  const box = qs("iaDeparaResult");
+  if (!box) return;
+  const c = counts || {};
+  const f = iaDeparaState.filtro;
+  const bucket = (key, label, cls) => `
+    <button type="button" class="ia-dp-bucket ${cls} ${f === key ? "active" : ""}" data-dp-filtro="${key}">
+      <span class="ia-dp-bucket-num">${Number(c[key] || 0).toLocaleString("pt-BR")}</span>
+      <span class="ia-dp-bucket-lbl">${label}</span>
+    </button>`;
+  const head = `
+    <div class="ia-dp-buckets">
+      <button type="button" class="ia-dp-bucket ia-dp-b-todos ${f === "todos" ? "active" : ""}" data-dp-filtro="todos">
+        <span class="ia-dp-bucket-num">${Number(c.total || 0).toLocaleString("pt-BR")}</span><span class="ia-dp-bucket-lbl">TODOS</span>
+      </button>
+      ${bucket("achou", "ACHOU", "ia-dp-b-achou")}
+      ${bucket("revisar", "REVISAR", "ia-dp-b-revisar")}
+      ${bucket("cotacao_propria", "COTAÇÃO PRÓPRIA", "ia-dp-b-cotacao")}
+      <button type="button" class="secondary ia-dp-export" id="iaDeparaExportBtn">⤓ Exportar resultado</button>
+    </div>`;
+  if (!itens.length) {
+    box.innerHTML = head + '<p class="empty">Nenhum item nesta situação.</p>';
+  } else {
+    box.innerHTML = head + `
+      <div class="ia-dp-table-wrap">
+        <table class="ia-dp-table">
+          <thead><tr>
+            <th>#</th><th>Descrição (origem)</th><th>Cód.</th><th></th>
+            <th>Sim.</th><th>Match SINAPI</th><th>Valor</th><th>Ação</th>
+          </tr></thead>
+          <tbody>${itens.map(iaDeparaRowHtml).join("")}</tbody>
+        </table>
+      </div>`;
+  }
+  box.querySelectorAll("[data-dp-filtro]").forEach((btn) => btn.addEventListener("click", () => iaDeparaLoadResults(btn.dataset.dpFiltro)));
+  qs("iaDeparaExportBtn")?.addEventListener("click", iaDeparaExport);
+  box.querySelectorAll("[data-dp-aceitar]").forEach((btn) => btn.addEventListener("click", () => iaDeparaAceitar(Number(btn.dataset.dpAceitar), btn)));
+  box.querySelectorAll("[data-dp-criar]").forEach((btn) => btn.addEventListener("click", () => iaDeparaCriarComposicao(btn.dataset.dpCriar)));
+}
+
+function iaDeparaRowHtml(it) {
+  const sit = IA_DEPARA_SIT[it.statusClassificacao] || { label: "—", cls: "" };
+  const tag = `<span class="ia-dp-sit ${sit.cls}">${sit.label}</span>`;
+  const codOrigem = it.codigoOrigem ? `<div class="ia-dp-cod">${escapeHtml(it.codigoOrigem)}</div>` : '<span class="muted">—</span>';
+  const sim = it.similaridade != null ? iaSimBadge(it.similaridade) : '<span class="muted">—</span>';
+  let matchCell = '<span class="muted">—</span>';
+  if (it.matchCode || it.matchDescription) {
+    const mtag = it.matchOrigem === "insumo"
+      ? '<span class="ia-tag ia-tag-ins">INS</span>'
+      : (it.matchOrigem === "composicao" ? '<span class="ia-tag ia-tag-comp">COMP</span>' : "");
+    matchCell = `<div class="ia-dp-match">${mtag}<strong>${escapeHtml(it.matchCode || "")}</strong>${it.matchUnit ? ` <span class="ia-result-unit">${escapeHtml(it.matchUnit)}</span>` : ""}<div class="ia-dp-match-desc">${escapeHtml(it.matchDescription || "")}</div></div>`;
+  }
+  const valor = it.matchValor != null
+    ? asMoney(it.matchValor)
+    : (it.valorOrigem != null ? `<span class="muted" title="valor da planilha (origem)">${asMoney(it.valorOrigem)}</span>` : "");
+  let acao;
+  if (it.statusClassificacao === "cotacao_propria") {
+    acao = `<button class="secondary ia-dp-mini" type="button" data-dp-criar="${it.id}">Criar comp. própria</button>`;
+  } else {
+    const aceito = Number(it.aceito) === 1;
+    acao = `<button class="${aceito ? "ia-dp-aceito" : "secondary"} ia-dp-mini" type="button" data-dp-aceitar="${it.id}">${aceito ? "✓ Aceito" : "Aceitar"}</button>`;
+  }
+  const extras = [
+    it.unidadeOrigem ? `un: ${escapeHtml(it.unidadeOrigem)}` : "",
+    it.quantidade != null ? `qtd: ${escapeHtml(String(it.quantidade))}` : "",
+  ].filter(Boolean).join(" · ");
+  return `
+    <tr class="ia-dp-tr ${Number(it.aceito) === 1 ? "is-aceito" : ""}">
+      <td class="ia-dp-linha">${it.linhaPlanilha ?? ""}</td>
+      <td class="ia-dp-desc">${tag}<div>${escapeHtml(it.descricaoOrigem || "")}</div>${extras ? `<span class="muted ia-dp-un">${extras}</span>` : ""}</td>
+      <td>${codOrigem}</td>
+      <td class="ia-dp-arrow">→</td>
+      <td>${sim}</td>
+      <td>${matchCell}</td>
+      <td class="ia-dp-valor">${valor}</td>
+      <td>${acao}</td>
+    </tr>`;
+}
+
+async function iaDeparaAceitar(itemId, btn) {
+  const novo = !btn.classList.contains("ia-dp-aceito");
+  btn.disabled = true;
+  try {
+    await apiModuleRequest("?module=ia&action=deparaAceitar", { method: "POST", body: JSON.stringify({ itemId, aceito: novo }) });
+    btn.classList.toggle("ia-dp-aceito", novo);
+    btn.classList.toggle("secondary", !novo);
+    btn.textContent = novo ? "✓ Aceito" : "Aceitar";
+    btn.closest("tr")?.classList.toggle("is-aceito", novo);
+  } catch (error) {
+    alert(`Não foi possível salvar: ${error.message}`);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function iaDeparaCriarComposicao(_itemId) {
+  // A criação completa da composição própria é a próxima fase; por ora levamos o
+  // usuário ao módulo de composições próprias (o item é cotado fora da SINAPI).
+  if (!canAccessModule("ownCompositions")) {
+    showToast("Item de cotação própria: cadastre uma composição própria para ele.");
+    return;
+  }
+  showToast("Crie a composição própria para este item de cotação fora da SINAPI.");
+  currentModule = "ownCompositions";
+  render();
+}
+
+async function iaDeparaExport() {
+  if (!iaDeparaState.jobId) return;
+  const btn = qs("iaDeparaExportBtn");
+  if (btn) btn.disabled = true;
+  try {
+    const resp = await fetch(`${API_BASE}/?module=ia&action=deparaExport&job=${encodeURIComponent(iaDeparaState.jobId)}`, { headers: authHeaders() });
+    if (!resp.ok) {
+      let msg = `Erro ${resp.status}`;
+      try { const j = await resp.json(); msg = j.error || j.message || msg; } catch { /* corpo não-JSON */ }
+      throw new Error(msg);
+    }
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `DeParaIA_${new Date().toISOString().slice(0, 10)}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    alert(`Não foi possível exportar: ${error.message}`);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 function pluginCard(row, index, total, editable) {

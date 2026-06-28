@@ -1,8 +1,8 @@
 # CLAUDE.md — Guia para agentes de IA no projeto ObraSync
 
-> **Versão atual:** `v1.20.0` · 2026-06-28
+> **Versão atual:** `v1.21.0` · 2026-06-28
 > **Última varredura de código:** 2026-06-27 (3ª rodada — segurança, bugs, performance, qualidade, UX; itens MÉDIO/BAIXO fechados na v1.12.1)
-> **Handoff:** este doc foi atualizado na v1.20.0 (busca semântica IA) — confira a seção **Sessão 2026-06-28 — v1.20.0** e **Operação/Deploy (handoff)** abaixo.
+> **Handoff:** este doc foi atualizado na v1.21.0 (de-para em lote IA) — confira a seção **Sessão 2026-06-28 — v1.21.0** e **Operação/Deploy (handoff)** abaixo.
 
 Este arquivo orienta qualquer agente (ou pessoa) que continue o desenvolvimento.
 Leia também o `README.md` (seção "Para quem está retomando o projeto") e o
@@ -60,6 +60,18 @@ Leia também o `README.md` (seção "Para quem está retomando o projeto") e o
 > Pontos fortes confirmados (não re-sinalizar): prepared statements em todo SQL (sem SQLi), autorização por rota/perfil após `authenticate_request`, sessão com token CSPRNG + SHA-256 + idle/TTL, `password_hash`, rate limit de login/reset, CSRF mitigado por auth via header, uploads fora do docroot, deploy com HMAC + `escapeshellarg`.
 
 ---
+
+## Sessão 2026-06-28 — v1.21.0 (De-para em lote da IA)
+
+**Feature:** nova tela em **IA → De-para em lote** (módulo `iaDepara`). Upload de um orçamento externo (.xlsx/.xls/.csv) → a IA classifica cada item contra a base SINAPI por busca semântica → revisão → export. Reusa a lógica do `action=buscarSemantica` (embedding + cosseno sobre `ia_embeddings`).
+
+**Tabelas novas:** migration `2026-06-28-ia-depara-lote.sql` + `ensure_ia_depara_tables()` (auto-cura runtime, igual a `ia_embeddings`). `ia_depara_jobs` (lote/progresso) e `ia_depara_itens` (linha crua da planilha + resultado: `statusClassificacao` enum achou/revisar/cotacao_propria, `matchOrigem/matchId/matchCode/matchDescription/matchUnit/matchValor`, `similaridade` 0-100, `top3Json`, `aceito`). FK `ia_depara_itens.jobId → ia_depara_jobs.id ON DELETE CASCADE`.
+
+**Endpoints (POST/GET em `?module=ia`):** `deparaUpload` (POST multipart: lê a 1ª aba com `read_xlsx_sheets`, detecta colunas por cabeçalho normalizado em `ia_depara_map_header`/`ia_depara_detect_columns` — descrição obrigatória; grava linhas cruas, **não inventa dados**), `deparaStart` (POST {jobId}: zera resultados e dispara o worker; exige `ia_embeddings` já populada), `deparaStatus` (GET polling + counts), `deparaItens` (GET lista + filtro por situação), `deparaAceitar` (POST {itemId, aceito}), `deparaExport` (GET download .xlsx via PhpSpreadsheet). Helper `ia_read_json_body()` lê o corpo JSON no padrão `{success,data,message}`.
+
+**Worker:** `scripts/ia_depara_worker.php` (espelha `ia_index_worker.php`; spawn por `spawn_ia_depara_worker` com nohup+nice-19). Carrega os vetores em memória 1x (query não-bufferizada, norma pré-calculada), monta mapas SINAPI por id e código→id, e por item: embed + cosseno top1/top3. **Regra (constantes `IA_DEPARA_ACHOU_MIN=0.80`, `IA_DEPARA_REVISAR_MIN=0.60`, `IA_DEPARA_COMMIT_EVERY=25`):** com código na planilha → existe na base = ACHOU (match por código, sim=100); não existe = REVISAR. Sem código → top1 ≥80% ACHOU, 60–80% REVISAR, <60% COTAÇÃO PRÓPRIA. Commit a cada 25.
+
+**Frontend:** `renderIaDepara()` + `iaDeparaUpload/Start/Poll/LoadResults/RenderResult/RowHtml/Aceitar/Export` (`app.js`). Módulo registrado em `moduleNames`, seção `ia` da sidebar, `SUBMODULE_ICONS` (`ti-arrows-exchange`) e roteamento. Upload via `fetchForm`; download autenticado via `fetch + authHeaders + blob` (igual `exportSinapiExcel`). Baldes coloridos achou/revisar/cotacao + tabela com Aceitar / "Criar comp. própria" (que por ora só navega para `ownCompositions` — criação completa é a próxima fase). CSS `.ia-dp-*` em `styles.css`. **Não** foram feitos os agrupamentos multidimensionais (disciplina/ala/fornecedor) — próxima fase.
 
 ## Sessão 2026-06-28 — v1.20.0 (Busca semântica IA na base SINAPI)
 

@@ -1038,6 +1038,47 @@ CREATE TABLE IF NOT EXISTS ia_index_jobs (
   KEY idx_status (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- De-para em lote da IA: lotes (upload de planilha) + itens classificados.
+CREATE TABLE IF NOT EXISTS ia_depara_jobs (
+  id VARCHAR(64) PRIMARY KEY,
+  nomeArquivo VARCHAR(255) NULL,
+  total INT UNSIGNED NOT NULL DEFAULT 0,
+  processados INT UNSIGNED NOT NULL DEFAULT 0,
+  status ENUM('queued','running','done','error') NOT NULL DEFAULT 'queued',
+  colunasJson TEXT NULL,
+  errorMessage TEXT NULL,
+  createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  startedAt TIMESTAMP NULL DEFAULT NULL,
+  finishedAt TIMESTAMP NULL DEFAULT NULL,
+  userId BIGINT UNSIGNED NULL,
+  KEY idx_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS ia_depara_itens (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  jobId VARCHAR(64) NOT NULL,
+  linhaPlanilha INT UNSIGNED NULL,
+  descricaoOrigem TEXT NOT NULL,
+  codigoOrigem VARCHAR(80) NULL,
+  quantidade DECIMAL(15,4) NULL,
+  unidadeOrigem VARCHAR(40) NULL,
+  valorOrigem DECIMAL(15,4) NULL,
+  statusClassificacao ENUM('achou','revisar','cotacao_propria') NULL,
+  matchOrigem ENUM('composicao','insumo') NULL,
+  matchId BIGINT UNSIGNED NULL,
+  matchCode VARCHAR(80) NULL,
+  matchDescription TEXT NULL,
+  matchUnit VARCHAR(40) NULL,
+  matchValor DECIMAL(15,4) NULL,
+  similaridade DECIMAL(5,2) NULL,
+  top3Json TEXT NULL,
+  aceito TINYINT NOT NULL DEFAULT 0,
+  createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_depara_item_job FOREIGN KEY (jobId) REFERENCES ia_depara_jobs(id) ON DELETE CASCADE,
+  KEY idx_job (jobId),
+  KEY idx_job_status (jobId, statusClassificacao)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS sinapi_import_jobs (
   id VARCHAR(60) PRIMARY KEY,
   status VARCHAR(12) NOT NULL DEFAULT 'queued',
