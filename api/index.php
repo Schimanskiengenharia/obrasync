@@ -819,7 +819,15 @@ function handle_payable_module(PDO $pdo, string $method, array $query, array $au
     try {
         if ($action === 'create_recurrence') {
             require_method($method, ['POST']);
-            payable_respond(true, payable_create_recurrence($pdo, read_json(), $authUser), 'Parcelas geradas com sucesso.', 201);
+            try {
+                payable_respond(true, payable_create_recurrence($pdo, read_json(), $authUser), 'Parcelas geradas com sucesso.', 201);
+            } catch (Throwable $e) {
+                // DEBUG TEMPORÁRIO: expõe o erro real (PDO/SQL) para diagnóstico da
+                // recorrência em produção. Remover e voltar à mensagem genérica do
+                // catch externo assim que a causa for confirmada.
+                error_log('RECORRENCIA_ERROR: ' . $e->getMessage() . ' em ' . $e->getFile() . ':' . $e->getLine());
+                payable_respond(false, [], 'DEBUG: ' . $e->getMessage(), 500);
+            }
         }
         if ($action === 'early_settlement') {
             require_method($method, ['POST']);
@@ -976,6 +984,28 @@ function payable_create_recurrence(PDO $pdo, array $payload, array $authUser): a
     }
     $openStatus = open_status_for_table($pdo, $table);
 
+    // Valida cada FK contra a tabela referenciada: id inexistente/ inválido vira NULL
+    // para não estourar a foreign key constraint do accounts_payable (causa comum de
+    // 500 mesmo com todas as colunas presentes). Resolvido uma vez (vale para todas as parcelas).
+    $fkOrNull = static function (string $ref, $value) use ($pdo): ?int {
+        $v = normalize_value($value);
+        if ($v === null) {
+            return null;
+        }
+        $id = (int) $v;
+        if ($id <= 0 || !resolve_existing_table($pdo, [$ref], false)) {
+            return null;
+        }
+        $stmt = $pdo->prepare("SELECT 1 FROM `{$ref}` WHERE id = ? LIMIT 1");
+        $stmt->execute([$id]);
+        return $stmt->fetchColumn() ? $id : null;
+    };
+    $supplierId = $fkOrNull('suppliers', $payload['supplierId'] ?? null);
+    $projectId = $fkOrNull('projects', $payload['projectId'] ?? null);
+    $categoryId = $fkOrNull('financial_categories', $payload['categoryId'] ?? null);
+    $costCenterId = $fkOrNull('cost_centers', $payload['costCenterId'] ?? null);
+    $bankAccount = normalize_value($payload['bankAccount'] ?? null);
+
     $created = [];
     $pdo->beginTransaction();
     try {
@@ -989,11 +1019,11 @@ function payable_create_recurrence(PDO $pdo, array $payload, array $authUser): a
                 'document' => mb_substr($label, 0, 80),
                 'issueDate' => $issueDate,
                 'dueDate' => $due,
-                'supplierId' => normalize_value($payload['supplierId'] ?? null),
-                'projectId' => normalize_value($payload['projectId'] ?? null),
-                'categoryId' => normalize_value($payload['categoryId'] ?? null),
-                'costCenterId' => normalize_value($payload['costCenterId'] ?? null),
-                'bankAccount' => normalize_value($payload['bankAccount'] ?? null),
+                'supplierId' => $supplierId,
+                'projectId' => $projectId,
+                'categoryId' => $categoryId,
+                'costCenterId' => $costCenterId,
+                'bankAccount' => $bankAccount,
                 'amount' => $amount,
                 'status' => $openStatus,
                 'recorrencia_id' => $rid,
