@@ -3763,13 +3763,20 @@ function lucroCaixaMonthsForPeriod(periodKey) {
 
 function lucroCaixaChart(periodKey, projectId = "") {
   const rows = lucroCaixaMonthlyRows(projectId, lucroCaixaMonthsForPeriod(periodKey));
+  const labels = rows.map((r) => monthLabel(r.month));
+  // Tooltip combinado por mês: lucro gerencial, caixa real e a diferença
+  // (= a receber líquido = lucro − caixa). Mostra as duas séries mesmo quando
+  // as linhas coincidem (sem contas em aberto no mês → lucro = caixa).
+  const tooltips = rows.map((r) =>
+    `${monthLabel(r.month)}\nLucro gerencial: ${compactMoney(r.lucro)}\nCaixa real: ${compactMoney(r.caixa)}\nDiferença (a receber líquido): ${compactMoney(r.lucro - r.caixa)}`
+  );
   return chartPanel(
     "Evolução: lucro gerencial x caixa",
     `Resultado por competência e caixa real por mês${projectId ? " · " + svgText(nameOf("projects", projectId) || "obra") : ""}`,
     lineChart([
       { label: "Lucro gerencial", color: "#2563eb", values: rows.map((r) => r.lucro) },
       { label: "Saldo em caixa", color: "#147a47", values: rows.map((r) => r.caixa) },
-    ], rows.map((r) => monthLabel(r.month)))
+    ], labels, tooltips)
   );
 }
 
@@ -4426,7 +4433,7 @@ function escapeHtml(value) {
 // Alias histórico: vários templates antigos chamam svgText.
 const svgText = escapeHtml;
 
-function lineChart(series, labels) {
+function lineChart(series, labels, columnTooltips = null) {
   const values = series.flatMap((item) => item.values);
   if (!labels.length || !hasValues(values)) return emptyChart();
   const width = 760;
@@ -4448,6 +4455,17 @@ function lineChart(series, labels) {
   }).join("");
   const dots = series.map((item) => item.values.map((value, index) => `<circle cx="${x(index)}" cy="${y(value)}" r="2.5" fill="${item.color}"><title>${svgText(item.label)}: ${compactMoney(value)}</title></circle>`).join("")).join("");
   const axisLabels = labels.map((label, index) => `<text x="${x(index)}" y="${height - 14}" text-anchor="middle" class="chart-axis">${svgText(label)}</text>`).join("");
+  // Faixa transparente por coluna: tooltip combinado (todas as séries do mês) ao
+  // passar o mouse. Fica por cima de tudo para capturar o hover. Opcional —
+  // quando columnTooltips não é informado, o gráfico segue inalterado.
+  const hoverBands = (Array.isArray(columnTooltips) && columnTooltips.length === labels.length)
+    ? labels.map((_, index) => {
+        const span = labels.length > 1 ? (width - pad.left - pad.right) / (labels.length - 1) : (width - pad.left - pad.right);
+        const rx = Math.max(pad.left, x(index) - span / 2);
+        const rw = Math.min(width - pad.right, x(index) + span / 2) - rx;
+        return `<rect x="${rx}" y="${pad.top}" width="${rw}" height="${height - pad.top - pad.bottom}" fill="transparent"><title>${svgText(columnTooltips[index])}</title></rect>`;
+      }).join("")
+    : "";
   return `
     <div class="chart-wrap">
       <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Gráfico de linha">
@@ -4456,6 +4474,7 @@ function lineChart(series, labels) {
         ${paths}
         ${dots}
         ${axisLabels}
+        ${hoverBands}
       </svg>
       ${chartLegend(series)}
     </div>
