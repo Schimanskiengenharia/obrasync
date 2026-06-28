@@ -28,6 +28,12 @@ const RESET_WINDOW_SECONDS = 3600;  // 1 h
 const RESET_MAX_PER_IP = 5;
 // Recorte das tabelas SINAPI no bootstrap; a base completa é consultada sob demanda.
 const SINAPI_BOOTSTRAP_LIMIT = 300;
+// Linhas lidas por aba na PRÉVIA da importação SINAPI: a prévia só mostra uma
+// amostra, então não há motivo para materializar 40k linhas (estourava memória).
+const SINAPI_PREVIEW_MAX_ROWS = 120;
+// Tamanho do bloco ao ler a planilha na importação REAL (read filter por faixa de
+// linhas), para o pico de memória do PhpSpreadsheet não acompanhar o tamanho do arquivo.
+const SINAPI_IMPORT_CHUNK_ROWS = 5000;
 
 // Recorrência de contas a pagar. DEFINIDAS NO TOPO de propósito: o roteamento inline
 // (try a partir da linha ~40) chama handle_payable_module e dá exit() antes de a
@@ -8972,7 +8978,10 @@ function sinapi_uploaded_files(string $field = 'files'): array
 
 function handle_sinapi_preview_package(PDO $pdo, array $config, array $authUser): never
 {
-    set_time_limit(0);
+    // Rede de segurança SÓ nesta operação (não mexe no php.ini global). A prévia já
+    // lê apenas uma amostra (read filter), mas mantemos folga para arquivos atípicos.
+    @ini_set('memory_limit', '1024M');
+    @set_time_limit(300);
     $uploaded = sinapi_uploaded_files('files');
     if (!$uploaded) {
         fail('Envie ao menos um arquivo SINAPI.', 400);
@@ -9001,11 +9010,15 @@ function handle_sinapi_preview_package(PDO $pdo, array $config, array $authUser)
             if (in_array(strtolower(pathinfo($path, PATHINFO_EXTENSION)), ['xlsx', 'xls'], true)) {
                 sinapi_require_phpspreadsheet();
             }
-            $parsed = parse_sinapi_file($path, $detected['fileType'], '', $detected['uf'], $detected['month'], $detected['year'], $detected['priceType']);
+            // Prévia: lê só uma amostra (SINAPI_PREVIEW_MAX_ROWS por aba). A leitura
+            // completa e a contagem real ocorrem na importação (worker/síncrono).
+            $parsed = parse_sinapi_file($path, $detected['fileType'], '', $detected['uf'], $detected['month'], $detected['year'], $detected['priceType'], SINAPI_PREVIEW_MAX_ROWS);
             if (!$parsed) {
                 $alerts[] = 'Nenhum registro reconhecido. Confirme UF, tipo de arquivo e layout da planilha.';
+            } elseif (count($parsed) >= SINAPI_PREVIEW_MAX_ROWS) {
+                $alerts[] = 'Prévia por amostra (primeiras ' . SINAPI_PREVIEW_MAX_ROWS . ' linhas por aba); a contagem e a gravação completas ocorrem na importação.';
             }
-            $columns = sinapi_detect_package_columns($path);
+            $columns = sinapi_detect_package_columns($path, SINAPI_PREVIEW_MAX_ROWS);
         } catch (Throwable $error) {
             $alerts[] = $error->getMessage();
             $pdo->prepare('INSERT INTO sinapi_import_errors (jobId, fileName, fileType, message) VALUES (?, ?, ?, ?)')
@@ -9228,10 +9241,15 @@ function sinapi_detect_file_metadata(string $name, string $defaultUf, int $defau
     return ['fileType' => $type === 'unknown' ? 'reference' : $type, 'uf' => $uf, 'month' => $month, 'year' => $year, 'priceType' => $priceType];
 }
 
-function sinapi_detect_package_columns(string $path): array
+function sinapi_detect_package_columns(string $path, ?int $maxRows = null): array
 {
     $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
-    $sheets = in_array($ext, ['csv', 'txt'], true) ? ['CSV' => read_csv_matrix($path)] : read_xlsx_sheets($path);
+    // Só inspeciona as primeiras ~20 linhas de cada aba; lê apenas a amostra.
+    $csv = static function () use ($path, $maxRows): array {
+        $matrix = read_csv_matrix($path);
+        return $maxRows !== null && $maxRows > 0 ? array_slice($matrix, 0, $maxRows) : $matrix;
+    };
+    $sheets = in_array($ext, ['csv', 'txt'], true) ? ['CSV' => $csv()] : read_xlsx_sheets($path, $maxRows);
     $out = [];
     foreach ($sheets as $name => $rows) {
         $header = null;
@@ -9290,16 +9308,22 @@ function sinapi_workbook_issue(string $path, array $expectedSheets): ?string
     return 'abas encontradas: ' . (implode(', ', array_slice($names, 0, 8)) ?: 'nenhuma') . '; esperava ' . implode(' / ', $expectedSheets);
 }
 
-function parse_sinapi_file(string $path, string $fileType, string $sheetName, string $uf, int $month, int $year, string $defaultReferenceType): array
+// $maxRows != null limita a leitura às primeiras linhas de cada aba (prévia/amostra);
+// null lê o arquivo todo (importação real e síncrona), agora em blocos de memória.
+function parse_sinapi_file(string $path, string $fileType, string $sheetName, string $uf, int $month, int $year, string $defaultReferenceType, ?int $maxRows = null): array
 {
     $extension = strtolower(pathinfo($path, PATHINFO_EXTENSION));
     if (in_array($extension, ['csv', 'txt'], true)) {
         if ($sheetName === '') {
             fail('Para CSV, informe qual aba foi exportada do Excel.', 400);
         }
-        $sheets = [$sheetName => read_csv_matrix($path)];
+        $matrix = read_csv_matrix($path);
+        if ($maxRows !== null && $maxRows > 0) {
+            $matrix = array_slice($matrix, 0, $maxRows);
+        }
+        $sheets = [$sheetName => $matrix];
     } else {
-        $sheets = read_xlsx_sheets($path);
+        $sheets = read_xlsx_sheets($path, $maxRows);
     }
 
     $records = [];
@@ -9515,29 +9539,101 @@ function read_csv_matrix(string $path): array
     return $rows;
 }
 
-function read_xlsx_sheets(string $path): array
+// Lê todas as abas de um XLSX/XLS em arrays simples (linha → colunas).
+//   $maxRows != null → PRÉVIA: lê só as primeiras $maxRows linhas de cada aba num
+//                      único load (amostra). Barato em memória.
+//   $maxRows == null → IMPORT REAL: lê cada aba em BLOCOS de linhas e desconecta o
+//                      spreadsheet entre os blocos, para o pico de memória do
+//                      PhpSpreadsheet não acompanhar o tamanho do arquivo (a
+//                      Referência ~13 MB estourava o memory_limit de 512 MB).
+function read_xlsx_sheets(string $path, ?int $maxRows = null): array
 {
     sinapi_require_phpspreadsheet();
-    $sheets = [];
     try {
-        $reader = \PhpOffice\PhpSpreadsheet\IOFactory::createReaderForFile($path);
-        $reader->setReadDataOnly(true);
-        $spreadsheet = $reader->load($path);
+        // Formato conhecido (xlsx) → reader explícito, sem a autodetecção custosa
+        // do createReaderForFile. Mantém createReaderForFile só para .xls legado.
+        $reader = strtolower(pathinfo($path, PATHINFO_EXTENSION)) === 'xlsx'
+            ? \PhpOffice\PhpSpreadsheet\IOFactory::createReader('Xlsx')
+            : \PhpOffice\PhpSpreadsheet\IOFactory::createReaderForFile($path);
+        $reader->setReadDataOnly(true); // ignora formatação → corta memória
     } catch (Throwable $error) {
         fail('Não foi possível abrir o arquivo XLSX: ' . $error->getMessage(), 400);
     }
-    foreach ($spreadsheet->getWorksheetIterator() as $sheet) {
-        $rows = [];
-        foreach ($sheet->toArray('', false, false, false) as $row) {
-            $values = array_map(static fn ($value) => trim(str_replace(["\r", "\n"], ' ', (string) $value)), $row);
-            if (array_filter($values, fn ($value) => $value !== '')) {
-                $rows[] = $values;
-            }
+
+    if ($maxRows !== null && $maxRows > 0) {
+        $reader->setReadFilter(sinapi_xlsx_row_filter(1, $maxRows));
+        try {
+            $spreadsheet = $reader->load($path);
+        } catch (Throwable $error) {
+            fail('Não foi possível abrir o arquivo XLSX: ' . $error->getMessage(), 400);
         }
-        $sheets[$sheet->getTitle()] = $rows;
+        $sheets = [];
+        foreach ($spreadsheet->getWorksheetIterator() as $sheet) {
+            $sheets[$sheet->getTitle()] = sinapi_rows_from_sheet($sheet);
+        }
+        $spreadsheet->disconnectWorksheets();
+        unset($spreadsheet);
+        return $sheets;
     }
-    $spreadsheet->disconnectWorksheets();
+
+    return read_xlsx_sheets_chunked($reader, $path);
+}
+
+// Importação real: lê aba por aba, em blocos de SINAPI_IMPORT_CHUNK_ROWS linhas,
+// extraindo cada bloco para arrays simples e liberando a memória do PhpSpreadsheet
+// (disconnectWorksheets + unset) antes do próximo. O contrato de retorno é idêntico
+// ao read completo anterior — só o pico de memória muda.
+function read_xlsx_sheets_chunked($reader, string $path): array
+{
+    $sheets = [];
+    foreach ($reader->listWorksheetInfo($path) as $meta) {
+        $name = (string) ($meta['worksheetName'] ?? '');
+        $totalRows = max(1, (int) ($meta['totalRows'] ?? 0));
+        $reader->setLoadSheetsOnly($name); // uma aba por vez
+        $rows = [];
+        for ($start = 1; $start <= $totalRows; $start += SINAPI_IMPORT_CHUNK_ROWS) {
+            $reader->setReadFilter(sinapi_xlsx_row_filter($start, $start + SINAPI_IMPORT_CHUNK_ROWS - 1));
+            $spreadsheet = $reader->load($path);
+            foreach (sinapi_rows_from_sheet($spreadsheet->getActiveSheet()) as $row) {
+                $rows[] = $row;
+            }
+            $spreadsheet->disconnectWorksheets();
+            unset($spreadsheet);
+        }
+        $sheets[$name] = $rows;
+    }
+    $reader->setLoadSheetsOnly(null); // remove o recorte de abas do reader
     return $sheets;
+}
+
+// Extrai as linhas não vazias de uma aba já carregada para um array simples.
+function sinapi_rows_from_sheet($sheet): array
+{
+    $rows = [];
+    foreach ($sheet->toArray('', false, false, false) as $row) {
+        $values = array_map(static fn ($value) => trim(str_replace(["\r", "\n"], ' ', (string) $value)), $row);
+        if (array_filter($values, static fn ($value) => $value !== '')) {
+            $rows[] = $values;
+        }
+    }
+    return $rows;
+}
+
+// Read filter (linhas no intervalo [$start,$end]) para ler XLSX em blocos / amostra.
+// Classe anônima: a interface IReadFilter só existe depois do autoload do
+// PhpSpreadsheet, então não pode ser declarada no topo do arquivo.
+function sinapi_xlsx_row_filter(int $start, int $end)
+{
+    return new class($start, $end) implements \PhpOffice\PhpSpreadsheet\Reader\IReadFilter {
+        public function __construct(private int $start, private int $end)
+        {
+        }
+
+        public function readCell($columnAddress, $row, $worksheetName = ''): bool
+        {
+            return $row >= $this->start && $row <= $this->end;
+        }
+    };
 }
 
 function xlsx_shared_strings($zip): array
