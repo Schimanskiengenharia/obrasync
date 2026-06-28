@@ -35,5 +35,5 @@ RedirectMatch 404 /\.git(/|$)
   # — sem CDN externo (evita bloqueio por CSP/Tracking Prevention).
   # Com o token de sessão no localStorage, esta é a defesa em profundidade contra
   # XSS exfiltrar a sessão para fora do domínio.
-  Header always set Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'self'; base-uri 'self'; form-action 'self'; object-src 'none'"
+  Header always set Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; connect-src 'self' https://viacep.com.br https://brasilapi.com.br; frame-ancestors 'self'; base-uri 'self'; form-action 'self'; object-src 'none'"
 </IfModule>

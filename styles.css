@@ -4560,6 +4560,35 @@ menu {
   font-size: 0.82rem;
 }
 
+@keyframes cepPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(24, 95, 165, 0.45); }
+  50% { box-shadow: 0 0 0 3px rgba(24, 95, 165, 0.15); }
+}
+
+input.cep-loading {
+  animation: cepPulse 0.9s ease-in-out infinite;
+}
+
+.obra-endereco-toggle {
+  margin: 6px 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+
+.obra-endereco-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.obra-endereco-hint {
+  margin: 6px 0 0;
+  font-size: 0.82rem;
+}
+
 .proposal-preview-toolbar {
   display: flex;
   flex-wrap: wrap;

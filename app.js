@@ -19,9 +19,10 @@ if (APP_ENV === "production" && location.protocol === "http:") {
   location.replace(location.href.replace(/^http:/, "https:"));
 }
 const APP_NAME = "ObraSync";
-const APP_VERSION = "v1.15.4";
+const APP_VERSION = "v1.15.5";
 const APP_VERSION_DATE = "2026-06-28";
 const APP_CHANGELOG = [
+  "CEP autofill universal: qualquer campo de CEP (em qualquer formulário/modal) preenche endereço/bairro/cidade/UF via ViaCEP com BrasilAPI de fallback (CSP liberado para ambos); preenchimento automático de cadastro de cliente e fornecedor ligado em todos os formulários; e no cadastro de obra o toggle \"A obra fica no mesmo endereço da empresa?\" (quando NÃO, bloco de endereço próprio com CEP) — PDFs usam o endereço próprio quando aplicável (v1.15.5).",
   "Correção: asDate passou a aceitar datetime do MySQL (\"2026-06-28 04:31:10\") e datas inválidas/zeradas sem lançar RangeError — a aba Viabilidade não trava mais ao carregar (v1.15.4).",
   "Modo licitação na proposta: comparativo com a referência SINAPI (custo × BDI de referência) versus o valor ofertado, com o percentual de desconto por item e global (\"Oferta com X% de desconto sobre a referência SINAPI\"), para propostas baseadas em preços SINAPI (v1.15.3).",
   "Formação de preço (BDI) flexível na proposta: BDI geral (%) para todos os itens, BDI por grupo/orçamento, ou venda manual por item com o BDI resultante calculado automaticamente — escolhido no seletor \"Formação do preço (BDI)\" do gerador (v1.15.2).",
@@ -614,8 +615,11 @@ const configs = {
     fields: [
       ["name", "Nome da obra/projeto", "text", true],
       ["clientId", "Cliente vinculado", "client"],
-      ["address", "Endereço", "text"],
-      ["zipCode", "CEP", "text"],
+      ["zipCode", "CEP da obra", "text"],
+      ["address", "Endereço da obra", "text"],
+      ["bairro", "Bairro", "text"],
+      ["cidade", "Cidade", "text"],
+      ["estado", "UF", "text"],
       ["responsible", "Responsável", "text"],
       ["technicalResponsible", "Responsável técnico", "text"],
       ["projectManagerId", "Gestor da obra", "user"],
@@ -5990,6 +5994,7 @@ function applyFormEnhancements() {
   const clientSelect = qs("formFields").querySelector('select[name="clientId"], select[name="cliente_id"]');
   if (clientSelect) setupClientAutofill(qs("formFields"), clientSelect);
   if (["clients", "suppliers", "companySettings"].includes(editing?.key)) setupAddressCep();
+  if (editing?.key === "projects") setupObraEnderecoToggle();
   if (editing?.key === "companySettings") setupCompanyLogoUpload();
   if (editing?.key === "payable" && !editing.id) setupPayableRecurrence();
   if (editing?.key === "payable" && editing.id) setupPayableCashLink();
@@ -6137,45 +6142,237 @@ function setupClientAutofill(container, clientSelect) {
   if (clientSelect.value) carregarDadosCliente(clientSelect.value, (client) => renderClientAutofillPanel(panel, client));
 }
 
-// Busca automática de endereço pelo CEP (ViaCEP) nos cadastros de clientes,
-// fornecedores e dados da empresa. Ao sair do campo CEP, preenche rua, bairro,
-// cidade e UF; número e complemento ficam para o usuário. Tolerante a nomes de
-// campo: cidade pode ser "cidade" ou "city"; UF pode ser "estado" ou "uf".
+const SUPPLIER_AUTOFILL_MAP = { address: "address", zipCode: "zipCode", cep: "zipCode", endereco: "address" };
+const SUPPLIER_AUTOFILL_TOOLTIP = "Preenchido automaticamente do cadastro do fornecedor. Clique para editar.";
+
+function carregarDadosFornecedor(fornecedorId, callback) {
+  if (!fornecedorId) return;
+  const local = byId("suppliers", fornecedorId);
+  if (local) { callback(local); return; }
+  if (serverMode) {
+    apiModuleRequest(`?module=suppliers&action=get&id=${encodeURIComponent(fornecedorId)}`)
+      .then((data) => { if (data && data.id) callback(data); })
+      .catch(() => {});
+  }
+}
+
+function renderSupplierAutofillPanel(panel, supplier) {
+  if (!panel) return;
+  if (!supplier) { panel.classList.add("hidden"); panel.innerHTML = ""; return; }
+  const linha = (label, value) => `<div class="client-autofill-row"><span>${label}</span>${value && String(value).trim() ? `<strong>${svgText(value)}</strong>` : '<span class="muted">—</span>'}</div>`;
+  panel.innerHTML = `
+    <div class="client-autofill-head"><span>🔄 Dados do fornecedor carregados automaticamente</span></div>
+    <div class="client-autofill-grid">
+      ${linha("Nome", supplier.name)}
+      ${linha("CPF/CNPJ", supplier.document ? maskDocument(supplier.document) : "")}
+      ${linha("E-mail", supplier.email)}
+      ${linha("Telefone", supplier.phone ? maskPhone(supplier.phone) : "")}
+      ${linha("Endereço", clientFullAddress(supplier))}
+      ${linha("Cidade/UF", [supplier.cidade, supplier.estado].filter(Boolean).join(" / "))}
+      ${linha("CEP", supplier.zipCode ? maskCep(supplier.zipCode) : "")}
+    </div>`;
+  panel.classList.remove("hidden");
+}
+
+// Preenchimento automático global do FORNECEDOR — espelha setupClientAutofill.
+function setupSupplierAutofill(container, supplierSelect) {
+  if (!container || !supplierSelect || supplierSelect.dataset.autofillReady === "1") return;
+  supplierSelect.dataset.autofillReady = "1";
+  const inputByName = (name) => container.querySelector(`[name="${name}"]`);
+  const labelHost = supplierSelect.closest("label") || supplierSelect;
+  if (!labelHost.querySelector(".client-sync-indicator")) {
+    supplierSelect.insertAdjacentHTML("afterend",
+      '<span class="client-sync-indicator" title="Os dados abaixo serão preenchidos automaticamente do cadastro deste fornecedor">🔄 Dados preenchidos automaticamente do fornecedor</span>');
+  }
+  let panel = container.querySelector(".supplier-autofill-panel");
+  if (!panel) {
+    panel = document.createElement("div");
+    panel.className = "client-autofill-panel supplier-autofill-panel full hidden";
+    labelHost.insertAdjacentElement("afterend", panel);
+  }
+  Object.keys(SUPPLIER_AUTOFILL_MAP).forEach((field) => {
+    const input = inputByName(field);
+    input?.addEventListener("input", () => {
+      if (input.dataset.autofilled === "1" && input.value !== (input.dataset.autofilledValue || "")) {
+        input.classList.remove("autofilled"); input.dataset.autofilled = "0"; input.removeAttribute("title");
+      }
+    });
+  });
+  const fillFrom = (supplier) => {
+    Object.entries(SUPPLIER_AUTOFILL_MAP).forEach(([field, supField]) => {
+      const input = inputByName(field);
+      if (!input) return;
+      if (supplier) {
+        let value = supplier[supField] || "";
+        if ((field === "zipCode" || field === "cep") && value) value = maskCep(value);
+        input.value = value; input.dataset.autofilled = "1"; input.dataset.autofilledValue = value;
+        input.classList.add("autofilled"); input.title = SUPPLIER_AUTOFILL_TOOLTIP;
+      } else if (input.dataset.autofilled === "1") {
+        input.value = ""; input.dataset.autofilled = "0"; input.classList.remove("autofilled"); input.removeAttribute("title");
+      }
+    });
+    renderSupplierAutofillPanel(panel, supplier);
+  };
+  supplierSelect.addEventListener("change", () => {
+    if (!supplierSelect.value) { fillFrom(null); return; }
+    carregarDadosFornecedor(supplierSelect.value, fillFrom);
+  });
+  if (supplierSelect.value) carregarDadosFornecedor(supplierSelect.value, (s) => renderSupplierAutofillPanel(panel, s));
+}
+
+// ── CEP autofill universal ────────────────────────────────────────────────
+// Liga QUALQUER campo de CEP (classe .cep-input, [data-cep] ou name zipCode/cep/
+// obra_cep) à busca ViaCEP, com BrasilAPI como fallback. Preenche logradouro/
+// bairro/cidade/UF do container mais próximo por convenção de name. Idempotente,
+// não-destrutivo (não sobrescreve o que o usuário digitou) e auto-anexável.
+const CEP_INPUT_SELECTOR = '.cep-input, [data-cep], input[name="zipCode"], input[name="cep"], input[name="obra_cep"]';
+
+async function cepFetch(cep) {
+  try {
+    const r = await fetch(`https://viacep.com.br/ws/${cep}/json/`);
+    if (r.ok) { const d = await r.json(); if (d && !d.erro) return { logradouro: d.logradouro, bairro: d.bairro, cidade: d.localidade, uf: d.uf }; }
+  } catch { /* tenta o fallback */ }
+  try {
+    const r = await fetch(`https://brasilapi.com.br/api/cep/v1/${cep}`);
+    if (r.ok) { const d = await r.json(); if (d && d.cep) return { logradouro: d.street, bairro: d.neighborhood, cidade: d.city, uf: d.state }; }
+  } catch { /* sem rede: o usuário preenche à mão, sem erro */ }
+  return null;
+}
+
+function cepTargets(scope) {
+  const q = (sel) => scope.querySelector && scope.querySelector(sel);
+  return {
+    address: q('[name="address"], [name="endereco"], [name="logradouro"], [name="obra_endereco"]'),
+    bairro: q('[name="bairro"], [name="obra_bairro"]'),
+    cidade: q('[name="cidade"], [name="city"], [name="localidade"], [name="obra_cidade"]'),
+    estado: q('[name="estado"], [name="uf"], [name="obra_estado"]'),
+  };
+}
+
+function bindCepInput(input) {
+  if (!input || input.dataset.cepReady === "1") return;
+  input.dataset.cepReady = "1";
+  let lastCep = "";
+  const run = async () => {
+    const cep = onlyDigits(input.value);
+    if (cep.length !== 8 || cep === lastCep) return;
+    lastCep = cep;
+    const scope = input.closest("form") || input.closest("dialog") || input.closest(".modal-box") || document;
+    input.classList.add("cep-loading");
+    const data = await cepFetch(cep);
+    input.classList.remove("cep-loading");
+    if (!data) { if (typeof showToast === "function") showToast("CEP não encontrado"); return; }
+    const t = cepTargets(scope);
+    // Não-destrutivo: só preenche campo vazio ou que já tinha sido preenchido por CEP.
+    const setIf = (el, val) => {
+      if (!el || !val) return;
+      if (el.value && el.dataset.autofilled !== "1") return;
+      el.value = val;
+      el.dataset.autofilled = "1";
+      el.dataset.autofilledValue = val;
+      el.classList.add("autofilled");
+      el.title = "Preenchido pela busca de CEP. Clique para editar.";
+    };
+    setIf(t.address, data.logradouro);
+    setIf(t.bairro, data.bairro);
+    setIf(t.cidade, data.cidade);
+    setIf(t.estado, data.uf);
+    (scope.querySelector && scope.querySelector('[name="numero"]'))?.focus();
+  };
+  input.addEventListener("blur", run);
+  input.addEventListener("input", () => { if (onlyDigits(input.value).length === 8) run(); });
+}
+
+function bindCepInputs(root) {
+  root = root || document;
+  if (root.matches && root.matches(CEP_INPUT_SELECTOR)) bindCepInput(root);
+  if (root.querySelectorAll) root.querySelectorAll(CEP_INPUT_SELECTOR).forEach(bindCepInput);
+}
+
+// Compatibilidade: telas que chamavam setupAddressCep continuam funcionando.
 function setupAddressCep() {
   const formFields = qs("formFields");
-  const cepInput = formFields?.querySelector('[name="zipCode"]');
-  if (!cepInput || cepInput.dataset.cepReady === "1") return;
-  cepInput.dataset.cepReady = "1";
-  const setVal = (names, value) => {
-    if (!value) return;
-    for (const name of names) {
-      const el = formFields.querySelector(`[name="${name}"]`);
-      if (!el) continue;
-      el.value = value;
-      el.classList.add("autofilled");
-      el.title = "Preenchido automaticamente pela busca de CEP. Clique para editar.";
-    }
+  formFields?.querySelectorAll('[name="zipCode"], [name="cep"], .cep-input').forEach(bindCepInput);
+}
+
+// Toggle "A obra fica no mesmo endereço da empresa?": SIM (default) oculta o bloco de
+// endereço próprio e usa company_settings; NÃO mostra o bloco (com .cep-input ativo).
+// Não-destrutivo: ocultar não apaga o endereço já gravado.
+function setupObraEnderecoToggle() {
+  const ff = qs("formFields");
+  if (!ff) return;
+  const row = editing && editing.id ? (byId("projects", editing.id) || {}) : {};
+  const addrNames = ["zipCode", "address", "bairro", "cidade", "estado"];
+  const labels = addrNames.map((n) => ff.querySelector(`[name="${n}"]`)?.closest("label")).filter(Boolean);
+  if (!labels.length) return;
+  // Estado inicial: usa o valor salvo; se indefinido, infere — obra com endereço próprio
+  // começa "NÃO" (mostra o bloco), obra nova/sem endereço começa "SIM".
+  let usaEmpresa = row.usa_endereco_empresa;
+  if (usaEmpresa === undefined || usaEmpresa === null || usaEmpresa === "") usaEmpresa = row.address ? 0 : 1;
+  usaEmpresa = Number(usaEmpresa) ? 1 : 0;
+  const wrap = document.createElement("div");
+  wrap.className = "obra-endereco-toggle full";
+  wrap.innerHTML = `
+    <label class="obra-endereco-check"><input type="checkbox" id="obraUsaEmpresa" ${usaEmpresa ? "checked" : ""}> A obra fica no mesmo endereço da empresa?</label>
+    <input type="hidden" name="usa_endereco_empresa" value="${usaEmpresa}">
+    <p class="muted obra-endereco-hint"></p>`;
+  labels[0].parentNode.insertBefore(wrap, labels[0]);
+  const hidden = wrap.querySelector('input[name="usa_endereco_empresa"]');
+  const hint = wrap.querySelector(".obra-endereco-hint");
+  const apply = (usa) => {
+    labels.forEach((l) => l.classList.toggle("hidden", !!usa));
+    hidden.value = usa ? 1 : 0;
+    const comp = (db.companySettings || [])[0] || {};
+    hint.textContent = usa
+      ? `Usará o endereço da empresa: ${[comp.address, comp.cidade, comp.estado].filter(Boolean).join(", ") || "(configure em Configurações da empresa)"}`
+      : "Informe o endereço próprio da obra abaixo — o CEP preenche o restante.";
   };
-  cepInput.addEventListener("blur", async () => {
-    const cep = onlyDigits(cepInput.value);
-    if (cep.length !== 8) return;
-    let data;
-    try {
-      const resp = await fetch(`https://viacep.com.br/ws/${cep}/json/`);
-      data = await resp.json();
-    } catch {
-      return; // rede indisponível: o usuário preenche manualmente, sem erro
-    }
-    if (!data || data.erro) {
-      if (typeof showToast === "function") showToast("CEP não encontrado"); else alert("CEP não encontrado");
-      return;
-    }
-    setVal(["address"], data.logradouro);
-    setVal(["bairro"], data.bairro);
-    setVal(["cidade", "city"], data.localidade);
-    setVal(["estado", "uf"], data.uf); // o select de UF recebe a sigla diretamente
-    formFields.querySelector('[name="numero"]')?.focus();
+  apply(usaEmpresa);
+  wrap.querySelector("#obraUsaEmpresa").addEventListener("change", (e) => apply(e.target.checked ? 1 : 0));
+}
+
+// Auto-anexa o autofill de cadastro (cliente/fornecedor) a qualquer select desses
+// registros presente no DOM, em qualquer formulário/modal.
+function bindAutofillSelects(root) {
+  root = root || document;
+  if (!root.querySelectorAll) return;
+  root.querySelectorAll('select[name="clientId"], select[name="cliente_id"]').forEach((sel) => {
+    const c = sel.closest("form") || sel.closest("dialog") || sel.closest(".modal-box");
+    if (c) setupClientAutofill(c, sel);
   });
+  root.querySelectorAll('select[name="supplierId"], select[name="fornecedor_id"], select[name="fornecedorId"]').forEach((sel) => {
+    const c = sel.closest("form") || sel.closest("dialog") || sel.closest(".modal-box");
+    if (c) setupSupplierAutofill(c, sel);
+  });
+}
+
+// Varre o DOM (inicial + via MutationObserver) ligando CEP e autofill em todo form.
+let formEnhancerStarted = false;
+function initFormEnhancers() {
+  if (formEnhancerStarted || typeof document === "undefined" || !document.body) return;
+  formEnhancerStarted = true;
+  const scan = (node) => { bindCepInputs(node); bindAutofillSelects(node); };
+  scan(document);
+  if (typeof MutationObserver !== "undefined") {
+    new MutationObserver((muts) => {
+      for (const m of muts) {
+        m.addedNodes && m.addedNodes.forEach((n) => { if (n.nodeType === 1) scan(n); });
+      }
+    }).observe(document.body, { childList: true, subtree: true });
+  }
+}
+
+// Endereço efetivo da obra para PDFs/relatórios: usa o endereço próprio quando
+// usa_endereco_empresa=0, senão o da empresa (company_settings).
+function obraEnderecoEfetivo(project) {
+  if (!project) return "";
+  const comp = (db.companySettings || [])[0] || {};
+  const usaEmpresa = (project.usa_endereco_empresa === undefined || project.usa_endereco_empresa === null || project.usa_endereco_empresa === "")
+    ? !project.address
+    : Number(project.usa_endereco_empresa) === 1;
+  const src = usaEmpresa ? comp : project;
+  const linha1 = [src.address, src.numero].filter((v) => v && String(v).trim()).join(", ");
+  return [linha1, src.bairro, [src.cidade, src.estado].filter(Boolean).join("/"), src.zipCode ? "CEP " + maskCep(src.zipCode) : ""].filter((v) => v && String(v).trim()).join(" - ");
 }
 
 // Endereço completo legível do cliente (logradouro, número, complemento, bairro).
@@ -12426,7 +12623,7 @@ function proposalDocumentHtml({ budget, project, client, items, model, input, va
       </header>
       <section class="proposal-meta-grid proposal-meta-2">
         <div><h3>Cliente</h3><p>${svgText(client.name || "")}</p><p>${svgText(client.document || "")}</p><p>${svgText(clientFullAddress(client) || client.address || "")}</p></div>
-        <div><h3>Obra/Projeto</h3><p>${svgText(project.name || "")}</p><p>${svgText(project.address || "")}</p><p>Orçamento: ${svgText(vars.numero_orcamento)} ${svgText(vars.versao_orcamento)}</p></div>
+        <div><h3>Obra/Projeto</h3><p>${svgText(project.name || "")}</p><p>${svgText(obraEnderecoEfetivo(project) || project.address || "")}</p><p>Orçamento: ${svgText(vars.numero_orcamento)} ${svgText(vars.versao_orcamento)}</p></div>
       </section>
       ${proposalSection("Objeto da proposta", value("proposalObject"))}
       ${proposalSection("Escopo dos serviços", `${value("generatedScope")}\n\n${value("scope")}`)}
@@ -15405,3 +15602,6 @@ bootstrapApp().catch((error) => {
     /* DOM ainda não pronto: nada a fazer além do log acima. */
   }
 });
+
+// CEP autofill universal + autofill de cliente/fornecedor em qualquer form/modal.
+initFormEnhancers();

@@ -1625,7 +1625,7 @@ function resource_map(): array
         'categories' => r('financial_categories', ['categorias'], ['name','type','chartAccountId','status'], ['name']),
         'costCenters' => r('cost_centers', ['centros-custo','centros_de_custo'], ['code','name','manager','status','tipo','descricao_uso','exemplos'], ['code','name']),
         'bankAccounts' => r('bank_accounts', ['contas-bancarias','contas_bancarias'], ['name','bank','agency','accountNumber','openingBalance','status'], ['name']),
-        'projects' => r('projects', ['obras','projetos','obras-projetos'], ['name','clientId','address','zipCode','responsible','technicalResponsible','projectManagerId','commercialUserId','financialUserId','startDate','endForecast','completionDate','status','budgetForecast','revenueContracted','costForecast','realizedCost','notes'], ['name']),
+        'projects' => r('projects', ['obras','projetos','obras-projetos'], ['name','clientId','address','zipCode','bairro','cidade','estado','usa_endereco_empresa','responsible','technicalResponsible','projectManagerId','commercialUserId','financialUserId','startDate','endForecast','completionDate','status','budgetForecast','revenueContracted','costForecast','realizedCost','notes'], ['name']),
         'workTypes' => r('obra_tipos', ['tipos-obras','tipos-de-obras'], ['name','description','status','sortOrder'], ['name']),
         'workStatuses' => r('obra_status', ['status-obras','status-de-obras'], ['name','description','color','sortOrder','status'], ['name']),
         'standardStages' => r('obra_etapas_padrao', ['etapas-padrao','etapas-padrão'], ['workTypeId','name','description','sortOrder','defaultPhysicalPercent','status'], ['workTypeId','name']),
@@ -2344,6 +2344,11 @@ function bootstrap_data(PDO $pdo, array $resources, ?array $authUser = null, boo
             && !in_array('custo_unitario', table_columns($pdo, 'proposta_itens'), true)) {
             ensure_proposal_cost_columns($pdo);
         }
+        // Endereço próprio da obra (toggle "mesmo endereço da empresa").
+        if (resolve_existing_table($pdo, ['projects'], false)
+            && !in_array('usa_endereco_empresa', table_columns($pdo, 'projects'), true)) {
+            ensure_obra_endereco_columns($pdo);
+        }
         // email/blocked/mustChangePassword em system_users (usados em login/reset).
         if (resolve_existing_table($pdo, ['system_users'], false)
             && !in_array('mustChangePassword', table_columns($pdo, 'system_users'), true)) {
@@ -2609,6 +2614,28 @@ function ensure_proposal_cost_columns(PDO $pdo): void
         $pdo->exec("ALTER TABLE sinapi_insumos ADD INDEX IF NOT EXISTS idx_insumo_code (code)");
     } catch (Throwable $error) {
         error_log('[ObraSync] ensure_proposal_cost_columns(index): ' . $error->getMessage());
+    }
+}
+
+// Auto-cura das colunas de endereço próprio da obra (toggle "mesmo endereço da
+// empresa"). Reaproveita address/zipCode já existentes em projects; cria só o que falta.
+function ensure_obra_endereco_columns(PDO $pdo): void
+{
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    try {
+        $pdo->exec(
+            "ALTER TABLE projects
+                ADD COLUMN IF NOT EXISTS usa_endereco_empresa TINYINT(1) NOT NULL DEFAULT 1,
+                ADD COLUMN IF NOT EXISTS bairro VARCHAR(120) NULL,
+                ADD COLUMN IF NOT EXISTS cidade VARCHAR(120) NULL,
+                ADD COLUMN IF NOT EXISTS estado VARCHAR(2) NULL"
+        );
+        $done = true;
+    } catch (Throwable $error) {
+        error_log('[ObraSync] ensure_obra_endereco_columns: ' . $error->getMessage());
     }
 }
 
