@@ -832,6 +832,34 @@ button:disabled {
   background: var(--teal);
 }
 
+/* Ícones Tabler (ti-*) na sidebar: caixa 24×24 com glifo, igual ao antigo .nav-icon */
+.sidebar-icon.ti {
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--teal-2);
+  font-size: 17px;
+}
+
+/* Animações dos ícones da sidebar */
+.sidebar-icon { transition: transform 0.2s ease, color 0.2s ease; }
+.sidebar-item:hover .sidebar-icon { transform: scale(1.2); }
+.sidebar-item.active .sidebar-icon { animation: pulse-icon 0.3s ease; }
+@keyframes pulse-icon {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.3); }
+  100% { transform: scale(1.1); }
+}
+.submenu-item { animation: slide-in 0.2s ease forwards; }
+@keyframes slide-in {
+  from { opacity: 0; transform: translateX(-10px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
 .nav-label {
   min-width: 0;
   flex: 1;

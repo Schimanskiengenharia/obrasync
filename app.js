@@ -164,21 +164,42 @@ const modules = [
 // Dashboard → Cadastros → Comercial → Viabilidade → Obras → Orçamento de Obra
 // → Planejamento → Financeiro → Contabilidade → Relatórios → Configurações.
 const sidebarSections = [
-  { id: "dashboard", label: "Dashboard", icon: "D", module: "dashboard" },
-  { id: "cadastros", label: "Cadastros", icon: "C", modules: ["clients", "suppliers", "products", "services", "categories", "costCenters", "bankAccounts"] },
-  { id: "comercial", label: "Comercial", icon: "V", modules: ["budgets", "proposals", "proposalModels", "proposalAreas", "proposalActionTypes", "proposalServiceSubtypes", "sales"] },
-  { id: "viabilidade", label: "Viabilidade", icon: "📋", modules: ["viabilidadeObra"] },
-  { id: "obras", label: "Obras/Projetos", icon: "O", modules: ["projects", "cotacoes", "projectCosts", "projectRevenues", "fiscalDocuments", "rdo", "projectNotifications", "projectTrackingLinks", "projectReport"] },
-  { id: "qualidadePbqph", label: "Qualidade PBQP-H", icon: "✅", modules: ["qualidadeDashboard", "qualidadePolitica", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos", "qualidadeAuditorias"] },
-  { id: "orcamentoObra", label: "Orçamento de Obra", icon: "Σ", modules: ["workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "purchaseOrders"] },
-  { id: "planejamento", label: "Planejamento", icon: "P", modules: ["projectSchedule", "projectMilestones", "agenda", "kanban", "technicalReports"] },
-  { id: "financeiro", label: "Financeiro", icon: "$", modules: ["receivable", "payable", "cashMoves", "cashFlow", "reconciliation"] },
-  { id: "contabilidade", label: "Contabilidade Gerencial", icon: "L", modules: ["chartAccounts", "journalEntries", "dre", "taxDocuments", "taxes"] },
-  { id: "relatorios", label: "Relatórios", icon: "R", modules: ["reports", "reportFinancial", "reportClient", "reportSupplier", "reportCostCenter", "reportProject", "exports"] },
+  { id: "dashboard", label: "Dashboard", icon: "ti-layout-dashboard", module: "dashboard" },
+  { id: "cadastros", label: "Cadastros", icon: "ti-database", modules: ["clients", "suppliers", "products", "services", "categories", "costCenters", "bankAccounts"] },
+  { id: "comercial", label: "Comercial", icon: "ti-briefcase", modules: ["budgets", "proposals", "proposalModels", "proposalAreas", "proposalActionTypes", "proposalServiceSubtypes", "sales"] },
+  { id: "viabilidade", label: "Viabilidade", icon: "ti-clipboard-check", modules: ["viabilidadeObra"] },
+  { id: "obras", label: "Obras/Projetos", icon: "ti-building-skyscraper", modules: ["projects", "cotacoes", "projectCosts", "projectRevenues", "fiscalDocuments", "rdo", "projectNotifications", "projectTrackingLinks", "projectReport"] },
+  { id: "qualidadePbqph", label: "Qualidade PBQP-H", icon: "ti-certificate", modules: ["qualidadeDashboard", "qualidadePolitica", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos", "qualidadeAuditorias"] },
+  { id: "orcamentoObra", label: "Orçamento de Obra", icon: "ti-calculator", modules: ["workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "purchaseOrders"] },
+  { id: "planejamento", label: "Planejamento", icon: "ti-calendar-event", modules: ["projectSchedule", "projectMilestones", "agenda", "kanban", "technicalReports"] },
+  { id: "financeiro", label: "Financeiro", icon: "ti-currency-dollar", modules: ["receivable", "payable", "cashMoves", "cashFlow", "reconciliation"] },
+  { id: "contabilidade", label: "Contabilidade Gerencial", icon: "ti-chart-infographic", modules: ["chartAccounts", "journalEntries", "dre", "taxDocuments", "taxes"] },
+  { id: "relatorios", label: "Relatórios", icon: "ti-chart-dots", modules: ["reports", "reportFinancial", "reportClient", "reportSupplier", "reportCostCenter", "reportProject", "exports"] },
   // Lançador de plugins: itens dinâmicos vindos de db.plugins, abertos em nova aba.
-  { id: "pluginsLauncher", label: "Plugins", icon: "⚡", pluginLauncher: true },
-  { id: "config", label: "Configurações", icon: "S", modules: ["companySettings", "users", "permissions", "systemVersion", "workTypes", "workStatuses", "standardStages", "standardMilestones", "customFields", "reportModels", "documentTypes", "checklists", "measurementTypes", "paymentMethods", "whatsappTemplates", "visibilityRules", "sinapiSettings", "plugins", "backupLocal", "preferences", "migration", "auditLog", "myProfile"] },
+  { id: "pluginsLauncher", label: "Plugins", icon: "ti-plug", pluginLauncher: true },
+  { id: "config", label: "Configurações", icon: "ti-settings", modules: ["companySettings", "users", "permissions", "systemVersion", "workTypes", "workStatuses", "standardStages", "standardMilestones", "customFields", "reportModels", "documentTypes", "checklists", "measurementTypes", "paymentMethods", "whatsappTemplates", "visibilityRules", "sinapiSettings", "plugins", "backupLocal", "preferences", "migration", "auditLog", "myProfile"] },
 ];
+
+// Ícones Tabler (ti-*) por módulo, usados nos itens da sidebar. Sem mapeamento → bolinha.
+const MODULE_ICONS = {
+  dashboard: "ti-layout-dashboard",
+  clients: "ti-users", suppliers: "ti-truck", products: "ti-package", services: "ti-tool",
+  categories: "ti-category", costCenters: "ti-building", bankAccounts: "ti-building-bank",
+  budgets: "ti-calculator", proposals: "ti-file-text", sales: "ti-file-certificate",
+  projects: "ti-building-skyscraper", projectSchedule: "ti-calendar-stats", projectMilestones: "ti-flag",
+  rdo: "ti-clipboard-list", purchaseOrders: "ti-shopping-cart", fiscalDocuments: "ti-receipt",
+  cotacoes: "ti-tag", viabilidadeObra: "ti-clipboard-check", viabilityAnalyses: "ti-coin",
+  receivable: "ti-arrow-up-circle", payable: "ti-arrow-down-circle", cashFlow: "ti-trending-up",
+  reconciliation: "ti-refresh", agenda: "ti-calendar", kanban: "ti-layout-kanban",
+  reports: "ti-chart-bar", reportFinancial: "ti-chart-bar", reportClient: "ti-chart-bar",
+  reportSupplier: "ti-chart-bar", reportCostCenter: "ti-chart-bar", reportProject: "ti-chart-bar",
+  users: "ti-user-check", sinapiReferences: "ti-database-import",
+};
+// Ícone de um item da sidebar: classe Tabler (ti-*) vira <i>; caractere/emoji legado vira <span>.
+function sidebarIconHtml(icon) {
+  if (icon && /^ti-/.test(icon)) return `<i class="ti ${icon} sidebar-icon" aria-hidden="true"></i>`;
+  return `<span class="nav-icon sidebar-icon">${icon || ""}</span>`;
+}
 
 const roleLabels = {
   admin: "Administrador",
@@ -2440,8 +2461,8 @@ function renderNav() {
       const open = openNavGroups.has(section.id);
       return `
         <div class="nav-section">
-          <button class="nav-section-toggle" type="button" data-nav-group="${section.id}" aria-expanded="${open}">
-            <span class="nav-icon">${section.icon}</span>
+          <button class="nav-section-toggle sidebar-item" type="button" data-nav-group="${section.id}" aria-expanded="${open}">
+            ${sidebarIconHtml(section.icon)}
             <span class="nav-label">${section.label}</span>
             <span class="nav-caret">${open ? "−" : "+"}</span>
           </button>
@@ -2463,13 +2484,13 @@ function renderNav() {
     const open = openNavGroups.has(section.id);
     return `
       <div class="nav-section ${active ? "section-active" : ""}">
-        <button class="nav-section-toggle" type="button" data-nav-group="${section.id}" aria-expanded="${open}">
-          <span class="nav-icon">${section.icon}</span>
+        <button class="nav-section-toggle sidebar-item" type="button" data-nav-group="${section.id}" aria-expanded="${open}">
+          ${sidebarIconHtml(section.icon)}
           <span class="nav-label">${section.label}</span>
           <span class="nav-caret">${open ? "−" : "+"}</span>
         </button>
         <div class="nav-submenu ${open ? "open" : ""}">
-          ${items.map((moduleKey) => navButton(moduleKey, moduleLabels[moduleKey], "")).join("")}
+          ${items.map((moduleKey) => navButton(moduleKey, moduleLabels[moduleKey], "", "submenu-item")).join("")}
         </div>
       </div>
     `;
@@ -2477,10 +2498,11 @@ function renderNav() {
   updateShellState();
 }
 
-function navButton(moduleKey, label, icon) {
+function navButton(moduleKey, label, icon, extraClass = "") {
+  const ic = icon || MODULE_ICONS[moduleKey] || "";
   return `
-    <button class="nav-link ${moduleKey === currentModule ? "active" : ""}" type="button" data-module="${moduleKey}">
-      ${icon ? `<span class="nav-icon">${icon}</span>` : '<span class="nav-dot"></span>'}
+    <button class="nav-link sidebar-item ${extraClass} ${moduleKey === currentModule ? "active" : ""}" type="button" data-module="${moduleKey}">
+      ${ic ? sidebarIconHtml(ic) : '<span class="nav-dot"></span>'}
       <span class="nav-label">${label}</span>
     </button>
   `;
