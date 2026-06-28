@@ -19,9 +19,10 @@ if (APP_ENV === "production" && location.protocol === "http:") {
   location.replace(location.href.replace(/^http:/, "https:"));
 }
 const APP_NAME = "ObraSync";
-const APP_VERSION = "v1.16.0";
+const APP_VERSION = "v1.17.0";
 const APP_VERSION_DATE = "2026-06-28";
 const APP_CHANGELOG = [
+  "Contrato a partir da proposta: botão \"Gerar contrato\" na proposta cria/atualiza o contrato com snapshot do cliente, valor e objeto consolidado por disciplina; \"Contrato (PDF)\" gera o documento no template de Prestação de Serviços Técnicos com 13 cláusulas (cabeçalho/rodapé da empresa, campos faltantes como placeholders); e \"Anexos\" permite enviar a proposta assinada e o contrato assinado (PDF), marcando o contrato como assinado (v1.17.0).",
   "Proposta por disciplina + modelos + SINAPI: cada orçamento vinculado recebe uma disciplina (Elétrico, Hidráulico, Civil…) e o PDF passa a agrupar o investimento por disciplina com subtotais; \"Salvar como modelo\" e \"Aplicar modelo…\" reutilizam a estrutura da proposta (sem cliente); o PDF mostra código SINAPI + referência (mês/ano/UF) por item e um anexo de composições SINAPI utilizadas; e botão \"Exportar SINAPI (Excel)\" gera a planilha .xlsx da obra agrupada por etapa com subtotais (v1.16.0).",
   "CEP autofill universal: qualquer campo de CEP (em qualquer formulário/modal) preenche endereço/bairro/cidade/UF via ViaCEP com BrasilAPI de fallback (CSP liberado para ambos); preenchimento automático de cadastro de cliente e fornecedor ligado em todos os formulários; e no cadastro de obra o toggle \"A obra fica no mesmo endereço da empresa?\" (quando NÃO, bloco de endereço próprio com CEP) — PDFs usam o endereço próprio quando aplicável (v1.15.5).",
   "Correção: asDate passou a aceitar datetime do MySQL (\"2026-06-28 04:31:10\") e datas inválidas/zeradas sem lançar RangeError — a aba Viabilidade não trava mais ao carregar (v1.15.4).",
@@ -5603,6 +5604,9 @@ function renderCrud(key) {
   qs("content").querySelectorAll("[data-preview-proposal]").forEach((button) => button.addEventListener("click", () => openSavedProposalPreview(button.dataset.previewProposal)));
   qs("content").querySelectorAll("[data-create-proposal-receivables]").forEach((button) => button.addEventListener("click", () => createReceivablesFromProposal(button.dataset.createProposalReceivables)));
   qs("content").querySelectorAll("[data-create-receivable]").forEach((button) => button.addEventListener("click", () => createReceivableFromSale(button.dataset.createReceivable)));
+  qs("content").querySelectorAll("[data-generate-contract]").forEach((button) => button.addEventListener("click", () => generateContractFromProposal(button.dataset.generateContract)));
+  qs("content").querySelectorAll("[data-contract-pdf]").forEach((button) => button.addEventListener("click", () => printContract(button.dataset.contractPdf)));
+  qs("content").querySelectorAll("[data-contract-anexos]").forEach((button) => button.addEventListener("click", () => openContractAnexos(button.dataset.contractAnexos)));
   qs("content").querySelectorAll("[data-print-po]").forEach((button) => button.addEventListener("click", () => openPurchaseOrderPrint(button.dataset.printPo)));
   qs("content").querySelectorAll("[data-po-fvm]").forEach((button) => button.addEventListener("click", () => abrirFvmDoPedido(button.dataset.poFvm)));
   qs("content").querySelectorAll("[data-po-cotacao]").forEach((button) => button.addEventListener("click", () => {
@@ -5650,6 +5654,177 @@ function table(title, rows, fields, actions = false, actionKey = "") {
   </section>`;
 }
 
+// ── Contrato a partir da proposta ─────────────────────────────────────────
+// Objeto/escopo consolidado a partir das disciplinas/grupos vinculados à proposta.
+function buildContractObjeto(proposal, links, project) {
+  const base = `Prestação de serviços técnicos de engenharia${project && project.name ? ` para ${project.name}` : ""}.`;
+  if (!links || !links.length) return proposal.description || base;
+  const byDisc = {};
+  links.forEach((l) => { const d = l.disciplina || "Geral"; (byDisc[d] = byDisc[d] || []).push(l.nome_grupo || ""); });
+  const linhas = Object.entries(byDisc).map(([d, gs]) => `${d}: ${gs.filter(Boolean).join(", ")}`);
+  return `${base}\n\nEscopo por disciplina:\n${linhas.join("\n")}`;
+}
+
+async function generateContractFromProposal(proposalId) {
+  const proposal = byId("proposals", proposalId);
+  if (!proposal) return alert("Proposta não encontrada.");
+  if (proposal.status !== "Aprovada" && !confirm("Esta proposta não está APROVADA. Gerar o contrato mesmo assim?")) return;
+  const client = byId("clients", proposal.clientId) || {};
+  const project = byId("projects", proposal.projectId) || {};
+  const links = (db.proposalBudgetLinks || []).filter((l) => sameId(l.proposalId, proposalId));
+  const objeto = buildContractObjeto(proposal, links, project);
+  const existing = (db.sales || []).find((s) => sameId(s.proposalId, proposalId));
+  if (existing && !confirm("Já existe um contrato gerado desta proposta. Deseja ATUALIZAR os dados dele em vez de duplicar?")) return;
+  const today = new Date().toISOString().slice(0, 10);
+  const numero = existing?.numero_contrato || `CT-${today.replaceAll("-", "")}-${String(Date.now()).slice(-4)}`;
+  const data = {
+    number: existing?.number || `VEN-${today.replaceAll("-", "")}-${String(Date.now()).slice(-4)}`,
+    date: today,
+    clientId: proposal.clientId || "",
+    projectId: proposal.projectId || "",
+    proposalId: proposal.id,
+    description: objeto,
+    amount: Number(proposal.amount || 0),
+    cost: Number(proposal.custo_total_orcamentos || 0),
+    status: existing?.status || "Aberto",
+    numero_contrato: numero,
+    data_contrato: today,
+    valor_contrato: Number(proposal.amount || 0),
+    objeto,
+    status_contrato: "gerado",
+    cliente_nome: client.name || "",
+    cpf_cnpj: client.document || "",
+    email: client.email || "",
+    telefone: client.phone || "",
+    endereco: clientFullAddress(client) || client.address || "",
+    cidade: client.cidade || "",
+    estado: client.estado || "",
+    cep: client.zipCode || "",
+  };
+  try {
+    if (existing) await updateIntegratedRecord("sales", existing.id, data);
+    else await createIntegratedRecord("sales", data);
+    alert(`Contrato ${numero} ${existing ? "atualizado" : "gerado"} a partir da proposta. Em Vendas/Contratos use "Contrato (PDF)".`);
+    currentModule = "sales";
+    await refreshAndRender();
+  } catch (e) {
+    alert(`Não foi possível gerar o contrato: ${e.message}`);
+  }
+}
+
+// PDF do contrato pelo template de 13 cláusulas (impressão pelo navegador).
+function contractPdfHtml(contract) {
+  const c = (db.companySettings || [])[0] || {};
+  const proposal = byId("proposals", contract.proposalId) || {};
+  const valor = Number(contract.valor_contrato || contract.amount || proposal.amount || 0);
+  const v = (val, ph) => (val && String(val).trim()) ? svgText(val) : `<span class="contract-ph">[${ph}]</span>`;
+  const clausula = (n, titulo, corpo) => `<section class="contract-clause"><h3>CLÁUSULA ${n} — ${svgText(titulo)}</h3><div>${corpo}</div></section>`;
+  const valorExtenso = typeof moneyToWords === "function" ? moneyToWords(valor) : asMoney(valor);
+  return `
+    <article class="contract-page">
+      ${generateDocumentHeader("Contrato de Prestação de Serviços Técnicos", contract.numero_contrato || "")}
+      <p class="contract-parties"><strong>CONTRATANTE:</strong> ${v(contract.cliente_nome, "nome do cliente")}, CPF/CNPJ ${v(contract.cpf_cnpj, "CPF/CNPJ")}, ${v(contract.endereco, "endereço")}${contract.cidade ? " — " + svgText(contract.cidade) : ""}${contract.estado ? "/" + svgText(contract.estado) : ""}.</p>
+      <p class="contract-parties"><strong>CONTRATADA:</strong> ${svgText(c.name || "[empresa]")}, CNPJ ${v(c.document, "CNPJ")}, ${svgText([c.address, c.city || c.cidade, c.estado].filter(Boolean).join(", ") || "[endereço da empresa]")}.</p>
+      ${clausula("1ª", "Do Objeto", `<p>${v(contract.objeto, "objeto/escopo do contrato")}</p>`)}
+      ${clausula("2ª", "Dos Documentos Integrantes", `<p>Integram este contrato a proposta comercial ${proposal.number ? "nº " + svgText(proposal.number) : `<span class="contract-ph">[nº da proposta]</span>`} e seus anexos técnicos.</p>`)}
+      ${clausula("3ª", "Das Obrigações da Contratada", `<p>Executar os serviços conforme as normas técnicas vigentes, com pessoal qualificado, fornecendo a respectiva Anotação/Registro de Responsabilidade Técnica (ART/RRT).</p>`)}
+      ${clausula("4ª", "Das Obrigações da Contratante", `<p>Disponibilizar acesso, informações e condições necessárias à execução e efetuar os pagamentos nos prazos pactuados.</p>`)}
+      ${clausula("5ª", "Do Valor e da Forma de Pagamento", `<p>O valor total dos serviços é de <strong>${svgText(valorExtenso)}</strong>, pago por medição conforme <span class="contract-ph">[forma/cronograma de pagamento por medição]</span>.</p>`)}
+      ${clausula("6ª", "Do Prazo de Execução", `<p>${v(proposal.executionDeadline || proposal.deadline, "prazo de execução")}.</p>`)}
+      ${clausula("7ª", "Da Responsabilidade Técnica", `<p>Responsável técnico: ${v(proposal.technicalResponsible, "responsável técnico")} — ART/RRT nº <span class="contract-ph">[ART/RRT]</span>.</p>`)}
+      ${clausula("8ª", "Da Segurança e Saúde no Trabalho", `<p>A execução observará as Normas Regulamentadoras aplicáveis à natureza dos serviços (ex.: NR-18, NR-35, NR-10, quando pertinentes).</p>`)}
+      ${clausula("9ª", "Das Alterações de Escopo", `<p>Alterações de escopo serão formalizadas por termo aditivo, com revisão de prazo e/ou preço.</p>`)}
+      ${clausula("10ª", "Da Garantia", `<p>Os serviços possuem garantia nos termos da legislação aplicável.</p>`)}
+      ${clausula("11ª", "Da Rescisão", `<p>O contrato poderá ser rescindido por inadimplemento de qualquer cláusula, mediante notificação prévia.</p>`)}
+      ${clausula("12ª", "Do Foro", `<p>Fica eleito o foro da comarca de ${svgText(c.city || c.cidade || "")}${(c.city || c.cidade) ? "" : `<span class="contract-ph">[comarca]</span>`} para dirimir questões oriundas deste contrato.</p>`)}
+      ${clausula("13ª", "Das Disposições Gerais", `<p>Os casos omissos serão resolvidos de comum acordo entre as partes, por escrito.</p>`)}
+      <div class="contract-signatures">
+        <div><span class="contract-sign-line"></span><br>${v(contract.cliente_nome, "Contratante")}</div>
+        <div><span class="contract-sign-line"></span><br>${svgText(c.name || "Contratada")}</div>
+      </div>
+      ${generateDocumentFooter()}
+    </article>`;
+}
+
+function printContract(contractId) {
+  const contract = byId("sales", contractId);
+  if (!contract) return alert("Contrato não encontrado.");
+  printStandaloneDocument(contractPdfHtml(contract));
+  // Marca como "gerado" se ainda estava em rascunho (não bloqueia a impressão).
+  if (contract.status_contrato !== "gerado" && contract.status_contrato !== "assinado") {
+    updateIntegratedRecord("sales", contractId, { status_contrato: "gerado" }).catch(() => {});
+  }
+}
+
+// Download autenticado de um anexo do contrato (arquivos ficam fora do docroot).
+async function downloadContractAnexo(contractId, tipo) {
+  try {
+    const resp = await fetch(`${API_BASE}/contrato-download?id=${encodeURIComponent(contractId)}&tipo=${encodeURIComponent(tipo)}`, { headers: authHeaders() });
+    if (!resp.ok) throw new Error(`Erro ${resp.status}`);
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `${tipo}_${contractId}.pdf`; a.target = "_blank";
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    alert(`Não foi possível baixar o anexo: ${e.message}`);
+  }
+}
+
+// Dialog de anexos do contrato: proposta assinada / contrato gerado / contrato assinado.
+function openContractAnexos(contractId) {
+  const contract = byId("sales", contractId);
+  if (!contract) return alert("Contrato não encontrado.");
+  const anexos = [
+    ["proposta_assinada", "Proposta assinada (PDF)", contract.proposta_assinada_path],
+    ["contrato_gerado", "Contrato gerado (PDF)", contract.contrato_gerado_path],
+    ["contrato_assinado", "Contrato assinado (PDF)", contract.contrato_assinado_path],
+  ];
+  const dialog = document.createElement("dialog");
+  dialog.className = "agenda-detail-dialog contract-anexos-dialog";
+  document.body.appendChild(dialog);
+  const close = () => { try { dialog.close(); } catch { /* já fechado */ } dialog.remove(); };
+  dialog.innerHTML = `
+    <div class="modal-box">
+      <h3>Anexos do contrato ${escapeHtml(contract.numero_contrato || contract.number || "")}</h3>
+      <p class="muted">Status: ${escapeHtml(contract.status_contrato || "rascunho")}</p>
+      <div class="contract-anexos-list">
+        ${anexos.map(([tipo, label, path]) => `
+          <div class="contract-anexo-row">
+            <strong>${escapeHtml(label)}</strong>
+            <div class="contract-anexo-state">${path ? `<button type="button" class="link-button" data-download="${tipo}">Baixar</button>` : `<span class="muted">não anexado</span>`}</div>
+            <input type="file" accept="application/pdf" data-file="${tipo}">
+            <button type="button" class="secondary" data-upload="${tipo}">Enviar</button>
+          </div>`).join("")}
+      </div>
+      <div class="agenda-detail-actions"><button type="button" class="secondary" data-close>Fechar</button></div>
+    </div>`;
+  dialog.querySelector("[data-close]")?.addEventListener("click", close);
+  dialog.querySelectorAll("[data-download]").forEach((b) => b.addEventListener("click", () => downloadContractAnexo(contractId, b.dataset.download)));
+  dialog.querySelectorAll("[data-upload]").forEach((b) => b.addEventListener("click", async () => {
+    const tipo = b.dataset.upload;
+    const input = dialog.querySelector(`input[data-file="${tipo}"]`);
+    const file = input?.files?.[0];
+    if (!file) return alert("Selecione um PDF.");
+    const fd = new FormData();
+    fd.append("contratoId", contractId);
+    fd.append("tipo", tipo);
+    fd.append("file", file);
+    b.disabled = true;
+    try {
+      await fetchForm("contrato-upload", fd);
+      await refreshData();
+      close();
+      openContractAnexos(contractId);
+    } catch (e) {
+      b.disabled = false;
+      alert(`Falha no upload: ${e.message}`);
+    }
+  }));
+  dialog.showModal();
+}
+
 function extraRowActions(actionKey, row) {
   if (actionKey === "users" && isAdmin()) {
     const perms = `<button class="secondary" type="button" data-user-perms="${row.id}">Permissões</button>`;
@@ -5665,11 +5840,12 @@ function extraRowActions(actionKey, row) {
   }
   if (actionKey === "proposals") {
     const hasReceivable = (db.receivable || []).some((item) => sameId(item.proposalId, row.id));
-    return `${row.status === "Aprovada" ? `<button class="secondary" type="button" data-convert-proposal="${row.id}">Converter</button>${hasReceivable ? "" : `<button class="secondary" type="button" data-create-proposal-receivables="${row.id}">Gerar contas</button>`}` : ""}${row.proposalBody ? `<button class="secondary" type="button" data-preview-proposal="${row.id}">Prévia/PDF</button>` : ""}`;
+    return `${row.status === "Aprovada" ? `<button class="secondary" type="button" data-convert-proposal="${row.id}">Converter</button>${hasReceivable ? "" : `<button class="secondary" type="button" data-create-proposal-receivables="${row.id}">Gerar contas</button>`}<button class="secondary" type="button" data-generate-contract="${row.id}">Gerar contrato</button>` : ""}${row.proposalBody ? `<button class="secondary" type="button" data-preview-proposal="${row.id}">Prévia/PDF</button>` : ""}`;
   }
   if (actionKey === "sales" && row.status !== "Cancelado") {
     const exists = (db.receivable || []).some((item) => (row.proposalId && sameId(item.proposalId, row.proposalId)) || (row.number && item.document === row.number));
-    return exists ? "" : `<button class="secondary" type="button" data-create-receivable="${row.id}">Gerar conta</button>`;
+    const conta = exists ? "" : `<button class="secondary" type="button" data-create-receivable="${row.id}">Gerar conta</button>`;
+    return `${conta}<button class="secondary" type="button" data-contract-pdf="${row.id}">Contrato (PDF)</button><button class="secondary" type="button" data-contract-anexos="${row.id}">Anexos</button>`;
   }
   if (actionKey === "purchaseOrders") {
     return `<button class="secondary" type="button" data-print-po="${row.id}">Imprimir / Gerar PDF</button><button class="secondary" type="button" data-po-fvm="${row.id}">Registrar recebimento (FVM)</button><button class="secondary" type="button" data-po-cotacao="${row.id}">Importar cotação</button>`;

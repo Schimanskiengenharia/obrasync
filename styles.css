@@ -4623,6 +4623,58 @@ input.cep-loading {
   font-size: 0.95em;
 }
 
+.contract-parties {
+  margin: 8px 0;
+  line-height: 1.5;
+}
+
+.contract-clause {
+  margin: 10px 0;
+  break-inside: avoid;
+}
+
+.contract-clause h3 {
+  margin: 0 0 4px;
+  font-size: 0.95rem;
+}
+
+.contract-ph {
+  color: #b45309;
+  background: rgba(180, 83, 9, 0.12);
+  padding: 0 4px;
+  border-radius: 3px;
+}
+
+.contract-signatures {
+  display: flex;
+  justify-content: space-between;
+  gap: 40px;
+  margin-top: 48px;
+  text-align: center;
+}
+
+.contract-sign-line {
+  display: inline-block;
+  width: 220px;
+  border-top: 1px solid currentColor;
+}
+
+.contract-anexos-list {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.contract-anexo-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--panel-2);
+}
+
 .proposal-preview-toolbar {
   display: flex;
   flex-wrap: wrap;

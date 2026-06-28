@@ -293,6 +293,17 @@ try {
         handle_sinapi_export_obra($pdo);
     }
 
+    // Anexos do contrato (proposta assinada / contrato gerado / contrato assinado).
+    if ($resource === 'contrato-upload') {
+        require_method($method, ['POST']);
+        handle_contrato_upload($pdo, $config, $authUser);
+    }
+    if ($resource === 'contrato-download') {
+        require_method($method, ['GET']);
+        authorize_request($pdo, $authUser, 'sales', 'view');
+        handle_contrato_download($pdo, (int) ($_GET['id'] ?? 0), (string) ($_GET['tipo'] ?? ''));
+    }
+
     if ($resource === 'project-upload') {
         require_method($method, ['POST']);
         authorize_request($pdo, $authUser, 'projectSchedule', 'edit');
@@ -1688,7 +1699,7 @@ function resource_map(): array
         'proposalFiles' => r('proposta_arquivos', ['proposta-arquivos','arquivos-proposta'], ['proposalId','filePath','type','status','createdByUserId'], ['proposalId','filePath']),
         'proposalBudgetLinks' => r('proposta_orcamento_vinculos', ['proposta-orcamento-vinculos','vinculos-proposta-orcamento'], ['proposalId','workBudgetId','projectId','clientId','proposalModelId','responsibleUserId','nome_grupo','bdi_grupo','custo_total','valor_venda','ordem','grupo_id','disciplina'], ['proposalId','workBudgetId']),
         'proposalVariables' => r('proposta_variaveis', ['proposta-variaveis','variaveis-proposta'], ['proposalId','variableName','variableValue'], ['proposalId','variableName']),
-        'sales' => r('sales_contracts', ['vendas','contratos','vendas-contratos'], ['number','date','competenceDate','clientId','projectId','proposalId','costCenterId','description','amount','cost','status'], ['number']),
+        'sales' => r('sales_contracts', ['vendas','contratos','vendas-contratos'], ['number','date','competenceDate','clientId','projectId','proposalId','costCenterId','description','amount','cost','status','numero_contrato','data_contrato','valor_contrato','objeto','status_contrato','proposta_assinada_path','contrato_gerado_path','contrato_assinado_path','cliente_nome','cpf_cnpj','email','telefone','endereco','cidade','estado','cep'], ['number']),
         'viabilityAnalyses' => r('viability_analyses', ['analises-viabilidade','análises-viabilidade'], ['projectId','proposalId','contractValue','estimatedCost','executionMonths','tmaPercent','grossMargin','marginPercent','estimatedProfit','paybackMonths','npv','irrPercent','autoVerdict','verdict','finalVerdict','verdictJustification','verdictHistory','risks','notes','analysisDate','responsibleUserId','status'], []),
         'plugins' => r('system_plugins', ['plugins'], ['name','url','icon','description','roles','sortOrder','status'], ['name']),
         'receivable' => r('accounts_receivable', ['contas-receber','contas_a_receber'], ['document','issueDate','dueDate','receivedDate','clientId','projectId','proposalId','categoryId','costCenterId','bankAccount','amount','status'], ['document']),
@@ -2365,6 +2376,11 @@ function bootstrap_data(PDO $pdo, array $resources, ?array $authUser = null, boo
                 && !in_array('grupo_id', table_columns($pdo, 'proposta_orcamento_vinculos'), true))) {
             ensure_proposta_hierarquia($pdo);
         }
+        // Colunas de contrato (vínculo à proposta, snapshot do cliente, anexos).
+        if (resolve_existing_table($pdo, ['sales_contracts'], false)
+            && !in_array('status_contrato', table_columns($pdo, 'sales_contracts'), true)) {
+            ensure_contrato_columns($pdo);
+        }
         // email/blocked/mustChangePassword em system_users (usados em login/reset).
         if (resolve_existing_table($pdo, ['system_users'], false)
             && !in_array('mustChangePassword', table_columns($pdo, 'system_users'), true)) {
@@ -2782,6 +2798,102 @@ function handle_sinapi_export_obra(PDO $pdo): never
     header('Cache-Control: max-age=0');
     $writer = new \PhpOffice\PhpSpreadsheet\Writer\Xlsx($ss);
     $writer->save('php://output');
+    exit;
+}
+
+// Auto-cura das colunas de contrato (vínculo à proposta, snapshot do cliente, anexos).
+function ensure_contrato_columns(PDO $pdo): void
+{
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    try {
+        $pdo->exec("ALTER TABLE sales_contracts
+            ADD COLUMN IF NOT EXISTS numero_contrato VARCHAR(40) NULL,
+            ADD COLUMN IF NOT EXISTS data_contrato DATE NULL,
+            ADD COLUMN IF NOT EXISTS valor_contrato DECIMAL(14,2) NULL,
+            ADD COLUMN IF NOT EXISTS objeto TEXT NULL,
+            ADD COLUMN IF NOT EXISTS status_contrato VARCHAR(30) NULL DEFAULT 'rascunho',
+            ADD COLUMN IF NOT EXISTS proposta_assinada_path VARCHAR(255) NULL,
+            ADD COLUMN IF NOT EXISTS contrato_gerado_path VARCHAR(255) NULL,
+            ADD COLUMN IF NOT EXISTS contrato_assinado_path VARCHAR(255) NULL,
+            ADD COLUMN IF NOT EXISTS cliente_nome VARCHAR(200) NULL,
+            ADD COLUMN IF NOT EXISTS cpf_cnpj VARCHAR(40) NULL,
+            ADD COLUMN IF NOT EXISTS email VARCHAR(160) NULL,
+            ADD COLUMN IF NOT EXISTS telefone VARCHAR(40) NULL,
+            ADD COLUMN IF NOT EXISTS endereco VARCHAR(255) NULL,
+            ADD COLUMN IF NOT EXISTS cidade VARCHAR(120) NULL,
+            ADD COLUMN IF NOT EXISTS estado VARCHAR(2) NULL,
+            ADD COLUMN IF NOT EXISTS cep VARCHAR(9) NULL");
+        $done = true;
+    } catch (Throwable $error) {
+        error_log('[ObraSync] ensure_contrato_columns: ' . $error->getMessage());
+    }
+}
+
+// Anexo de PDF ao contrato (proposta assinada / contrato gerado / contrato assinado).
+// Reusa store_upload (PDF only, nome sanitizado, fora do docroot). Ao anexar o contrato
+// assinado, marca status_contrato='assinado'.
+function handle_contrato_upload(PDO $pdo, array $config, array $authUser): never
+{
+    require_method($_SERVER['REQUEST_METHOD'] ?? 'POST', ['POST']);
+    authorize_request($pdo, $authUser, 'sales', 'edit');
+    ensure_contrato_columns($pdo);
+    $contratoId = (int) ($_POST['contratoId'] ?? ($_POST['id'] ?? 0));
+    $tipo = (string) ($_POST['tipo'] ?? '');
+    $colByTipo = [
+        'proposta_assinada' => 'proposta_assinada_path',
+        'contrato_gerado' => 'contrato_gerado_path',
+        'contrato_assinado' => 'contrato_assinado_path',
+    ];
+    if ($contratoId <= 0) {
+        fail('Informe o id do contrato.', 400);
+    }
+    if (!isset($colByTipo[$tipo])) {
+        fail('Tipo de anexo inválido.', 400);
+    }
+    $file = $_FILES['file'] ?? $_FILES['arquivo'] ?? null;
+    if (!$file || empty($file['tmp_name'])) {
+        fail('Arquivo PDF não informado.', 400);
+    }
+    $uploadDir = rtrim($config['upload_dir'] ?? '/var/lib/financeiro/uploads', '/') . '/contratos';
+    if (!is_dir($uploadDir)) {
+        mkdir($uploadDir, 0750, true);
+    }
+    $path = store_upload($file, $uploadDir, ['pdf'], ['application/pdf']);
+    $update = [$colByTipo[$tipo] => $path];
+    if ($tipo === 'contrato_assinado') {
+        $update['status_contrato'] = 'assinado';
+    }
+    update_dynamic($pdo, 'sales_contracts', $contratoId, $update);
+    server_audit($pdo, $authUser, 'upload', 'sales', $contratoId, $tipo);
+    respond(['ok' => true, 'file' => basename($path), 'tipo' => $tipo]);
+}
+
+// Download de um anexo do contrato (arquivos ficam fora do docroot).
+function handle_contrato_download(PDO $pdo, int $contratoId, string $tipo): never
+{
+    $colByTipo = [
+        'proposta_assinada' => 'proposta_assinada_path',
+        'contrato_gerado' => 'contrato_gerado_path',
+        'contrato_assinado' => 'contrato_assinado_path',
+    ];
+    if (!isset($colByTipo[$tipo])) {
+        fail('Tipo de anexo inválido.', 400);
+    }
+    $col = $colByTipo[$tipo];
+    $stmt = $pdo->prepare("SELECT `{$col}` AS path FROM sales_contracts WHERE id = ?");
+    $stmt->execute([$contratoId]);
+    $row = $stmt->fetch();
+    if (!$row || empty($row['path']) || !is_file($row['path'])) {
+        fail('Anexo não encontrado.', 404);
+    }
+    header_remove('Content-Type');
+    header('Content-Type: application/pdf');
+    header('Content-Disposition: inline; filename="' . basename($row['path']) . '"');
+    header('Content-Length: ' . filesize($row['path']));
+    readfile($row['path']);
     exit;
 }
 
