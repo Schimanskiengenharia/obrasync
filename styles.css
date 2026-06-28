@@ -2703,12 +2703,12 @@ html[data-theme="dark"] .exec-dash-alert {
 }
 
 .chart-card header {
-  padding: 15px 16px 0;
+  padding: 10px 12px 0;
 }
 
 .chart-card h3 {
-  margin-bottom: 3px;
-  font-size: 16px;
+  margin-bottom: 2px;
+  font-size: 12px;
 }
 
 .chart-card p {
@@ -2718,7 +2718,7 @@ html[data-theme="dark"] .exec-dash-alert {
 }
 
 .chart-wrap {
-  padding: 8px 12px 14px;
+  padding: 4px 10px 8px;
 }
 
 .chart-wrap svg {
@@ -2731,7 +2731,10 @@ html[data-theme="dark"] .exec-dash-alert {
 .chart-legend {
   fill: var(--muted);
   color: var(--muted);
-  font-size: 12px;
+}
+
+.chart-axis {
+  font-size: 9px;
 }
 
 .chart-grid-line {
@@ -2749,6 +2752,7 @@ html[data-theme="dark"] .exec-dash-alert {
   flex-wrap: wrap;
   gap: 8px 14px;
   padding: 0 8px;
+  font-size: 10px;
 }
 
 .chart-legend span {

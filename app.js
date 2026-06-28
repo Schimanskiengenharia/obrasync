@@ -4404,6 +4404,21 @@ function compactMoney(value) {
   return money.format(Number(value || 0));
 }
 
+// Versão abreviada para os rótulos do eixo Y dos gráficos: R$ 1k, R$ 10k, R$ 1M.
+// Tooltips continuam usando compactMoney (valor cheio).
+function abbreviateMoney(value) {
+  const n = Number(value || 0);
+  const abs = Math.abs(n);
+  const sign = n < 0 ? "-" : "";
+  const fmt = (x) => {
+    const r = Math.round(x * 10) / 10;
+    return (Number.isInteger(r) ? String(r) : r.toFixed(1)).replace(".", ",");
+  };
+  if (abs >= 1000000) return `${sign}R$ ${fmt(abs / 1000000)}M`;
+  if (abs >= 1000) return `${sign}R$ ${fmt(abs / 1000)}k`;
+  return `${sign}R$ ${Math.round(abs)}`;
+}
+
 // Escape padrão de HTML para qualquer dado dinâmico interpolado em innerHTML.
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
@@ -4415,8 +4430,8 @@ function lineChart(series, labels) {
   const values = series.flatMap((item) => item.values);
   if (!labels.length || !hasValues(values)) return emptyChart();
   const width = 760;
-  const height = 300;
-  const pad = { top: 24, right: 24, bottom: 44, left: 72 };
+  const height = 180;
+  const pad = { top: 16, right: 24, bottom: 28, left: 52 };
   const min = Math.min(0, ...values);
   const max = Math.max(1, ...values);
   const range = max - min || 1;
@@ -4425,13 +4440,13 @@ function lineChart(series, labels) {
   const grid = [0, 0.25, 0.5, 0.75, 1].map((step) => {
     const gy = pad.top + step * (height - pad.top - pad.bottom);
     const label = max - step * range;
-    return `<line x1="${pad.left}" y1="${gy}" x2="${width - pad.right}" y2="${gy}" class="chart-grid-line"></line><text x="8" y="${gy + 4}" class="chart-axis">${compactMoney(label)}</text>`;
+    return `<line x1="${pad.left}" y1="${gy}" x2="${width - pad.right}" y2="${gy}" class="chart-grid-line"></line><text x="8" y="${gy + 4}" class="chart-axis">${abbreviateMoney(label)}</text>`;
   }).join("");
   const paths = series.map((item) => {
     const points = item.values.map((value, index) => `${x(index)},${y(value)}`).join(" ");
-    return `<polyline points="${points}" fill="none" stroke="${item.color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"></polyline>`;
+    return `<polyline points="${points}" fill="none" stroke="${item.color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></polyline>`;
   }).join("");
-  const dots = series.map((item) => item.values.map((value, index) => `<circle cx="${x(index)}" cy="${y(value)}" r="3.5" fill="${item.color}"><title>${svgText(item.label)}: ${compactMoney(value)}</title></circle>`).join("")).join("");
+  const dots = series.map((item) => item.values.map((value, index) => `<circle cx="${x(index)}" cy="${y(value)}" r="2.5" fill="${item.color}"><title>${svgText(item.label)}: ${compactMoney(value)}</title></circle>`).join("")).join("");
   const axisLabels = labels.map((label, index) => `<text x="${x(index)}" y="${height - 14}" text-anchor="middle" class="chart-axis">${svgText(label)}</text>`).join("");
   return `
     <div class="chart-wrap">
