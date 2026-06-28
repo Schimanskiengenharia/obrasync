@@ -110,8 +110,8 @@ const modules = [
   ["proposalActionTypes", "Tipos de atuação"],
   ["proposalServiceSubtypes", "Subtipos/Serviços"],
   ["sales", "Vendas/Contratos"],
-  ["viabilityAnalyses", "Análise de Viabilidade"],
-  ["viabilidadeObra", "Viabilidade"],
+  ["viabilityAnalyses", "Viabilidade Financeira"],
+  ["viabilidadeObra", "Análise de Viabilidade"],
   ["purchaseOrders", "Pedidos de compra"],
   ["projectSchedule", "Cronograma Físico-Financeiro"],
   ["projectMilestones", "Marcos da obra"],
@@ -165,9 +165,9 @@ const modules = [
 const sidebarSections = [
   { id: "dashboard", label: "Dashboard", icon: "D", module: "dashboard" },
   { id: "cadastros", label: "Cadastros", icon: "C", modules: ["clients", "suppliers", "products", "services", "categories", "costCenters", "bankAccounts"] },
-  { id: "comercial", label: "Comercial", icon: "V", modules: ["viabilidadeObra", "budgets", "proposals", "proposalModels", "proposalAreas", "proposalActionTypes", "proposalServiceSubtypes", "sales"] },
-  { id: "viabilidade", label: "Viabilidade", icon: "%", modules: ["viabilityAnalyses"] },
-  { id: "obras", label: "Obras/Projetos", icon: "O", modules: ["projects", "viabilidadeObra", "projectCosts", "projectRevenues", "fiscalDocuments", "rdo", "projectNotifications", "projectTrackingLinks", "projectReport"] },
+  { id: "comercial", label: "Comercial", icon: "V", modules: ["budgets", "proposals", "proposalModels", "proposalAreas", "proposalActionTypes", "proposalServiceSubtypes", "sales"] },
+  { id: "viabilidade", label: "Viabilidade", icon: "📋", modules: ["viabilidadeObra", "viabilityAnalyses"] },
+  { id: "obras", label: "Obras/Projetos", icon: "O", modules: ["projects", "projectCosts", "projectRevenues", "fiscalDocuments", "rdo", "projectNotifications", "projectTrackingLinks", "projectReport"] },
   { id: "qualidadePbqph", label: "Qualidade PBQP-H", icon: "✅", modules: ["qualidadeDashboard", "qualidadePolitica", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos", "qualidadeAuditorias"] },
   { id: "orcamentoObra", label: "Orçamento de Obra", icon: "Σ", modules: ["workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "purchaseOrders"] },
   { id: "planejamento", label: "Planejamento", icon: "P", modules: ["projectSchedule", "projectMilestones", "agenda", "kanban", "technicalReports"] },
@@ -222,7 +222,7 @@ const EDITABLE_BY_ROLE = {
   financeiro: ["fiscalDocuments", "receivable", "payable", "cashMoves", "cashFlow", "reconciliation", "categories", "costCenters", "bankAccounts", "chartAccounts", "journalEntries", "taxDocuments", "taxes", "exports", "projectSchedule", "agenda", "kanban", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "sinapiSettings", "quotes", "sales", "viabilityAnalyses", "viabilidadeObra"],
   comercial: ["clients", "budgets", "proposals", "agenda", "kanban", "viabilityAnalyses", "viabilidadeObra"],
   engenharia: ["rdo", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "purchaseOrders", "fiscalDocuments", "technicalReports", "viabilidadeObra", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
-  gestor_obra: ["rdo", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "purchaseOrders", "fiscalDocuments", "technicalReports", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
+  gestor_obra: ["rdo", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "purchaseOrders", "fiscalDocuments", "technicalReports", "viabilidadeObra", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
   gerente: modules.map(([k]) => k).filter((k) => !["users", "permissions"].includes(k)),
   operador: ["rdo", "clients", "suppliers", "products", "services", "categories", "costCenters", "bankAccounts", "projects", "projectCosts", "projectRevenues", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "ownCompositions", "quotes", "fiscalDocuments", "receivable", "payable", "cashMoves", "reconciliation", "budgets", "proposals", "sales", "purchaseOrders", "projectSchedule", "projectMilestones", "agenda", "kanban", "qualidadeFvs", "qualidadeFvm", "qualidadeNc"],
 };
@@ -561,7 +561,7 @@ const configs = {
     ],
   },
   viabilityAnalyses: {
-    title: "Análise de Viabilidade",
+    title: "Viabilidade Financeira",
     description: "Avaliação de custo x benefício por obra/projeto com margem, payback, VPL, TIR e parecer automático.",
     fields: [
       ["projectId", "Obra/Projeto", "project", true],
@@ -4620,7 +4620,7 @@ function renderViability() {
   qs("content").innerHTML = `
     <section class="module-head">
       <div>
-        <h2>Análise de Viabilidade</h2>
+        <h2>Viabilidade Financeira</h2>
         <p>Custo x benefício por obra/projeto com margem, payback, VPL, TIR e parecer automático.</p>
       </div>
       ${editable ? '<button class="primary" type="button" id="newViability">Nova análise</button>' : ""}
