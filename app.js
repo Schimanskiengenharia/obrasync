@@ -4975,6 +4975,7 @@ function renderPlugins() {
       </div>
       ${editable ? '<button class="primary" type="button" id="newPlugin">Novo plugin</button>' : ""}
     </section>
+    ${iaIndexCardHtml()}
     ${rows.length
       ? `<section class="plugins-grid">${rows.map((row, index) => pluginCard(row, index, rows.length, editable)).join("")}</section>`
       : '<div class="empty">Nenhum plugin cadastrado.</div>'}
@@ -4987,6 +4988,83 @@ function renderPlugins() {
     const [id, direction] = button.dataset.movePlugin.split(":");
     movePlugin(id, direction);
   }));
+  wireIaIndexCard();
+}
+
+// ── IA: card de indexação da base SINAPI (aba Plugins) ──────────────────────
+// Mesma autenticação/sessão das outras telas: apiModuleRequest envia o token e bate
+// em ?module=ia&action=startIndex|indexStatus (worker em background no servidor).
+let iaIndexTimer = null;
+
+function iaIndexCardHtml() {
+  if (!serverMode) {
+    return '<section class="panel"><h3>IA — Indexação da base SINAPI</h3><p class="empty">Disponível apenas com a API no servidor.</p></section>';
+  }
+  return `
+    <section class="panel" id="iaIndexCard">
+      <h3>IA — Indexação da base SINAPI</h3>
+      <p class="field-hint">Gera os vetores de busca semântica (embeddings) das composições e insumos da base SINAPI — necessário antes da busca por IA. Total estimado: ~25 mil itens (10.378 composições + 14.565 insumos). Roda em segundo plano, em baixa prioridade.</p>
+      <div id="iaIndexProgress" class="muted">Verificando status…</div>
+      <div style="height:10px;background:var(--line);border-radius:5px;overflow:hidden;margin:10px 0">
+        <div id="iaIndexBar" style="height:100%;width:0%;background:#185FA5;transition:width .3s"></div>
+      </div>
+      <div class="actions"><button class="primary" type="button" id="iaIndexBtn">Indexar base para IA</button></div>
+    </section>`;
+}
+
+function wireIaIndexCard() {
+  if (!serverMode || !qs("iaIndexCard")) return;
+  qs("iaIndexBtn")?.addEventListener("click", startIaIndex);
+  loadIaIndexStatus();
+}
+
+function updateIaIndexUI(d) {
+  const prog = qs("iaIndexProgress");
+  const bar = qs("iaIndexBar");
+  const btn = qs("iaIndexBtn");
+  if (!prog || !bar) return false;
+  const total = Number(d.total || 0);
+  const done = Number(d.processados || 0);
+  const pct = Math.max(0, Math.min(100, Number(d.percent || 0)));
+  const label = { queued: "na fila", running: "indexando…", done: "concluído ✅", error: "erro", none: "não iniciado" }[d.status] || (d.status || "");
+  prog.textContent = `${done.toLocaleString("pt-BR")} de ${total.toLocaleString("pt-BR")} indexados (${pct}%) — ${label}`
+    + (d.status === "error" && d.error ? ` · ${d.error}` : "");
+  bar.style.width = `${pct}%`;
+  const busy = d.status === "running" || d.status === "queued";
+  if (btn) { btn.disabled = busy; btn.textContent = busy ? "Indexando…" : "Indexar base para IA"; }
+  return busy;
+}
+
+async function loadIaIndexStatus() {
+  try {
+    const d = await apiModuleRequest("?module=ia&action=indexStatus");
+    if (updateIaIndexUI(d)) scheduleIaPoll();
+  } catch (error) {
+    const prog = qs("iaIndexProgress");
+    if (prog) prog.textContent = `Não foi possível obter o status: ${error.message}`;
+  }
+}
+
+function scheduleIaPoll() {
+  if (iaIndexTimer) clearTimeout(iaIndexTimer);
+  iaIndexTimer = setTimeout(() => {
+    iaIndexTimer = null;
+    // Continua o polling só enquanto a aba Plugins (com o card) estiver aberta.
+    if (currentModule === "plugins" && qs("iaIndexProgress")) loadIaIndexStatus();
+  }, 2500);
+}
+
+async function startIaIndex() {
+  const btn = qs("iaIndexBtn");
+  if (btn) { btn.disabled = true; btn.textContent = "Iniciando…"; }
+  try {
+    await apiModuleRequest("?module=ia&action=startIndex", { method: "POST" });
+    showToast("Indexação IA iniciada em segundo plano.");
+    loadIaIndexStatus();
+  } catch (error) {
+    alert(`Não foi possível iniciar a indexação: ${error.message}`);
+    if (btn) { btn.disabled = false; btn.textContent = "Indexar base para IA"; }
+  }
 }
 
 function pluginCard(row, index, total, editable) {

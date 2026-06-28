@@ -209,7 +209,7 @@ try {
     // 'ia' — ela não existe em nenhum papel e devolvia 403 ao usuário logado; basta
     // a sessão válida, como em check-session/bootstrap.
     if ($module === 'ia') {
-        handle_ia_module($pdo, $method, $_GET, $authUser);
+        handle_ia_module($pdo, $method, $_GET, $config, $authUser);
     }
 
     if ($resource === '' || $resource === 'bootstrap') {
@@ -8878,10 +8878,10 @@ function ollama_embed(string $text): array
     ];
 }
 
-function handle_ia_module(PDO $pdo, string $method, array $query, ?array $authUser): never
+function handle_ia_module(PDO $pdo, string $method, array $query, array $config, ?array $authUser): never
 {
-    // Exige apenas a sessão logada (autenticada acima, igual aos demais endpoints).
-    // Respostas no padrão {success, data, message} do resto da API, inclusive os erros.
+    // Exige apenas a sessão logada (autenticada acima por authenticate_request, igual
+    // aos demais módulos). Respostas no padrão {success, data, message} do resto da API.
     if (!$authUser) {
         sinapi_module_respond(false, [], 'Não autenticado. Faça login para acessar a API.', 401);
     }
@@ -8891,6 +8891,18 @@ function handle_ia_module(PDO $pdo, string $method, array $query, ?array $authUs
             sinapi_module_respond(false, [], 'Método não permitido para o ping de IA.', 405);
         }
         handle_ia_ping();
+    }
+    if ($action === 'startindex') {
+        if (strtoupper($method) !== 'POST') {
+            sinapi_module_respond(false, [], 'Método não permitido. Use POST.', 405);
+        }
+        handle_ia_start_index($pdo, $config, $authUser);
+    }
+    if ($action === 'indexstatus') {
+        if (strtoupper($method) !== 'GET') {
+            sinapi_module_respond(false, [], 'Método não permitido. Use GET.', 405);
+        }
+        handle_ia_index_status($pdo);
     }
     sinapi_module_respond(false, [], 'Ação de IA não reconhecida.', 404);
 }
@@ -8915,6 +8927,162 @@ function handle_ia_ping(): never
         'embed_ok' => $embed['success'],
         'embed_dim' => count($embed['embedding']),
     ], 'Integração Ollama respondeu.');
+}
+
+// ── Indexação IA da base SINAPI (embeddings) ────────────────────────────────
+// Tabelas criadas em runtime (mesma estratégia ensure_*_table do resto do arquivo),
+// além da migração migrations/2026-06-28-ia-embeddings.sql.
+function ensure_ia_tables(PDO $pdo): void
+{
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    $pdo->exec(
+        'CREATE TABLE IF NOT EXISTS ia_embeddings (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            origem ENUM(\'composicao\',\'insumo\') NOT NULL,
+            origemId BIGINT UNSIGNED NOT NULL,
+            code VARCHAR(80) NULL,
+            texto TEXT NOT NULL,
+            embedding LONGTEXT NOT NULL,
+            sinapiReferenceId BIGINT UNSIGNED NULL,
+            createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updatedAt TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_origem (origem, origemId),
+            KEY idx_origem (origem)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+    );
+    $pdo->exec(
+        'CREATE TABLE IF NOT EXISTS ia_index_jobs (
+            id VARCHAR(64) PRIMARY KEY,
+            status ENUM(\'queued\',\'running\',\'done\',\'error\') NOT NULL DEFAULT \'queued\',
+            total INT UNSIGNED NOT NULL DEFAULT 0,
+            processados INT UNSIGNED NOT NULL DEFAULT 0,
+            errorMessage TEXT NULL,
+            startedAt TIMESTAMP NULL DEFAULT NULL,
+            finishedAt TIMESTAMP NULL DEFAULT NULL,
+            createdByUserId BIGINT UNSIGNED NULL,
+            createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updatedAt TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+            KEY idx_status (status)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+    );
+    $done = true;
+}
+
+// Marca como erro jobs presos (worker que não subiu ou morreu sem fechar o job).
+function expire_stale_ia_jobs(PDO $pdo): void
+{
+    $pdo->exec(
+        "UPDATE ia_index_jobs
+            SET status = 'error',
+                errorMessage = 'Job abandonado: o worker não iniciou ou parou de responder.',
+                finishedAt = NOW()
+          WHERE (status = 'queued' AND COALESCE(updatedAt, createdAt) < DATE_SUB(NOW(), INTERVAL 10 MINUTE))
+             OR (status = 'running' AND COALESCE(updatedAt, createdAt) < DATE_SUB(NOW(), INTERVAL 2 HOUR))"
+    );
+}
+
+function handle_ia_start_index(PDO $pdo, array $config, array $authUser): never
+{
+    ensure_ia_tables($pdo);
+    expire_stale_ia_jobs($pdo);
+    // Uma indexação por vez (o Ollama processa sequencial — NUM_PARALLEL=1).
+    $running = $pdo->query("SELECT id FROM ia_index_jobs WHERE status IN ('queued','running') LIMIT 1")->fetchColumn();
+    if ($running) {
+        sinapi_module_respond(false, [], 'Já existe uma indexação de IA em andamento. Aguarde a conclusão.', 409);
+    }
+    $total = (int) $pdo->query('SELECT COUNT(*) FROM sinapi_composicoes')->fetchColumn()
+        + (int) $pdo->query('SELECT COUNT(*) FROM sinapi_insumos')->fetchColumn();
+    if ($total === 0) {
+        sinapi_module_respond(false, [], 'Não há composições/insumos SINAPI para indexar. Importe a base SINAPI primeiro.', 400);
+    }
+    $jobId = uniqid('ia_idx_', true);
+    $pdo->prepare('INSERT INTO ia_index_jobs (id, status, total, processados, createdByUserId) VALUES (?, ?, ?, 0, ?)')
+        ->execute([$jobId, 'queued', $total, (int) ($authUser['id'] ?? 0) ?: null]);
+    spawn_ia_index_worker($pdo, $config, $jobId);
+    server_audit($pdo, $authUser, 'index', 'plugins', $jobId, "Indexação IA da base SINAPI ({$total} itens)");
+    sinapi_module_respond(true, ['jobId' => $jobId, 'total' => $total], 'Indexação iniciada em segundo plano.');
+}
+
+function handle_ia_index_status(PDO $pdo): never
+{
+    ensure_ia_tables($pdo);
+    expire_stale_ia_jobs($pdo);
+    $jobId = trim((string) ($_GET['job'] ?? $_GET['jobId'] ?? ''));
+    if ($jobId !== '') {
+        $stmt = $pdo->prepare('SELECT * FROM ia_index_jobs WHERE id = ? LIMIT 1');
+        $stmt->execute([$jobId]);
+    } else {
+        $stmt = $pdo->query('SELECT * FROM ia_index_jobs ORDER BY createdAt DESC, id DESC LIMIT 1');
+    }
+    $job = $stmt->fetch();
+    if (!$job) {
+        sinapi_module_respond(true, ['total' => 0, 'processados' => 0, 'status' => 'none', 'percent' => 0], 'Nenhuma indexação ainda.');
+    }
+    $total = (int) $job['total'];
+    $processados = (int) $job['processados'];
+    $percent = $total > 0 ? (int) floor($processados * 100 / $total) : (($job['status'] === 'done') ? 100 : 0);
+    sinapi_module_respond(true, [
+        'jobId' => $job['id'],
+        'total' => $total,
+        'processados' => $processados,
+        'status' => (string) $job['status'],
+        'percent' => $percent,
+        'error' => $job['errorMessage'] ?? null,
+    ], 'OK');
+}
+
+// Dispara o worker CLI de indexação em background, em BAIXA prioridade (nice -n 19)
+// para não competir com o Apache/MySQL. Espelha spawn_sinapi_worker (resolução do
+// binário PHP CLI + pasta de logs fora da área pública).
+function spawn_ia_index_worker(PDO $pdo, array $config, string $jobId): void
+{
+    $worker = dirname(__DIR__) . '/scripts/ia_index_worker.php';
+    if (!is_file($worker)) {
+        sinapi_module_respond(false, [], 'Worker não encontrado em scripts/ia_index_worker.php — confira o deploy.', 500);
+    }
+    $logDir = dirname(rtrim($config['upload_dir'] ?? '/var/lib/financeiro/uploads', '/')) . '/ia_jobs';
+    if (!is_dir($logDir) && !@mkdir($logDir, 0750, true)) {
+        sinapi_module_respond(false, [], "Não foi possível criar a pasta de logs em {$logDir}. Verifique as permissões do usuário do Apache.", 500);
+    }
+    if (!is_writable($logDir)) {
+        sinapi_module_respond(false, [], "Sem permissão de escrita em {$logDir} — o log do worker não poderia ser gravado.", 500);
+    }
+    $php = null;
+    $candidates = [
+        PHP_BINDIR . '/php',
+        '/usr/bin/php',
+        '/usr/local/bin/php',
+        '/usr/bin/php8.4',
+        '/usr/bin/php8.3',
+        '/usr/bin/php8.2',
+        '/usr/bin/php8.1',
+        '/usr/bin/php8',
+        trim((string) shell_exec('command -v php 2>/dev/null')),
+    ];
+    foreach ($candidates as $candidate) {
+        if ($candidate !== null && $candidate !== '' && @is_executable($candidate)) {
+            $php = $candidate;
+            break;
+        }
+    }
+    if (!$php) {
+        sinapi_module_respond(false, [], 'Binário PHP CLI não encontrado no servidor. Instale o pacote php-cli.', 500);
+    }
+    // nice -n 19: prioridade mais baixa, para a indexação não sobrecarregar o servidor.
+    $nice = trim((string) shell_exec('command -v nice 2>/dev/null'));
+    $prefix = $nice !== '' ? escapeshellarg($nice) . ' -n 19 ' : '';
+    $logFile = $logDir . '/' . preg_replace('/[^A-Za-z0-9_.-]/', '', $jobId) . '.log';
+    exec(sprintf(
+        'nohup %s%s %s --job %s >> %s 2>&1 &',
+        $prefix,
+        escapeshellarg($php),
+        escapeshellarg($worker),
+        escapeshellarg($jobId),
+        escapeshellarg($logFile)
+    ));
 }
 
 function handle_sinapi_module(PDO $pdo, string $method, array $query, array $config, array $authUser): never

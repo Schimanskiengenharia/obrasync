@@ -1009,6 +1009,35 @@ CREATE TABLE IF NOT EXISTS sinapi_configuracoes (
   UNIQUE KEY uk_sinapi_config_default (defaultUf, defaultReferenceMonth, defaultReferenceYear, defaultReferenceType)
 ) ENGINE=InnoDB;
 
+-- Indexação IA (embeddings da base SINAPI para busca semântica).
+CREATE TABLE IF NOT EXISTS ia_embeddings (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  origem ENUM('composicao','insumo') NOT NULL,
+  origemId BIGINT UNSIGNED NOT NULL,
+  code VARCHAR(80) NULL,
+  texto TEXT NOT NULL,
+  embedding LONGTEXT NOT NULL,
+  sinapiReferenceId BIGINT UNSIGNED NULL,
+  createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updatedAt TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uniq_origem (origem, origemId),
+  KEY idx_origem (origem)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS ia_index_jobs (
+  id VARCHAR(64) PRIMARY KEY,
+  status ENUM('queued','running','done','error') NOT NULL DEFAULT 'queued',
+  total INT UNSIGNED NOT NULL DEFAULT 0,
+  processados INT UNSIGNED NOT NULL DEFAULT 0,
+  errorMessage TEXT NULL,
+  startedAt TIMESTAMP NULL DEFAULT NULL,
+  finishedAt TIMESTAMP NULL DEFAULT NULL,
+  createdByUserId BIGINT UNSIGNED NULL,
+  createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updatedAt TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  KEY idx_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS sinapi_import_jobs (
   id VARCHAR(60) PRIMARY KEY,
   status VARCHAR(12) NOT NULL DEFAULT 'queued',
