@@ -1,8 +1,8 @@
 # CLAUDE.md — Guia para agentes de IA no projeto ObraSync
 
-> **Versão atual:** `v1.18.0` · 2026-06-28
+> **Versão atual:** `v1.19.0` · 2026-06-28
 > **Última varredura de código:** 2026-06-27 (3ª rodada — segurança, bugs, performance, qualidade, UX; itens MÉDIO/BAIXO fechados na v1.12.1)
-> **Handoff:** este doc foi atualizado na v1.18.0 para troca de IA — confira a seção **Sessão 2026-06-28 — v1.18.0** e **Operação/Deploy (handoff)** abaixo.
+> **Handoff:** este doc foi atualizado na v1.19.0 para troca de IA — confira a seção **Sessão 2026-06-28 — v1.19.0** e **Operação/Deploy (handoff)** abaixo.
 
 Este arquivo orienta qualquer agente (ou pessoa) que continue o desenvolvimento.
 Leia também o `README.md` (seção "Para quem está retomando o projeto") e o
@@ -22,7 +22,7 @@ Leia também o `README.md` (seção "Para quem está retomando o projeto") e o
 - **Antes de salvar:** valide a sintaxe — `php -l api/index.php` e `node --check app.js`.
 - **Backend:** respostas REST via `respond(['ok' => true, 'data' => ...])` e erros via `fail($msg, $status)`; módulos `?module=` respondem `{success, data, message}`. Auditoria via `server_audit()`. Tabelas/colunas novas devem ter **`ensure_*`** no `index.php` (não só migração) para auto-cura em produção.
 - **Frontend:** chamadas autenticadas via `apiRequest()` / `apiModuleRequest()`; uploads via `fetchForm()`; toasts via `showToast()`. **Sempre** escape de dados do banco em `innerHTML` com `svgText()` / `escapeHtml()`. IDs novos via `crypto.randomUUID()` (não existe `uid()`).
-- **Cache busting:** ao mudar `app.js`/`styles.css`, incremente `?v=NNNN` em `index.html` (hoje `app.js?v=1769`, `styles.css?v=1769`) e a constante `APP_VERSION` no topo de `app.js`.
+- **Cache busting:** ao mudar `app.js`/`styles.css`, incremente `?v=NNNN` em `index.html` (hoje `app.js?v=1770`, `styles.css?v=1770`) e a constante `APP_VERSION` no topo de `app.js`.
 - **Deploy:** push na `main` → webhook GitHub → `deploy.php` roda `git pull` + backup pré-deploy. Em produção, rode as migrations novas manualmente. **Nunca** toque em `/etc/financeiro/config.php`, uploads, backups ou banco.
 - **Commits:** use a mensagem exata pedida pelo usuário. Não faça `git push` sem solicitação. Não inclua `.claude/settings.local.json` nos commits.
 
@@ -60,6 +60,23 @@ Leia também o `README.md` (seção "Para quem está retomando o projeto") e o
 > Pontos fortes confirmados (não re-sinalizar): prepared statements em todo SQL (sem SQLi), autorização por rota/perfil após `authenticate_request`, sessão com token CSPRNG + SHA-256 + idle/TTL, `password_hash`, rate limit de login/reset, CSRF mitigado por auth via header, uploads fora do docroot, deploy com HMAC + `escapeshellarg`.
 
 ---
+
+## Sessão 2026-06-28 — v1.19.0 (Importação mensal SINAPI)
+
+**Fluxo novo:** em `Orçamento de Obra > Base SINAPI`, o card "Importação mensal SINAPI" faz upload múltiplo dos arquivos oficiais, gera prévia persistida, processa em fila e permite definir a referência padrão atual.
+
+**Endpoints reais:** `?module=sinapi&action=previewPacote`, `processarPacote`, `statusImportacao`, `listarReferencias`, `ativarReferencia`. O endpoint antigo `GET api/sinapi-buscar?q=` continua existindo e agora usa `sinapi_referencias.isDefault = 1` quando nenhum filtro de referência é passado.
+
+**Tabelas/colunas novas:** migration `2026-06-28-sinapi-importacao-mensal.sql`; auto-cura `ensure_sinapi_monthly_import_tables()`. Novas tabelas `sinapi_import_files`, `sinapi_import_errors`; novas colunas `sinapi_referencias.isDefault/defaultAt/importJobId`, `sinapi_import_jobs.replaceExisting/packagePreviewJson`, `orcamento_obra_itens.sinapiSnapshotJson`.
+
+**Worker:** `scripts/sinapi_import_worker.php` continua sendo o processador assíncrono. Quando `replaceExisting=1`, ele limpa somente os dados da referência/recurso antes do upsert. Erros por linha vão para `sinapi_import_errors`.
+
+**Dependência obrigatória para XLSX:** `PhpSpreadsheet`. Sem ela, a API retorna 422 orientando:
+```
+cd /var/www/financeiro && composer require phpoffice/phpspreadsheet
+```
+
+**Snapshot de orçamento:** ao adicionar item SINAPI ao orçamento, o frontend grava `sinapiSnapshotJson` com código, descrição, unidade, custo unitário, mês/ano/UF e tipo de preço/referência, além das colunas já existentes. Orçamentos antigos não devem ser recalculados automaticamente ao trocar a base padrão.
 
 ## Sessão 2026-06-28 — v1.18.0 (Orçamento→Proposta SINAPI, contrato, CEP universal)
 

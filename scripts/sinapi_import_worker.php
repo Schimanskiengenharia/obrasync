@@ -35,7 +35,7 @@ if ($jobId === '') {
     exit(1);
 }
 
-ensure_sinapi_import_jobs_table($pdo);
+ensure_sinapi_monthly_import_tables($pdo);
 $stmt = $pdo->prepare('SELECT * FROM sinapi_import_jobs WHERE id = ? LIMIT 1');
 $stmt->execute([$jobId]);
 $job = $stmt->fetch();
@@ -78,6 +78,7 @@ register_shutdown_function(static function () use ($pdo, $jobId): void {
 
 $params = json_decode((string) ($job['paramsJson'] ?? '{}'), true) ?: [];
 $files = is_array($params['files'] ?? null) ? $params['files'] : [];
+$replaceExisting = !empty($params['replaceExisting']) || ((int) ($job['replaceExisting'] ?? 0) === 1);
 $uf = (string) $job['uf'];
 $month = (int) $job['referenceMonth'];
 $year = (int) $job['referenceYear'];
@@ -91,6 +92,7 @@ try {
     $progress = 0;
     $total = 0;
     $referenceCache = []; // priceType => id em sinapi_referencias (evita um SELECT por linha)
+    $cleared = [];
 
     foreach (sinapi_job_file_types() as $field => $info) {
         $path = (string) ($files[$field] ?? '');
@@ -101,6 +103,7 @@ try {
             throw new RuntimeException("Arquivo de {$info['label']} não encontrado em {$path}.");
         }
 
+        $pdo->prepare("UPDATE sinapi_import_files SET status = 'processando' WHERE jobId = ? AND storedPath = ?")->execute([$jobId, $path]);
         $updateJob(['currentStep' => "Lendo a planilha de {$info['label']} (pode levar alguns minutos)"]);
         echo date('Y-m-d H:i:s') . " — lendo {$info['label']}: {$path}\n";
         $entries = parse_sinapi_file($path, $info['fileType'], '', $uf, $month, $year, $referenceType);
@@ -118,6 +121,7 @@ try {
             $priceType = (string) ($entry['priceType'] ?? $referenceType);
             $referenceCache[$priceType] ??= ensure_sinapi_reference($pdo, $resources['sinapiReferences'], $uf, $month, $year, $priceType, (string) ($entry['referenceType'] ?? $referenceType));
             $referenceId = $referenceCache[$priceType];
+            $pdo->prepare('UPDATE sinapi_referencias SET importJobId = ?, importDate = CURDATE() WHERE id = ?')->execute([$jobId, $referenceId]);
 
             $data = $entry['data'];
             if (in_array('sinapiReferenceId', $resources[$key]['fields'], true)) {
@@ -129,7 +133,16 @@ try {
 
             $summary[$key] ??= ['total' => 0, 'created' => 0, 'updated' => 0, 'skipped' => 0];
             $summary[$key]['total']++;
-            $result = upsert_resource_record($pdo, $resources[$key], $data, $key);
+            if ($replaceExisting && empty($cleared[$referenceId][$key])) {
+                sinapi_clear_reference_resource($pdo, $key, $referenceId);
+                $cleared[$referenceId][$key] = true;
+            }
+            try {
+                $result = upsert_resource_record($pdo, $resources[$key], $data, $key);
+            } catch (Throwable $rowError) {
+                sinapi_record_import_error($pdo, $jobId, basename($path), $info['fileType'], $summary[$key]['total'], $rowError->getMessage(), $data);
+                $result = 'skipped';
+            }
             $summary[$key][$result]++;
             $progress++;
 
@@ -145,6 +158,7 @@ try {
             $pdo->commit();
         }
         $updateJob(['progress' => $progress, 'summaryJson' => json_encode($summary, JSON_UNESCAPED_UNICODE)]);
+        $pdo->prepare("UPDATE sinapi_import_files SET status = 'concluido', rowsFound = ? WHERE jobId = ? AND storedPath = ?")->execute([count($entries), $jobId, $path]);
         unset($entries); // libera memória antes do próximo arquivo
     }
 
@@ -166,6 +180,10 @@ try {
         'errorMessage' => $error->getMessage(),
         'finishedAt' => date('Y-m-d H:i:s'),
     ]);
+    if (!empty($path)) {
+        $pdo->prepare("UPDATE sinapi_import_files SET status = 'erro', errorMessage = ? WHERE jobId = ? AND storedPath = ?")->execute([$error->getMessage(), $jobId, (string) $path]);
+    }
+    sinapi_record_import_error($pdo, $jobId, !empty($path) ? basename((string) $path) : null, isset($info) ? ($info['fileType'] ?? null) : null, null, $error->getMessage());
     fwrite(STDERR, date('Y-m-d H:i:s') . " — job {$jobId}: ERRO — {$error->getMessage()}\n{$error->getTraceAsString()}\n");
     exit(1);
 }

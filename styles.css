@@ -114,6 +114,24 @@ html[data-theme="dark"] .audit-action.a-delete { background: rgba(157, 23, 77, 0
   pointer-events: none;
 }
 
+.sinapi-monthly-panel .actions {
+  align-items: center;
+  gap: 8px;
+}
+
+.sinapi-history {
+  margin-top: 16px;
+}
+
+.sinapi-history h4 {
+  margin: 18px 0 8px;
+  font-size: 0.95rem;
+}
+
+.sinapi-monthly-panel #sinapiPackagePreview {
+  margin-top: 12px;
+}
+
 @keyframes skeleton {
   0%   { background-position: 200% 0; }
   100% { background-position: -200% 0; }

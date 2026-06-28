@@ -1,6 +1,6 @@
 # STATUS — ObraSync
 
-> **Versão:** `v1.18.0` · 2026-06-28 · **Varredura:** 2026-06-27 · **Ambiente:** produção em `https://schimanskiengenharia.com.br/financeiro`
+> **Versão:** `v1.19.0` · 2026-06-28 · **Varredura:** 2026-06-27 · **Ambiente:** produção em `https://schimanskiengenharia.com.br/financeiro`
 
 ---
 
@@ -27,6 +27,8 @@ Lucro×Caixa. A base herda a v1.12.0/v1.12.1 (Orçamento profissional + varredur
 segurança completa). **Atenção:** parte da v1.18.0 (export Excel, anexos de
 contrato, PDF do contrato) **ainda não foi validada em runtime no servidor** — ver
 seção 3.
+
+Na **v1.19.0**, a Base SINAPI ganhou importação mensal por pacote com upload múltiplo, prévia, histórico por arquivo, reimportação controlada, referência padrão atual e snapshot do item SINAPI no orçamento. A leitura de XLSX agora exige PhpSpreadsheet.
 
 ---
 
@@ -56,6 +58,18 @@ seção 3.
 ---
 
 ## 3. Problemas conhecidos e pendentes
+
+### v1.19.0 — FEITO vs PENDENTE
+
+**✅ FEITO em código e validado por sintaxe:**
+- Base SINAPI com importação mensal por pacote, prévia persistida, fila via `sinapi_import_jobs`, histórico em `sinapi_import_files`, log em `sinapi_import_errors`, opção manter/substituir e referência padrão atual.
+- `sinapi-buscar` mantém compatibilidade com `q=` e usa a referência padrão quando o usuário não informa filtro.
+- Item do orçamento preserva snapshot SINAPI (`sinapiSnapshotJson`) além das colunas já existentes (`code`, `description`, `unit`, `unitCost`, `sinapiReferenceId`, `sinapiUf`, `sinapiReferenceType`).
+
+**🟡 PENDENTE de validação em runtime no servidor:**
+- Rodar a migration `2026-06-28-sinapi-importacao-mensal.sql`.
+- Instalar/confirmar PhpSpreadsheet: `cd /var/www/financeiro && composer require phpoffice/phpspreadsheet`.
+- Testar com os quatro XLSX oficiais da CAIXA da mesma competência e conferir permissões de `/var/lib/financeiro/uploads/sinapi` e `/var/lib/financeiro/sinapi_jobs`.
 
 ### v1.18.0 — FEITO vs PENDENTE (honesto)
 

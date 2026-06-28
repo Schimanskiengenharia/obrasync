@@ -180,6 +180,14 @@ try {
         handle_cotacoes_module($pdo, $method, $_GET, $config, $authUser);
     }
 
+    // Fluxo mensal da Base SINAPI dentro de Orçamento de Obra.
+    //   POST ?module=sinapi&action=previewPacote|processarPacote|ativarReferencia
+    //   GET  ?module=sinapi&action=statusImportacao|listarReferencias
+    if (in_array($module, ['sinapi', 'base-sinapi'], true)) {
+        authorize_request($pdo, $authUser, 'sinapiReferences', action_for_method($method));
+        handle_sinapi_module($pdo, $method, $_GET, $config, $authUser);
+    }
+
     if ($resource === '' || $resource === 'bootstrap') {
         require_method($method, ['GET']);
         respond(['ok' => true, 'data' => bootstrap_data($pdo, $resources, $authUser)]);
@@ -262,6 +270,7 @@ try {
     if ($resource === 'sinapi-buscar') {
         require_method($method, ['GET']);
         authorize_request($pdo, $authUser, 'sinapiCompositions', 'view');
+        ensure_sinapi_monthly_import_tables($pdo);
         $term = trim((string) ($_GET['q'] ?? ''));
         if (mb_strlen($term) < 2) {
             respond(['ok' => true, 'data' => []]);
@@ -269,16 +278,36 @@ try {
         $prefix = $term . '%';
         $contains = '%' . $term . '%';
         $params = [':exact' => $term, ':prefix' => $prefix, ':contains' => $contains];
-        $ufFilter = '';
+        $filters = '';
         if (!empty($_GET['uf'])) {
-            $ufFilter = ' AND c.uf = :uf';
+            $filters .= ' AND c.uf = :uf';
             $params[':uf'] = strtoupper(substr((string) $_GET['uf'], 0, 2));
         }
+        if (!empty($_GET['referenceId'])) {
+            $filters .= ' AND c.sinapiReferenceId = :referenceId';
+            $params[':referenceId'] = (int) $_GET['referenceId'];
+        } elseif (!empty($_GET['month']) && !empty($_GET['year'])) {
+            $filters .= ' AND r.referenceMonth = :month AND r.referenceYear = :year';
+            $params[':month'] = max(1, min(12, (int) $_GET['month']));
+            $params[':year'] = (int) $_GET['year'];
+        } else {
+            $defaultId = sinapi_default_reference_id($pdo);
+            if ($defaultId) {
+                $filters .= ' AND c.sinapiReferenceId = :defaultReferenceId';
+                $params[':defaultReferenceId'] = $defaultId;
+            }
+        }
+        if (!empty($_GET['priceType'])) {
+            $filters .= ' AND r.priceType = :priceType';
+            $params[':priceType'] = (string) $_GET['priceType'];
+        }
         $sql = "SELECT c.id, c.code, c.description, c.unit, c.unitCost, c.uf, c.referenceType,
-                       c.sinapiReferenceId, c.groupName
+                       c.sinapiReferenceId, c.groupName,
+                       r.referenceMonth, r.referenceYear, r.priceType, r.isDefault
                 FROM sinapi_composicoes c
+                LEFT JOIN sinapi_referencias r ON r.id = c.sinapiReferenceId
                 WHERE (c.status IS NULL OR c.status = 'Ativo')
-                  AND (c.code LIKE :prefix OR c.description LIKE :contains){$ufFilter}
+                  AND (c.code LIKE :prefix OR c.description LIKE :contains){$filters}
                 ORDER BY (c.code = :exact) DESC, (c.code LIKE :prefix) DESC, c.code ASC
                 LIMIT 20";
         $stmt = $pdo->prepare($sql);
@@ -1650,7 +1679,7 @@ function resource_map(): array
         'standardMilestones' => r('obra_marcos_padrao', ['marcos-padrao','marcos-padrão'], ['workTypeId','standardStageId','name','defaultMessage','visibleToClient','sortOrder','status'], ['workTypeId','name']),
         'customFields' => r('obra_campos_personalizados', ['campos-personalizados-obras'], ['workTypeId','fieldName','fieldType','options','required','sortOrder','status'], ['workTypeId','fieldName']),
         'customFieldValues' => r('obra_valores_personalizados', ['valores-personalizados-obras'], ['projectId','customFieldId','value','status'], ['projectId','customFieldId']),
-        'sinapiReferences' => r('sinapi_referencias', ['sinapi-referencias','base-sinapi'], ['uf','referenceMonth','referenceYear','priceType','source','defaultUf','locationName','issueDate','availableTypes','importDate','importUserId','status'], ['uf','referenceMonth','referenceYear','priceType']),
+        'sinapiReferences' => r('sinapi_referencias', ['sinapi-referencias','base-sinapi'], ['uf','referenceMonth','referenceYear','priceType','source','defaultUf','locationName','issueDate','availableTypes','importDate','importUserId','status','isDefault','defaultAt','importJobId'], ['uf','referenceMonth','referenceYear','priceType']),
         'sinapiInputs' => r('sinapi_insumos', ['sinapi-insumos','insumos-sinapi'], ['sinapiReferenceId','referenceType','uf','classification','code','description','unit','priceOrigin','unitPrice','origin','category','status'], ['sinapiReferenceId','code']),
         'sinapiCompositions' => r('sinapi_composicoes', ['sinapi-composicoes','composicoes-sinapi'], ['sinapiReferenceId','referenceType','uf','code','description','unit','unitCost','percentAS','type','groupName','className','status'], ['sinapiReferenceId','code']),
         'sinapiCompositionItems' => r('sinapi_composicao_itens', ['sinapi-composicao-itens','itens-composicoes-sinapi'], ['sinapiReferenceId','sinapiCompositionId','compositionCode','itemType','itemCode','itemDescription','unit','coefficient','situation','unitPrice','totalCost'], ['sinapiCompositionId','itemCode']),
@@ -1660,7 +1689,7 @@ function resource_map(): array
         'sinapiSettings' => r('sinapi_configuracoes', ['sinapi-configuracoes','configuracoes-sinapi'], ['defaultUf','defaultReferenceMonth','defaultReferenceYear','defaultReferenceType','defaultBdiPercent','defaultItemMode','showSinapiCodeInProposal','showAnalyticalInProposal','showUnitPriceInProposal','showGlobalOnlyInProposal','status'], ['defaultUf','defaultReferenceMonth','defaultReferenceYear','defaultReferenceType']),
         'ownCompositions' => r('composicoes_proprias', ['composicoes-proprias','composições-próprias'], ['code','description','unit','estimatedCost','laborCost','materialCost','equipmentCost','thirdPartyCost','marginPercent','suggestedPrice','status'], ['code']),
         'workBudgets' => r('orcamentos_obras', ['orcamentos-obras','orçamentos-obras'], ['projectId','clientId','name','version','budgetDate','sinapiReferenceId','priceType','status','bdiPercent','chargesPercent','discountPercent','directCost','totalCost','totalPrice','notes','createdByUserId','commercialUserId'], ['projectId','name','version']),
-        'workBudgetItems' => r('orcamento_obra_itens', ['itens-orcamentos-obras','itens-orçamentos-obras'], ['workBudgetId','projectId','origin','sinapiReferenceId','sinapiUf','sinapiReferenceType','code','description','unit','quantity','unitCost','totalCost','bdiPercent','unitPrice','totalPrice','stageName','costCenterId','categoryId','notes','quantidade_realizada','codigo','tipo','etapa_id','sinapi_id','composicao_propria_id','ordem'], ['workBudgetId','code','description']),
+        'workBudgetItems' => r('orcamento_obra_itens', ['itens-orcamentos-obras','itens-orçamentos-obras'], ['workBudgetId','projectId','origin','sinapiReferenceId','sinapiUf','sinapiReferenceType','code','description','unit','quantity','unitCost','totalCost','bdiPercent','unitPrice','totalPrice','stageName','costCenterId','categoryId','notes','quantidade_realizada','codigo','tipo','etapa_id','sinapi_id','composicao_propria_id','ordem','sinapiSnapshotJson'], ['workBudgetId','code','description']),
         'orcamentoEtapas' => r('orcamento_etapas', ['orcamento-etapas','etapas-orcamento'], ['orcamento_id','obra_id','nome','codigo','ordem','bdi_especifico'], ['orcamento_id','nome']),
         'quotes' => r('cotacoes', ['cotacoes','cotações'], ['supplierId','description','unit','quantity','unitValue','totalValue','quoteDate','validityDate','attachmentPath','projectId','workBudgetId','notes','status'], ['supplierId','description','quoteDate']),
         'fiscalDocuments' => r('fiscal_documents', ['notas-fiscais','documentos-fiscais-obra'], ['projectId','supplierId','documentNumber','issueDate','amount','type','status','payableId','receivableId','saleId','costCenterId','categoryId','pdfPath','xmlPath','notes'], ['documentNumber'], ['pdfPath','xmlPath']),
@@ -2364,6 +2393,11 @@ function bootstrap_data(PDO $pdo, array $resources, ?array $authUser = null, boo
             && !in_array('custo_unitario', table_columns($pdo, 'proposta_itens'), true)) {
             ensure_proposal_cost_columns($pdo);
         }
+        if (!resolve_existing_table($pdo, ['sinapi_import_files'], false)
+            || (resolve_existing_table($pdo, ['sinapi_referencias'], false)
+                && !in_array('isDefault', table_columns($pdo, 'sinapi_referencias'), true))) {
+            ensure_sinapi_monthly_import_tables($pdo);
+        }
         // Endereço próprio da obra (toggle "mesmo endereço da empresa").
         if (resolve_existing_table($pdo, ['projects'], false)
             && !in_array('usa_endereco_empresa', table_columns($pdo, 'projects'), true)) {
@@ -2646,6 +2680,60 @@ function ensure_proposal_cost_columns(PDO $pdo): void
         $pdo->exec("ALTER TABLE sinapi_insumos ADD INDEX IF NOT EXISTS idx_insumo_code (code)");
     } catch (Throwable $error) {
         error_log('[ObraSync] ensure_proposal_cost_columns(index): ' . $error->getMessage());
+    }
+}
+
+function ensure_sinapi_monthly_import_tables(PDO $pdo): void
+{
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    try {
+        ensure_sinapi_import_jobs_table($pdo);
+        $pdo->exec("ALTER TABLE sinapi_referencias
+            ADD COLUMN IF NOT EXISTS isDefault TINYINT(1) NOT NULL DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS defaultAt TIMESTAMP NULL DEFAULT NULL,
+            ADD COLUMN IF NOT EXISTS importJobId VARCHAR(60) NULL");
+        $pdo->exec("ALTER TABLE sinapi_import_jobs
+            ADD COLUMN IF NOT EXISTS replaceExisting TINYINT(1) NOT NULL DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS packagePreviewJson LONGTEXT NULL");
+        $pdo->exec("CREATE TABLE IF NOT EXISTS sinapi_import_files (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            jobId VARCHAR(60) NOT NULL,
+            originalName VARCHAR(255) NOT NULL,
+            storedPath VARCHAR(500) NOT NULL,
+            fileType ENUM('reference','labor','families','maintenance','unknown') NOT NULL DEFAULT 'unknown',
+            detectedUf CHAR(2) NULL,
+            detectedMonth TINYINT UNSIGNED NULL,
+            detectedYear SMALLINT UNSIGNED NULL,
+            detectedPriceType VARCHAR(80) NULL,
+            rowsFound INT NOT NULL DEFAULT 0,
+            columnsJson LONGTEXT NULL,
+            previewJson LONGTEXT NULL,
+            alertsJson LONGTEXT NULL,
+            status ENUM('aguardando','processando','concluido','erro') NOT NULL DEFAULT 'aguardando',
+            errorMessage TEXT NULL,
+            createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updatedAt TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_sinapi_import_files_job (jobId),
+            INDEX idx_sinapi_import_files_status (status)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        $pdo->exec("CREATE TABLE IF NOT EXISTS sinapi_import_errors (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            jobId VARCHAR(60) NOT NULL,
+            fileName VARCHAR(255) NULL,
+            fileType VARCHAR(40) NULL,
+            rowNumber INT NULL,
+            message TEXT NOT NULL,
+            rawJson LONGTEXT NULL,
+            createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_sinapi_import_errors_job (jobId)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        $pdo->exec("ALTER TABLE orcamento_obra_itens ADD COLUMN IF NOT EXISTS sinapiSnapshotJson LONGTEXT NULL");
+        $done = true;
+    } catch (Throwable $error) {
+        error_log('[ObraSync] ensure_sinapi_monthly_import_tables: ' . $error->getMessage());
     }
 }
 
@@ -8386,8 +8474,15 @@ function handle_sinapi_import(PDO $pdo, array $resources, array $config): never
     // O caminho síncrono processa o arquivo inteiro dentro da requisição web:
     // arquivos grandes (ex.: Referência completa de 13 MB) estouram memória/tempo
     // do PHP-CGI — para esses, use a importação em background (Configuração SINAPI).
-    if ((int) ($_FILES['file']['size'] ?? 0) > 4 * 1024 * 1024) {
-        fail('Arquivo acima de 4 MB no importador síncrono. Use a "Importar Tabela SINAPI" em Configuração SINAPI (processamento em background).', 413);
+    if ((int) ($_FILES['file']['size'] ?? 0) > 20 * 1024 * 1024) {
+        fail('Arquivo acima de 20 MB no importador síncrono. Use a "Importar Tabela SINAPI" em Configuração SINAPI (processamento em background).', 413);
+    }
+    // Eleva limites de runtime SÓ para esta operação síncrona, para que arquivos de até
+    // 20 MB não estourem memória/tempo do PHP-CGI. Não altera o php.ini global.
+    @ini_set('memory_limit', '512M');
+    @set_time_limit(300);
+    if (preg_match('/\.xlsx?$/i', (string) ($_FILES['file']['name'] ?? ''))) {
+        sinapi_require_phpspreadsheet();
     }
     $mode = ($_POST['mode'] ?? 'preview') === 'confirm' ? 'confirm' : 'preview';
     $fileType = (string) ($_POST['fileType'] ?? 'reference');
@@ -8473,6 +8568,8 @@ function ensure_sinapi_import_jobs_table(PDO $pdo): void
             paramsJson TEXT NULL,
             summaryJson TEXT NULL,
             errorMessage TEXT NULL,
+            replaceExisting TINYINT(1) NOT NULL DEFAULT 0,
+            packagePreviewJson LONGTEXT NULL,
             createdByUserId BIGINT UNSIGNED NULL,
             createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -8481,6 +8578,13 @@ function ensure_sinapi_import_jobs_table(PDO $pdo): void
             KEY idx_sinapi_job_created (createdAt)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
     );
+    try {
+        $pdo->exec("ALTER TABLE sinapi_import_jobs
+            ADD COLUMN IF NOT EXISTS replaceExisting TINYINT(1) NOT NULL DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS packagePreviewJson LONGTEXT NULL");
+    } catch (Throwable $error) {
+        error_log('[ObraSync] ensure_sinapi_import_jobs_table(columns): ' . $error->getMessage());
+    }
     $done = true;
 }
 
@@ -8519,6 +8623,7 @@ function handle_sinapi_import_async(PDO $pdo, array $config, array $authUser): n
         if (empty($_FILES[$field]['tmp_name'])) {
             continue;
         }
+        sinapi_require_phpspreadsheet();
         $path = store_upload($_FILES[$field], $uploadDir, ['xlsx'], ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/zip', 'application/octet-stream']);
         $issue = sinapi_workbook_issue($path, $info['sheets']);
         if ($issue !== null) {
@@ -8532,7 +8637,8 @@ function handle_sinapi_import_async(PDO $pdo, array $config, array $authUser): n
     }
 
     $jobId = uniqid('sinapi_', true);
-    $pdo->prepare('INSERT INTO sinapi_import_jobs (id, status, currentStep, uf, referenceMonth, referenceYear, referenceType, paramsJson, createdByUserId) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    $replaceExisting = !empty($_POST['replaceExisting']) && (string) $_POST['replaceExisting'] !== '0';
+    $pdo->prepare('INSERT INTO sinapi_import_jobs (id, status, currentStep, uf, referenceMonth, referenceYear, referenceType, paramsJson, replaceExisting, createdByUserId) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
         ->execute([
             $jobId,
             'queued',
@@ -8541,7 +8647,8 @@ function handle_sinapi_import_async(PDO $pdo, array $config, array $authUser): n
             $referenceMonth,
             $referenceYear,
             $referenceType,
-            json_encode(['files' => $files], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+            json_encode(['files' => $files, 'replaceExisting' => $replaceExisting], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+            $replaceExisting ? 1 : 0,
             (int) ($authUser['id'] ?? 0) ?: null,
         ]);
 
@@ -8654,6 +8761,7 @@ function expire_stale_sinapi_jobs(PDO $pdo): void
 function handle_sinapi_import_status(PDO $pdo): never
 {
     ensure_sinapi_import_jobs_table($pdo);
+    ensure_sinapi_monthly_import_tables($pdo);
     expire_stale_sinapi_jobs($pdo);
     $jobId = trim((string) ($_GET['job'] ?? ''));
     if ($jobId !== '') {
@@ -8669,6 +8777,360 @@ function handle_sinapi_import_status(PDO $pdo): never
     $job['summary'] = !empty($job['summaryJson']) ? json_decode((string) $job['summaryJson'], true) : null;
     unset($job['paramsJson'], $job['summaryJson']);
     respond(['ok' => true, 'job' => $job]);
+}
+
+function handle_sinapi_module(PDO $pdo, string $method, array $query, array $config, array $authUser): never
+{
+    ensure_sinapi_monthly_import_tables($pdo);
+    $action = strtolower(trim((string) ($query['action'] ?? 'listarReferencias')));
+
+    if (in_array($action, ['uploadpacote', 'previewpacote'], true)) {
+        require_method($method, ['POST']);
+        require_admin($authUser);
+        handle_sinapi_preview_package($pdo, $config, $authUser);
+    }
+    if ($action === 'processarpacote') {
+        require_method($method, ['POST']);
+        require_admin($authUser);
+        handle_sinapi_process_package($pdo, $config, read_json(), $authUser);
+    }
+    if ($action === 'statusimportacao') {
+        require_method($method, ['GET']);
+        $jobId = trim((string) ($query['id'] ?? $query['job'] ?? ''));
+        handle_sinapi_status_package($pdo, $jobId);
+    }
+    if ($action === 'listarreferencias') {
+        require_method($method, ['GET']);
+        handle_sinapi_list_references($pdo);
+    }
+    if ($action === 'ativarreferencia') {
+        require_method($method, ['POST']);
+        require_admin($authUser);
+        handle_sinapi_activate_reference($pdo, read_json(), $authUser);
+    }
+    sinapi_module_respond(false, [], 'Ação SINAPI inválida.', 400);
+}
+
+function sinapi_module_respond(bool $success, mixed $data = [], string $message = '', int $status = 200): never
+{
+    http_response_code($status);
+    echo json_encode(['success' => $success, 'data' => $data, 'message' => $message], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
+function sinapi_uploaded_files(string $field = 'files'): array
+{
+    if (empty($_FILES[$field])) {
+        return [];
+    }
+    $files = $_FILES[$field];
+    if (!is_array($files['name'])) {
+        return [$files];
+    }
+    $normalized = [];
+    foreach ($files['name'] as $i => $name) {
+        if (($files['error'][$i] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) {
+            continue;
+        }
+        $normalized[] = [
+            'name' => $name,
+            'type' => $files['type'][$i] ?? '',
+            'tmp_name' => $files['tmp_name'][$i] ?? '',
+            'error' => $files['error'][$i] ?? UPLOAD_ERR_OK,
+            'size' => $files['size'][$i] ?? 0,
+        ];
+    }
+    return $normalized;
+}
+
+function handle_sinapi_preview_package(PDO $pdo, array $config, array $authUser): never
+{
+    set_time_limit(0);
+    $uploaded = sinapi_uploaded_files('files');
+    if (!$uploaded) {
+        fail('Envie ao menos um arquivo SINAPI.', 400);
+    }
+    $defaultUf = strtoupper(substr(preg_replace('/[^A-Za-z]/', '', (string) ($_POST['uf'] ?? 'MS')), 0, 2)) ?: 'MS';
+    $defaultMonth = max(1, min(12, (int) ($_POST['referenceMonth'] ?? date('n'))));
+    $defaultYear = (int) ($_POST['referenceYear'] ?? date('Y'));
+    $defaultType = (string) ($_POST['referenceType'] ?? 'Sem desoneração');
+    $replaceExisting = !empty($_POST['replaceExisting']) && (string) $_POST['replaceExisting'] !== '0';
+    $uploadDir = rtrim($config['upload_dir'] ?? '/var/lib/financeiro/uploads', '/') . '/sinapi';
+    if (!is_dir($uploadDir)) {
+        mkdir($uploadDir, 0750, true);
+    }
+
+    $jobId = uniqid('sinapi_', true);
+    $filesByWorkerField = [];
+    $preview = [];
+    $totalRows = 0;
+    foreach ($uploaded as $file) {
+        $path = store_upload($file, $uploadDir, ['xlsx','xls','csv','txt'], ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','application/vnd.ms-excel','application/zip','application/octet-stream','text/plain','text/csv','application/csv']);
+        $detected = sinapi_detect_file_metadata((string) ($file['name'] ?? ''), $defaultUf, $defaultMonth, $defaultYear, $defaultType);
+        $parsed = [];
+        $alerts = [];
+        $columns = [];
+        try {
+            if (in_array(strtolower(pathinfo($path, PATHINFO_EXTENSION)), ['xlsx', 'xls'], true)) {
+                sinapi_require_phpspreadsheet();
+            }
+            $parsed = parse_sinapi_file($path, $detected['fileType'], '', $detected['uf'], $detected['month'], $detected['year'], $detected['priceType']);
+            if (!$parsed) {
+                $alerts[] = 'Nenhum registro reconhecido. Confirme UF, tipo de arquivo e layout da planilha.';
+            }
+            $columns = sinapi_detect_package_columns($path);
+        } catch (Throwable $error) {
+            $alerts[] = $error->getMessage();
+            $pdo->prepare('INSERT INTO sinapi_import_errors (jobId, fileName, fileType, message) VALUES (?, ?, ?, ?)')
+                ->execute([$jobId, (string) ($file['name'] ?? ''), $detected['fileType'], $error->getMessage()]);
+        }
+        $rowsFound = count($parsed);
+        $totalRows += $rowsFound;
+        $sample = array_slice(array_map(static fn ($entry) => [
+            'resource' => $entry['resource'] ?? '',
+            'priceType' => $entry['priceType'] ?? '',
+            'data' => array_slice((array) ($entry['data'] ?? []), 0, 8, true),
+        ], $parsed), 0, 5);
+        $pdo->prepare('INSERT INTO sinapi_import_files (jobId, originalName, storedPath, fileType, detectedUf, detectedMonth, detectedYear, detectedPriceType, rowsFound, columnsJson, previewJson, alertsJson, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+            ->execute([
+                $jobId,
+                (string) ($file['name'] ?? basename($path)),
+                $path,
+                $detected['fileType'],
+                $detected['uf'],
+                $detected['month'],
+                $detected['year'],
+                $detected['priceType'],
+                $rowsFound,
+                json_encode($columns, JSON_UNESCAPED_UNICODE),
+                json_encode($sample, JSON_UNESCAPED_UNICODE),
+                json_encode($alerts, JSON_UNESCAPED_UNICODE),
+                $alerts ? 'erro' : 'aguardando',
+            ]);
+        $workerField = sinapi_worker_field_for_type($detected['fileType']);
+        if ($workerField && empty($filesByWorkerField[$workerField])) {
+            $filesByWorkerField[$workerField] = $path;
+        }
+        $preview[] = [
+            'fileName' => (string) ($file['name'] ?? basename($path)),
+            'fileType' => $detected['fileType'],
+            'uf' => $detected['uf'],
+            'referenceMonth' => $detected['month'],
+            'referenceYear' => $detected['year'],
+            'priceType' => $detected['priceType'],
+            'rowsFound' => $rowsFound,
+            'columns' => $columns,
+            'samples' => $sample,
+            'alerts' => $alerts,
+        ];
+    }
+    $pdo->prepare('INSERT INTO sinapi_import_jobs (id, status, currentStep, progress, total, uf, referenceMonth, referenceYear, referenceType, paramsJson, summaryJson, packagePreviewJson, replaceExisting, createdByUserId) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        ->execute([
+            $jobId,
+            'draft',
+            'Prévia gerada; aguardando confirmação',
+            0,
+            $totalRows,
+            $defaultUf,
+            $defaultMonth,
+            $defaultYear,
+            $defaultType,
+            json_encode(['files' => $filesByWorkerField], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+            null,
+            json_encode($preview, JSON_UNESCAPED_UNICODE),
+            $replaceExisting ? 1 : 0,
+            (int) ($authUser['id'] ?? 0) ?: null,
+        ]);
+    sinapi_module_respond(true, ['jobId' => $jobId, 'preview' => $preview, 'totalRows' => $totalRows, 'replaceExisting' => $replaceExisting], 'Prévia gerada.');
+}
+
+function handle_sinapi_process_package(PDO $pdo, array $config, array $payload, array $authUser): never
+{
+    $jobId = trim((string) ($payload['jobId'] ?? ''));
+    if ($jobId === '') {
+        fail('Informe o jobId da prévia.', 400);
+    }
+    expire_stale_sinapi_jobs($pdo);
+    $running = $pdo->prepare("SELECT id FROM sinapi_import_jobs WHERE status IN ('queued','running') AND id <> ? LIMIT 1");
+    $running->execute([$jobId]);
+    if ($running->fetchColumn()) {
+        fail('Já existe uma importação SINAPI em andamento. Aguarde a conclusão antes de iniciar outra.', 409);
+    }
+    $stmt = $pdo->prepare('SELECT * FROM sinapi_import_jobs WHERE id = ? LIMIT 1');
+    $stmt->execute([$jobId]);
+    $job = $stmt->fetch();
+    if (!$job) {
+        fail('Prévia SINAPI não encontrada.', 404);
+    }
+    $params = json_decode((string) ($job['paramsJson'] ?? '{}'), true) ?: [];
+    $files = (array) ($params['files'] ?? []);
+    $missing = array_filter($files, static fn ($path) => !is_file((string) $path));
+    if (!$files || $missing) {
+        fail('Arquivos da prévia não encontrados no servidor. Gere a prévia novamente.', 410);
+    }
+    $replace = array_key_exists('replaceExisting', $payload)
+        ? (!empty($payload['replaceExisting']) && (string) $payload['replaceExisting'] !== '0')
+        : ((int) ($job['replaceExisting'] ?? 0) === 1);
+    $params['replaceExisting'] = $replace;
+    $pdo->prepare("UPDATE sinapi_import_jobs SET status = 'queued', currentStep = 'Aguardando o processamento em background', progress = 0, errorMessage = NULL, finishedAt = NULL, replaceExisting = ?, paramsJson = ? WHERE id = ?")
+        ->execute([$replace ? 1 : 0, json_encode($params, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), $jobId]);
+    $pdo->prepare("UPDATE sinapi_import_files SET status = 'aguardando', errorMessage = NULL WHERE jobId = ?")->execute([$jobId]);
+    spawn_sinapi_worker($pdo, $config, $jobId);
+    server_audit($pdo, $authUser, 'import', 'sinapiReferences', $jobId, 'Processamento do pacote mensal SINAPI');
+    sinapi_module_respond(true, ['jobId' => $jobId], 'Importação enviada para a fila.', 202);
+}
+
+function handle_sinapi_status_package(PDO $pdo, string $jobId): never
+{
+    expire_stale_sinapi_jobs($pdo);
+    if ($jobId !== '') {
+        $stmt = $pdo->prepare('SELECT * FROM sinapi_import_jobs WHERE id = ? LIMIT 1');
+        $stmt->execute([$jobId]);
+    } else {
+        $stmt = $pdo->query('SELECT * FROM sinapi_import_jobs ORDER BY createdAt DESC, id DESC LIMIT 1');
+    }
+    $job = $stmt->fetch();
+    if (!$job) {
+        sinapi_module_respond(true, ['job' => null]);
+    }
+    $files = $pdo->prepare('SELECT id, originalName, fileType, detectedUf, detectedMonth, detectedYear, detectedPriceType, rowsFound, columnsJson, previewJson, alertsJson, status, errorMessage, createdAt FROM sinapi_import_files WHERE jobId = ? ORDER BY id');
+    $files->execute([$job['id']]);
+    $job['files'] = array_map(static function ($row) {
+        $row['columns'] = json_decode((string) ($row['columnsJson'] ?? '[]'), true) ?: [];
+        $row['preview'] = json_decode((string) ($row['previewJson'] ?? '[]'), true) ?: [];
+        $row['alerts'] = json_decode((string) ($row['alertsJson'] ?? '[]'), true) ?: [];
+        unset($row['columnsJson'], $row['previewJson'], $row['alertsJson']);
+        return $row;
+    }, $files->fetchAll());
+    $job['summary'] = !empty($job['summaryJson']) ? json_decode((string) $job['summaryJson'], true) : null;
+    $job['packagePreview'] = !empty($job['packagePreviewJson']) ? json_decode((string) $job['packagePreviewJson'], true) : null;
+    unset($job['paramsJson'], $job['summaryJson'], $job['packagePreviewJson']);
+    sinapi_module_respond(true, ['job' => $job]);
+}
+
+function handle_sinapi_list_references(PDO $pdo): never
+{
+    $refs = $pdo->query("SELECT r.*,
+            (SELECT COUNT(*) FROM sinapi_composicoes c WHERE c.sinapiReferenceId = r.id) AS totalComposicoes,
+            (SELECT COUNT(*) FROM sinapi_insumos i WHERE i.sinapiReferenceId = r.id) AS totalInsumos
+        FROM sinapi_referencias r
+        ORDER BY r.isDefault DESC, r.referenceYear DESC, r.referenceMonth DESC, r.uf, r.priceType")->fetchAll();
+    $jobs = $pdo->query('SELECT id, status, currentStep, progress, total, uf, referenceMonth, referenceYear, referenceType, replaceExisting, createdByUserId, createdAt, updatedAt, finishedAt, errorMessage FROM sinapi_import_jobs ORDER BY createdAt DESC, id DESC LIMIT 25')->fetchAll();
+    sinapi_module_respond(true, ['references' => $refs, 'jobs' => $jobs, 'defaultReferenceId' => sinapi_default_reference_id($pdo)]);
+}
+
+function handle_sinapi_activate_reference(PDO $pdo, array $payload, array $authUser): never
+{
+    $id = (int) ($payload['id'] ?? $payload['referenceId'] ?? 0);
+    if ($id <= 0) {
+        fail('Informe a referência SINAPI.', 422);
+    }
+    $stmt = $pdo->prepare('SELECT * FROM sinapi_referencias WHERE id = ? LIMIT 1');
+    $stmt->execute([$id]);
+    $ref = $stmt->fetch();
+    if (!$ref) {
+        fail('Referência SINAPI não encontrada.', 404);
+    }
+    $pdo->beginTransaction();
+    try {
+        $pdo->exec('UPDATE sinapi_referencias SET isDefault = 0, defaultAt = NULL');
+        $pdo->prepare('UPDATE sinapi_referencias SET isDefault = 1, defaultAt = NOW(), status = ? WHERE id = ?')->execute(['Ativo', $id]);
+        $pdo->exec("UPDATE sinapi_configuracoes SET status = 'Inativo'");
+        $pdo->prepare("INSERT INTO sinapi_configuracoes
+            (defaultUf, defaultReferenceMonth, defaultReferenceYear, defaultReferenceType, defaultBdiPercent, defaultItemMode, showSinapiCodeInProposal, showAnalyticalInProposal, showUnitPriceInProposal, showGlobalOnlyInProposal, status)
+            VALUES (?, ?, ?, ?, 25, 'Composições', 'Sim', 'Não', 'Sim', 'Não', 'Ativo')
+            ON DUPLICATE KEY UPDATE status = 'Ativo', updatedAt = CURRENT_TIMESTAMP")
+            ->execute([$ref['uf'], $ref['referenceMonth'], $ref['referenceYear'], $ref['priceType']]);
+        $pdo->commit();
+    } catch (Throwable $error) {
+        $pdo->rollBack();
+        throw $error;
+    }
+    server_audit($pdo, $authUser, 'edit', 'sinapiReferences', $id, 'Referência SINAPI marcada como padrão atual');
+    sinapi_module_respond(true, ['reference' => $ref], 'Referência padrão atualizada.');
+}
+
+function sinapi_default_reference_id(PDO $pdo): ?int
+{
+    $id = $pdo->query('SELECT id FROM sinapi_referencias WHERE isDefault = 1 AND status <> "Inativo" ORDER BY defaultAt DESC, id DESC LIMIT 1')->fetchColumn();
+    if ($id) return (int) $id;
+    $cfg = $pdo->query('SELECT defaultUf, defaultReferenceMonth, defaultReferenceYear, defaultReferenceType FROM sinapi_configuracoes WHERE status <> "Inativo" ORDER BY id DESC LIMIT 1')->fetch();
+    if ($cfg) {
+        $stmt = $pdo->prepare('SELECT id FROM sinapi_referencias WHERE uf = ? AND referenceMonth = ? AND referenceYear = ? AND priceType = ? LIMIT 1');
+        $stmt->execute([$cfg['defaultUf'], $cfg['defaultReferenceMonth'], $cfg['defaultReferenceYear'], $cfg['defaultReferenceType']]);
+        $id = $stmt->fetchColumn();
+        if ($id) return (int) $id;
+    }
+    $id = $pdo->query('SELECT id FROM sinapi_referencias WHERE status <> "Inativo" ORDER BY referenceYear DESC, referenceMonth DESC, id DESC LIMIT 1')->fetchColumn();
+    return $id ? (int) $id : null;
+}
+
+function sinapi_worker_field_for_type(string $type): ?string
+{
+    return [
+        'reference' => 'referenceFile',
+        'labor' => 'laborFile',
+        'families' => 'familiesFile',
+        'maintenance' => 'maintenanceFile',
+    ][$type] ?? null;
+}
+
+function sinapi_detect_file_metadata(string $name, string $defaultUf, int $defaultMonth, int $defaultYear, string $defaultType): array
+{
+    $lower = lower_text($name);
+    $type = 'unknown';
+    if (str_contains($lower, 'refer')) $type = 'reference';
+    elseif (str_contains($lower, 'mao') || str_contains($lower, 'mão') || str_contains($lower, 'obra')) $type = 'labor';
+    elseif (str_contains($lower, 'famil') || str_contains($lower, 'coef')) $type = 'families';
+    elseif (str_contains($lower, 'manuten')) $type = 'maintenance';
+    if (preg_match('/(20\d{2})[._-](0?[1-9]|1[0-2])/', $name, $m)) {
+        $year = (int) $m[1];
+        $month = (int) $m[2];
+    } else {
+        $month = $defaultMonth;
+        $year = $defaultYear;
+    }
+    $uf = $defaultUf;
+    if (preg_match('/(?:^|[_\-. ])(AC|AL|AM|AP|BA|CE|DF|ES|GO|MA|MG|MS|MT|PA|PB|PE|PI|PR|RJ|RN|RO|RR|RS|SC|SE|SP|TO)(?:[_\-. ]|$)/i', $name, $m)) {
+        $uf = strtoupper($m[1]);
+    }
+    $priceType = $defaultType;
+    if (str_contains($lower, 'com_des') || str_contains($lower, 'com des')) $priceType = 'Com desoneração';
+    elseif (str_contains($lower, 'sem_enc') || str_contains($lower, 'sem encarg')) $priceType = 'Sem encargos sociais';
+    elseif (str_contains($lower, 'sem_des') || str_contains($lower, 'sem des')) $priceType = 'Sem desoneração';
+    return ['fileType' => $type === 'unknown' ? 'reference' : $type, 'uf' => $uf, 'month' => $month, 'year' => $year, 'priceType' => $priceType];
+}
+
+function sinapi_detect_package_columns(string $path): array
+{
+    $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+    $sheets = in_array($ext, ['csv', 'txt'], true) ? ['CSV' => read_csv_matrix($path)] : read_xlsx_sheets($path);
+    $out = [];
+    foreach ($sheets as $name => $rows) {
+        $header = null;
+        foreach (array_slice($rows, 0, 20) as $row) {
+            $filled = array_values(array_filter(array_map('trim', array_map('strval', $row)), static fn ($v) => $v !== ''));
+            if (count($filled) >= 3) {
+                $header = array_slice($filled, 0, 20);
+                break;
+            }
+        }
+        $out[] = ['sheet' => $name, 'columns' => $header ?: []];
+    }
+    return $out;
+}
+
+function sinapi_require_phpspreadsheet(): void
+{
+    foreach (['/vendor/autoload.php', '/../vendor/autoload.php'] as $rel) {
+        $autoload = __DIR__ . $rel;
+        if (is_file($autoload)) {
+            require_once $autoload;
+        }
+    }
+    if (!class_exists('PhpOffice\\PhpSpreadsheet\\IOFactory')) {
+        fail('Leitura de .xlsx requer PhpSpreadsheet. Instale no servidor: cd /var/www/financeiro && composer require phpoffice/phpspreadsheet', 422);
+    }
 }
 
 // Confere se o XLSX contém ao menos uma das abas esperadas da planilha SINAPI,
@@ -8928,49 +9390,26 @@ function read_csv_matrix(string $path): array
 
 function read_xlsx_sheets(string $path): array
 {
-    if (!class_exists('ZipArchive')) {
-        fail('O servidor PHP não possui ZipArchive/php-zip. Instale php-zip ou exporte a aba do Excel para CSV.', 400);
-    }
-    $zip = new ZipArchive();
-    if ($zip->open($path) !== true) {
-        fail('Não foi possível abrir o arquivo XLSX.', 400);
-    }
-    $shared = xlsx_shared_strings($zip);
-    $workbook = safe_xml_load((string) $zip->getFromName('xl/workbook.xml'));
-    $workbook->registerXPathNamespace('a', 'http://schemas.openxmlformats.org/spreadsheetml/2006/main');
-    $workbook->registerXPathNamespace('r', 'http://schemas.openxmlformats.org/officeDocument/2006/relationships');
-    $rels = safe_xml_load((string) $zip->getFromName('xl/_rels/workbook.xml.rels'));
-    $rels->registerXPathNamespace('rel', 'http://schemas.openxmlformats.org/package/2006/relationships');
-    $relationMap = [];
-    foreach ($rels->xpath('//rel:Relationship') as $rel) {
-        $relationMap[(string) $rel['Id']] = (string) $rel['Target'];
-    }
+    sinapi_require_phpspreadsheet();
     $sheets = [];
-    foreach ($workbook->xpath('//a:sheet') as $sheet) {
-        $name = (string) $sheet['name'];
-        $rid = (string) $sheet->attributes('http://schemas.openxmlformats.org/officeDocument/2006/relationships')['id'];
-        $target = $relationMap[$rid] ?? '';
-        $sheetPath = str_starts_with($target, 'xl/') ? $target : 'xl/' . ltrim($target, '/');
-        $xml = safe_xml_load((string) $zip->getFromName($sheetPath));
-        $xml->registerXPathNamespace('a', 'http://schemas.openxmlformats.org/spreadsheetml/2006/main');
+    try {
+        $reader = \PhpOffice\PhpSpreadsheet\IOFactory::createReaderForFile($path);
+        $reader->setReadDataOnly(true);
+        $spreadsheet = $reader->load($path);
+    } catch (Throwable $error) {
+        fail('Não foi possível abrir o arquivo XLSX: ' . $error->getMessage(), 400);
+    }
+    foreach ($spreadsheet->getWorksheetIterator() as $sheet) {
         $rows = [];
-        foreach ($xml->xpath('//a:sheetData/a:row') as $rowNode) {
-            $values = [];
-            foreach ($rowNode->c as $cell) {
-                $ref = (string) $cell['r'];
-                $index = xlsx_column_index($ref);
-                while (count($values) <= $index) {
-                    $values[] = '';
-                }
-                $values[$index] = xlsx_cell_value($cell, $shared);
-            }
+        foreach ($sheet->toArray('', false, false, false) as $row) {
+            $values = array_map(static fn ($value) => trim(str_replace(["\r", "\n"], ' ', (string) $value)), $row);
             if (array_filter($values, fn ($value) => $value !== '')) {
                 $rows[] = $values;
             }
         }
-        $sheets[$name] = $rows;
+        $sheets[$sheet->getTitle()] = $rows;
     }
-    $zip->close();
+    $spreadsheet->disconnectWorksheets();
     return $sheets;
 }
 
@@ -9129,6 +9568,32 @@ function upsert_resource_record(PDO $pdo, array $meta, array $data, string $key)
     }
     create_record($pdo, $meta, $data);
     return 'created';
+}
+
+function sinapi_clear_reference_resource(PDO $pdo, string $key, int $referenceId): void
+{
+    if ($referenceId <= 0) return;
+    $map = [
+        'sinapiInputs' => ['table' => 'sinapi_insumos', 'column' => 'sinapiReferenceId'],
+        'sinapiCompositions' => ['table' => 'sinapi_composicoes', 'column' => 'sinapiReferenceId'],
+        'sinapiCompositionItems' => ['table' => 'sinapi_composicao_itens', 'column' => 'sinapiReferenceId'],
+        'sinapiLabor' => ['table' => 'sinapi_mao_de_obra', 'column' => 'sinapiReferenceId'],
+        'sinapiFamilies' => ['table' => 'sinapi_familias_coeficientes', 'column' => 'sinapiReferenceId'],
+        'sinapiMaintenances' => ['table' => 'sinapi_manutencoes', 'column' => 'sinapiReferenceId'],
+    ];
+    $info = $map[$key] ?? null;
+    if (!$info || !resolve_existing_table($pdo, [$info['table']], false)) return;
+    $pdo->prepare('DELETE FROM `' . $info['table'] . '` WHERE `' . $info['column'] . '` = ?')->execute([$referenceId]);
+}
+
+function sinapi_record_import_error(PDO $pdo, string $jobId, ?string $fileName, ?string $fileType, ?int $rowNumber, string $message, mixed $raw = null): void
+{
+    try {
+        ensure_sinapi_monthly_import_tables($pdo);
+        $pdo->prepare('INSERT INTO sinapi_import_errors (jobId, fileName, fileType, rowNumber, message, rawJson) VALUES (?, ?, ?, ?, ?, ?)')
+            ->execute([$jobId, $fileName, $fileType, $rowNumber, $message, $raw === null ? null : json_encode($raw, JSON_UNESCAPED_UNICODE)]);
+    } catch (Throwable $ignored) {
+    }
 }
 
 function find_existing_by_unique_fields(PDO $pdo, array $meta, array $data, string $key): ?int

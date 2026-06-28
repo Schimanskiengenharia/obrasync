@@ -19,9 +19,10 @@ if (APP_ENV === "production" && location.protocol === "http:") {
   location.replace(location.href.replace(/^http:/, "https:"));
 }
 const APP_NAME = "ObraSync";
-const APP_VERSION = "v1.18.0";
+const APP_VERSION = "v1.19.0";
 const APP_VERSION_DATE = "2026-06-28";
 const APP_CHANGELOG = [
+  "Importação mensal SINAPI na Base SINAPI: upload múltiplo dos arquivos oficiais, detecção de competência/tipo, prévia com colunas/amostras/alertas, processamento em fila, reimportação com manter/substituir, histórico por arquivo e referência padrão atual usada pela busca do orçamento (v1.19.0).",
   "Consolidação v1.18.0 (documentação de handoff): README/CLAUDE/STATUS sincronizados com o estado real do projeto, com os nomes reais de tabelas/colunas e o changelog completo da leva (asDate, CEP/autofill/obra, proposta por disciplina/modelos/SINAPI, contrato e exclusão de viabilidade).",
   "Análise de Viabilidade: botão \"Excluir\" em cada análise da lista remove a análise inteira em cascata (grupos, itens e anexos, inclusive os arquivos do disco) numa transação com rollback, após confirmação irreversível (v1.17.1).",
   "Contrato a partir da proposta: botão \"Gerar contrato\" na proposta cria/atualiza o contrato com snapshot do cliente, valor e objeto consolidado por disciplina; \"Contrato (PDF)\" gera o documento no template de Prestação de Serviços Técnicos com 13 cláusulas (cabeçalho/rodapé da empresa, campos faltantes como placeholders); e \"Anexos\" permite enviar a proposta assinada e o contrato assinado (PDF), marcando o contrato como assinado (v1.17.0).",
@@ -435,6 +436,7 @@ let sinapiJobPollTimer = null;
 let sinapiJobPollSeq = 0; // invalida correntes de polling antigas após re-render
 let sinapiSearchFetchTimer = null;
 let sinapiSearchLastFetched = ""; // último termo já buscado no servidor (evita repetição)
+let sinapiPackagePreview = null;
 let proposalGeneratorState = null;
 let agendaViewMode = "month";
 let agendaCursorDate = agendaSafeDateString(new Date());
@@ -9147,7 +9149,9 @@ function openBudgetItemModal(budget, etapaId) {
     if (!filtered.length) return '<p class="muted">Nenhuma composição encontrada.</p>';
     return filtered.map((r) => {
       const valor = tab === "sinapi" ? Number(r.unitCost || 0) : Number(r.suggestedPrice || r.estimatedCost || 0);
-      return `<button type="button" class="budget-item-result" data-pick="${escapeHtml(r.id)}">${escapeHtml((r.code ? r.code + " - " : "") + (r.description || ""))} <span class="muted">${escapeHtml(r.unit || "")} · ${asMoney(valor)}</span></button>`;
+      const ref = tab === "sinapi" ? byId("sinapiReferences", r.sinapiReferenceId) || r : {};
+      const refLabel = tab === "sinapi" ? ` · ${escapeHtml(ref.uf || r.uf || "")} ${String(ref.referenceMonth || r.referenceMonth || "").padStart(2, "0")}/${escapeHtml(ref.referenceYear || r.referenceYear || "")} ${escapeHtml(ref.priceType || r.priceType || r.referenceType || "")}` : "";
+      return `<button type="button" class="budget-item-result" data-pick="${escapeHtml(r.id)}">${escapeHtml((r.code ? r.code + " - " : "") + (r.description || ""))} <span class="muted">${escapeHtml(r.unit || "")} · ${asMoney(valor)}${refLabel}</span></button>`;
     }).join("");
   };
   const tabHtml = () => {
@@ -9270,6 +9274,20 @@ function openBudgetItemModal(budget, etapaId) {
       costCenterId: dialog.querySelector("#biCc").value || "",
       origin: tab === "sinapi" ? "SINAPI" : (tab === "propria" ? "Própria" : "Manual"),
       sinapi_id: tab === "sinapi" && picked ? picked.id : "",
+      sinapiReferenceId: tab === "sinapi" && picked ? (picked.sinapiReferenceId || "") : "",
+      sinapiUf: tab === "sinapi" && picked ? (picked.uf || byId("sinapiReferences", picked.sinapiReferenceId)?.uf || "") : "",
+      sinapiReferenceType: tab === "sinapi" && picked ? (picked.priceType || byId("sinapiReferences", picked.sinapiReferenceId)?.priceType || picked.referenceType || "") : "",
+      notes: tab === "sinapi" && picked ? `Snapshot SINAPI: ${(picked.uf || byId("sinapiReferences", picked.sinapiReferenceId)?.uf || "")} ${String(picked.referenceMonth || byId("sinapiReferences", picked.sinapiReferenceId)?.referenceMonth || "").padStart(2, "0")}/${picked.referenceYear || byId("sinapiReferences", picked.sinapiReferenceId)?.referenceYear || ""} ${picked.priceType || byId("sinapiReferences", picked.sinapiReferenceId)?.priceType || picked.referenceType || ""}.` : "",
+      sinapiSnapshotJson: tab === "sinapi" && picked ? JSON.stringify({
+        codigo: codigo,
+        descricao,
+        unidade,
+        custoUnitario: vu,
+        referenciaMes: picked.referenceMonth || byId("sinapiReferences", picked.sinapiReferenceId)?.referenceMonth || "",
+        referenciaAno: picked.referenceYear || byId("sinapiReferences", picked.sinapiReferenceId)?.referenceYear || "",
+        uf: picked.uf || byId("sinapiReferences", picked.sinapiReferenceId)?.uf || "",
+        tipoPrecoReferencia: picked.priceType || byId("sinapiReferences", picked.sinapiReferenceId)?.priceType || picked.referenceType || "",
+      }) : "",
       composicao_propria_id: tab === "propria" && picked ? picked.id : "",
       ordem: (db.workBudgetItems || []).filter((it) => sameId(it.etapa_id, etapaId)).length + 1,
     };
@@ -9459,27 +9477,7 @@ function renderSinapiReferences() {
         <label>Orçamento destino<select id="sinapiTargetBudget"><option value="">Selecione</option>${budgets.map((row) => `<option value="${row.id}" ${sameId(row.id, selectedWorkBudgetId) ? "selected" : ""}>${svgText(row.name || row.id)}</option>`).join("")}</select></label>
       </div>
     </section>
-    ${isAdmin() ? `<section class="panel import-panel">
-      <h3>Importar SINAPI</h3>
-      <div class="form-grid">
-        <label>Tipo do arquivo<select id="sinapiImportType"><option value="reference">Referência SINAPI</option><option value="labor">Mão de obra</option><option value="families">Famílias e coeficientes</option><option value="maintenance">Manutenções</option></select></label>
-        <label>Aba CSV / tipo de aba<select id="sinapiImportSheet"><option value="">XLSX: detectar automaticamente</option><option value="ISD">ISD - insumos sem desoneração</option><option value="ICD">ICD - insumos com desoneração</option><option value="ISE">ISE - insumos sem encargos</option><option value="CSD">CSD - composições sem desoneração</option><option value="CCD">CCD - composições com desoneração</option><option value="CSE">CSE - composições sem encargos</option><option value="Analítico">Analítico</option><option value="SEM Desoneração">Mão de obra sem desoneração</option><option value="COM Desoneração">Mão de obra com desoneração</option><option value="Coeficientes">Famílias/coeficientes</option><option value="Manutenções">Manutenções</option></select></label>
-        <label>UF padrão<input id="sinapiImportUf" value="${svgText(settings.defaultUf || "MS")}" maxlength="2"></label>
-        <label>Mês<input id="sinapiImportMonth" type="number" value="${Number(settings.defaultReferenceMonth || 4)}"></label>
-        <label>Ano<input id="sinapiImportYear" type="number" value="${Number(settings.defaultReferenceYear || 2026)}"></label>
-        <label>Tipo padrão<select id="sinapiImportReferenceType"><option ${settings.defaultReferenceType === "Sem desoneração" ? "selected" : ""}>Sem desoneração</option><option ${settings.defaultReferenceType === "Com desoneração" ? "selected" : ""}>Com desoneração</option><option ${settings.defaultReferenceType === "Sem encargos sociais" ? "selected" : ""}>Sem encargos sociais</option></select></label>
-        <label>Arquivo XLSX/CSV<input id="sinapiImportFile" type="file" accept=".csv,.txt,.xlsx,text/csv"></label>
-      </div>
-      <div class="actions">
-        <button class="secondary" type="button" id="previewSinapiImport" ${editable ? "" : "disabled"}>Validar / prévia</button>
-        <button class="primary" type="button" id="runSinapiImport" ${editable ? "" : "disabled"}>Confirmar importação</button>
-      </div>
-      <p class="field-hint">XLSX é importado pela API quando o PHP tiver suporte a ZipArchive. Se não houver suporte, exporte cada aba do Excel para CSV e informe a aba correspondente. Arquivos ficam em /var/lib/financeiro/uploads/sinapi.</p>
-      <div id="sinapiImportResult" class="empty ${sinapiLastImportHtml ? "" : "hidden"}">${sinapiLastImportHtml}</div>
-    </section>` : `<section class="panel import-panel sinapi-locked">
-      <h3>Importar SINAPI</h3>
-      ${sinapiLockedNoticeHtml(false)}
-    </section>`}
+    ${sinapiMonthlyImportHtml(settings, editable)}
     ${table("Referências SINAPI", references, ["uf", "referenceMonth", "referenceYear", "priceType", "source", "locationName", "issueDate", "status"], editable, "sinapiReferences")}
     ${["all", "inputs"].includes(sinapiSourceFilter) ? table("Insumos SINAPI", inputs.slice(0, 80), ["sinapiReferenceId", "referenceType", "uf", "classification", "code", "description", "unit", "priceOrigin", "unitPrice", "status"], canUseSinapi, "sinapiInputs") : ""}
     ${["all", "compositions"].includes(sinapiSourceFilter) ? table("Composições SINAPI", compositions.slice(0, 80), ["sinapiReferenceId", "referenceType", "uf", "groupName", "code", "description", "unit", "unitCost", "percentAS", "status"], canUseSinapi, "sinapiCompositions") : ""}
@@ -9488,8 +9486,11 @@ function renderSinapiReferences() {
     ${sinapiSourceFilter === "maintenances" ? table("Manutenções SINAPI", maintenances.slice(0, 80), ["sinapiReferenceId", "referenceCode", "itemType", "code", "description", "maintenanceType"], editable, "sinapiMaintenances") : ""}
   `;
   qs("newRecord")?.addEventListener("click", () => openForm("sinapiReferences"));
-  qs("previewSinapiImport")?.addEventListener("click", () => importSinapiFile("preview"));
-  qs("runSinapiImport")?.addEventListener("click", () => importSinapiFile("confirm"));
+  qs("sinapiPkgAnalyze")?.addEventListener("click", previewSinapiPackage);
+  qs("sinapiPkgProcess")?.addEventListener("click", processSinapiPackage);
+  qs("sinapiPkgFiles")?.addEventListener("change", (event) => {
+    Array.from(event.target.files || []).forEach(detectSinapiReferenceFromFile);
+  });
   qs("sinapiSearch")?.addEventListener("input", (event) => {
     sinapiSearchTerm = event.target.value;
     // O bootstrap traz só um recorte das tabelas SINAPI: a pesquisa consulta a
@@ -9527,6 +9528,167 @@ function renderSinapiReferences() {
       addBudgetItemFromSource(sourceKey, id);
     });
   });
+  qs("content").querySelectorAll("[data-sinapi-default]").forEach((button) => {
+    button.addEventListener("click", () => activateSinapiReference(button.dataset.sinapiDefault));
+  });
+  if (serverMode) {
+    loadSinapiReferenceHistory();
+    resumeSinapiAsyncJob();
+  }
+}
+
+function sinapiMonthlyImportHtml(settings, editable) {
+  if (!isAdmin()) return `<section class="panel import-panel sinapi-locked"><h3>Importação mensal SINAPI</h3>${sinapiLockedNoticeHtml(false)}<div id="sinapiReferenceHistory" class="sinapi-history"></div></section>`;
+  const typeOptions = ["Sem desoneração", "Com desoneração", "Sem encargos sociais"].map((type) => `<option ${settings.defaultReferenceType === type ? "selected" : ""}>${type}</option>`).join("");
+  return `
+    <section class="panel import-panel sinapi-monthly-panel">
+      <h3>Importação mensal SINAPI</h3>
+      <div class="form-grid">
+        <label>UF<select id="sinapiPkgUf">${SINAPI_UFS.map((uf) => `<option value="${uf}" ${(settings.defaultUf || "MS") === uf ? "selected" : ""}>${uf}</option>`).join("")}</select></label>
+        <label>Mês<input id="sinapiPkgMonth" type="number" min="1" max="12" value="${Number(settings.defaultReferenceMonth || 4)}"></label>
+        <label>Ano<input id="sinapiPkgYear" type="number" min="2000" max="2100" value="${Number(settings.defaultReferenceYear || 2026)}"></label>
+        <label>Tipo de preço/referência<select id="sinapiPkgType">${typeOptions}</select></label>
+        <label class="full">Arquivos da competência<input id="sinapiPkgFiles" type="file" accept=".xlsx,.xls,.csv,.txt" multiple></label>
+        <label>Reimportação<select id="sinapiPkgReplace"><option value="0">Manter/atualizar base existente</option><option value="1">Substituir a base desta referência</option></select></label>
+      </div>
+      <div class="actions">
+        <button class="secondary" type="button" id="sinapiPkgAnalyze" ${editable && serverMode ? "" : "disabled"}>Analisar arquivos</button>
+        <button class="primary" type="button" id="sinapiPkgProcess" disabled>Processar importação</button>
+      </div>
+      <p class="field-hint">Arquivos esperados: SINAPI_Referência_YYYY_MM.xlsx, SINAPI_mao_de_obra_YYYY_MM.xlsx, SINAPI_familias_e_coeficientes_YYYY_MM.xlsx e SINAPI_Manutenções_YYYY_MM.xlsx. Os originais ficam fora da pasta pública em /var/lib/financeiro/uploads/sinapi.</p>
+      <div id="sinapiPackagePreview" class="empty hidden"></div>
+      <div id="sinapiAsyncStatus" class="empty hidden"></div>
+      <div id="sinapiReferenceHistory" class="sinapi-history"></div>
+    </section>`;
+}
+
+async function previewSinapiPackage() {
+  const input = qs("sinapiPkgFiles");
+  const files = Array.from(input?.files || []);
+  if (!files.length) return alert("Selecione os arquivos mensais SINAPI.");
+  const form = new FormData();
+  files.forEach((file) => form.append("files[]", file));
+  form.append("uf", qs("sinapiPkgUf").value);
+  form.append("referenceMonth", qs("sinapiPkgMonth").value);
+  form.append("referenceYear", qs("sinapiPkgYear").value);
+  form.append("referenceType", qs("sinapiPkgType").value);
+  form.append("replaceExisting", qs("sinapiPkgReplace").value);
+  const button = qs("sinapiPkgAnalyze");
+  button.disabled = true;
+  button.textContent = "Analisando…";
+  try {
+    const payload = await fetchForm("?module=sinapi&action=previewPacote", form);
+    if (payload.success === false) throw new Error(payload.message || payload.error || "Prévia não gerada.");
+    sinapiPackagePreview = payload.data || payload;
+    renderSinapiPackagePreview(sinapiPackagePreview);
+    const processButton = qs("sinapiPkgProcess");
+    if (processButton) processButton.disabled = !(sinapiPackagePreview.jobId && serverMode);
+  } catch (error) {
+    alert(`Não foi possível analisar os arquivos SINAPI: ${error.message}`);
+  } finally {
+    button.disabled = !(isAdmin() && serverMode);
+    button.textContent = "Analisar arquivos";
+  }
+}
+
+function renderSinapiPackagePreview(data) {
+  const box = qs("sinapiPackagePreview");
+  if (!box) return;
+  const rows = (data.preview || []).map((file) => ({
+    arquivo: file.fileName,
+    tipo: sinapiFileTypeLabel(file.fileType),
+    competencia: `${String(file.referenceMonth || "").padStart(2, "0")}/${file.referenceYear || ""}`,
+    uf: file.uf || "",
+    preco: file.priceType || "",
+    linhas: Number(file.rowsFound || 0).toLocaleString("pt-BR"),
+    colunas: (file.columns || []).map((s) => `${s.sheet}: ${(s.columns || []).slice(0, 6).join(", ")}`).join(" | "),
+    alertas: (file.alerts || []).join(" | "),
+  }));
+  const samples = (data.preview || []).flatMap((file) => (file.samples || []).slice(0, 2).map((sample) => ({ arquivo: file.fileName, recurso: sample.resource, registro: JSON.stringify(sample.data || {}) })));
+  box.classList.remove("hidden");
+  box.innerHTML = `
+    <strong>Prévia do pacote</strong>
+    ${table("Arquivos analisados", rows, ["arquivo", "tipo", "competencia", "uf", "preco", "linhas", "colunas", "alertas"])}
+    ${samples.length ? table("Primeiros registros válidos", samples, ["arquivo", "recurso", "registro"]) : '<p class="muted">Nenhum registro válido encontrado.</p>'}
+  `;
+}
+
+async function processSinapiPackage() {
+  if (!sinapiPackagePreview?.jobId) return alert("Gere a prévia antes de processar.");
+  if (!confirm("Processar a importação SINAPI desta competência?")) return;
+  const replaceExisting = qs("sinapiPkgReplace")?.value === "1";
+  const button = qs("sinapiPkgProcess");
+  button.disabled = true;
+  button.textContent = "Enviando para fila…";
+  try {
+    const payload = await apiModuleRequest("?module=sinapi&action=processarPacote", {
+      method: "POST",
+      body: JSON.stringify({ jobId: sinapiPackagePreview.jobId, replaceExisting }),
+    });
+    pollSinapiAsyncJob(payload.jobId || sinapiPackagePreview.jobId, { refreshOnDone: true });
+  } catch (error) {
+    alert(`Não foi possível processar a importação SINAPI: ${error.message}`);
+    button.disabled = false;
+    button.textContent = "Processar importação";
+  }
+}
+
+async function loadSinapiReferenceHistory() {
+  const box = qs("sinapiReferenceHistory");
+  if (!box || !serverMode) return;
+  try {
+    const data = await apiModuleRequest("?module=sinapi&action=listarReferencias");
+    renderSinapiReferenceHistory(data);
+  } catch {
+    box.innerHTML = "";
+  }
+}
+
+function renderSinapiReferenceHistory(data) {
+  const box = qs("sinapiReferenceHistory");
+  if (!box) return;
+  const refs = (data.references || []).slice(0, 20);
+  const jobs = (data.jobs || []).slice(0, 10);
+  box.innerHTML = `
+    <h4>Histórico de referências</h4>
+    <div class="table-wrap"><table><thead><tr><th>Competência</th><th>UF</th><th>Tipo</th><th>Importação</th><th>Linhas</th><th>Status</th><th>Padrão</th><th></th></tr></thead><tbody>
+      ${refs.map((ref) => `<tr>
+        <td>${String(ref.referenceMonth).padStart(2, "0")}/${svgText(ref.referenceYear)}</td>
+        <td>${svgText(ref.uf || "")}</td>
+        <td>${svgText(ref.priceType || "")}</td>
+        <td>${svgText(ref.importDate || ref.createdAt || "")}</td>
+        <td>${Number(ref.totalComposicoes || 0).toLocaleString("pt-BR")} comp. / ${Number(ref.totalInsumos || 0).toLocaleString("pt-BR")} ins.</td>
+        <td>${svgText(ref.status || "")}</td>
+        <td>${Number(ref.isDefault || 0) ? "Sim" : "Não"}</td>
+        <td>${Number(ref.isDefault || 0) ? "" : `<button class="secondary" type="button" data-sinapi-default="${escapeHtml(ref.id)}">Definir padrão</button>`}</td>
+      </tr>`).join("") || '<tr><td colspan="8">Nenhuma referência importada.</td></tr>'}
+    </tbody></table></div>
+    <h4>Fila e tentativas recentes</h4>
+    <div class="table-wrap"><table><thead><tr><th>Competência</th><th>UF</th><th>Tipo</th><th>Status</th><th>Linhas</th><th>Data</th></tr></thead><tbody>
+      ${jobs.map((job) => `<tr><td>${String(job.referenceMonth || "").padStart(2, "0")}/${svgText(job.referenceYear || "")}</td><td>${svgText(job.uf || "")}</td><td>${svgText(job.referenceType || "")}</td><td>${sinapiJobStatusLabel(job.status)}</td><td>${Number(job.progress || 0).toLocaleString("pt-BR")} / ${Number(job.total || 0).toLocaleString("pt-BR")}</td><td>${svgText(String(job.createdAt || "").slice(0, 16))}</td></tr>`).join("") || '<tr><td colspan="6">Sem importações recentes.</td></tr>'}
+    </tbody></table></div>`;
+  box.querySelectorAll("[data-sinapi-default]").forEach((button) => {
+    button.addEventListener("click", () => activateSinapiReference(button.dataset.sinapiDefault));
+  });
+}
+
+async function activateSinapiReference(id) {
+  if (!id || !confirm("Definir esta referência SINAPI como padrão atual dos orçamentos?")) return;
+  try {
+    await apiModuleRequest("?module=sinapi&action=ativarReferencia", { method: "POST", body: JSON.stringify({ id }) });
+    showToast("Referência SINAPI padrão atualizada.");
+    await refreshAndRender();
+  } catch (error) {
+    alert(`Não foi possível ativar a referência: ${error.message}`);
+  }
+}
+
+function sinapiFileTypeLabel(type) {
+  return { reference: "Referência", labor: "Mão de obra", families: "Famílias/coeficientes", maintenance: "Manutenções" }[type] || "Referência";
+}
+
+function sinapiJobStatusLabel(status) {
+  return { draft: "aguardando confirmação", queued: "aguardando", running: "processando", done: "concluído", error: "erro" }[status] || svgText(status || "");
 }
 
 // Busca a base SINAPI completa no servidor e mescla os resultados no cache local
@@ -9830,6 +9992,11 @@ function pollSinapiAsyncJob(jobId, { refreshOnDone = false } = {}) {
           startButton.disabled = !(isAdmin() && serverMode);
           startButton.textContent = "Importar e Atualizar Preços";
         }
+        const packageButton = qs("sinapiPkgProcess");
+        if (packageButton) {
+          packageButton.disabled = !(isAdmin() && serverMode && sinapiPackagePreview?.jobId);
+          packageButton.textContent = "Processar importação";
+        }
         return;
       }
       renderSinapiAsyncStatus(job);
@@ -9841,6 +10008,11 @@ function pollSinapiAsyncJob(jobId, { refreshOnDone = false } = {}) {
       if (button) {
         button.disabled = !(isAdmin() && serverMode);
         button.textContent = "Importar e Atualizar Preços";
+      }
+      const packageButton = qs("sinapiPkgProcess");
+      if (packageButton) {
+        packageButton.disabled = !(isAdmin() && serverMode && sinapiPackagePreview?.jobId);
+        packageButton.textContent = "Processar importação";
       }
       if (job.status === "done" && refreshOnDone) {
         await refreshAndRender(); // recarrega insumos/composições com os preços novos
