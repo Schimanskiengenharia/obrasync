@@ -155,6 +155,17 @@ try {
         handle_viabilidade_module($pdo, $method, $_GET, $config, $authUser);
     }
 
+    // PBQP-H Fase 1: anexo PDF do procedimento de execução (PES).
+    //   POST ?module=procedimentosExecucao&action=uploadPdf  (multipart: pesId + file)
+    //   GET  ?module=procedimentosExecucao&action=downloadPdf&id=<pesId>
+    if (in_array($module, ['procedimentosexecucao', 'procedimentos-execucao'], true)) {
+        authorize_request($pdo, $authUser, 'qualidadePes', action_for_method($method));
+        if (strtolower(trim((string) ($_GET['action'] ?? ''))) === 'downloadpdf') {
+            handle_pes_pdf_download($pdo, (int) ($_GET['id'] ?? 0));
+        }
+        handle_pes_pdf_upload($pdo, $config, $authUser);
+    }
+
     if ($resource === '' || $resource === 'bootstrap') {
         require_method($method, ['GET']);
         respond(['ok' => true, 'data' => bootstrap_data($pdo, $resources, $authUser)]);
@@ -1547,7 +1558,7 @@ function resource_map(): array
 {
     return [
         'clients' => r('clients', ['clientes'], ['name','document','zipCode','address','numero','complemento','bairro','cidade','estado','email','phone','status'], ['document','name']),
-        'suppliers' => r('suppliers', ['fornecedores'], ['name','document','zipCode','address','numero','complemento','bairro','cidade','estado','email','phone','status'], ['document','name']),
+        'suppliers' => r('suppliers', ['fornecedores'], ['name','document','zipCode','address','numero','complemento','bairro','cidade','estado','email','phone','status','pbqph_nivel','pbqph_letra','pbqph_validade','iso9001','iso9001_validade','datec','datec_numero','abnt_marca','avaliacao_pontualidade','avaliacao_qualidade','avaliacao_preco','avaliacao_data','avaliacao_responsavel'], ['document','name']),
         'categories' => r('financial_categories', ['categorias'], ['name','type','chartAccountId','status'], ['name']),
         'costCenters' => r('cost_centers', ['centros-custo','centros_de_custo'], ['code','name','manager','status','tipo','descricao_uso','exemplos'], ['code','name']),
         'bankAccounts' => r('bank_accounts', ['contas-bancarias','contas_bancarias'], ['name','bank','agency','accountNumber','openingBalance','status'], ['name']),
@@ -1585,10 +1596,10 @@ function resource_map(): array
         // Qualidade PBQP-H Nível B — tabelas criadas sob demanda por ensure_qualidade_tables().
         // Campos JSON (itensVerificacao, servicosControlados, checklistSiac) trafegam como string.
         'qualidadePolitica' => r('qualidade_politica', ['qualidade-politica','politica-qualidade'], ['conteudo','versao','aprovadoPor','dataAprovacao','status'], ['versao']),
-        'qualidadePes' => r('qualidade_pes', ['qualidade-pes','procedimentos-execucao'], ['servicoSiacId','servicoNome','servicoGrupo','versao','objetivo','materiaisNecessarios','equipamentosEpi','procedimento','criteriosAceitacao','normasReferencia','responsavelElaboracao','dataElaboracao','status'], ['servicoSiacId','versao']),
+        'qualidadePes' => r('qualidade_pes', ['qualidade-pes','procedimentos-execucao'], ['servicoSiacId','servicoNome','servicoGrupo','versao','objetivo','materiaisNecessarios','equipamentosEpi','procedimento','criteriosAceitacao','normasReferencia','responsavelElaboracao','dataElaboracao','status','arquivoPdf','arquivoNome','arquivoData'], ['servicoSiacId','versao']),
         'qualidadePqo' => r('qualidade_pqo', ['qualidade-pqo','plano-qualidade-obra'], ['projectId','versao','responsavelTecnico','crea','dataInicioPrevisto','dataFimPrevisto','escopo','servicosControlados','materiaisControlados','metasQualidade','status','dataAprovacao','aprovadoPor'], ['projectId']),
         'qualidadeFvs' => r('qualidade_fvs', ['qualidade-fvs','fichas-verificacao-servico'], ['pqoId','projectId','etapaId','pesId','servicoSiacId','servicoNome','dataExecucao','localObra','responsavelExecucao','responsavelInspecao','itensVerificacao','resultado','observacoes','acaoCorretiva','dataInspecao','assinaturaExecutor','assinaturaInspetor','status'], ['projectId','servicoSiacId','dataExecucao','localObra']),
-        'qualidadeFvm' => r('qualidade_fvm', ['qualidade-fvm','fichas-verificacao-material'], ['pqoId','projectId','materialNome','materialCodigo','fornecedor','notaFiscal','quantidade','unidade','dataRecebimento','responsavelRecebimento','itensVerificacao','resultado','observacoes','status'], ['projectId','materialNome','notaFiscal','dataRecebimento']),
+        'qualidadeFvm' => r('qualidade_fvm', ['qualidade-fvm','fichas-verificacao-material'], ['pqoId','projectId','materialNome','materialCodigo','fornecedor','notaFiscal','quantidade','unidade','dataRecebimento','responsavelRecebimento','itensVerificacao','resultado','observacoes','status','lote','fabricante','dataFabricacao','validade','localAplicacao','certificadoQualidade','purchaseOrderId'], ['projectId','materialNome','notaFiscal','dataRecebimento']),
         'qualidadeNc' => r('qualidade_nc', ['qualidade-nc','nao-conformidades'], ['projectId','pqoId','numero','origem','fvsId','fvmId','descricaoNC','servicoSiacId','servicoNome','localObra','grau','responsavelDeteccao','dataDeteccao','prazoAcao','acaoCorretiva','responsavelAcao','dataAcao','verificacaoEficacia','responsavelVerificacao','dataVerificacao','status'], ['numero']),
         'qualidadeTreinamentos' => r('qualidade_treinamentos', ['qualidade-treinamentos','treinamentos-qualidade'], ['projectId','pqoId','servicoSiacId','servicoNome','dataTreinamento','instrutor','participantes','conteudo','cargaHoraria','observacoes'], ['projectId','servicoSiacId','dataTreinamento']),
         'qualidadeAuditorias' => r('qualidade_auditorias', ['qualidade-auditorias','auditorias-internas'], ['projectId','tipo','dataAuditoria','auditor','escopo','checklistSiac','totalItens','itensConformes','ncsAbertas','resultado','relatorioTexto','status'], ['tipo','dataAuditoria','auditor']),
@@ -2205,6 +2216,11 @@ function bootstrap_data(PDO $pdo, array $resources, ?array $authUser = null, boo
             && !in_array('cidade', table_columns($pdo, 'suppliers'), true)) {
             ensure_supplier_address_columns($pdo);
         }
+        // PBQP-H Fase 1: qualificação/certificação de fornecedores.
+        if (resolve_existing_table($pdo, ['suppliers'], false)
+            && !in_array('pbqph_nivel', table_columns($pdo, 'suppliers'), true)) {
+            ensure_supplier_qualification_columns($pdo);
+        }
         if (resolve_existing_table($pdo, ['company_settings'], false)
             && !in_array('estado', table_columns($pdo, 'company_settings'), true)) {
             ensure_company_address_columns($pdo);
@@ -2364,6 +2380,66 @@ function ensure_supplier_address_columns(PDO $pdo): void
             ADD COLUMN IF NOT EXISTS cidade VARCHAR(100) NULL,
             ADD COLUMN IF NOT EXISTS estado VARCHAR(2) NULL"
     );
+}
+
+// PBQP-H Fase 1 — qualificação/certificação e avaliação de desempenho de fornecedores.
+function ensure_supplier_qualification_columns(PDO $pdo): void
+{
+    try {
+        $pdo->exec(
+            "ALTER TABLE suppliers
+                ADD COLUMN IF NOT EXISTS pbqph_nivel ENUM('nao_avaliado','aprovado','em_avaliacao','suspenso','reprovado') DEFAULT 'nao_avaliado',
+                ADD COLUMN IF NOT EXISTS pbqph_letra VARCHAR(2) NULL,
+                ADD COLUMN IF NOT EXISTS pbqph_validade DATE NULL,
+                ADD COLUMN IF NOT EXISTS iso9001 TINYINT(1) DEFAULT 0,
+                ADD COLUMN IF NOT EXISTS iso9001_validade DATE NULL,
+                ADD COLUMN IF NOT EXISTS datec TINYINT(1) DEFAULT 0,
+                ADD COLUMN IF NOT EXISTS datec_numero VARCHAR(50) NULL,
+                ADD COLUMN IF NOT EXISTS abnt_marca TINYINT(1) DEFAULT 0,
+                ADD COLUMN IF NOT EXISTS avaliacao_pontualidade TINYINT UNSIGNED NULL,
+                ADD COLUMN IF NOT EXISTS avaliacao_qualidade TINYINT UNSIGNED NULL,
+                ADD COLUMN IF NOT EXISTS avaliacao_preco TINYINT UNSIGNED NULL,
+                ADD COLUMN IF NOT EXISTS avaliacao_data DATE NULL,
+                ADD COLUMN IF NOT EXISTS avaliacao_responsavel VARCHAR(100) NULL"
+        );
+    } catch (Throwable $error) {
+        error_log('[ObraSync] ensure_supplier_qualification_columns: ' . $error->getMessage());
+    }
+}
+
+// PBQP-H Fase 1 — rastreabilidade de lote na FVM (qualidade_fvm) + vínculo com o
+// pedido de compra. Não duplica notaFiscal/resultado (já existem). camelCase.
+function ensure_fvm_rastreabilidade_columns(PDO $pdo): void
+{
+    try {
+        $pdo->exec(
+            "ALTER TABLE qualidade_fvm
+                ADD COLUMN IF NOT EXISTS lote VARCHAR(100) NULL,
+                ADD COLUMN IF NOT EXISTS fabricante VARCHAR(200) NULL,
+                ADD COLUMN IF NOT EXISTS dataFabricacao DATE NULL,
+                ADD COLUMN IF NOT EXISTS validade DATE NULL,
+                ADD COLUMN IF NOT EXISTS localAplicacao VARCHAR(300) NULL,
+                ADD COLUMN IF NOT EXISTS certificadoQualidade TINYINT(1) DEFAULT 0,
+                ADD COLUMN IF NOT EXISTS purchaseOrderId BIGINT UNSIGNED NULL"
+        );
+    } catch (Throwable $error) {
+        error_log('[ObraSync] ensure_fvm_rastreabilidade_columns: ' . $error->getMessage());
+    }
+}
+
+// PBQP-H Fase 1 — anexo de PDF do procedimento de execução (qualidade_pes).
+function ensure_pes_arquivo_columns(PDO $pdo): void
+{
+    try {
+        $pdo->exec(
+            "ALTER TABLE qualidade_pes
+                ADD COLUMN IF NOT EXISTS arquivoPdf VARCHAR(500) NULL,
+                ADD COLUMN IF NOT EXISTS arquivoNome VARCHAR(200) NULL,
+                ADD COLUMN IF NOT EXISTS arquivoData TIMESTAMP NULL"
+        );
+    } catch (Throwable $error) {
+        error_log('[ObraSync] ensure_pes_arquivo_columns: ' . $error->getMessage());
+    }
 }
 
 // Dados da empresa: já possui `city` (cidade); acrescenta os demais campos.
@@ -4348,6 +4424,9 @@ function ensure_qualidade_tables(PDO $pdo): void
     } catch (Throwable $error) {
         // Sem permissão de DDL ou MariaDB antigo sem IF NOT EXISTS: segue sem o vínculo.
     }
+    // PBQP-H Fase 1: rastreabilidade de lote na FVM e anexo PDF no PES (auto-cura).
+    ensure_fvm_rastreabilidade_columns($pdo);
+    ensure_pes_arquivo_columns($pdo);
     $done = true;
 }
 
@@ -7294,6 +7373,50 @@ function handle_safe_file_upload(array $config, string $subdir, array $extension
     $path = store_upload($_FILES['file'], $uploadDir, $extensions, $mimes);
     // Só o nome do arquivo na resposta: o caminho absoluto expõe a estrutura do servidor.
     respond(['ok' => true, 'file' => basename($path)]);
+}
+
+// PBQP-H Fase 1: salva o PDF do procedimento (PES) e grava o caminho no banco.
+function handle_pes_pdf_upload(PDO $pdo, array $config, array $authUser): never
+{
+    require_method($_SERVER['REQUEST_METHOD'] ?? 'POST', ['POST']);
+    ensure_qualidade_tables($pdo);
+    $pesId = (int) ($_POST['pesId'] ?? ($_POST['id'] ?? 0));
+    if ($pesId <= 0) {
+        fail('Informe o id do PES.', 400);
+    }
+    $file = $_FILES['file'] ?? $_FILES['arquivo'] ?? null;
+    if (!$file || empty($file['tmp_name'])) {
+        fail('Arquivo PDF não informado.', 400);
+    }
+    $uploadDir = rtrim($config['upload_dir'] ?? '/var/lib/financeiro/uploads', '/') . '/procedimentos';
+    if (!is_dir($uploadDir)) {
+        mkdir($uploadDir, 0755, true);
+    }
+    $path = store_upload($file, $uploadDir, ['pdf'], ['application/pdf']);
+    $original = substr((string) ($file['name'] ?? 'procedimento.pdf'), 0, 200);
+    update_dynamic($pdo, 'qualidade_pes', $pesId, [
+        'arquivoPdf' => $path,
+        'arquivoNome' => $original,
+        'arquivoData' => date('Y-m-d H:i:s'),
+    ]);
+    server_audit($pdo, $authUser, 'upload', 'qualidadePes', $pesId, $original);
+    respond(['ok' => true, 'arquivoNome' => $original]);
+}
+
+function handle_pes_pdf_download(PDO $pdo, int $pesId): never
+{
+    $stmt = $pdo->prepare('SELECT arquivoPdf, arquivoNome FROM qualidade_pes WHERE id = ?');
+    $stmt->execute([$pesId]);
+    $row = $stmt->fetch();
+    if (!$row || empty($row['arquivoPdf']) || !is_file($row['arquivoPdf'])) {
+        fail('PDF do procedimento não encontrado.', 404);
+    }
+    header_remove('Content-Type');
+    header('Content-Type: application/pdf');
+    header('Content-Disposition: inline; filename="' . basename($row['arquivoNome'] ?: 'procedimento.pdf') . '"');
+    header('Content-Length: ' . filesize($row['arquivoPdf']));
+    readfile($row['arquivoPdf']);
+    exit;
 }
 
 function handle_sinapi_import(PDO $pdo, array $resources, array $config): never

@@ -5439,6 +5439,7 @@ function renderCrud(key) {
     .map((field) => field[0]);
   if (key === "fiscalDocuments") tableFields.push("hasPdf", "hasXml");
   if (key === "payable" || key === "receivable") tableFields.push("fiscalDocumentNumber");
+  if (key === "suppliers") tableFields.push("pbqph_nivel");
   const docTitle = { purchaseOrders: "Pedido de Compra" }[key];
   qs("content").innerHTML = `
     ${docTitle ? generateDocumentHeader(docTitle, documentPeriodSubtitle()) : ""}
@@ -5470,6 +5471,8 @@ function renderCrud(key) {
   qs("content").querySelectorAll("[data-create-proposal-receivables]").forEach((button) => button.addEventListener("click", () => createReceivablesFromProposal(button.dataset.createProposalReceivables)));
   qs("content").querySelectorAll("[data-create-receivable]").forEach((button) => button.addEventListener("click", () => createReceivableFromSale(button.dataset.createReceivable)));
   qs("content").querySelectorAll("[data-print-po]").forEach((button) => button.addEventListener("click", () => openPurchaseOrderPrint(button.dataset.printPo)));
+  qs("content").querySelectorAll("[data-po-fvm]").forEach((button) => button.addEventListener("click", () => abrirFvmDoPedido(button.dataset.poFvm)));
+  qs("content").querySelectorAll("[data-supplier-qual]").forEach((button) => button.addEventListener("click", () => openSupplierQualificationForm(button.dataset.supplierQual)));
   qs("content").querySelectorAll("[data-generate-proposal]").forEach((button) => button.addEventListener("click", () => openProposalGenerator(button.dataset.generateProposal)));
   qs("content").querySelectorAll("[data-add-budget-item]").forEach((button) => button.addEventListener("click", () => {
     const [sourceKey, id] = button.dataset.addBudgetItem.split(":");
@@ -5480,7 +5483,7 @@ function renderCrud(key) {
 }
 
 // Campos cujo formatCell devolve HTML intencional (links e badges); todo o resto é escapado.
-const HTML_CELL_FIELDS = new Set(["generatedLink", "hasPdf", "hasXml", "status"]);
+const HTML_CELL_FIELDS = new Set(["generatedLink", "hasPdf", "hasXml", "status", "pbqph_nivel"]);
 
 function tableCell(field, row, moduleKey = "") {
   const content = formatCell(field, row[field], row, moduleKey);
@@ -5529,7 +5532,10 @@ function extraRowActions(actionKey, row) {
     return exists ? "" : `<button class="secondary" type="button" data-create-receivable="${row.id}">Gerar conta</button>`;
   }
   if (actionKey === "purchaseOrders") {
-    return `<button class="secondary" type="button" data-print-po="${row.id}">Imprimir / Gerar PDF</button>`;
+    return `<button class="secondary" type="button" data-print-po="${row.id}">Imprimir / Gerar PDF</button><button class="secondary" type="button" data-po-fvm="${row.id}">Registrar recebimento (FVM)</button>`;
+  }
+  if (actionKey === "suppliers") {
+    return `<button class="secondary" type="button" data-supplier-qual="${row.id}">Qualificação PBQP-H</button>`;
   }
   return "";
 }
@@ -5701,6 +5707,7 @@ function formatCell(field, value, row = {}, moduleKey = "") {
     return match ? match.documentNumber : "";
   }
   if (["chartAccountId", "debitAccountId", "creditAccountId", "parentId"].includes(field)) return nameOf("chartAccounts", value);
+  if (field === "pbqph_nivel") return supplierQualBadge(value);
   if (field === "status" && moduleKey === "fiscalDocuments") return nfStatusBadge(value);
   if (field === "status") return `<span class="status ${["Pago", "Recebido", "Aprovado", "Concluída", "Concluído", "Enviado manualmente"].includes(value) ? "success" : ["Vencido", "Atrasada"].includes(value) ? "danger" : ""}">${escapeHtml(value || "")}</span>`;
   return value ?? "";
@@ -9678,6 +9685,20 @@ function renderQualidadeDashboard() {
       else if (!qTemTreinamento(obraId, idServico)) alertas.push(`⚠️ Serviço "${servicoSiac(idServico)?.nome || idServico}" sem treinamento registrado nesta obra.`);
     });
   }
+  // PBQP-H Fase 1: certificações de fornecedores vencendo (30 dias) e materiais (FVM) com validade próxima.
+  (db.suppliers || []).forEach((f) => {
+    [["PBQP-H", f.pbqph_validade], ["ISO 9001", f.iso9001_validade]].forEach(([cert, val]) => {
+      if (!val) return;
+      const dias = Math.ceil((new Date(val) - new Date(hoje)) / 86400000);
+      if (dias < 0) alertas.push(`❌ ${cert} do fornecedor ${f.name} venceu em ${val}.`);
+      else if (dias <= 30) alertas.push(`⚠️ ${cert} do fornecedor ${f.name} vence em ${dias} dia(s).`);
+    });
+  });
+  fvm.forEach((m) => {
+    if (!m.validade) return;
+    const dias = Math.ceil((new Date(m.validade) - new Date(hoje)) / 86400000);
+    if (dias >= 0 && dias <= 30) alertas.push(`⚠️ Material ${m.materialNome}${m.lote ? " (lote " + m.lote + ")" : ""} vence em ${dias} dia(s).`);
+  });
 
   qs("content").innerHTML = `
     <section class="module-head">
@@ -9795,6 +9816,16 @@ function renderQualidadePes() {
         <label class="full">Procedimento de execução<textarea id="qPesProcedimento" rows="6">${svgText(row.procedimento || "")}</textarea></label>
         <label class="full">Critérios de aceitação — um por linha (cada linha vira um item da FVS)<textarea id="qPesCriterios" rows="5">${svgText(row.criteriosAceitacao || "")}</textarea></label>
       </div>
+      <div class="q-pes-pdf">
+        <strong>Procedimento em PDF (PBQP-H)</strong>
+        ${row.id ? `
+          ${row.arquivoPdf
+            ? `<p class="muted">📎 ${svgText(row.arquivoNome || "procedimento.pdf")}${row.arquivoData ? " · " + asDate(row.arquivoData) : ""} <button type="button" class="secondary" id="qPesVerPdf">Visualizar PDF</button></p>`
+            : '<p class="muted">Nenhum PDF anexado.</p>'}
+          <label>${row.arquivoPdf ? "Substituir PDF" : "Anexar PDF do procedimento"}<input type="file" id="qPesPdfFile" accept="application/pdf,.pdf"></label>
+          <button type="button" class="secondary" id="qPesUpPdf">Enviar PDF</button>`
+          : '<p class="muted">Salve o PES para anexar o PDF do procedimento.</p>'}
+      </div>
       <div class="actions">
         <button class="primary" type="button" id="qPesSalvar">Salvar</button>
         <button class="secondary" type="button" id="qFormCancelar">Cancelar</button>
@@ -9829,6 +9860,39 @@ function renderQualidadePes() {
       status: qVal("qPesStatus") || "Rascunho",
     }, qualidadeEdit?.id || null);
   });
+  qs("qPesVerPdf")?.addEventListener("click", () => qPesAbrirPdf(qualidadeEdit?.id));
+  qs("qPesUpPdf")?.addEventListener("click", () => qPesUploadPdf(qualidadeEdit?.id));
+}
+
+// PBQP-H Fase 1 — upload/visualização do PDF do procedimento (PES).
+async function qPesUploadPdf(pesId) {
+  if (!pesId) return alert("Salve o PES antes de anexar o PDF.");
+  const file = qs("qPesPdfFile")?.files?.[0];
+  if (!file) return alert("Selecione um arquivo PDF.");
+  if (file.type !== "application/pdf" && !/\.pdf$/i.test(file.name)) return alert("Apenas arquivos PDF são aceitos.");
+  if (file.size > 10 * 1024 * 1024) return alert("PDF acima de 10 MB.");
+  try {
+    const form = new FormData();
+    form.append("pesId", pesId);
+    form.append("file", file);
+    await fetchForm("?module=procedimentosExecucao&action=uploadPdf", form);
+    showToast("PDF do procedimento anexado.");
+    await refreshAndRender();
+  } catch (error) {
+    alert(`Não foi possível enviar o PDF: ${error.message}`);
+  }
+}
+async function qPesAbrirPdf(pesId) {
+  if (!pesId) return;
+  try {
+    const resp = await fetch(`${API_BASE}/?module=procedimentosExecucao&action=downloadPdf&id=${encodeURIComponent(pesId)}`, { headers: authHeaders() });
+    if (!resp.ok) throw new Error("PDF do procedimento não encontrado.");
+    const url = URL.createObjectURL(await resp.blob());
+    window.open(url, "_blank");
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (error) {
+    alert(error.message);
+  }
 }
 
 // ── PQO — Plano da Qualidade da Obra ────────────────────────────────────────
@@ -10176,6 +10240,102 @@ function renderQualidadeFvs() {
   });
 }
 
+// PBQP-H Fase 1 — qualificação de fornecedores (status + certificações + avaliação).
+const SUPPLIER_QUAL_STATUS = [
+  ["nao_avaliado", "Não avaliado", "cinza"],
+  ["aprovado", "Aprovado", "verde"],
+  ["em_avaliacao", "Em avaliação", "amarelo"],
+  ["suspenso", "Suspenso", "laranja"],
+  ["reprovado", "Reprovado", "vermelho"],
+];
+function supplierQualMeta(value) {
+  return SUPPLIER_QUAL_STATUS.find(([k]) => k === (value || "nao_avaliado")) || SUPPLIER_QUAL_STATUS[0];
+}
+function supplierQualBadge(value) {
+  const [, label, cls] = supplierQualMeta(value);
+  return `<span class="sup-qual sup-qual-${cls}">${label}</span>`;
+}
+function openSupplierQualificationForm(id) {
+  if (!canEditModule("suppliers")) return;
+  if (!serverMode) return alert("A qualificação de fornecedores requer conexão com o servidor.");
+  const s = byId("suppliers", id);
+  if (!s) return;
+  const statusOpts = SUPPLIER_QUAL_STATUS.map(([v, l]) => `<option value="${v}" ${(s.pbqph_nivel || "nao_avaliado") === v ? "selected" : ""}>${l}</option>`).join("");
+  const letraOpts = ["", "A", "B", "C", "D"].map((l) => `<option value="${l}" ${(s.pbqph_letra || "") === l ? "selected" : ""}>${l || "—"}</option>`).join("");
+  const nota = (fid, val) => `<select id="${fid}"><option value="">—</option>${[1, 2, 3, 4, 5].map((n) => `<option value="${n}" ${Number(val) === n ? "selected" : ""}>${"★".repeat(n)} (${n})</option>`).join("")}</select>`;
+  const { close, q } = viabilidadeDialog(`
+    <div class="viab-modal">
+      <header class="viab-modal-head"><h3>Qualificação PBQP-H — ${escapeHtml(s.name || "")}</h3><button type="button" class="viab-x" data-close aria-label="Fechar">✕</button></header>
+      <div class="viab-modal-body">
+        <h4 class="q-subhead">Status de qualificação</h4>
+        <div class="form-grid"><label>Status<select id="sqStatus">${statusOpts}</select></label></div>
+        <h4 class="q-subhead">Certificações</h4>
+        <div class="form-grid">
+          <label>PBQP-H — nível<select id="sqLetra">${letraOpts}</select></label>
+          <label>PBQP-H — validade<input type="date" id="sqPbqphVal" value="${escapeHtml((s.pbqph_validade || "").slice(0, 10))}"></label>
+          <label class="sq-chk"><input type="checkbox" id="sqIso" ${Number(s.iso9001) ? "checked" : ""}> ISO 9001</label>
+          <label>ISO 9001 — validade<input type="date" id="sqIsoVal" value="${escapeHtml((s.iso9001_validade || "").slice(0, 10))}"></label>
+          <label class="sq-chk"><input type="checkbox" id="sqDatec" ${Number(s.datec) ? "checked" : ""}> DATec SiNAT</label>
+          <label>DATec — número<input id="sqDatecNum" value="${escapeHtml(s.datec_numero || "")}"></label>
+          <label class="sq-chk"><input type="checkbox" id="sqAbnt" ${Number(s.abnt_marca) ? "checked" : ""}> Marca de conformidade ABNT</label>
+        </div>
+        <h4 class="q-subhead">Avaliação de desempenho (1 a 5)</h4>
+        <div class="form-grid">
+          <label>Pontualidade nas entregas${nota("sqPont", s.avaliacao_pontualidade)}</label>
+          <label>Qualidade dos produtos${nota("sqQual", s.avaliacao_qualidade)}</label>
+          <label>Preço competitivo${nota("sqPreco", s.avaliacao_preco)}</label>
+          <label>Responsável pela avaliação<input id="sqResp" value="${escapeHtml(s.avaliacao_responsavel || "")}"></label>
+          <label>Data da avaliação<input type="date" id="sqData" value="${escapeHtml((s.avaliacao_data || "").slice(0, 10))}"></label>
+        </div>
+      </div>
+      <footer class="viab-modal-foot"><button type="button" class="secondary" data-close>Cancelar</button><button type="button" class="primary" data-save>Salvar qualificação</button></footer>
+    </div>`, "viab-dialog-md");
+  q("[data-save]").addEventListener("click", async () => {
+    try {
+      const payload = {
+        ...s,
+        pbqph_nivel: q("#sqStatus").value,
+        pbqph_letra: q("#sqLetra").value,
+        pbqph_validade: q("#sqPbqphVal").value || null,
+        iso9001: q("#sqIso").checked ? 1 : 0,
+        iso9001_validade: q("#sqIsoVal").value || null,
+        datec: q("#sqDatec").checked ? 1 : 0,
+        datec_numero: q("#sqDatecNum").value,
+        abnt_marca: q("#sqAbnt").checked ? 1 : 0,
+        avaliacao_pontualidade: q("#sqPont").value || null,
+        avaliacao_qualidade: q("#sqQual").value || null,
+        avaliacao_preco: q("#sqPreco").value || null,
+        avaliacao_responsavel: q("#sqResp").value,
+        avaliacao_data: q("#sqData").value || null,
+      };
+      const res = await apiRequest(`${apiResources.suppliers}/${id}`, { method: "PUT", body: JSON.stringify(payload) });
+      db.suppliers = db.suppliers.map((r) => sameId(r.id, id) ? (res.record || { ...r, ...payload }) : r);
+      close();
+      showToast("Qualificação do fornecedor atualizada.");
+      render();
+    } catch (error) {
+      alert(`Erro ao salvar qualificação: ${error.message}`);
+    }
+  });
+}
+
+// PBQP-H Fase 1 — abre uma FVM já vinculada ao pedido de compra, pré-preenchida.
+function abrirFvmDoPedido(poId) {
+  const po = byId("purchaseOrders", poId);
+  if (!po) return;
+  if (!canEditModule("qualidadeFvm")) return alert("Sem permissão para registrar FVM.");
+  const supplier = byId("suppliers", po.supplierId);
+  qualidadeEdit = { key: "qualidadeFvm", id: null };
+  qualidadeDraft = qFvmDraft(null);
+  qualidadeDraft.projectId = po.projectId || "";
+  qualidadeDraft.fornecedor = supplier?.name || "";
+  qualidadeDraft.fabricante = supplier?.name || "";
+  qualidadeDraft.purchaseOrderId = po.id;
+  qualidadeDraft.dataRecebimento = qHoje();
+  currentModule = "qualidadeFvm";
+  render();
+}
+
 function qFvmDraft(row) {
   return {
     id: row?.id || null,
@@ -10191,7 +10351,24 @@ function qFvmDraft(row) {
     itens: qjson(row?.itensVerificacao, FVM_CHECKLIST_PADRAO.map((item) => ({ item, conforme: "", observacao: "" }))),
     resultado: row?.resultado || "",
     observacoes: row?.observacoes || "",
+    // PBQP-H Fase 1 — rastreabilidade de lote + vínculo com pedido de compra.
+    lote: row?.lote || "",
+    fabricante: row?.fabricante || "",
+    dataFabricacao: row?.dataFabricacao || "",
+    validade: row?.validade || "",
+    localAplicacao: row?.localAplicacao || "",
+    certificadoQualidade: Number(row?.certificadoQualidade) ? 1 : 0,
+    purchaseOrderId: row?.purchaseOrderId || "",
   };
+}
+
+// Selo de alerta de validade do material (vencido / vence em <= 30 dias).
+function qFvmValidadeAlerta(validade) {
+  if (!validade) return "";
+  const dias = Math.ceil((new Date(validade) - new Date(qHoje())) / 86400000);
+  if (dias < 0) return " " + qBadge("Vencido", "ruim");
+  if (dias <= 30) return " " + qBadge(`Vence em ${dias} dia(s)`, "atencao");
+  return "";
 }
 
 function renderQualidadeFvm() {
@@ -10215,6 +10392,16 @@ function renderQualidadeFvm() {
         <label>Unidade<input id="qFvmUnidade" value="${svgText(draft.unidade)}"></label>
         <label>Data de recebimento<input id="qFvmData" type="date" value="${svgText(draft.dataRecebimento)}"></label>
         <label>Responsável pelo recebimento<input id="qFvmResponsavel" value="${svgText(draft.responsavelRecebimento)}"></label>
+      </div>
+      <h4 class="q-subhead">Rastreabilidade (PBQP-H / SiNAT)</h4>
+      <div class="form-grid">
+        <label>Lote<input id="qFvmLote" value="${svgText(draft.lote)}"></label>
+        <label>Fabricante<input id="qFvmFabricante" value="${svgText(draft.fabricante)}" placeholder="Fabricante do material"></label>
+        <label>Data de fabricação<input id="qFvmDataFab" type="date" value="${svgText(draft.dataFabricacao)}"></label>
+        <label>Validade${qFvmValidadeAlerta(draft.validade)}<input id="qFvmValidade" type="date" value="${svgText(draft.validade)}"></label>
+        <label>Local de aplicação na obra<input id="qFvmLocal" list="qFvmLocalSug" value="${svgText(draft.localAplicacao)}" placeholder="Ex.: Bloco A - 2 pav. - fachada norte"><datalist id="qFvmLocalSug">${["Fundação", "Estrutura", "Alvenaria", "Cobertura", "Elétrica", "Hidráulica", "Revestimento", "Acabamento"].map((s) => `<option value="${s}">`).join("")}</datalist></label>
+        <label>Certificado de qualidade recebido<select id="qFvmCert">${[["0", "Não"], ["1", "Sim"]].map(([v, l]) => `<option value="${v}" ${Number(draft.certificadoQualidade) === Number(v) ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+        <label>Pedido de compra vinculado<select id="qFvmPedido"><option value="">— Nenhum —</option>${(db.purchaseOrders || []).map((po) => `<option value="${escapeHtml(po.id)}" ${sameId(po.id, draft.purchaseOrderId) ? "selected" : ""}>${escapeHtml(po.number || po.id)}</option>`).join("")}</select></label>
       </div>
       ${qChecklistHtml(draft.itens, { editableLabels: true })}
       <button class="secondary" type="button" id="qFvmAddItem">+ Item personalizado para este material</button>
@@ -10248,6 +10435,13 @@ function renderQualidadeFvm() {
     d.responsavelRecebimento = qVal("qFvmResponsavel");
     d.resultado = qVal("qFvmResultado");
     d.observacoes = qVal("qFvmObservacoes");
+    d.lote = qVal("qFvmLote");
+    d.fabricante = qVal("qFvmFabricante");
+    d.dataFabricacao = qVal("qFvmDataFab");
+    d.validade = qVal("qFvmValidade");
+    d.localAplicacao = qVal("qFvmLocal");
+    d.certificadoQualidade = Number(qVal("qFvmCert")) ? 1 : 0;
+    d.purchaseOrderId = qVal("qFvmPedido");
     d.itens = qChecklistCollect();
     return d;
   };
@@ -10274,6 +10468,13 @@ function renderQualidadeFvm() {
       itensVerificacao: JSON.stringify(d.itens),
       resultado: d.resultado || null,
       observacoes: d.observacoes,
+      lote: d.lote,
+      fabricante: d.fabricante,
+      dataFabricacao: d.dataFabricacao || null,
+      validade: d.validade || null,
+      localAplicacao: d.localAplicacao,
+      certificadoQualidade: d.certificadoQualidade,
+      purchaseOrderId: d.purchaseOrderId || null,
       status,
     }, d.id);
   });
