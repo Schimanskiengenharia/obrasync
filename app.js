@@ -19,9 +19,10 @@ if (APP_ENV === "production" && location.protocol === "http:") {
   location.replace(location.href.replace(/^http:/, "https:"));
 }
 const APP_NAME = "ObraSync";
-const APP_VERSION = "v1.15.3";
+const APP_VERSION = "v1.15.4";
 const APP_VERSION_DATE = "2026-06-28";
 const APP_CHANGELOG = [
+  "Correção: asDate passou a aceitar datetime do MySQL (\"2026-06-28 04:31:10\") e datas inválidas/zeradas sem lançar RangeError — a aba Viabilidade não trava mais ao carregar (v1.15.4).",
   "Modo licitação na proposta: comparativo com a referência SINAPI (custo × BDI de referência) versus o valor ofertado, com o percentual de desconto por item e global (\"Oferta com X% de desconto sobre a referência SINAPI\"), para propostas baseadas em preços SINAPI (v1.15.3).",
   "Formação de preço (BDI) flexível na proposta: BDI geral (%) para todos os itens, BDI por grupo/orçamento, ou venda manual por item com o BDI resultante calculado automaticamente — escolhido no seletor \"Formação do preço (BDI)\" do gerador (v1.15.2).",
   "Proposta com múltiplos orçamentos: vincule vários orçamentos de obra à mesma proposta, cada um como um grupo com BDI próprio (ex.: Cobertura 22%, Elétrica 25%), com totalizador de custo, BDI médio ponderado, valor de venda e margem, e resumo por grupo no PDF para o cliente (v1.15.1).",
@@ -2086,7 +2087,14 @@ function asMoney(value) {
 }
 
 function asDate(value) {
-  return value ? dateFmt.format(new Date(`${value}T00:00:00Z`)) : "";
+  // Aceita date pura ("2026-06-28") e datetime do MySQL ("2026-06-28 04:31:10" ou com "T").
+  // Nunca deixa dateFmt.format lançar RangeError com data inválida/zerada.
+  if (value === null || value === undefined || value === "") return "";
+  const s = String(value).trim().replace(" ", "T");
+  if (s === "" || s.startsWith("0000-00-00")) return "";
+  const iso = s.length === 10 ? `${s}T00:00:00Z` : s;
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? "" : dateFmt.format(d);
 }
 
 function isMoneyField(field) {
