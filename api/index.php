@@ -144,6 +144,17 @@ try {
         handle_dashboard_execution_module($pdo, $method, $_GET);
     }
 
+    // Análise de Viabilidade por tipo de obra (checklist de grupos/itens).
+    //   GET  ?module=viabilidade&action=list|get|check_bloqueio
+    //   POST ?module=viabilidade&action=create|update_item|add_item|add_grupo|upload_anexo
+    //   PUT  ?module=viabilidade&action=update
+    //   DELETE ?module=viabilidade&action=delete_item
+    // Reaproveita a permissão do módulo viabilityAnalyses (mesmos perfis).
+    if (in_array($module, ['viabilidade', 'viabilidade-obra', 'viabilidade_obra'], true)) {
+        authorize_request($pdo, $authUser, 'viabilityAnalyses', action_for_method($method));
+        handle_viabilidade_module($pdo, $method, $_GET, $config, $authUser);
+    }
+
     if ($resource === '' || $resource === 'bootstrap') {
         require_method($method, ['GET']);
         respond(['ok' => true, 'data' => bootstrap_data($pdo, $resources, $authUser)]);
@@ -2241,6 +2252,10 @@ function bootstrap_data(PDO $pdo, array $resources, ?array $authUser = null, boo
         if (!resolve_existing_table($pdo, ['kanban_boards'], false)) {
             ensure_kanban_tables($pdo);
         }
+        // Tabelas do módulo de Análise de Viabilidade por tipo de obra.
+        if (!resolve_existing_table($pdo, ['viabilidade_analises'], false)) {
+            ensure_viabilidade_tables($pdo);
+        }
         // email/blocked/mustChangePassword em system_users (usados em login/reset).
         if (resolve_existing_table($pdo, ['system_users'], false)
             && !in_array('mustChangePassword', table_columns($pdo, 'system_users'), true)) {
@@ -2725,6 +2740,663 @@ function cost_centers_respond(bool $success, mixed $data = [], string $message =
         'message' => $message,
     ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit;
+}
+
+// ─── Módulo de Análise de Viabilidade por tipo de obra (checklist) ──────────
+// Independente do módulo financeiro viabilityAnalyses (margem/payback/VPL/TIR).
+// Tabelas: viabilidade_analises / _grupos / _itens / _anexos.
+function ensure_viabilidade_tables(PDO $pdo): void
+{
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    try {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS viabilidade_analises (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            obra_id BIGINT UNSIGNED NULL,
+            proposta_id BIGINT UNSIGNED NULL,
+            cliente_id BIGINT UNSIGNED NULL,
+            tipo_obra VARCHAR(50) NOT NULL,
+            nome VARCHAR(200) NOT NULL,
+            status ENUM('em_andamento','aprovada','bloqueada','concluida') DEFAULT 'em_andamento',
+            progresso_geral DECIMAL(5,2) DEFAULT 0,
+            responsavel_id BIGINT UNSIGNED NULL,
+            observacoes TEXT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_obra (obra_id),
+            INDEX idx_proposta (proposta_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        $pdo->exec("CREATE TABLE IF NOT EXISTS viabilidade_grupos (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            analise_id BIGINT UNSIGNED NOT NULL,
+            nome VARCHAR(100) NOT NULL,
+            tipo VARCHAR(50) NOT NULL,
+            obrigatorio TINYINT(1) DEFAULT 1,
+            ordem INT DEFAULT 0,
+            progresso DECIMAL(5,2) DEFAULT 0,
+            INDEX idx_analise (analise_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        $pdo->exec("CREATE TABLE IF NOT EXISTS viabilidade_itens (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            grupo_id BIGINT UNSIGNED NOT NULL,
+            analise_id BIGINT UNSIGNED NOT NULL,
+            descricao VARCHAR(300) NOT NULL,
+            status ENUM('nao_iniciado','em_andamento','aguardando_terceiro','aprovado','reprovado') DEFAULT 'nao_iniciado',
+            obrigatorio TINYINT(1) DEFAULT 1,
+            responsavel VARCHAR(100) NULL,
+            prazo DATE NULL,
+            data_verificacao DATE NULL,
+            observacao TEXT NULL,
+            terceiro_nome VARCHAR(100) NULL,
+            ordem INT DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_grupo (grupo_id),
+            INDEX idx_analise (analise_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        $pdo->exec("CREATE TABLE IF NOT EXISTS viabilidade_anexos (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            item_id BIGINT UNSIGNED NOT NULL,
+            nome_arquivo VARCHAR(200) NOT NULL,
+            caminho VARCHAR(500) NOT NULL,
+            tipo_arquivo VARCHAR(50) NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_item (item_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        $done = true;
+    } catch (Throwable $error) {
+        error_log('[ObraSync] ensure_viabilidade_tables: ' . $error->getMessage());
+    }
+}
+
+// Tipos de obra aceitos pelo módulo de viabilidade.
+function viabilidade_tipos_validos(): array
+{
+    return ['energia_solar', 'obra_civil', 'eletrica', 'ar_condicionado', 'cobertura', 'hidraulica', 'manutencao', 'outro'];
+}
+
+// Template de grupos + itens padrão por tipo de obra. Cada grupo:
+// ['nome','tipo','obrigatorio'(0/1),'terceiro_nome'(opcional),'itens'=>[descrições]].
+function get_viabilidade_template(string $tipoObra): array
+{
+    $g = fn (string $nome, string $tipo, int $obrigatorio, array $itens, ?string $terceiro = null) =>
+        ['nome' => $nome, 'tipo' => $tipo, 'obrigatorio' => $obrigatorio, 'terceiro_nome' => $terceiro, 'itens' => $itens];
+
+    $templates = [
+        'energia_solar' => [
+            $g('Técnica', 'tecnica', 1, [
+                'Análise estrutural do telhado (capacidade de carga)',
+                'Verificação de sombreamento (árvores, prédios, caixas d\'água)',
+                'Orientação e inclinação do telhado (ideal norte, 15-35°)',
+                'Dimensionamento do sistema (kWp necessário)',
+                'Capacidade da instalação elétrica existente',
+                'Definição do tipo de inversor (string, micro, híbrido)',
+            ]),
+            $g('Concessionária', 'concessionaria', 1, [
+                'Solicitação de acesso à rede enviada',
+                'Aprovação de conexão de micro/minigeração',
+                'Vistoria da concessionária realizada',
+                'Troca do medidor bidirecional',
+            ], 'ENERGISA'),
+            $g('Financeira', 'financeira', 1, [
+                'Orçamento detalhado aprovado pelo cliente',
+                'Payback calculado e apresentado',
+                'Forma de pagamento/financiamento definida',
+                'Margem de lucro dentro do esperado',
+            ]),
+            $g('Legal/Prefeitura', 'legal', 0, [
+                'ART do projeto elétrico emitida',
+                'Autorização do condomínio (se aplicável)',
+                'Alvará de construção (se carport solar ou estrutura nova)',
+            ]),
+            $g('Ambiental', 'ambiental', 0, [
+                'Plano de descarte dos painéis (fim de vida útil)',
+                'Verificação de impacto visual (patrimônio histórico)',
+            ]),
+        ],
+        'obra_civil' => [
+            $g('Técnica', 'tecnica', 1, [
+                'Análise do terreno e tipo de solo',
+                'Sondagem SPT realizada (se necessário)',
+                'Topografia do terreno',
+                'Compatibilidade entre projetos (civil, elétrico, hidráulico)',
+                'Disponibilidade de infraestrutura (água, energia, esgoto)',
+                'Acesso ao canteiro de obras',
+            ]),
+            $g('Legal/Prefeitura', 'legal', 1, [
+                'Verificação de zoneamento e uso do solo',
+                'Recuos e afastamentos obrigatórios',
+                'Taxa de ocupação e coeficiente de aproveitamento',
+                'Projeto aprovado na prefeitura',
+                'Alvará de construção emitido',
+                'ART/RRT do responsável técnico',
+            ]),
+            $g('Financeira', 'financeira', 1, [
+                'Orçamento dentro do budget do cliente',
+                'BDI e margem calculados',
+                'Cronograma financeiro aprovado',
+                'Forma de medição e pagamento definida',
+            ]),
+            $g('Ambiental', 'ambiental', 0, [
+                'Verificação de APP (Área de Preservação Permanente)',
+                'Licença ambiental (se necessário)',
+                'Plano de gerenciamento de resíduos (PGRS)',
+            ]),
+            $g('Operacional', 'operacional', 0, [
+                'Prazo de execução aprovado pelo cliente',
+                'Equipe disponível para o período',
+                'Fornecedores e materiais mapeados',
+            ]),
+        ],
+        'eletrica' => [
+            $g('Técnica', 'tecnica', 1, [
+                'Levantamento de carga elétrica total',
+                'Dimensionamento do quadro de distribuição',
+                'Verificação da qualidade da rede existente',
+                'Aterramento e SPDA verificados',
+                'Conformidade com NBR 5410',
+            ]),
+            $g('Legal', 'legal', 1, [
+                'ART do projeto elétrico',
+                'Conformidade com NR-10',
+                'AVCB verificado (se necessário)',
+            ]),
+            $g('Financeira', 'financeira', 1, [
+                'Orçamento aprovado',
+                'Materiais especificados e cotados',
+            ]),
+            $g('Concessionária', 'concessionaria', 0, [
+                'Solicitação de aumento de carga (se necessário)',
+                'Aprovação de novo ramal de entrada',
+            ], 'ENERGISA'),
+        ],
+        'ar_condicionado' => [
+            $g('Técnica', 'tecnica', 1, [
+                'Carga térmica calculada por ambiente',
+                'Tipo de equipamento definido (split, VRF, chiller, janela)',
+                'Infraestrutura elétrica disponível (circuito dedicado)',
+                'Local definido para condensadora (área, ventilação, ruído)',
+                'Sistema de drenagem do condensado',
+                'Distância máxima entre evaporadora e condensadora',
+            ]),
+            $g('Legal', 'legal', 1, [
+                'ART de instalação',
+                'Autorização do condomínio ou proprietário',
+                'Verificação de normas de barulho (vizinhança)',
+            ]),
+            $g('Financeira', 'financeira', 1, [
+                'Orçamento aprovado incluindo instalação',
+                'Custo operacional de energia apresentado ao cliente',
+            ]),
+            $g('Ambiental', 'ambiental', 0, [
+                'Gás refrigerante aprovado (sem CFC)',
+                'Certificação PROCEL do equipamento',
+            ]),
+        ],
+        'cobertura' => [
+            $g('Técnica', 'tecnica', 1, [
+                'Análise da estrutura de apoio (madeira ou metálica)',
+                'Inclinação mínima por tipo de telha verificada',
+                'Sistema de calha e drenagem pluvial dimensionado',
+                'Carga sobre a laje ou estrutura verificada',
+                'Impermeabilização das emendas e arremates',
+            ]),
+            $g('Legal', 'legal', 1, [
+                'ART estrutural (se estrutura metálica)',
+                'Alvará de reforma (se alteração significativa)',
+            ]),
+            $g('Financeira', 'financeira', 1, [
+                'Orçamento aprovado',
+                'Tipo de telha e material definido com cliente',
+            ]),
+            $g('Operacional', 'operacional', 0, [
+                'NR-35 (trabalho em altura) verificada',
+                'EPI da equipe conferido',
+                'Previsão climática do período de execução',
+            ]),
+        ],
+        'hidraulica' => [
+            $g('Técnica', 'tecnica', 1, [
+                'Pressão da rede pública verificada',
+                'Dimensionamento das tubulações',
+                'Capacidade do reservatório calculada',
+                'Sistema de esgoto e drenagem analisado',
+                'Conformidade com NBR 5626',
+            ]),
+            $g('Legal', 'legal', 1, [
+                'ART hidráulica emitida',
+                'Aprovação da ligação com SANESUL/Águas Guariroba',
+                'Aprovação de fossa e sumidouro (se necessário)',
+            ]),
+            $g('Financeira', 'financeira', 1, [
+                'Orçamento aprovado',
+                'Materiais especificados',
+            ]),
+            $g('Ambiental', 'ambiental', 0, [
+                'Sistema de reuso de água de chuva (se solicitado)',
+                'Tratamento adequado do esgoto',
+            ]),
+        ],
+        'manutencao' => [
+            $g('Técnica', 'tecnica', 1, [
+                'Laudo de vistoria realizado',
+                'Diagnóstico de patologias documentado',
+                'Priorização dos serviços por risco',
+                'NBR 5674 verificada',
+            ]),
+            $g('Operacional', 'operacional', 1, [
+                'Acesso às áreas definido',
+                'Impacto nos usuários mapeado',
+                'Horário de trabalho aprovado',
+                'AVCB em dia verificado',
+            ]),
+            $g('Financeira', 'financeira', 1, [
+                'Orçamento por etapa aprovado',
+                'Prioridade de execução por risco definida',
+            ]),
+            $g('Legal', 'legal', 0, [
+                'ART do laudo técnico',
+                'Seguro de obra verificado',
+            ]),
+        ],
+        'outro' => [],
+    ];
+    return $templates[$tipoObra] ?? [];
+}
+
+// Recalcula progresso de cada grupo, progresso geral e status da análise.
+// - Progresso do grupo = itens aprovados / total de itens * 100.
+// - Progresso geral = média dos progressos dos grupos obrigatórios.
+// - Status: bloqueada (item obrigatório reprovado) > concluida (100%) > em_andamento.
+function viabilidade_recalcular_progresso(PDO $pdo, int $analiseId): array
+{
+    $gStmt = $pdo->prepare('SELECT id, obrigatorio FROM viabilidade_grupos WHERE analise_id = ?');
+    $gStmt->execute([$analiseId]);
+    $grupos = $gStmt->fetchAll();
+    $iStmt = $pdo->prepare('SELECT status, obrigatorio FROM viabilidade_itens WHERE grupo_id = ?');
+    $updG = $pdo->prepare('UPDATE viabilidade_grupos SET progresso = ? WHERE id = ?');
+    $progObrig = [];
+    $progTodos = [];
+    $bloqueada = false;
+    foreach ($grupos as $grupo) {
+        $iStmt->execute([(int) $grupo['id']]);
+        $itens = $iStmt->fetchAll();
+        $total = count($itens);
+        $aprovados = 0;
+        foreach ($itens as $item) {
+            if ($item['status'] === 'aprovado') {
+                $aprovados++;
+            }
+            if ((int) $item['obrigatorio'] === 1 && $item['status'] === 'reprovado') {
+                $bloqueada = true;
+            }
+        }
+        $prog = $total > 0 ? round($aprovados / $total * 100, 2) : 0.0;
+        $updG->execute([$prog, (int) $grupo['id']]);
+        $progTodos[] = $prog;
+        if ((int) $grupo['obrigatorio'] === 1) {
+            $progObrig[] = $prog;
+        }
+    }
+    $base = $progObrig ?: $progTodos;
+    $geral = $base ? round(array_sum($base) / count($base), 2) : 0.0;
+    $status = $bloqueada ? 'bloqueada' : ($geral >= 100 ? 'concluida' : 'em_andamento');
+    $pdo->prepare('UPDATE viabilidade_analises SET progresso_geral = ?, status = ? WHERE id = ?')
+        ->execute([$geral, $status, $analiseId]);
+    return ['progresso_geral' => $geral, 'status' => $status, 'bloqueada' => $bloqueada];
+}
+
+// Análise completa: dados + grupos (ordenados) + itens (com anexos, sem caminho absoluto).
+function viabilidade_get_full(PDO $pdo, int $analiseId): ?array
+{
+    $aStmt = $pdo->prepare('SELECT * FROM viabilidade_analises WHERE id = ?');
+    $aStmt->execute([$analiseId]);
+    $analise = $aStmt->fetch();
+    if (!$analise) {
+        return null;
+    }
+    $gStmt = $pdo->prepare('SELECT * FROM viabilidade_grupos WHERE analise_id = ? ORDER BY ordem, id');
+    $gStmt->execute([$analiseId]);
+    $grupos = $gStmt->fetchAll();
+    $iStmt = $pdo->prepare('SELECT * FROM viabilidade_itens WHERE grupo_id = ? ORDER BY ordem, id');
+    $anStmt = $pdo->prepare('SELECT id, item_id, nome_arquivo, tipo_arquivo, created_at FROM viabilidade_anexos WHERE item_id = ? ORDER BY id');
+    foreach ($grupos as &$grupo) {
+        $iStmt->execute([(int) $grupo['id']]);
+        $itens = $iStmt->fetchAll();
+        foreach ($itens as &$item) {
+            $anStmt->execute([(int) $item['id']]);
+            $item['anexos'] = $anStmt->fetchAll();
+        }
+        unset($item);
+        $grupo['itens'] = $itens;
+    }
+    unset($grupo);
+    $analise['grupos'] = $grupos;
+    return $analise;
+}
+
+function viabilidade_respond(bool $success, mixed $data = [], string $message = '', int $status = 200): never
+{
+    http_response_code($status);
+    echo json_encode([
+        'success' => $success,
+        'data' => $data,
+        'message' => $message,
+    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
+function handle_viabilidade_module(PDO $pdo, string $method, array $query, array $config, array $authUser): never
+{
+    $action = strtolower(trim((string) ($query['action'] ?? '')));
+    if ($action === '') {
+        $action = match (strtoupper($method)) {
+            'GET' => (isset($query['id']) && $query['id'] !== '') ? 'get' : 'list',
+            'DELETE' => 'delete_item',
+            default => 'create',
+        };
+    }
+    $intOrNull = static fn ($value) => ($value === null || $value === '') ? null : (int) $value;
+    $statusItemValidos = ['nao_iniciado', 'em_andamento', 'aguardando_terceiro', 'aprovado', 'reprovado'];
+    try {
+        ensure_viabilidade_tables($pdo);
+
+        if ($action === 'list') {
+            require_method($method, ['GET']);
+            $where = [];
+            $params = [];
+            if (!empty($query['obra_id'])) { $where[] = 'obra_id = ?'; $params[] = (int) $query['obra_id']; }
+            if (!empty($query['proposta_id'])) { $where[] = 'proposta_id = ?'; $params[] = (int) $query['proposta_id']; }
+            if (!empty($query['cliente_id'])) { $where[] = 'cliente_id = ?'; $params[] = (int) $query['cliente_id']; }
+            if (!empty($query['status'])) { $where[] = 'status = ?'; $params[] = (string) $query['status']; }
+            if (!empty($query['tipo_obra'])) { $where[] = 'tipo_obra = ?'; $params[] = (string) $query['tipo_obra']; }
+            $sql = 'SELECT * FROM viabilidade_analises' . ($where ? ' WHERE ' . implode(' AND ', $where) : '') . ' ORDER BY created_at DESC, id DESC';
+            $stmt = $pdo->prepare($sql);
+            $stmt->execute($params);
+            viabilidade_respond(true, $stmt->fetchAll());
+        }
+
+        if ($action === 'get') {
+            require_method($method, ['GET']);
+            $full = viabilidade_get_full($pdo, (int) ($query['id'] ?? 0));
+            if (!$full) {
+                viabilidade_respond(false, [], 'Análise não encontrada.', 404);
+            }
+            viabilidade_respond(true, $full);
+        }
+
+        if ($action === 'check_bloqueio') {
+            require_method($method, ['GET']);
+            $analiseId = (int) ($query['id'] ?? 0);
+            $stmt = $pdo->prepare(
+                'SELECT i.id, i.descricao, i.observacao, i.grupo_id, g.nome AS grupo_nome
+                   FROM viabilidade_itens i
+                   JOIN viabilidade_grupos g ON g.id = i.grupo_id
+                  WHERE i.analise_id = ? AND i.obrigatorio = 1 AND i.status = ?
+                  ORDER BY g.ordem, i.ordem, i.id'
+            );
+            $stmt->execute([$analiseId, 'reprovado']);
+            $itens = $stmt->fetchAll();
+            viabilidade_respond(true, ['bloqueada' => count($itens) > 0, 'total' => count($itens), 'itens' => $itens]);
+        }
+
+        if ($action === 'create') {
+            require_method($method, ['POST']);
+            $payload = read_json();
+            $tipo = (string) ($payload['tipo_obra'] ?? 'outro');
+            if (!in_array($tipo, viabilidade_tipos_validos(), true)) {
+                $tipo = 'outro';
+            }
+            $nome = trim((string) ($payload['nome'] ?? ''));
+            if ($nome === '') {
+                viabilidade_respond(false, [], 'Informe o nome da análise.', 400);
+            }
+            $analiseId = insert_dynamic($pdo, 'viabilidade_analises', [
+                'obra_id' => $intOrNull($payload['obra_id'] ?? null),
+                'proposta_id' => $intOrNull($payload['proposta_id'] ?? null),
+                'cliente_id' => $intOrNull($payload['cliente_id'] ?? null),
+                'tipo_obra' => $tipo,
+                'nome' => $nome,
+                'status' => 'em_andamento',
+                'progresso_geral' => 0,
+                'responsavel_id' => $intOrNull($payload['responsavel_id'] ?? ($authUser['id'] ?? null)),
+                'observacoes' => (string) ($payload['observacoes'] ?? ''),
+            ]);
+            $ordemG = 0;
+            foreach (get_viabilidade_template($tipo) as $grupo) {
+                $ordemG++;
+                $obrig = !empty($grupo['obrigatorio']) ? 1 : 0;
+                $grupoId = insert_dynamic($pdo, 'viabilidade_grupos', [
+                    'analise_id' => $analiseId,
+                    'nome' => $grupo['nome'],
+                    'tipo' => $grupo['tipo'],
+                    'obrigatorio' => $obrig,
+                    'ordem' => $ordemG,
+                    'progresso' => 0,
+                ]);
+                $ordemI = 0;
+                foreach ($grupo['itens'] as $descricao) {
+                    $ordemI++;
+                    insert_dynamic($pdo, 'viabilidade_itens', [
+                        'grupo_id' => $grupoId,
+                        'analise_id' => $analiseId,
+                        'descricao' => $descricao,
+                        'status' => 'nao_iniciado',
+                        'obrigatorio' => $obrig,
+                        'terceiro_nome' => $grupo['terceiro_nome'] ?? null,
+                        'ordem' => $ordemI,
+                    ]);
+                }
+            }
+            viabilidade_recalcular_progresso($pdo, $analiseId);
+            server_audit($pdo, $authUser, 'create', 'viabilidade', $analiseId, $nome);
+            viabilidade_respond(true, viabilidade_get_full($pdo, $analiseId), 'Análise de viabilidade criada.', 201);
+        }
+
+        if ($action === 'update') {
+            require_method($method, ['PUT', 'PATCH', 'POST']);
+            $payload = read_json();
+            $id = (int) ($query['id'] ?? ($payload['id'] ?? 0));
+            if ($id <= 0) {
+                viabilidade_respond(false, [], 'Informe o id da análise.', 400);
+            }
+            $update = [];
+            if (array_key_exists('nome', $payload)) { $update['nome'] = trim((string) $payload['nome']); }
+            if (array_key_exists('observacoes', $payload)) { $update['observacoes'] = (string) $payload['observacoes']; }
+            if (array_key_exists('obra_id', $payload)) { $update['obra_id'] = $intOrNull($payload['obra_id']); }
+            if (array_key_exists('proposta_id', $payload)) { $update['proposta_id'] = $intOrNull($payload['proposta_id']); }
+            if (array_key_exists('cliente_id', $payload)) { $update['cliente_id'] = $intOrNull($payload['cliente_id']); }
+            if (array_key_exists('responsavel_id', $payload)) { $update['responsavel_id'] = $intOrNull($payload['responsavel_id']); }
+            if (array_key_exists('status', $payload) && in_array($payload['status'], ['em_andamento', 'aprovada', 'bloqueada', 'concluida'], true)) {
+                $update['status'] = (string) $payload['status'];
+            }
+            if ($update) {
+                update_dynamic($pdo, 'viabilidade_analises', $id, $update);
+            }
+            server_audit($pdo, $authUser, 'update', 'viabilidade', $id, (string) ($update['nome'] ?? ''));
+            viabilidade_respond(true, viabilidade_get_full($pdo, $id), 'Análise atualizada.');
+        }
+
+        if ($action === 'update_item') {
+            require_method($method, ['POST', 'PUT', 'PATCH']);
+            $payload = read_json();
+            $itemId = (int) ($payload['item_id'] ?? ($query['id'] ?? 0));
+            if ($itemId <= 0) {
+                viabilidade_respond(false, [], 'Informe o id do item.', 400);
+            }
+            $itemStmt = $pdo->prepare('SELECT * FROM viabilidade_itens WHERE id = ?');
+            $itemStmt->execute([$itemId]);
+            $item = $itemStmt->fetch();
+            if (!$item) {
+                viabilidade_respond(false, [], 'Item não encontrado.', 404);
+            }
+            $update = [];
+            if (array_key_exists('status', $payload)) {
+                if (!in_array($payload['status'], $statusItemValidos, true)) {
+                    viabilidade_respond(false, [], 'Status de item inválido.', 400);
+                }
+                $update['status'] = (string) $payload['status'];
+            }
+            foreach (['responsavel', 'observacao', 'terceiro_nome'] as $field) {
+                if (array_key_exists($field, $payload)) {
+                    $update[$field] = ($payload[$field] === '') ? null : (string) $payload[$field];
+                }
+            }
+            foreach (['prazo', 'data_verificacao'] as $field) {
+                if (array_key_exists($field, $payload)) {
+                    $update[$field] = ($payload[$field] === '' || $payload[$field] === null) ? null : substr((string) $payload[$field], 0, 10);
+                }
+            }
+            if ($update) {
+                update_dynamic($pdo, 'viabilidade_itens', $itemId, $update);
+            }
+            $resultado = viabilidade_recalcular_progresso($pdo, (int) $item['analise_id']);
+            server_audit($pdo, $authUser, 'update', 'viabilidade_item', $itemId, (string) ($update['status'] ?? ''));
+            viabilidade_respond(true, viabilidade_get_full($pdo, (int) $item['analise_id']), 'Item atualizado.', 200);
+        }
+
+        if ($action === 'add_item') {
+            require_method($method, ['POST']);
+            $payload = read_json();
+            $grupoId = (int) ($payload['grupo_id'] ?? 0);
+            $grupoStmt = $pdo->prepare('SELECT * FROM viabilidade_grupos WHERE id = ?');
+            $grupoStmt->execute([$grupoId]);
+            $grupo = $grupoStmt->fetch();
+            if (!$grupo) {
+                viabilidade_respond(false, [], 'Grupo não encontrado.', 404);
+            }
+            $descricao = trim((string) ($payload['descricao'] ?? ''));
+            if ($descricao === '') {
+                viabilidade_respond(false, [], 'Informe a descrição do item.', 400);
+            }
+            $ordem = (int) $pdo->query('SELECT COALESCE(MAX(ordem),0)+1 FROM viabilidade_itens WHERE grupo_id = ' . $grupoId)->fetchColumn();
+            insert_dynamic($pdo, 'viabilidade_itens', [
+                'grupo_id' => $grupoId,
+                'analise_id' => (int) $grupo['analise_id'],
+                'descricao' => $descricao,
+                'status' => 'nao_iniciado',
+                'obrigatorio' => array_key_exists('obrigatorio', $payload) ? ((int) $payload['obrigatorio'] ? 1 : 0) : 1,
+                'terceiro_nome' => ($payload['terceiro_nome'] ?? '') === '' ? null : (string) $payload['terceiro_nome'],
+                'ordem' => $ordem,
+            ]);
+            viabilidade_recalcular_progresso($pdo, (int) $grupo['analise_id']);
+            server_audit($pdo, $authUser, 'create', 'viabilidade_item', $grupoId, $descricao);
+            viabilidade_respond(true, viabilidade_get_full($pdo, (int) $grupo['analise_id']), 'Item adicionado.', 201);
+        }
+
+        if ($action === 'add_grupo') {
+            require_method($method, ['POST']);
+            $payload = read_json();
+            $analiseId = (int) ($payload['analise_id'] ?? 0);
+            $aStmt = $pdo->prepare('SELECT id FROM viabilidade_analises WHERE id = ?');
+            $aStmt->execute([$analiseId]);
+            if (!$aStmt->fetch()) {
+                viabilidade_respond(false, [], 'Análise não encontrada.', 404);
+            }
+            $nome = trim((string) ($payload['nome'] ?? ''));
+            if ($nome === '') {
+                viabilidade_respond(false, [], 'Informe o nome do grupo.', 400);
+            }
+            $ordem = (int) $pdo->query('SELECT COALESCE(MAX(ordem),0)+1 FROM viabilidade_grupos WHERE analise_id = ' . $analiseId)->fetchColumn();
+            insert_dynamic($pdo, 'viabilidade_grupos', [
+                'analise_id' => $analiseId,
+                'nome' => $nome,
+                'tipo' => (string) ($payload['tipo'] ?? 'outro'),
+                'obrigatorio' => array_key_exists('obrigatorio', $payload) ? ((int) $payload['obrigatorio'] ? 1 : 0) : 1,
+                'ordem' => $ordem,
+                'progresso' => 0,
+            ]);
+            viabilidade_recalcular_progresso($pdo, $analiseId);
+            server_audit($pdo, $authUser, 'create', 'viabilidade_grupo', $analiseId, $nome);
+            viabilidade_respond(true, viabilidade_get_full($pdo, $analiseId), 'Grupo adicionado.', 201);
+        }
+
+        if ($action === 'delete_item') {
+            require_method($method, ['DELETE', 'POST']);
+            $id = (int) ($query['id'] ?? 0);
+            if ($id <= 0) {
+                $id = (int) (read_json()['id'] ?? 0);
+            }
+            $itemStmt = $pdo->prepare('SELECT analise_id FROM viabilidade_itens WHERE id = ?');
+            $itemStmt->execute([$id]);
+            $item = $itemStmt->fetch();
+            if (!$item) {
+                viabilidade_respond(false, [], 'Item não encontrado.', 404);
+            }
+            // Remove anexos do item (registros + arquivos) antes do item.
+            $anStmt = $pdo->prepare('SELECT caminho FROM viabilidade_anexos WHERE item_id = ?');
+            $anStmt->execute([$id]);
+            foreach ($anStmt->fetchAll() as $anexo) {
+                if (!empty($anexo['caminho']) && is_file($anexo['caminho'])) {
+                    @unlink($anexo['caminho']);
+                }
+            }
+            $pdo->prepare('DELETE FROM viabilidade_anexos WHERE item_id = ?')->execute([$id]);
+            $pdo->prepare('DELETE FROM viabilidade_itens WHERE id = ?')->execute([$id]);
+            viabilidade_recalcular_progresso($pdo, (int) $item['analise_id']);
+            server_audit($pdo, $authUser, 'delete', 'viabilidade_item', $id, '');
+            viabilidade_respond(true, viabilidade_get_full($pdo, (int) $item['analise_id']), 'Item removido.');
+        }
+
+        if ($action === 'upload_anexo') {
+            require_method($method, ['POST']);
+            $itemId = (int) ($_POST['item_id'] ?? 0);
+            $itemStmt = $pdo->prepare('SELECT analise_id FROM viabilidade_itens WHERE id = ?');
+            $itemStmt->execute([$itemId]);
+            $item = $itemStmt->fetch();
+            if (!$item) {
+                viabilidade_respond(false, [], 'Item não encontrado.', 404);
+            }
+            $file = $_FILES['arquivo'] ?? $_FILES['file'] ?? null;
+            if (!$file || empty($file['tmp_name'])) {
+                viabilidade_respond(false, [], 'Arquivo não informado.', 400);
+            }
+            $uploadDir = rtrim($config['upload_dir'] ?? '/var/lib/financeiro/uploads', '/') . '/viabilidade';
+            if (!is_dir($uploadDir)) {
+                mkdir($uploadDir, 0755, true);
+            }
+            $path = store_upload(
+                $file,
+                $uploadDir,
+                ['pdf', 'png', 'jpg', 'jpeg', 'webp'],
+                ['application/pdf', 'image/png', 'image/jpeg', 'image/webp']
+            );
+            $original = (string) ($file['name'] ?? 'arquivo');
+            insert_dynamic($pdo, 'viabilidade_anexos', [
+                'item_id' => $itemId,
+                'nome_arquivo' => substr($original, 0, 200),
+                'caminho' => $path,
+                'tipo_arquivo' => strtolower(pathinfo($original, PATHINFO_EXTENSION)),
+            ]);
+            server_audit($pdo, $authUser, 'upload', 'viabilidade_item', $itemId, $original);
+            viabilidade_respond(true, viabilidade_get_full($pdo, (int) $item['analise_id']), 'Anexo enviado.', 201);
+        }
+
+        if ($action === 'download_anexo') {
+            require_method($method, ['GET']);
+            $anexoId = (int) ($query['id'] ?? 0);
+            $stmt = $pdo->prepare('SELECT nome_arquivo, caminho, tipo_arquivo FROM viabilidade_anexos WHERE id = ?');
+            $stmt->execute([$anexoId]);
+            $anexo = $stmt->fetch();
+            if (!$anexo || empty($anexo['caminho']) || !is_file($anexo['caminho'])) {
+                fail('Anexo não encontrado.', 404);
+            }
+            $mime = mime_content_type($anexo['caminho']) ?: 'application/octet-stream';
+            header_remove('Content-Type');
+            header('Content-Type: ' . $mime);
+            header('Content-Disposition: inline; filename="' . basename($anexo['nome_arquivo']) . '"');
+            header('Content-Length: ' . filesize($anexo['caminho']));
+            readfile($anexo['caminho']);
+            exit;
+        }
+
+        viabilidade_respond(false, [], 'Ação de viabilidade inválida.', 400);
+    } catch (Throwable $e) {
+        error_log('[ObraSync viabilidade] ' . $e->getMessage() . ' em ' . $e->getFile() . ':' . $e->getLine());
+        viabilidade_respond(false, [], 'Erro interno ao processar a viabilidade.', 500);
+    }
 }
 
 // ─── Vínculo caixa ↔ conta a pagar (anti dupla contagem) ────────────────────

@@ -19,9 +19,10 @@ if (APP_ENV === "production" && location.protocol === "http:") {
   location.replace(location.href.replace(/^http:/, "https:"));
 }
 const APP_NAME = "ObraSync";
-const APP_VERSION = "v1.13.0";
+const APP_VERSION = "v1.14.0";
 const APP_VERSION_DATE = "2026-06-27";
 const APP_CHANGELOG = [
+  "Módulo de Análise de Viabilidade por tipo de obra: checklist com grupos/itens padrão (energia solar, obra civil, elétrica, ar-condicionado, cobertura, hidráulica, manutenção), progresso automático, itens aguardando terceiro, anexos, relatório PDF e bloqueio da proposta quando há item obrigatório reprovado (v1.14.0).",
   "Controle interno de versão e instruções de atualização segura.",
   "Perfis e permissões preparados por módulo e ação.",
   "Obras/projetos fortalecidos como eixo de vínculos comerciais, financeiros e técnicos.",
@@ -110,6 +111,7 @@ const modules = [
   ["proposalServiceSubtypes", "Subtipos/Serviços"],
   ["sales", "Vendas/Contratos"],
   ["viabilityAnalyses", "Análise de Viabilidade"],
+  ["viabilidadeObra", "Viabilidade"],
   ["purchaseOrders", "Pedidos de compra"],
   ["projectSchedule", "Cronograma Físico-Financeiro"],
   ["projectMilestones", "Marcos da obra"],
@@ -163,9 +165,9 @@ const modules = [
 const sidebarSections = [
   { id: "dashboard", label: "Dashboard", icon: "D", module: "dashboard" },
   { id: "cadastros", label: "Cadastros", icon: "C", modules: ["clients", "suppliers", "products", "services", "categories", "costCenters", "bankAccounts"] },
-  { id: "comercial", label: "Comercial", icon: "V", modules: ["budgets", "proposals", "proposalModels", "proposalAreas", "proposalActionTypes", "proposalServiceSubtypes", "sales"] },
+  { id: "comercial", label: "Comercial", icon: "V", modules: ["viabilidadeObra", "budgets", "proposals", "proposalModels", "proposalAreas", "proposalActionTypes", "proposalServiceSubtypes", "sales"] },
   { id: "viabilidade", label: "Viabilidade", icon: "%", modules: ["viabilityAnalyses"] },
-  { id: "obras", label: "Obras/Projetos", icon: "O", modules: ["projects", "projectCosts", "projectRevenues", "fiscalDocuments", "rdo", "projectNotifications", "projectTrackingLinks", "projectReport"] },
+  { id: "obras", label: "Obras/Projetos", icon: "O", modules: ["projects", "viabilidadeObra", "projectCosts", "projectRevenues", "fiscalDocuments", "rdo", "projectNotifications", "projectTrackingLinks", "projectReport"] },
   { id: "qualidadePbqph", label: "Qualidade PBQP-H", icon: "✅", modules: ["qualidadeDashboard", "qualidadePolitica", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos", "qualidadeAuditorias"] },
   { id: "orcamentoObra", label: "Orçamento de Obra", icon: "Σ", modules: ["workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "purchaseOrders"] },
   { id: "planejamento", label: "Planejamento", icon: "P", modules: ["projectSchedule", "projectMilestones", "agenda", "kanban", "technicalReports"] },
@@ -196,14 +198,14 @@ const roleModules = {
   admin: modules.map(([key]) => key),
   financeiro: [
     "dashboard", "clients", "suppliers", "categories", "costCenters", "bankAccounts", "projects", "projectSchedule", "agenda", "kanban",
-    "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "sinapiSettings", "ownCompositions", "quotes", "abcCurve", "viabilityAnalyses",
+    "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "sinapiSettings", "ownCompositions", "quotes", "abcCurve", "viabilityAnalyses", "viabilidadeObra",
     "fiscalDocuments", "receivable", "payable", "cashMoves", "cashFlow", "reconciliation",
     "proposals", "sales", "chartAccounts", "journalEntries", "dre", "taxDocuments", "taxes",
     "reports", "reportFinancial", "reportClient", "reportSupplier", "reportCostCenter", "reportProject", "exports", "systemVersion", "qualidadeDashboard",
   ],
-  comercial: ["dashboard", "clients", "projects", "projectSchedule", "agenda", "kanban", "workBudgets", "abcCurve", "viabilityAnalyses", "budgets", "proposals", "proposalModels", "sales", "reportClient", "systemVersion"],
-  engenharia: ["dashboard", "rdo", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "viabilityAnalyses", "purchaseOrders", "fiscalDocuments", "technicalReports", "projectReport", "proposals", "reportProject", "systemVersion", "qualidadeDashboard", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
-  gestor_obra: ["dashboard", "rdo", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "viabilityAnalyses", "purchaseOrders", "fiscalDocuments", "technicalReports", "projectReport", "proposals", "reportProject", "systemVersion", "qualidadeDashboard", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
+  comercial: ["dashboard", "clients", "projects", "projectSchedule", "agenda", "kanban", "workBudgets", "abcCurve", "viabilityAnalyses", "viabilidadeObra", "budgets", "proposals", "proposalModels", "sales", "reportClient", "systemVersion"],
+  engenharia: ["dashboard", "rdo", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "viabilityAnalyses", "viabilidadeObra", "purchaseOrders", "fiscalDocuments", "technicalReports", "projectReport", "proposals", "reportProject", "systemVersion", "qualidadeDashboard", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
+  gestor_obra: ["dashboard", "rdo", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "viabilityAnalyses", "viabilidadeObra", "purchaseOrders", "fiscalDocuments", "technicalReports", "projectReport", "proposals", "reportProject", "systemVersion", "qualidadeDashboard", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
   equipe_campo: ["dashboard", "projectReport", "systemVersion"],
   cliente_obra: ["dashboard", "projectReport", "projectSchedule", "technicalReports", "systemVersion"],
   fornecedor_terceiro: ["dashboard", "systemVersion"],
@@ -217,9 +219,9 @@ const roleModules = {
 // única, reusada por canEditModule e pelo cálculo do padrão na grade de
 // permissões por usuário.
 const EDITABLE_BY_ROLE = {
-  financeiro: ["fiscalDocuments", "receivable", "payable", "cashMoves", "cashFlow", "reconciliation", "categories", "costCenters", "bankAccounts", "chartAccounts", "journalEntries", "taxDocuments", "taxes", "exports", "projectSchedule", "agenda", "kanban", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "sinapiSettings", "quotes", "sales", "viabilityAnalyses"],
-  comercial: ["clients", "budgets", "proposals", "agenda", "kanban", "viabilityAnalyses"],
-  engenharia: ["rdo", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "purchaseOrders", "fiscalDocuments", "technicalReports", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
+  financeiro: ["fiscalDocuments", "receivable", "payable", "cashMoves", "cashFlow", "reconciliation", "categories", "costCenters", "bankAccounts", "chartAccounts", "journalEntries", "taxDocuments", "taxes", "exports", "projectSchedule", "agenda", "kanban", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "sinapiSettings", "quotes", "sales", "viabilityAnalyses", "viabilidadeObra"],
+  comercial: ["clients", "budgets", "proposals", "agenda", "kanban", "viabilityAnalyses", "viabilidadeObra"],
+  engenharia: ["rdo", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "purchaseOrders", "fiscalDocuments", "technicalReports", "viabilidadeObra", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
   gestor_obra: ["rdo", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "purchaseOrders", "fiscalDocuments", "technicalReports", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
   gerente: modules.map(([k]) => k).filter((k) => !["users", "permissions"].includes(k)),
   operador: ["rdo", "clients", "suppliers", "products", "services", "categories", "costCenters", "bankAccounts", "projects", "projectCosts", "projectRevenues", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "ownCompositions", "quotes", "fiscalDocuments", "receivable", "payable", "cashMoves", "reconciliation", "budgets", "proposals", "sales", "purchaseOrders", "projectSchedule", "projectMilestones", "agenda", "kanban", "qualidadeFvs", "qualidadeFvm", "qualidadeNc"],
@@ -2643,6 +2645,7 @@ function render() {
   if (currentModule === "projectRevenues") return renderProjectRevenues();
   if (currentModule === "workBudgets") return renderWorkBudgets();
   if (currentModule === "viabilityAnalyses") return renderViability();
+  if (currentModule === "viabilidadeObra") { viabilidadeObraOpenId = null; return renderViabilidadeList(); }
   if (currentModule === "plugins") return renderPlugins();
   if (currentModule === "preferences") return renderPreferences();
   if (currentModule === "sinapiReferences") return renderSinapiReferences();
@@ -10624,10 +10627,623 @@ function canGenerateProposalForBudget(budget) {
   return ["rascunho", "em analise", "aprovado"].includes(normalizedText(budget?.status || ""));
 }
 
-function openProposalGenerator(workBudgetId) {
+// ─── Módulo de Análise de Viabilidade por tipo de obra (frontend) ───────────
+// Backend: ?module=viabilidade&action=...  (tabelas viabilidade_analises/_grupos/_itens/_anexos)
+let viabilidadeObraOpenId = null;      // análise aberta no detalhe (null = listagem)
+let viabilidadeObraDetail = null;      // análise completa carregada
+let viabilidadeObraList = [];          // cache da listagem
+const viabilidadeObraFilters = { tipo: "", status: "", periodo: "" };
+
+const VIABILIDADE_TIPOS = [
+  ["energia_solar", "Energia Solar", "☀️"],
+  ["obra_civil", "Obra Civil", "🏗️"],
+  ["eletrica", "Instalação Elétrica", "⚡"],
+  ["ar_condicionado", "Ar Condicionado", "❄️"],
+  ["cobertura", "Cobertura e Telhado", "🏠"],
+  ["hidraulica", "Hidráulica", "🚿"],
+  ["manutencao", "Manutenção Predial", "🔧"],
+  ["outro", "Outro", "📋"],
+];
+const VIABILIDADE_STATUS = {
+  em_andamento: ["Em andamento", "viab-st-andamento"],
+  aprovada: ["Aprovada", "viab-st-aprovada"],
+  bloqueada: ["Bloqueada", "viab-st-bloqueada"],
+  concluida: ["Concluída", "viab-st-concluida"],
+};
+// Ícones por status de item: check verde, relógio azul, ampulheta, X vermelho, quadrado cinza.
+const VIABILIDADE_ITEM_STATUS = {
+  nao_iniciado: ["Não iniciado", "◻️", "viab-it-naoiniciado"],
+  em_andamento: ["Em andamento", "🕐", "viab-it-andamento"],
+  aguardando_terceiro: ["Aguardando terceiro", "⏳", "viab-it-aguardando"],
+  aprovado: ["Aprovado", "✅", "viab-it-aprovado"],
+  reprovado: ["Reprovado", "❌", "viab-it-reprovado"],
+};
+
+function viabilidadeTipoMeta(tipo) {
+  return VIABILIDADE_TIPOS.find(([v]) => v === tipo) || ["outro", "Outro", "📋"];
+}
+function viabilidadeStatusMeta(status) {
+  return VIABILIDADE_STATUS[status] || VIABILIDADE_STATUS.em_andamento;
+}
+function viabilidadeItemStatusMeta(status) {
+  return VIABILIDADE_ITEM_STATUS[status] || VIABILIDADE_ITEM_STATUS.nao_iniciado;
+}
+function viabilidadeStatusBadge(status) {
+  const [label, cls] = viabilidadeStatusMeta(status);
+  return `<span class="viab-badge ${cls}">${label}</span>`;
+}
+function viabilidadeProgressBar(pct, extraClass = "") {
+  const value = Math.max(0, Math.min(100, Number(pct || 0)));
+  const tone = value >= 100 ? "viab-bar-green" : value >= 50 ? "viab-bar-blue" : value >= 1 ? "viab-bar-yellow" : "viab-bar-gray";
+  return `<div class="viab-progress ${extraClass}"><span class="${tone}" style="width:${value}%"></span></div>`;
+}
+async function viabilidadeApi(action, options = {}, extra = "") {
+  return apiModuleRequest(`?module=viabilidade&action=${action}${extra}`, options);
+}
+
+// Download de anexo via fetch autenticado (o token vai no header, não na URL).
+async function downloadViabilidadeAnexo(id) {
+  try {
+    const resp = await fetch(`${API_BASE}/?module=viabilidade&action=download_anexo&id=${encodeURIComponent(id)}`, { headers: authHeaders() });
+    if (!resp.ok) throw new Error("Não foi possível baixar o anexo.");
+    const url = URL.createObjectURL(await resp.blob());
+    window.open(url, "_blank");
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+function renderViabilidadeObra() {
+  if (viabilidadeObraOpenId) return renderViabilidadeDetail();
+  return renderViabilidadeList();
+}
+
+async function renderViabilidadeList() {
+  const content = qs("content");
+  const editable = canEditModule("viabilidadeObra");
+  const head = `
+    <section class="module-head">
+      <div>
+        <h2>Análise de Viabilidade</h2>
+        <p>Checklist de viabilidade por tipo de obra: técnica, financeira, legal, concessionária e mais — bloqueia a proposta quando há item obrigatório reprovado.</p>
+      </div>
+      ${editable ? '<button class="primary" type="button" id="viabNova">+ Nova análise</button>' : ""}
+    </section>`;
+  if (!serverMode) {
+    content.innerHTML = head + '<div class="empty">O módulo de viabilidade requer conexão com o servidor.</div>';
+    qs("viabNova")?.addEventListener("click", () => openViabilidadeCreate());
+    return;
+  }
+  content.innerHTML = head + '<div class="empty">Carregando análises…</div>';
+  qs("viabNova")?.addEventListener("click", () => openViabilidadeCreate());
+  let list;
+  try {
+    list = await viabilidadeApi("list") || [];
+  } catch (error) {
+    if (currentModule === "viabilidadeObra" && !viabilidadeObraOpenId) {
+      content.innerHTML = head + `<div class="empty">Não foi possível carregar as análises: ${svgText(error.message)}</div>`;
+      qs("viabNova")?.addEventListener("click", () => openViabilidadeCreate());
+    }
+    return;
+  }
+  if (currentModule !== "viabilidadeObra" || viabilidadeObraOpenId) return;
+  viabilidadeObraList = Array.isArray(list) ? list : [];
+  const now = Date.now();
+  const periodCut = { "30": 30, "90": 90, "365": 365 }[viabilidadeObraFilters.periodo];
+  const rows = viabilidadeObraList.filter((a) => {
+    if (viabilidadeObraFilters.tipo && a.tipo_obra !== viabilidadeObraFilters.tipo) return false;
+    if (viabilidadeObraFilters.status && a.status !== viabilidadeObraFilters.status) return false;
+    if (periodCut) {
+      const created = Date.parse((a.created_at || "").replace(" ", "T"));
+      if (!Number.isNaN(created) && (now - created) > periodCut * 86400000) return false;
+    }
+    return true;
+  });
+  const tipoOptions = ['<option value="">Todos os tipos</option>']
+    .concat(VIABILIDADE_TIPOS.map(([v, l, ic]) => `<option value="${v}" ${v === viabilidadeObraFilters.tipo ? "selected" : ""}>${ic} ${l}</option>`)).join("");
+  const statusOptions = ['<option value="">Todos os status</option>']
+    .concat(Object.entries(VIABILIDADE_STATUS).map(([v, [l]]) => `<option value="${v}" ${v === viabilidadeObraFilters.status ? "selected" : ""}>${l}</option>`)).join("");
+  const periodoOptions = [["", "Todo o período"], ["30", "Últimos 30 dias"], ["90", "Últimos 90 dias"], ["365", "Este ano"]]
+    .map(([v, l]) => `<option value="${v}" ${v === viabilidadeObraFilters.periodo ? "selected" : ""}>${l}</option>`).join("");
+  const cards = rows.map((a) => {
+    const [tipoKey, tipoLabel, tipoIcon] = viabilidadeTipoMeta(a.tipo_obra);
+    const obra = a.obra_id ? nameOf("projects", a.obra_id) : "";
+    return `
+      <article class="viab-card" data-open="${escapeHtml(a.id)}">
+        <header class="viab-card-head">
+          <span class="viab-tipo">${tipoIcon} ${svgText(tipoLabel)}</span>
+          ${viabilidadeStatusBadge(a.status)}
+        </header>
+        <h3>${svgText(a.nome || "Sem nome")}</h3>
+        ${obra ? `<p class="muted">Obra: ${svgText(obra)}</p>` : ""}
+        ${viabilidadeProgressBar(a.progresso_geral)}
+        <div class="viab-card-foot">
+          <span class="muted">${Number(a.progresso_geral || 0).toFixed(0)}% concluído</span>
+          <span class="muted">${asDate(a.created_at)}</span>
+        </div>
+        <button class="secondary" type="button" data-open="${escapeHtml(a.id)}">Abrir</button>
+      </article>`;
+  }).join("");
+  content.innerHTML = `
+    ${head}
+    <section class="viab-filters">
+      <label>Tipo de obra<select id="viabFiltroTipo">${tipoOptions}</select></label>
+      <label>Status<select id="viabFiltroStatus">${statusOptions}</select></label>
+      <label>Período<select id="viabFiltroPeriodo">${periodoOptions}</select></label>
+    </section>
+    ${rows.length ? `<section class="viab-grid">${cards}</section>` : '<div class="empty">Nenhuma análise de viabilidade para os filtros atuais.</div>'}
+  `;
+  qs("viabNova")?.addEventListener("click", () => openViabilidadeCreate());
+  qs("viabFiltroTipo")?.addEventListener("change", (e) => { viabilidadeObraFilters.tipo = e.target.value; renderViabilidadeList(); });
+  qs("viabFiltroStatus")?.addEventListener("change", (e) => { viabilidadeObraFilters.status = e.target.value; renderViabilidadeList(); });
+  qs("viabFiltroPeriodo")?.addEventListener("change", (e) => { viabilidadeObraFilters.periodo = e.target.value; renderViabilidadeList(); });
+  content.querySelectorAll("[data-open]").forEach((el) => el.addEventListener("click", () => openViabilidadeAnalise(el.dataset.open)));
+}
+
+async function openViabilidadeAnalise(id) {
+  viabilidadeObraOpenId = id;
+  viabilidadeObraDetail = null;
+  qs("content").innerHTML = '<div class="empty">Carregando análise…</div>';
+  try {
+    viabilidadeObraDetail = await viabilidadeApi("get", {}, `&id=${encodeURIComponent(id)}`);
+  } catch (error) {
+    qs("content").innerHTML = `<div class="empty">Não foi possível abrir a análise: ${svgText(error.message)}</div>`;
+    return;
+  }
+  if (currentModule === "viabilidadeObra") renderViabilidadeDetail();
+}
+
+function viabilidadeFlatItems(detail) {
+  return (detail?.grupos || []).flatMap((g) => (g.itens || []).map((i) => ({ ...i, _grupo: g })));
+}
+
+function renderViabilidadeDetail() {
+  const a = viabilidadeObraDetail;
+  if (!a) return renderViabilidadeList();
+  const editable = canEditModule("viabilidadeObra");
+  const [, tipoLabel, tipoIcon] = viabilidadeTipoMeta(a.tipo_obra);
+  const itens = viabilidadeFlatItems(a);
+  const obrig = itens.filter((i) => Number(i.obrigatorio) === 1);
+  const obrigConcluidos = obrig.filter((i) => i.status === "aprovado");
+  const reprovados = obrig.filter((i) => i.status === "reprovado");
+  const aguardando = itens.filter((i) => i.status === "aguardando_terceiro");
+  const prazos = aguardando.map((i) => i.prazo).filter(Boolean).sort();
+  const conclusao = reprovados.length ? "Bloqueada" : (Number(a.progresso_geral) >= 100 ? "Viável" : "Em análise");
+
+  const blockBanner = reprovados.length ? `
+    <div class="viab-block-banner">
+      <strong>⚠️ ${reprovados.length} ${reprovados.length === 1 ? "item bloqueante reprovado" : "itens bloqueantes reprovados"} — a proposta não pode ser gerada até resolução.</strong>
+      <ul>${reprovados.map((i) => `<li><button type="button" class="linklike" data-item="${escapeHtml(i.id)}">${svgText(i._grupo.nome)} · ${svgText(i.descricao)}</button></li>`).join("")}</ul>
+    </div>` : "";
+
+  const resumo = `
+    <section class="viab-resumo">
+      <div><span>Itens obrigatórios</span><strong>${obrigConcluidos.length} / ${obrig.length} concluídos</strong></div>
+      <div><span>Bloqueantes pendentes</span><strong class="${reprovados.length ? "viab-danger" : ""}">${reprovados.length}</strong></div>
+      <div><span>Aguardando terceiro</span><strong>${aguardando.length}${prazos.length ? ` · prazo ${asDate(prazos[0])}` : ""}</strong></div>
+    </section>`;
+
+  const grupos = (a.grupos || []).map((g) => {
+    const itensHtml = (g.itens || []).map((i) => {
+      const [stLabel, stIcon, stCls] = viabilidadeItemStatusMeta(i.status);
+      const detalhe = [
+        i.status === "aguardando_terceiro" && i.prazo ? `prazo ${asDate(i.prazo)}` : "",
+        i.terceiro_nome ? svgText(i.terceiro_nome) : "",
+        (i.anexos || []).length ? `📎 ${i.anexos.length}` : "",
+      ].filter(Boolean).join(" · ");
+      return `
+        <li class="viab-item">
+          <span class="viab-item-icon" title="${stLabel}">${stIcon}</span>
+          <span class="viab-item-desc">
+            ${svgText(i.descricao)}
+            ${Number(i.obrigatorio) === 1 ? '<span class="viab-mini-tag">obrigatório</span>' : ""}
+            ${detalhe ? `<small class="muted">${detalhe}</small>` : ""}
+          </span>
+          <span class="viab-badge ${stCls}">${stLabel}</span>
+          ${editable ? `<button class="secondary" type="button" data-item="${escapeHtml(i.id)}">Atualizar</button>` : ""}
+        </li>`;
+    }).join("");
+    return `
+      <section class="viab-grupo">
+        <header class="viab-grupo-head">
+          <div>
+            <h3>${svgText(g.nome)}</h3>
+            <span class="viab-mini-tag ${Number(g.obrigatorio) === 1 ? "viab-tag-obrig" : "viab-tag-opc"}">${Number(g.obrigatorio) === 1 ? "Obrigatório" : "Opcional"}</span>
+          </div>
+          <div class="viab-grupo-prog">${viabilidadeProgressBar(g.progresso)}<span class="muted">${Number(g.progresso || 0).toFixed(0)}%</span></div>
+        </header>
+        <ul class="viab-itens">${itensHtml || '<li class="muted">Nenhum item neste grupo.</li>'}</ul>
+        ${editable ? `<button class="secondary viab-add-item" type="button" data-add-item="${escapeHtml(g.id)}">+ Adicionar item ao grupo</button>` : ""}
+      </section>`;
+  }).join("");
+
+  qs("content").innerHTML = `
+    <section class="module-head viab-detail-head">
+      <div>
+        <button class="secondary" type="button" id="viabVoltar">← Voltar</button>
+        <h2>${svgText(a.nome)}</h2>
+        <p><span class="viab-tipo">${tipoIcon} ${svgText(tipoLabel)}</span> ${viabilidadeStatusBadge(a.status)} ${a.obra_id ? "· Obra: " + svgText(nameOf("projects", a.obra_id) || "—") : ""}</p>
+      </div>
+      <div class="viab-detail-actions">
+        ${editable ? '<button class="secondary" type="button" id="viabEditar">Editar</button>' : ""}
+        <button class="secondary" type="button" id="viabImprimir">Imprimir relatório</button>
+        ${editable ? '<button class="secondary" type="button" id="viabVincular">Vincular à proposta</button>' : ""}
+      </div>
+    </section>
+    <section class="viab-progress-geral">
+      <div class="viab-progress-geral-head"><strong>Progresso geral</strong><span>${Number(a.progresso_geral || 0).toFixed(0)}%</span></div>
+      ${viabilidadeProgressBar(a.progresso_geral, "viab-progress-lg")}
+    </section>
+    ${blockBanner}
+    ${resumo}
+    <div class="viab-grupos">${grupos}</div>
+    ${editable ? '<div class="viab-foot"><button class="primary" type="button" id="viabAddGrupo">+ Adicionar novo grupo</button></div>' : ""}
+  `;
+  qs("viabVoltar").addEventListener("click", () => { viabilidadeObraOpenId = null; viabilidadeObraDetail = null; renderViabilidadeList(); });
+  qs("viabImprimir").addEventListener("click", () => printViabilidadeReport());
+  qs("viabEditar")?.addEventListener("click", () => openViabilidadeEdit());
+  qs("viabVincular")?.addEventListener("click", () => viabilidadeVincularProposta());
+  qs("viabAddGrupo")?.addEventListener("click", () => openViabilidadeAddGrupo());
+  qs("content").querySelectorAll("[data-item]").forEach((el) => el.addEventListener("click", () => openViabilidadeItemModal(el.dataset.item)));
+  qs("content").querySelectorAll("[data-add-item]").forEach((el) => el.addEventListener("click", () => openViabilidadeAddItem(el.dataset.addItem)));
+}
+
+// Modal genérico do módulo: cria <dialog>, devolve helpers de fechar.
+function viabilidadeDialog(innerHtml, className = "") {
+  const dialog = document.createElement("dialog");
+  dialog.className = `viab-dialog ${className}`.trim();
+  dialog.innerHTML = innerHtml;
+  document.body.appendChild(dialog);
+  const close = () => { try { dialog.close(); } catch { /* já fechado */ } dialog.remove(); };
+  dialog.addEventListener("cancel", (e) => { e.preventDefault(); close(); });
+  dialog.querySelectorAll("[data-close]").forEach((b) => b.addEventListener("click", close));
+  dialog.showModal();
+  return { dialog, close, q: (sel) => dialog.querySelector(sel) };
+}
+
+function openViabilidadeCreate(prefill = {}) {
+  if (!canEditModule("viabilidadeObra")) return;
+  if (!serverMode) return alert("O módulo de viabilidade requer conexão com o servidor.");
+  let tipoSel = prefill.tipo_obra || "energia_solar";
+  const projOptions = ['<option value="">— Sem obra —</option>']
+    .concat((db.projects || []).map((p) => `<option value="${escapeHtml(p.id)}" ${sameId(p.id, prefill.obra_id) ? "selected" : ""}>${escapeHtml(p.name)}</option>`)).join("");
+  const cliOptions = ['<option value="">— Sem cliente —</option>']
+    .concat((db.clients || []).map((c) => `<option value="${escapeHtml(c.id)}" ${sameId(c.id, prefill.cliente_id) ? "selected" : ""}>${escapeHtml(c.name)}</option>`)).join("");
+  const propOptions = ['<option value="">— Sem proposta —</option>']
+    .concat((db.proposals || []).map((p) => `<option value="${escapeHtml(p.id)}" ${sameId(p.id, prefill.proposta_id) ? "selected" : ""}>${escapeHtml(p.number || p.id)}</option>`)).join("");
+  const tabs = VIABILIDADE_TIPOS.map(([v, l, ic]) => `<button type="button" class="viab-tipo-tab ${v === tipoSel ? "active" : ""}" data-tipo="${v}">${ic} ${l}</button>`).join("");
+  const { close, q, dialog } = viabilidadeDialog(`
+    <div class="viab-modal">
+      <header class="viab-modal-head"><h3>Nova análise de viabilidade</h3><button type="button" class="viab-x" data-close aria-label="Fechar">✕</button></header>
+      <div class="viab-modal-body">
+        <p class="muted">Selecione o tipo de obra — o checklist padrão (grupos e itens) é carregado automaticamente.</p>
+        <div class="viab-tipo-tabs">${tabs}</div>
+        <div class="form-grid">
+          <label>Nome da análise<input name="nome" value="${escapeHtml(prefill.nome || "")}" placeholder="Ex.: Viabilidade UFV Cliente X"></label>
+          <label>Obra/Projeto<select name="obra_id">${projOptions}</select></label>
+          <label>Cliente<select name="cliente_id">${cliOptions}</select></label>
+          <label>Proposta (opcional)<select name="proposta_id">${propOptions}</select></label>
+        </div>
+      </div>
+      <footer class="viab-modal-foot"><button type="button" class="secondary" data-close>Cancelar</button><button type="button" class="primary" data-save>Criar análise</button></footer>
+    </div>`, "viab-dialog-md");
+  dialog.querySelectorAll("[data-tipo]").forEach((btn) => btn.addEventListener("click", () => {
+    tipoSel = btn.dataset.tipo;
+    dialog.querySelectorAll("[data-tipo]").forEach((b) => b.classList.toggle("active", b === btn));
+  }));
+  q("[data-save]").addEventListener("click", async () => {
+    const nome = q('[name="nome"]').value.trim();
+    if (!nome) return alert("Informe o nome da análise.");
+    try {
+      const data = await viabilidadeApi("create", {
+        method: "POST",
+        body: JSON.stringify({
+          tipo_obra: tipoSel,
+          nome,
+          obra_id: q('[name="obra_id"]').value || null,
+          cliente_id: q('[name="cliente_id"]').value || null,
+          proposta_id: q('[name="proposta_id"]').value || null,
+        }),
+      });
+      close();
+      showToast("Análise de viabilidade criada.");
+      viabilidadeObraDetail = data;
+      viabilidadeObraOpenId = data?.id ?? null;
+      renderViabilidadeObra();
+    } catch (error) {
+      alert(`Erro ao criar análise: ${error.message}`);
+    }
+  });
+}
+
+function openViabilidadeItemModal(itemId) {
+  const item = viabilidadeFlatItems(viabilidadeObraDetail).find((i) => sameId(i.id, itemId));
+  if (!item) return;
+  const editable = canEditModule("viabilidadeObra");
+  const statusOptions = Object.entries(VIABILIDADE_ITEM_STATUS)
+    .map(([v, [l]]) => `<option value="${v}" ${v === item.status ? "selected" : ""}>${l}</option>`).join("");
+  const anexosHtml = (item.anexos || []).length
+    ? `<ul class="viab-anexos">${item.anexos.map((an) => `<li><button type="button" class="linklike" data-anexo="${escapeHtml(an.id)}">📎 ${svgText(an.nome_arquivo)}</button></li>`).join("")}</ul>`
+    : '<p class="muted">Nenhum anexo.</p>';
+  const { close, q, dialog } = viabilidadeDialog(`
+    <div class="viab-modal">
+      <header class="viab-modal-head"><h3>Atualizar item</h3><button type="button" class="viab-x" data-close aria-label="Fechar">✕</button></header>
+      <div class="viab-modal-body">
+        <p class="viab-item-title">${svgText(item.descricao)}</p>
+        <div class="form-grid">
+          <label>Status<select name="status" ${editable ? "" : "disabled"}>${statusOptions}</select></label>
+          <label>Responsável pela verificação<input name="responsavel" value="${escapeHtml(item.responsavel || "")}" ${editable ? "" : "disabled"}></label>
+          <label>Data de verificação<input type="date" name="data_verificacao" value="${escapeHtml((item.data_verificacao || "").slice(0, 10))}" ${editable ? "" : "disabled"}></label>
+          <label>Prazo (aguardando terceiro)<input type="date" name="prazo" value="${escapeHtml((item.prazo || "").slice(0, 10))}" ${editable ? "" : "disabled"}></label>
+          <label>Nome do terceiro<input name="terceiro_nome" value="${escapeHtml(item.terceiro_nome || "")}" placeholder="Ex.: ENERGISA, Prefeitura" ${editable ? "" : "disabled"}></label>
+        </div>
+        <label class="viab-block-label">Observações<textarea name="observacao" rows="4" ${editable ? "" : "disabled"}>${escapeHtml(item.observacao || "")}</textarea></label>
+        <div class="viab-anexo-box">
+          <strong>Anexos</strong>
+          ${anexosHtml}
+          ${editable ? '<label class="viab-file-label">Anexar documento (PDF, foto)<input type="file" name="arquivo" accept=".pdf,.png,.jpg,.jpeg,.webp"></label>' : ""}
+        </div>
+      </div>
+      <footer class="viab-modal-foot">${editable ? '<button type="button" class="danger viab-foot-left" data-delete>Excluir item</button>' : ""}<button type="button" class="secondary" data-close>Fechar</button>${editable ? '<button type="button" class="primary" data-save>Salvar</button>' : ""}</footer>
+    </div>`, "viab-dialog-md");
+  dialog.querySelectorAll("[data-anexo]").forEach((b) => b.addEventListener("click", () => downloadViabilidadeAnexo(b.dataset.anexo)));
+  q("[data-delete]")?.addEventListener("click", async () => {
+    if (!confirm("Excluir este item do checklist?")) return;
+    try {
+      const data = await viabilidadeApi("delete_item", { method: "DELETE" }, `&id=${encodeURIComponent(item.id)}`);
+      viabilidadeObraDetail = data;
+      close();
+      showToast("Item removido.");
+      renderViabilidadeDetail();
+    } catch (error) {
+      alert(`Erro ao remover item: ${error.message}`);
+    }
+  });
+  q("[data-save]")?.addEventListener("click", async () => {
+    const saveBtn = q("[data-save]");
+    saveBtn.disabled = true;
+    try {
+      const data = await viabilidadeApi("update_item", {
+        method: "POST",
+        body: JSON.stringify({
+          item_id: item.id,
+          status: q('[name="status"]').value,
+          responsavel: q('[name="responsavel"]').value,
+          data_verificacao: q('[name="data_verificacao"]').value,
+          prazo: q('[name="prazo"]').value,
+          terceiro_nome: q('[name="terceiro_nome"]').value,
+          observacao: q('[name="observacao"]').value,
+        }),
+      });
+      viabilidadeObraDetail = data;
+      const file = q('[name="arquivo"]')?.files?.[0];
+      if (file) {
+        const form = new FormData();
+        form.append("item_id", item.id);
+        form.append("arquivo", file);
+        const res = await fetchForm("?module=viabilidade&action=upload_anexo", form);
+        const upData = res?.data ?? res;
+        if (upData?.grupos) viabilidadeObraDetail = upData;
+      }
+      close();
+      showToast("Item atualizado.");
+      renderViabilidadeDetail();
+    } catch (error) {
+      saveBtn.disabled = false;
+      alert(`Erro ao salvar item: ${error.message}`);
+    }
+  });
+}
+
+function openViabilidadeAddItem(grupoId) {
+  if (!canEditModule("viabilidadeObra")) return;
+  const { close, q } = viabilidadeDialog(`
+    <div class="viab-modal">
+      <header class="viab-modal-head"><h3>Adicionar item ao grupo</h3><button type="button" class="viab-x" data-close aria-label="Fechar">✕</button></header>
+      <div class="viab-modal-body">
+        <label class="viab-block-label">Descrição do item<input name="descricao" placeholder="Ex.: Verificação adicional"></label>
+        <div class="form-grid">
+          <label>Obrigatório?<select name="obrigatorio"><option value="1">Sim (bloqueia proposta)</option><option value="0">Não (opcional)</option></select></label>
+          <label>Nome do terceiro (opcional)<input name="terceiro_nome" placeholder="Ex.: Prefeitura"></label>
+        </div>
+      </div>
+      <footer class="viab-modal-foot"><button type="button" class="secondary" data-close>Cancelar</button><button type="button" class="primary" data-save>Adicionar</button></footer>
+    </div>`, "viab-dialog-md");
+  q("[data-save]").addEventListener("click", async () => {
+    const descricao = q('[name="descricao"]').value.trim();
+    if (!descricao) return alert("Informe a descrição do item.");
+    try {
+      const data = await viabilidadeApi("add_item", {
+        method: "POST",
+        body: JSON.stringify({ grupo_id: grupoId, descricao, obrigatorio: q('[name="obrigatorio"]').value, terceiro_nome: q('[name="terceiro_nome"]').value }),
+      });
+      viabilidadeObraDetail = data;
+      close();
+      showToast("Item adicionado.");
+      renderViabilidadeDetail();
+    } catch (error) {
+      alert(`Erro ao adicionar item: ${error.message}`);
+    }
+  });
+}
+
+function openViabilidadeAddGrupo() {
+  if (!canEditModule("viabilidadeObra") || !viabilidadeObraDetail) return;
+  const tipoOpts = [["tecnica", "Técnica"], ["financeira", "Financeira"], ["legal", "Legal"], ["ambiental", "Ambiental"], ["concessionaria", "Concessionária"], ["operacional", "Operacional"], ["mercado", "Mercado"], ["outro", "Outro"]]
+    .map(([v, l]) => `<option value="${v}">${l}</option>`).join("");
+  const { close, q } = viabilidadeDialog(`
+    <div class="viab-modal">
+      <header class="viab-modal-head"><h3>Adicionar novo grupo</h3><button type="button" class="viab-x" data-close aria-label="Fechar">✕</button></header>
+      <div class="viab-modal-body">
+        <div class="form-grid">
+          <label>Nome do grupo<input name="nome" placeholder="Ex.: Segurança"></label>
+          <label>Tipo<select name="tipo">${tipoOpts}</select></label>
+          <label>Obrigatório?<select name="obrigatorio"><option value="1">Sim</option><option value="0">Não</option></select></label>
+        </div>
+      </div>
+      <footer class="viab-modal-foot"><button type="button" class="secondary" data-close>Cancelar</button><button type="button" class="primary" data-save>Adicionar</button></footer>
+    </div>`, "viab-dialog-md");
+  q("[data-save]").addEventListener("click", async () => {
+    const nome = q('[name="nome"]').value.trim();
+    if (!nome) return alert("Informe o nome do grupo.");
+    try {
+      const data = await viabilidadeApi("add_grupo", {
+        method: "POST",
+        body: JSON.stringify({ analise_id: viabilidadeObraDetail.id, nome, tipo: q('[name="tipo"]').value, obrigatorio: q('[name="obrigatorio"]').value }),
+      });
+      viabilidadeObraDetail = data;
+      close();
+      showToast("Grupo adicionado.");
+      renderViabilidadeDetail();
+    } catch (error) {
+      alert(`Erro ao adicionar grupo: ${error.message}`);
+    }
+  });
+}
+
+function openViabilidadeEdit() {
+  if (!canEditModule("viabilidadeObra") || !viabilidadeObraDetail) return;
+  const a = viabilidadeObraDetail;
+  const statusOpts = Object.entries(VIABILIDADE_STATUS).map(([v, [l]]) => `<option value="${v}" ${v === a.status ? "selected" : ""}>${l}</option>`).join("");
+  const { close, q } = viabilidadeDialog(`
+    <div class="viab-modal">
+      <header class="viab-modal-head"><h3>Editar análise</h3><button type="button" class="viab-x" data-close aria-label="Fechar">✕</button></header>
+      <div class="viab-modal-body">
+        <div class="form-grid">
+          <label>Nome<input name="nome" value="${escapeHtml(a.nome || "")}"></label>
+          <label>Status<select name="status">${statusOpts}</select></label>
+        </div>
+        <label class="viab-block-label">Observações<textarea name="observacoes" rows="4">${escapeHtml(a.observacoes || "")}</textarea></label>
+      </div>
+      <footer class="viab-modal-foot"><button type="button" class="secondary" data-close>Cancelar</button><button type="button" class="primary" data-save>Salvar</button></footer>
+    </div>`, "viab-dialog-md");
+  q("[data-save]").addEventListener("click", async () => {
+    try {
+      const data = await viabilidadeApi("update", {
+        method: "PUT",
+        body: JSON.stringify({ id: a.id, nome: q('[name="nome"]').value.trim(), status: q('[name="status"]').value, observacoes: q('[name="observacoes"]').value }),
+      });
+      viabilidadeObraDetail = data;
+      close();
+      showToast("Análise atualizada.");
+      renderViabilidadeDetail();
+    } catch (error) {
+      alert(`Erro ao salvar: ${error.message}`);
+    }
+  });
+}
+
+async function viabilidadeVincularProposta() {
+  if (!viabilidadeObraDetail) return;
+  const reprovados = viabilidadeFlatItems(viabilidadeObraDetail).filter((i) => Number(i.obrigatorio) === 1 && i.status === "reprovado");
+  if (reprovados.length) return alert("Não é possível aprovar: há itens obrigatórios reprovados. Resolva os bloqueios primeiro.");
+  if (!confirm("Marcar esta análise como APROVADA para liberar a geração da proposta?")) return;
+  try {
+    const data = await viabilidadeApi("update", { method: "PUT", body: JSON.stringify({ id: viabilidadeObraDetail.id, status: "aprovada" }) });
+    viabilidadeObraDetail = data;
+    showToast("Viabilidade aprovada.");
+    renderViabilidadeDetail();
+  } catch (error) {
+    alert(`Erro ao aprovar: ${error.message}`);
+  }
+}
+
+function printViabilidadeReport() {
+  const a = viabilidadeObraDetail;
+  if (!a) return;
+  const [, tipoLabel] = viabilidadeTipoMeta(a.tipo_obra);
+  const cliente = a.cliente_id ? nameOf("clients", a.cliente_id) : "";
+  const obra = a.obra_id ? nameOf("projects", a.obra_id) : "";
+  const itens = viabilidadeFlatItems(a);
+  const obrig = itens.filter((i) => Number(i.obrigatorio) === 1);
+  const reprovados = obrig.filter((i) => i.status === "reprovado");
+  const aguardando = itens.filter((i) => i.status === "aguardando_terceiro");
+  const conclusao = reprovados.length ? "BLOQUEADA" : (Number(a.progresso_geral) >= 100 ? "VIÁVEL" : "EM ANÁLISE");
+  const subtitulo = [tipoLabel, cliente, asDate(a.created_at)].filter(Boolean).join(" · ");
+  const gruposHtml = (a.grupos || []).map((g) => `
+    <section class="doc-block">
+      <h3>${svgText(g.nome)} — ${Number(g.obrigatorio) === 1 ? "Obrigatório" : "Opcional"} · ${Number(g.progresso || 0).toFixed(0)}%</h3>
+      <table class="doc-table">
+        <thead><tr><th>Item</th><th>Status</th><th>Observações</th></tr></thead>
+        <tbody>
+          ${(g.itens || []).map((i) => {
+            const [stLabel] = viabilidadeItemStatusMeta(i.status);
+            const obs = [i.observacao, i.terceiro_nome ? `Terceiro: ${i.terceiro_nome}` : "", i.prazo ? `Prazo: ${asDate(i.prazo)}` : ""].filter(Boolean).join(" — ");
+            return `<tr><td>${svgText(i.descricao)}${Number(i.obrigatorio) === 1 ? " *" : ""}</td><td>${stLabel}</td><td>${svgText(obs)}</td></tr>`;
+          }).join("")}
+        </tbody>
+      </table>
+    </section>`).join("");
+  const aguardandoHtml = aguardando.length ? `
+    <section class="doc-block">
+      <h3>Itens aguardando terceiro</h3>
+      <ul>${aguardando.map((i) => `<li>${svgText(i.descricao)} — ${svgText(i.terceiro_nome || "terceiro")}${i.prazo ? ` · prazo ${asDate(i.prazo)}` : ""}</li>`).join("")}</ul>
+    </section>` : "";
+  const html = `
+    <article class="doc-sheet">
+      ${generateDocumentHeader("RELATÓRIO DE ANÁLISE DE VIABILIDADE", subtitulo)}
+      <section class="doc-block">
+        <h2>${svgText(a.nome)}</h2>
+        <div class="doc-kv">
+          ${obra ? `<p><span class="doc-kv-label">Obra/Projeto:</span> ${svgText(obra)}</p>` : ""}
+          ${cliente ? `<p><span class="doc-kv-label">Cliente:</span> ${svgText(cliente)}</p>` : ""}
+          <p><span class="doc-kv-label">Tipo de obra:</span> ${svgText(tipoLabel)}</p>
+        </div>
+      </section>
+      <section class="doc-block">
+        <h3>Resumo executivo</h3>
+        <p>Progresso geral: <strong>${Number(a.progresso_geral || 0).toFixed(0)}%</strong> · Itens obrigatórios concluídos: <strong>${obrig.filter((i) => i.status === "aprovado").length}/${obrig.length}</strong> · Itens bloqueantes: <strong>${reprovados.length}</strong></p>
+        <p>Conclusão: <strong>${conclusao}</strong></p>
+      </section>
+      ${gruposHtml}
+      ${aguardandoHtml}
+      <section class="doc-block doc-signature">
+        <p>____________________________________________</p>
+        <p>Responsável técnico</p>
+      </section>
+      ${generateDocumentFooter()}
+    </article>`;
+  openPrintDialog(html);
+}
+
+// Gate de viabilidade antes de gerar uma proposta a partir do orçamento.
+// Bloqueia se a análise da obra estiver bloqueada; oferece criar uma se não houver.
+async function proposalViabilityGate(budget) {
+  if (!serverMode || !budget.projectId) return true;
+  let analyses = [];
+  try {
+    analyses = await viabilidadeApi("list", {}, `&obra_id=${encodeURIComponent(budget.projectId)}`) || [];
+  } catch {
+    return true; // falha de rede na checagem não deve impedir a geração
+  }
+  const bloqueadas = analyses.filter((a) => a.status === "bloqueada");
+  if (bloqueadas.length) {
+    alert(`⚠️ A análise de viabilidade desta obra está BLOQUEADA (itens obrigatórios reprovados).\n\nAnálise: ${bloqueadas[0].nome}\n\nResolva os bloqueios antes de gerar a proposta.`);
+    return false;
+  }
+  if (!analyses.length) {
+    const criar = confirm("Não há análise de viabilidade para esta obra.\n\nDeseja criar uma análise de viabilidade antes de gerar a proposta?\n\nOK = criar agora · Cancelar = pular e gerar a proposta");
+    if (criar) {
+      currentModule = "viabilidadeObra";
+      viabilidadeObraOpenId = null;
+      render();
+      setTimeout(() => openViabilidadeCreate({ obra_id: budget.projectId, cliente_id: budget.clientId || "" }), 60);
+      return false;
+    }
+    return true;
+  }
+  if (analyses.some((a) => a.status === "aprovada" || a.status === "concluida")) {
+    showToast("✅ Viabilidade aprovada vinculada a esta obra.", 3500);
+  }
+  return true;
+}
+
+async function openProposalGenerator(workBudgetId) {
   const budget = enrichWorkBudget(byId("workBudgets", workBudgetId) || {});
   if (!budget.id) return alert("Selecione um orçamento de obra.");
   if (!canGenerateProposalForBudget(budget)) return alert("A proposta pode ser gerada para orçamentos em rascunho, em análise ou aprovados.");
+  if (!(await proposalViabilityGate(budget))) return;
   const project = byId("projects", budget.projectId) || {};
   const client = byId("clients", budget.clientId || project.clientId) || {};
   const models = (db.proposalModels || []).filter((model) => model.status !== "Inativo");
