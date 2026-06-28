@@ -204,9 +204,12 @@ try {
 
     // Integração com IA local (Ollama). Por ora só a fundação + ping de teste:
     //   GET ?module=ia&action=ping → valida geração e embeddings server-side.
+    // Autenticação IDÊNTICA aos demais módulos: a sessão já foi validada acima por
+    // authenticate_request (token no header). NÃO exigimos uma permissão de módulo
+    // 'ia' — ela não existe em nenhum papel e devolvia 403 ao usuário logado; basta
+    // a sessão válida, como em check-session/bootstrap.
     if ($module === 'ia') {
-        authorize_request($pdo, $authUser, 'ia', action_for_method($method));
-        handle_ia_module($pdo, $method, $_GET);
+        handle_ia_module($pdo, $method, $_GET, $authUser);
     }
 
     if ($resource === '' || $resource === 'bootstrap') {
@@ -8875,14 +8878,21 @@ function ollama_embed(string $text): array
     ];
 }
 
-function handle_ia_module(PDO $pdo, string $method, array $query): never
+function handle_ia_module(PDO $pdo, string $method, array $query, ?array $authUser): never
 {
+    // Exige apenas a sessão logada (autenticada acima, igual aos demais endpoints).
+    // Respostas no padrão {success, data, message} do resto da API, inclusive os erros.
+    if (!$authUser) {
+        sinapi_module_respond(false, [], 'Não autenticado. Faça login para acessar a API.', 401);
+    }
     $action = strtolower((string) ($query['action'] ?? ''));
     if ($action === 'ping') {
-        require_method($method, ['GET']);
+        if (strtoupper($method) !== 'GET') {
+            sinapi_module_respond(false, [], 'Método não permitido para o ping de IA.', 405);
+        }
         handle_ia_ping();
     }
-    fail('Ação de IA não reconhecida.', 404);
+    sinapi_module_respond(false, [], 'Ação de IA não reconhecida.', 404);
 }
 
 // Valida a integração ponta a ponta sem construir nada por cima: faz uma geração e
@@ -8894,22 +8904,17 @@ function handle_ia_ping(): never
     $embed = ollama_embed('teste');
 
     if (!$gen['success'] && !$embed['success']) {
-        respond([
-            'success' => false,
-            'message' => 'Ollama indisponível em ' . OLLAMA_URL . '. Verifique se o serviço está ativo. '
-                . 'Detalhe: ' . ($gen['error'] ?? $embed['error'] ?? 'erro desconhecido'),
-        ]);
+        sinapi_module_respond(false, [], 'Ollama indisponível em ' . OLLAMA_URL
+            . '. Verifique se o serviço está ativo. Detalhe: '
+            . ($gen['error'] ?? $embed['error'] ?? 'erro desconhecido'), 503);
     }
 
-    respond([
-        'success' => true,
-        'data' => [
-            'gen_ok' => $gen['success'],
-            'gen_response' => trim($gen['response']),
-            'embed_ok' => $embed['success'],
-            'embed_dim' => count($embed['embedding']),
-        ],
-    ]);
+    sinapi_module_respond(true, [
+        'gen_ok' => $gen['success'],
+        'gen_response' => trim($gen['response']),
+        'embed_ok' => $embed['success'],
+        'embed_dim' => count($embed['embedding']),
+    ], 'Integração Ollama respondeu.');
 }
 
 function handle_sinapi_module(PDO $pdo, string $method, array $query, array $config, array $authUser): never
