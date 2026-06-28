@@ -1,8 +1,8 @@
 # CLAUDE.md — Guia para agentes de IA no projeto ObraSync
 
-> **Versão atual:** `v1.21.0` · 2026-06-28
+> **Versão atual:** `v1.22.0` · 2026-06-28
 > **Última varredura de código:** 2026-06-27 (3ª rodada — segurança, bugs, performance, qualidade, UX; itens MÉDIO/BAIXO fechados na v1.12.1)
-> **Handoff:** este doc foi atualizado na v1.21.0 (de-para em lote IA) — confira a seção **Sessão 2026-06-28 — v1.21.0** e **Operação/Deploy (handoff)** abaixo.
+> **Handoff:** este doc foi atualizado na v1.22.0 (comparador de orçamento IA — Fase A) — confira a seção **Sessão 2026-06-28 — v1.22.0** e **Operação/Deploy (handoff)** abaixo.
 
 Este arquivo orienta qualquer agente (ou pessoa) que continue o desenvolvimento.
 Leia também o `README.md` (seção "Para quem está retomando o projeto") e o
@@ -60,6 +60,18 @@ Leia também o `README.md` (seção "Para quem está retomando o projeto") e o
 > Pontos fortes confirmados (não re-sinalizar): prepared statements em todo SQL (sem SQLi), autorização por rota/perfil após `authenticate_request`, sessão com token CSPRNG + SHA-256 + idle/TTL, `password_hash`, rate limit de login/reset, CSRF mitigado por auth via header, uploads fora do docroot, deploy com HMAC + `escapeshellarg`.
 
 ---
+
+## Sessão 2026-06-28 — v1.22.0 (Comparador de orçamento IA — Fase A)
+
+**Feature:** nova tela em **IA → Comparador de orçamento** (módulo `iaCompara`). Upload de planilha → IA casa cada item com a SINAPI (código ou busca semântica) e **compara o preço planilha × SINAPI** → relatório → export. **Fase A: só análise** (não vira orçamento editável — Fase B). Estrutura espelha o de-para (`iaDepara`); reusa `ia_depara_detect_columns`/`cotacao_num` na leitura e o cosseno do `buscarSemantica`.
+
+**Tabelas novas:** migration `2026-06-28-ia-comparador.sql` + `ensure_ia_compara_tables()`. `ia_compara_jobs` e `ia_compara_itens` — esta com os dados crus (`descricaoOrigem`, `codigoOrigem`, `unidadeOrigem`, `quantidadeOrigem`, `valorUnitOrigem`), o match (`statusClassificacao` enum **achou/faltou_importar/cotacao_propria**, `matchOrigem/Id/Code/Description/Unit/Valor`, `similaridade`) e a comparação (`precoMaisBaixo` enum planilha/sinapi/igual/sem_comparacao, `diferencaValor` = planilha−sinapi, `diferencaPercent`). FK `ON DELETE CASCADE`.
+
+**Endpoints (`?module=ia`):** `comparaUpload` (POST multipart), `comparaStart` (POST), `comparaStatus` (GET + counts), `comparaItens` (GET + counts + **resumo**), `comparaAceitar` (POST), `comparaExport` (GET .xlsx). `ia_compara_resumo()` agrega via SQL: nº planilha mais barata / SINAPI mais barata / iguais + economia/excesso total (Σ diferença×quantidade quando há qtd). Constantes `IA_COMPARA_ACHOU_MIN=0.80`, `IA_COMPARA_REVISAR_MIN=0.60`, `IA_COMPARA_PRECO_TOLERANCIA=0.005`, `IA_COMPARA_COMMIT_EVERY=25`.
+
+**Worker:** `scripts/ia_compara_worker.php` (espelha `ia_depara_worker.php`; `spawn_ia_compara_worker`). Classificação: com código → existe na base = ACHOU; não existe = **FALTOU_IMPORTAR**. Sem código → top1 ≥60% ACHOU (60–80% marca "similaridade baixa/revisar" no front via aviso ⚠), <60% COTAÇÃO PRÓPRIA. **Comparação só quando ACHOU + há `valorUnitOrigem` + `matchValor>0`:** `diferencaValor=valorUnitOrigem−matchValor`, `%`, e `precoMaisBaixo` (tolerância 0,5% = igual). Nunca inventa preço → faltando um valor = `sem_comparacao`.
+
+**Frontend:** `renderIaCompara()` + `iaCompara*` (`app.js`). Resumo no topo (economia/excesso), baldes por situação (reusa classes `.ia-dp-b-*`), tabela **Valor planilha × Valor SINAPI** com destaque `.ia-cmp-low` no mais barato e badge `.ia-cmp-badge` (planilha −R$/% verde, SINAPI mais barata vermelho), aviso ⚠ p/ similaridade <80%, Aceitar por item e Exportar relatório. CSS `.ia-cmp-*` em `styles.css`. **Não** transforma em orçamento e **não** faz agrupamentos multidimensionais (próximas fases).
 
 ## Sessão 2026-06-28 — v1.21.0 (De-para em lote da IA)
 

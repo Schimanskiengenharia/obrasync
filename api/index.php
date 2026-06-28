@@ -57,6 +57,13 @@ const IA_DEPARA_ACHOU_MIN = 0.80;
 const IA_DEPARA_REVISAR_MIN = 0.60;
 const IA_DEPARA_COMMIT_EVERY = 25; // commit/progresso a cada N itens classificados
 
+// Comparador de orçamento (Fase A): limiares da classificação semântica e da
+// comparação de preço planilha × SINAPI. Ajustáveis aqui sem mexer no worker.
+const IA_COMPARA_ACHOU_MIN = 0.80;       // top1 >= → ACHOU
+const IA_COMPARA_REVISAR_MIN = 0.60;     // 60–80% → ACHOU (similaridade baixa: revisar); < → COTAÇÃO PRÓPRIA
+const IA_COMPARA_PRECO_TOLERANCIA = 0.005; // |dif|/sinapi <= 0,5% → preços "iguais"
+const IA_COMPARA_COMMIT_EVERY = 25;
+
 $config = load_config();
 $pdo = db($config);
 $resources = resource_map();
@@ -8954,6 +8961,43 @@ function handle_ia_module(PDO $pdo, string $method, array $query, array $config,
         }
         handle_ia_depara_export($pdo);
     }
+    // ── Comparador de orçamento (Fase A): upload → análise → relatório → export ──
+    if ($action === 'comparaupload') {
+        if (strtoupper($method) !== 'POST') {
+            sinapi_module_respond(false, [], 'Método não permitido. Use POST.', 405);
+        }
+        handle_ia_compara_upload($pdo, $config, $authUser);
+    }
+    if ($action === 'comparastart') {
+        if (strtoupper($method) !== 'POST') {
+            sinapi_module_respond(false, [], 'Método não permitido. Use POST.', 405);
+        }
+        handle_ia_compara_start($pdo, $config, ia_read_json_body(), $authUser);
+    }
+    if ($action === 'comparastatus') {
+        if (strtoupper($method) !== 'GET') {
+            sinapi_module_respond(false, [], 'Método não permitido. Use GET.', 405);
+        }
+        handle_ia_compara_status($pdo);
+    }
+    if ($action === 'comparaitens') {
+        if (strtoupper($method) !== 'GET') {
+            sinapi_module_respond(false, [], 'Método não permitido. Use GET.', 405);
+        }
+        handle_ia_compara_items($pdo);
+    }
+    if ($action === 'comparaaceitar') {
+        if (strtoupper($method) !== 'POST') {
+            sinapi_module_respond(false, [], 'Método não permitido. Use POST.', 405);
+        }
+        handle_ia_compara_accept($pdo, ia_read_json_body(), $authUser);
+    }
+    if ($action === 'comparaexport') {
+        if (strtoupper($method) !== 'GET') {
+            sinapi_module_respond(false, [], 'Método não permitido. Use GET.', 405);
+        }
+        handle_ia_compara_export($pdo);
+    }
     sinapi_module_respond(false, [], 'Ação de IA não reconhecida.', 404);
 }
 
@@ -9078,6 +9122,73 @@ function expire_stale_ia_depara_jobs(PDO $pdo): void
 {
     $pdo->exec(
         "UPDATE ia_depara_jobs
+            SET status = 'error',
+                errorMessage = 'Lote abandonado: o worker não iniciou ou parou de responder.',
+                finishedAt = NOW()
+          WHERE (status = 'queued' AND COALESCE(startedAt, createdAt) < DATE_SUB(NOW(), INTERVAL 10 MINUTE))
+             OR (status = 'running' AND COALESCE(startedAt, createdAt) < DATE_SUB(NOW(), INTERVAL 2 HOUR))"
+    );
+}
+
+// Auto-cura das tabelas do comparador de orçamento (igual a ia_embeddings +
+// migração migrations/2026-06-28-ia-comparador.sql).
+function ensure_ia_compara_tables(PDO $pdo): void
+{
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    $pdo->exec(
+        'CREATE TABLE IF NOT EXISTS ia_compara_jobs (
+            id VARCHAR(64) PRIMARY KEY,
+            nomeArquivo VARCHAR(255) NULL,
+            total INT UNSIGNED NOT NULL DEFAULT 0,
+            processados INT UNSIGNED NOT NULL DEFAULT 0,
+            status ENUM(\'queued\',\'running\',\'done\',\'error\') NOT NULL DEFAULT \'queued\',
+            colunasJson TEXT NULL,
+            errorMessage TEXT NULL,
+            createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            startedAt TIMESTAMP NULL DEFAULT NULL,
+            finishedAt TIMESTAMP NULL DEFAULT NULL,
+            userId BIGINT UNSIGNED NULL,
+            KEY idx_status (status)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+    );
+    $pdo->exec(
+        'CREATE TABLE IF NOT EXISTS ia_compara_itens (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            jobId VARCHAR(64) NOT NULL,
+            linhaPlanilha INT UNSIGNED NULL,
+            descricaoOrigem TEXT NOT NULL,
+            codigoOrigem VARCHAR(80) NULL,
+            unidadeOrigem VARCHAR(40) NULL,
+            quantidadeOrigem DECIMAL(18,4) NULL,
+            valorUnitOrigem DECIMAL(15,4) NULL,
+            statusClassificacao ENUM(\'achou\',\'faltou_importar\',\'cotacao_propria\') NULL,
+            matchOrigem ENUM(\'composicao\',\'insumo\') NULL,
+            matchId BIGINT UNSIGNED NULL,
+            matchCode VARCHAR(80) NULL,
+            matchDescription TEXT NULL,
+            matchUnit VARCHAR(40) NULL,
+            matchValor DECIMAL(15,4) NULL,
+            similaridade DECIMAL(5,2) NULL,
+            precoMaisBaixo ENUM(\'planilha\',\'sinapi\',\'igual\',\'sem_comparacao\') NULL,
+            diferencaValor DECIMAL(15,4) NULL,
+            diferencaPercent DECIMAL(7,2) NULL,
+            aceito TINYINT NOT NULL DEFAULT 0,
+            createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            KEY idx_job (jobId),
+            KEY idx_job_status (jobId, statusClassificacao)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+    );
+    $done = true;
+}
+
+// Marca como erro lotes do comparador presos (worker que não subiu ou morreu sem fechar).
+function expire_stale_ia_compara_jobs(PDO $pdo): void
+{
+    $pdo->exec(
+        "UPDATE ia_compara_jobs
             SET status = 'error',
                 errorMessage = 'Lote abandonado: o worker não iniciou ou parou de responder.',
                 finishedAt = NOW()
@@ -9699,6 +9810,415 @@ function spawn_ia_depara_worker(PDO $pdo, array $config, string $jobId): void
     $worker = dirname(__DIR__) . '/scripts/ia_depara_worker.php';
     if (!is_file($worker)) {
         sinapi_module_respond(false, [], 'Worker não encontrado em scripts/ia_depara_worker.php — confira o deploy.', 500);
+    }
+    $logDir = dirname(rtrim($config['upload_dir'] ?? '/var/lib/financeiro/uploads', '/')) . '/ia_jobs';
+    if (!is_dir($logDir) && !@mkdir($logDir, 0750, true)) {
+        sinapi_module_respond(false, [], "Não foi possível criar a pasta de logs em {$logDir}. Verifique as permissões do usuário do Apache.", 500);
+    }
+    if (!is_writable($logDir)) {
+        sinapi_module_respond(false, [], "Sem permissão de escrita em {$logDir} — o log do worker não poderia ser gravado.", 500);
+    }
+    $php = null;
+    $candidates = [
+        PHP_BINDIR . '/php',
+        '/usr/bin/php',
+        '/usr/local/bin/php',
+        '/usr/bin/php8.4',
+        '/usr/bin/php8.3',
+        '/usr/bin/php8.2',
+        '/usr/bin/php8.1',
+        '/usr/bin/php8',
+        trim((string) shell_exec('command -v php 2>/dev/null')),
+    ];
+    foreach ($candidates as $candidate) {
+        if ($candidate !== null && $candidate !== '' && @is_executable($candidate)) {
+            $php = $candidate;
+            break;
+        }
+    }
+    if (!$php) {
+        sinapi_module_respond(false, [], 'Binário PHP CLI não encontrado no servidor. Instale o pacote php-cli.', 500);
+    }
+    $nice = trim((string) shell_exec('command -v nice 2>/dev/null'));
+    $prefix = $nice !== '' ? escapeshellarg($nice) . ' -n 19 ' : '';
+    $logFile = $logDir . '/' . preg_replace('/[^A-Za-z0-9_.-]/', '', $jobId) . '.log';
+    exec(sprintf(
+        'nohup %s%s %s --job %s >> %s 2>&1 &',
+        $prefix,
+        escapeshellarg($php),
+        escapeshellarg($worker),
+        escapeshellarg($jobId),
+        escapeshellarg($logFile)
+    ));
+}
+
+// ── Comparador de orçamento (Fase A): upload da planilha ────────────────────
+// Igual ao de-para no upload/detecção de colunas, mas guarda também a quantidade
+// e o valor unitário para a comparação de preço planilha × SINAPI feita no worker.
+function handle_ia_compara_upload(PDO $pdo, array $config, array $authUser): never
+{
+    ensure_ia_compara_tables($pdo);
+    @ini_set('memory_limit', '1024M');
+    @set_time_limit(300);
+
+    $files = sinapi_uploaded_files('file');
+    if (!$files) {
+        $files = sinapi_uploaded_files('files');
+    }
+    if (!$files) {
+        sinapi_module_respond(false, [], 'Envie uma planilha (.xlsx, .xls ou .csv).', 400);
+    }
+    $file = $files[0];
+    $uploadDir = rtrim($config['upload_dir'] ?? '/var/lib/financeiro/uploads', '/') . '/ia_compara';
+    if (!is_dir($uploadDir) && !@mkdir($uploadDir, 0750, true)) {
+        sinapi_module_respond(false, [], 'Não foi possível criar a pasta de uploads do comparador. Verifique as permissões do usuário do Apache.', 500);
+    }
+    $path = store_upload($file, $uploadDir, ['xlsx', 'xls', 'csv'], [
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'application/vnd.ms-excel', 'application/zip', 'application/octet-stream',
+        'text/plain', 'text/csv', 'application/csv',
+    ]);
+
+    try {
+        if (strtolower(pathinfo($path, PATHINFO_EXTENSION)) === 'csv') {
+            $rows = cotacao_parse_csv($path);
+        } else {
+            sinapi_require_phpspreadsheet();
+            $sheets = read_xlsx_sheets($path);
+            $rows = $sheets ? (array) reset($sheets) : [];
+        }
+    } catch (Throwable $error) {
+        @unlink($path);
+        sinapi_module_respond(false, [], 'Não foi possível ler a planilha: ' . $error->getMessage(), 400);
+    }
+    if (!$rows) {
+        @unlink($path);
+        sinapi_module_respond(false, [], 'A planilha está vazia ou não pôde ser lida.', 400);
+    }
+
+    // Detecta cabeçalho/colunas (reusa o mapeador do de-para).
+    $detected = ia_depara_detect_columns($rows);
+    if (!$detected['ok']) {
+        @unlink($path);
+        sinapi_module_respond(false, ['amostra' => array_slice($rows, 0, 3)],
+            'Não foi possível identificar a coluna de descrição. A planilha precisa de uma coluna "Descrição" (ou Item/Serviço/Produto). Ajuste o cabeçalho e tente novamente.', 422);
+    }
+    $cols = $detected['cols'];
+    $headerIdx = $detected['headerIdx'];
+
+    $itens = [];
+    $n = count($rows);
+    for ($i = $headerIdx + 1; $i < $n; $i++) {
+        $r = (array) $rows[$i];
+        $desc = trim((string) ($r[$cols['descricao']] ?? ''));
+        if ($desc === '') {
+            continue;
+        }
+        $itens[] = [
+            'linha' => $i + 1,
+            'descricaoOrigem' => mb_substr($desc, 0, 1000),
+            'codigoOrigem' => isset($cols['codigo']) ? (mb_substr(trim((string) ($r[$cols['codigo']] ?? '')), 0, 80) ?: null) : null,
+            'unidadeOrigem' => isset($cols['unidade']) ? (mb_substr(trim((string) ($r[$cols['unidade']] ?? '')), 0, 40) ?: null) : null,
+            'quantidadeOrigem' => isset($cols['quantidade']) ? cotacao_num($r[$cols['quantidade']] ?? '') : null,
+            'valorUnitOrigem' => isset($cols['valor']) ? cotacao_num($r[$cols['valor']] ?? '') : null,
+        ];
+    }
+    if (!$itens) {
+        @unlink($path);
+        sinapi_module_respond(false, [], 'Nenhuma linha com descrição foi encontrada abaixo do cabeçalho.', 422);
+    }
+
+    $jobId = uniqid('ia_cmp_', true);
+    $colunasDetectadas = array_keys($cols);
+    $pdo->prepare('INSERT INTO ia_compara_jobs (id, nomeArquivo, total, processados, status, colunasJson, userId) VALUES (?, ?, ?, 0, ?, ?, ?)')
+        ->execute([
+            $jobId,
+            (string) ($file['name'] ?? basename($path)),
+            count($itens),
+            'queued',
+            json_encode($colunasDetectadas, JSON_UNESCAPED_UNICODE),
+            (int) ($authUser['id'] ?? 0) ?: null,
+        ]);
+    $ins = $pdo->prepare('INSERT INTO ia_compara_itens (jobId, linhaPlanilha, descricaoOrigem, codigoOrigem, unidadeOrigem, quantidadeOrigem, valorUnitOrigem) VALUES (?, ?, ?, ?, ?, ?, ?)');
+    $pdo->beginTransaction();
+    foreach ($itens as $it) {
+        $ins->execute([$jobId, $it['linha'], $it['descricaoOrigem'], $it['codigoOrigem'], $it['unidadeOrigem'], $it['quantidadeOrigem'], $it['valorUnitOrigem']]);
+    }
+    $pdo->commit();
+
+    @unlink($path);
+    server_audit($pdo, $authUser, 'import', 'ia', $jobId, 'Comparador IA: upload de planilha (' . count($itens) . ' itens)');
+    sinapi_module_respond(true, [
+        'jobId' => $jobId,
+        'total' => count($itens),
+        'colunasDetectadas' => $colunasDetectadas,
+    ], 'Planilha lida: ' . count($itens) . ' itens prontos para analisar.');
+}
+
+// Dispara a análise do lote em background (worker CLI nohup + nice -19).
+function handle_ia_compara_start(PDO $pdo, array $config, array $payload, array $authUser): never
+{
+    ensure_ia_compara_tables($pdo);
+    expire_stale_ia_compara_jobs($pdo);
+    $jobId = trim((string) ($payload['jobId'] ?? ''));
+    if ($jobId === '') {
+        sinapi_module_respond(false, [], 'Informe o jobId do lote.', 400);
+    }
+    $stmt = $pdo->prepare('SELECT * FROM ia_compara_jobs WHERE id = ? LIMIT 1');
+    $stmt->execute([$jobId]);
+    $job = $stmt->fetch();
+    if (!$job) {
+        sinapi_module_respond(false, [], 'Lote não encontrado.', 404);
+    }
+    if ($job['status'] === 'running') {
+        sinapi_module_respond(false, [], 'Este lote já está sendo analisado.', 409);
+    }
+    ensure_ia_tables($pdo);
+    $temVetores = (int) $pdo->query('SELECT COUNT(*) FROM ia_embeddings')->fetchColumn();
+    if ($temVetores === 0) {
+        sinapi_module_respond(false, [], 'A base SINAPI ainda não foi indexada. Rode a indexação primeiro em IA → Indexação SINAPI.', 400);
+    }
+    $pdo->prepare("UPDATE ia_compara_jobs SET status='queued', processados=0, errorMessage=NULL, startedAt=NOW(), finishedAt=NULL WHERE id=?")->execute([$jobId]);
+    $pdo->prepare('UPDATE ia_compara_itens SET statusClassificacao=NULL, matchOrigem=NULL, matchId=NULL, matchCode=NULL, matchDescription=NULL, matchUnit=NULL, matchValor=NULL, similaridade=NULL, precoMaisBaixo=NULL, diferencaValor=NULL, diferencaPercent=NULL, aceito=0 WHERE jobId=?')->execute([$jobId]);
+    spawn_ia_compara_worker($pdo, $config, $jobId);
+    server_audit($pdo, $authUser, 'index', 'ia', $jobId, 'Comparador IA: análise iniciada (' . (int) $job['total'] . ' itens)');
+    sinapi_module_respond(true, ['jobId' => $jobId, 'total' => (int) $job['total']], 'Análise iniciada em segundo plano.');
+}
+
+// Status do lote para o polling (+ contagem por situação e resumo de preços).
+function handle_ia_compara_status(PDO $pdo): never
+{
+    ensure_ia_compara_tables($pdo);
+    expire_stale_ia_compara_jobs($pdo);
+    $jobId = trim((string) ($_GET['job'] ?? $_GET['jobId'] ?? ''));
+    if ($jobId === '') {
+        sinapi_module_respond(false, [], 'Informe o jobId.', 400);
+    }
+    $stmt = $pdo->prepare('SELECT * FROM ia_compara_jobs WHERE id = ? LIMIT 1');
+    $stmt->execute([$jobId]);
+    $job = $stmt->fetch();
+    if (!$job) {
+        sinapi_module_respond(true, ['status' => 'none', 'total' => 0, 'processados' => 0, 'percent' => 0], 'Lote não encontrado.');
+    }
+    $total = (int) $job['total'];
+    $proc = (int) $job['processados'];
+    $percent = $total > 0 ? (int) floor($proc * 100 / $total) : (($job['status'] === 'done') ? 100 : 0);
+    sinapi_module_respond(true, [
+        'jobId' => $job['id'],
+        'total' => $total,
+        'processados' => $proc,
+        'status' => (string) $job['status'],
+        'percent' => $percent,
+        'error' => $job['errorMessage'] ?? null,
+        'counts' => ia_compara_counts($pdo, $jobId),
+    ], 'OK');
+}
+
+// Contagem por situação (baldes do frontend).
+function ia_compara_counts(PDO $pdo, string $jobId): array
+{
+    $counts = ['achou' => 0, 'faltou_importar' => 0, 'cotacao_propria' => 0, 'total' => 0, 'classificados' => 0];
+    $stmt = $pdo->prepare('SELECT statusClassificacao s, COUNT(*) c FROM ia_compara_itens WHERE jobId = ? GROUP BY statusClassificacao');
+    $stmt->execute([$jobId]);
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
+        $c = (int) $r['c'];
+        $counts['total'] += $c;
+        if ($r['s'] !== null && isset($counts[$r['s']])) {
+            $counts[$r['s']] = $c;
+            $counts['classificados'] += $c;
+        }
+    }
+    return $counts;
+}
+
+// Resumo de preços: quantos itens a planilha está mais barata/cara que a SINAPI e
+// a economia/excesso total estimado (diferença × quantidade, quando houver qtd).
+function ia_compara_resumo(PDO $pdo, string $jobId): array
+{
+    $sql = "SELECT
+                SUM(precoMaisBaixo = 'planilha') AS planilhaMaisBarata,
+                SUM(precoMaisBaixo = 'sinapi') AS sinapiMaisBarata,
+                SUM(precoMaisBaixo = 'igual') AS iguais,
+                SUM(precoMaisBaixo IN ('planilha','sinapi','igual')) AS comparados,
+                SUM(CASE WHEN diferencaValor IS NOT NULL AND quantidadeOrigem IS NOT NULL AND diferencaValor < 0
+                         THEN -diferencaValor * quantidadeOrigem ELSE 0 END) AS economiaTotal,
+                SUM(CASE WHEN diferencaValor IS NOT NULL AND quantidadeOrigem IS NOT NULL AND diferencaValor > 0
+                         THEN diferencaValor * quantidadeOrigem ELSE 0 END) AS excessoTotal
+            FROM ia_compara_itens WHERE jobId = ?";
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute([$jobId]);
+    $r = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
+    return [
+        'planilhaMaisBarata' => (int) ($r['planilhaMaisBarata'] ?? 0),
+        'sinapiMaisBarata' => (int) ($r['sinapiMaisBarata'] ?? 0),
+        'iguais' => (int) ($r['iguais'] ?? 0),
+        'comparados' => (int) ($r['comparados'] ?? 0),
+        'economiaTotal' => round((float) ($r['economiaTotal'] ?? 0), 2),
+        'excessoTotal' => round((float) ($r['excessoTotal'] ?? 0), 2),
+    ];
+}
+
+// Lista os itens do lote (opcionalmente filtrados por situação) + contagens + resumo.
+function handle_ia_compara_items(PDO $pdo): never
+{
+    ensure_ia_compara_tables($pdo);
+    $jobId = trim((string) ($_GET['job'] ?? $_GET['jobId'] ?? ''));
+    if ($jobId === '') {
+        sinapi_module_respond(false, [], 'Informe o jobId.', 400);
+    }
+    $filtro = strtolower((string) ($_GET['situacao'] ?? 'todos'));
+    $sql = 'SELECT id, linhaPlanilha, descricaoOrigem, codigoOrigem, unidadeOrigem, quantidadeOrigem, valorUnitOrigem,
+                   statusClassificacao, matchOrigem, matchId, matchCode, matchDescription, matchUnit, matchValor,
+                   similaridade, precoMaisBaixo, diferencaValor, diferencaPercent, aceito
+            FROM ia_compara_itens WHERE jobId = ?';
+    $params = [$jobId];
+    if (in_array($filtro, ['achou', 'faltou_importar', 'cotacao_propria'], true)) {
+        $sql .= ' AND statusClassificacao = ?';
+        $params[] = $filtro;
+    }
+    $sql .= ' ORDER BY id';
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    $itens = [];
+    while ($r = $stmt->fetch(PDO::FETCH_ASSOC)) {
+        $itens[] = [
+            'id' => (int) $r['id'],
+            'linhaPlanilha' => $r['linhaPlanilha'] !== null ? (int) $r['linhaPlanilha'] : null,
+            'descricaoOrigem' => (string) $r['descricaoOrigem'],
+            'codigoOrigem' => $r['codigoOrigem'],
+            'unidadeOrigem' => $r['unidadeOrigem'],
+            'quantidadeOrigem' => $r['quantidadeOrigem'] !== null ? (float) $r['quantidadeOrigem'] : null,
+            'valorUnitOrigem' => $r['valorUnitOrigem'] !== null ? (float) $r['valorUnitOrigem'] : null,
+            'statusClassificacao' => $r['statusClassificacao'],
+            'matchOrigem' => $r['matchOrigem'],
+            'matchId' => $r['matchId'] !== null ? (int) $r['matchId'] : null,
+            'matchCode' => $r['matchCode'],
+            'matchDescription' => $r['matchDescription'],
+            'matchUnit' => $r['matchUnit'],
+            'matchValor' => $r['matchValor'] !== null ? (float) $r['matchValor'] : null,
+            'similaridade' => $r['similaridade'] !== null ? (float) $r['similaridade'] : null,
+            'precoMaisBaixo' => $r['precoMaisBaixo'],
+            'diferencaValor' => $r['diferencaValor'] !== null ? (float) $r['diferencaValor'] : null,
+            'diferencaPercent' => $r['diferencaPercent'] !== null ? (float) $r['diferencaPercent'] : null,
+            'aceito' => (int) $r['aceito'],
+        ];
+    }
+    sinapi_module_respond(true, [
+        'itens' => $itens,
+        'counts' => ia_compara_counts($pdo, $jobId),
+        'resumo' => ia_compara_resumo($pdo, $jobId),
+    ], 'OK');
+}
+
+// Aceita (confirma) ou desmarca um item da análise.
+function handle_ia_compara_accept(PDO $pdo, array $payload, array $authUser): never
+{
+    ensure_ia_compara_tables($pdo);
+    $itemId = (int) ($payload['itemId'] ?? $payload['id'] ?? 0);
+    if ($itemId <= 0) {
+        sinapi_module_respond(false, [], 'Informe o item.', 400);
+    }
+    $aceito = array_key_exists('aceito', $payload) ? (!empty($payload['aceito']) ? 1 : 0) : 1;
+    $chk = $pdo->prepare('SELECT id FROM ia_compara_itens WHERE id = ?');
+    $chk->execute([$itemId]);
+    if (!$chk->fetchColumn()) {
+        sinapi_module_respond(false, [], 'Item não encontrado.', 404);
+    }
+    $pdo->prepare('UPDATE ia_compara_itens SET aceito = ? WHERE id = ?')->execute([$aceito, $itemId]);
+    sinapi_module_respond(true, ['itemId' => $itemId, 'aceito' => $aceito], $aceito ? 'Item aceito.' : 'Item desmarcado.');
+}
+
+// Exporta o relatório do comparador em .xlsx (linhas + classificação + comparação).
+function handle_ia_compara_export(PDO $pdo): never
+{
+    ensure_ia_compara_tables($pdo);
+    $jobId = trim((string) ($_GET['job'] ?? $_GET['jobId'] ?? ''));
+    if ($jobId === '') {
+        fail('Informe o jobId.', 422);
+    }
+    foreach (['/vendor/autoload.php', '/../vendor/autoload.php'] as $rel) {
+        $autoload = __DIR__ . $rel;
+        if (is_file($autoload)) { require_once $autoload; break; }
+    }
+    if (!class_exists('PhpOffice\\PhpSpreadsheet\\Spreadsheet')) {
+        fail('Exportar .xlsx requer a biblioteca PhpSpreadsheet (composer require phpoffice/phpspreadsheet). Veja CLAUDE.md.', 422);
+    }
+    $jstmt = $pdo->prepare('SELECT * FROM ia_compara_jobs WHERE id = ?');
+    $jstmt->execute([$jobId]);
+    $job = $jstmt->fetch(PDO::FETCH_ASSOC);
+    if (!$job) {
+        fail('Lote não encontrado.', 404);
+    }
+    $stmt = $pdo->prepare('SELECT * FROM ia_compara_itens WHERE jobId = ? ORDER BY id');
+    $stmt->execute([$jobId]);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $sitLabels = ['achou' => 'ACHOU', 'faltou_importar' => 'FALTOU IMPORTAR', 'cotacao_propria' => 'COTAÇÃO PRÓPRIA'];
+    $precoLabels = ['planilha' => 'Planilha mais barata', 'sinapi' => 'SINAPI mais barata', 'igual' => 'Iguais', 'sem_comparacao' => 'Sem comparação'];
+    $resumo = ia_compara_resumo($pdo, $jobId);
+
+    $ss = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
+    $sheet = $ss->getActiveSheet();
+    $sheet->setTitle('Comparador IA');
+    $row = 1;
+    $sheet->setCellValue('A' . $row, 'Comparador de orçamento (IA) — planilha × base SINAPI'); $row++;
+    $sheet->setCellValue('A' . $row, 'Arquivo: ' . (string) ($job['nomeArquivo'] ?? '')); $row++;
+    $sheet->setCellValue('A' . $row, 'Gerado em ' . date('Y-m-d H:i')); $row++;
+    $sheet->setCellValue('A' . $row, sprintf('Planilha mais barata em %d itens · SINAPI mais barata em %d · iguais %d', $resumo['planilhaMaisBarata'], $resumo['sinapiMaisBarata'], $resumo['iguais'])); $row++;
+    $sheet->setCellValue('A' . $row, sprintf('Economia estimada R$ %s · Excesso estimado R$ %s', number_format($resumo['economiaTotal'], 2, ',', '.'), number_format($resumo['excessoTotal'], 2, ',', '.'))); $row += 2;
+
+    $headers = ['Linha', 'Descrição (planilha)', 'Cód. origem', 'Unid', 'Qtd', 'Valor unit. planilha',
+        'Situação', 'Match', 'Código SINAPI', 'Descrição SINAPI', 'Unid SINAPI', 'Valor SINAPI',
+        'Similaridade %', 'Preço mais baixo', 'Diferença R$', 'Diferença %', 'Aceito'];
+    $cols = [];
+    $c = 'A';
+    foreach ($headers as $h) { $cols[] = $c; $c++; }
+    foreach ($headers as $i => $h) { $sheet->setCellValue($cols[$i] . $row, $h); }
+    $sheet->getStyle('A' . $row . ':' . end($cols) . $row)->getFont()->setBold(true);
+    $row++;
+    foreach ($rows as $r) {
+        $vals = [
+            (int) ($r['linhaPlanilha'] ?? 0),
+            (string) $r['descricaoOrigem'],
+            (string) ($r['codigoOrigem'] ?? ''),
+            (string) ($r['unidadeOrigem'] ?? ''),
+            $r['quantidadeOrigem'] !== null ? (float) $r['quantidadeOrigem'] : '',
+            $r['valorUnitOrigem'] !== null ? (float) $r['valorUnitOrigem'] : '',
+            $sitLabels[$r['statusClassificacao']] ?? '',
+            (string) ($r['matchOrigem'] ?? ''),
+            (string) ($r['matchCode'] ?? ''),
+            (string) ($r['matchDescription'] ?? ''),
+            (string) ($r['matchUnit'] ?? ''),
+            $r['matchValor'] !== null ? (float) $r['matchValor'] : '',
+            $r['similaridade'] !== null ? (float) $r['similaridade'] : '',
+            $precoLabels[$r['precoMaisBaixo']] ?? '',
+            $r['diferencaValor'] !== null ? (float) $r['diferencaValor'] : '',
+            $r['diferencaPercent'] !== null ? (float) $r['diferencaPercent'] : '',
+            !empty($r['aceito']) ? 'Sim' : '',
+        ];
+        foreach ($vals as $i => $v) { $sheet->setCellValue($cols[$i] . $row, $v); }
+        $row++;
+    }
+    foreach ($cols as $col) { $sheet->getColumnDimension($col)->setAutoSize(true); }
+
+    $fileName = 'ComparadorIA_' . trim(preg_replace('/[^A-Za-z0-9_-]+/', '_', pathinfo((string) ($job['nomeArquivo'] ?? 'lote'), PATHINFO_FILENAME)), '_') . '_' . date('Y-m-d') . '.xlsx';
+    while (ob_get_level() > 0) { ob_end_clean(); }
+    header_remove('Content-Type');
+    header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    header('Content-Disposition: attachment; filename="' . $fileName . '"');
+    header('Cache-Control: max-age=0');
+    $writer = new \PhpOffice\PhpSpreadsheet\Writer\Xlsx($ss);
+    $writer->save('php://output');
+    exit;
+}
+
+// Dispara o worker CLI de análise do comparador em background (nohup + nice -19).
+// Espelha spawn_ia_depara_worker.
+function spawn_ia_compara_worker(PDO $pdo, array $config, string $jobId): void
+{
+    $worker = dirname(__DIR__) . '/scripts/ia_compara_worker.php';
+    if (!is_file($worker)) {
+        sinapi_module_respond(false, [], 'Worker não encontrado em scripts/ia_compara_worker.php — confira o deploy.', 500);
     }
     $logDir = dirname(rtrim($config['upload_dir'] ?? '/var/lib/financeiro/uploads', '/')) . '/ia_jobs';
     if (!is_dir($logDir) && !@mkdir($logDir, 0750, true)) {

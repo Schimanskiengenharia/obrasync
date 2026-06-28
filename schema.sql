@@ -1079,6 +1079,49 @@ CREATE TABLE IF NOT EXISTS ia_depara_itens (
   KEY idx_job_status (jobId, statusClassificacao)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Comparador de orçamento da IA (Fase A): lotes + itens com comparação de preço.
+CREATE TABLE IF NOT EXISTS ia_compara_jobs (
+  id VARCHAR(64) PRIMARY KEY,
+  nomeArquivo VARCHAR(255) NULL,
+  total INT UNSIGNED NOT NULL DEFAULT 0,
+  processados INT UNSIGNED NOT NULL DEFAULT 0,
+  status ENUM('queued','running','done','error') NOT NULL DEFAULT 'queued',
+  colunasJson TEXT NULL,
+  errorMessage TEXT NULL,
+  createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  startedAt TIMESTAMP NULL DEFAULT NULL,
+  finishedAt TIMESTAMP NULL DEFAULT NULL,
+  userId BIGINT UNSIGNED NULL,
+  KEY idx_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS ia_compara_itens (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  jobId VARCHAR(64) NOT NULL,
+  linhaPlanilha INT UNSIGNED NULL,
+  descricaoOrigem TEXT NOT NULL,
+  codigoOrigem VARCHAR(80) NULL,
+  unidadeOrigem VARCHAR(40) NULL,
+  quantidadeOrigem DECIMAL(18,4) NULL,
+  valorUnitOrigem DECIMAL(15,4) NULL,
+  statusClassificacao ENUM('achou','faltou_importar','cotacao_propria') NULL,
+  matchOrigem ENUM('composicao','insumo') NULL,
+  matchId BIGINT UNSIGNED NULL,
+  matchCode VARCHAR(80) NULL,
+  matchDescription TEXT NULL,
+  matchUnit VARCHAR(40) NULL,
+  matchValor DECIMAL(15,4) NULL,
+  similaridade DECIMAL(5,2) NULL,
+  precoMaisBaixo ENUM('planilha','sinapi','igual','sem_comparacao') NULL,
+  diferencaValor DECIMAL(15,4) NULL,
+  diferencaPercent DECIMAL(7,2) NULL,
+  aceito TINYINT NOT NULL DEFAULT 0,
+  createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_compara_item_job FOREIGN KEY (jobId) REFERENCES ia_compara_jobs(id) ON DELETE CASCADE,
+  KEY idx_job (jobId),
+  KEY idx_job_status (jobId, statusClassificacao)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS sinapi_import_jobs (
   id VARCHAR(60) PRIMARY KEY,
   status VARCHAR(12) NOT NULL DEFAULT 'queued',
