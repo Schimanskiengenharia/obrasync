@@ -1,6 +1,6 @@
 # ObraSync
 
-> Versão `v1.14.0` · 2026-06-28
+> Versão `v1.18.0` · 2026-06-28
 
 ObraSync é uma aplicação web em HTML, CSS, JavaScript puro, PHP e MariaDB/MySQL para gestão integrada de obras, financeiro, comercial e contabilidade gerencial. O frontend fica em `/var/www/financeiro`, a URL pública é `https://schimanskiengenharia.com.br/financeiro`, os dados persistentes ficam no banco e os arquivos de dados ficam fora da pasta pública.
 
@@ -12,10 +12,10 @@ Antes de atualizar em produção, faça backup do banco e de `/var/lib/financeir
 
 Esta seção orienta qualquer pessoa — ou outra IA — que precise continuar o trabalho sem se perder.
 
-- **Versão atual:** `v1.14.0` (2026-06-28). A versão fica em **dois lugares que devem andar juntos**: a constante `APP_VERSION`/`APP_VERSION_DATE` no topo de `app.js` (com `APP_CHANGELOG`) e o cabeçalho deste README. O painel "Versão" em Configurações lê de `APP_VERSION`.
-- **Cache busting:** sempre que `app.js` ou `styles.css` mudarem, **incremente o `?v=NNNN`** das tags correspondentes em `index.html` (hoje `app.js?v=1759`, `styles.css?v=1759`). Sem isso o navegador serve a versão velha.
-- **Estado de saúde (2026-06-28):** varredura completa de segurança/bugs concluída e **todas as pendências MÉDIO/BAIXO fechadas na v1.12.1**; a v1.14.0 (2026-06-28) entregou cotações (PDF/Excel), PBQP-H Fase 1, módulo de Viabilidade, dashboard Lucro Gerencial vs Caixa Real e correção do 500 das contas recorrentes — ver `STATUS.md` na raiz e a seção **Auditoria de Código — 2026-06-27** no fim deste README.
-- **Arquitetura:** SPA sem build. Todo o frontend está em `app.js` (arquivo único, ~10 mil linhas) + `index.html` (shell) + `styles.css`. Todo o backend está em `api/index.php` (arquivo único). O banco é MariaDB/MySQL.
+- **Versão atual:** `v1.18.0` (2026-06-28). A versão fica em **dois lugares que devem andar juntos**: a constante `APP_VERSION`/`APP_VERSION_DATE` no topo de `app.js` (com `APP_CHANGELOG`) e o cabeçalho deste README. O painel "Versão" em Configurações lê de `APP_VERSION`.
+- **Cache busting:** sempre que `app.js` ou `styles.css` mudarem, **incremente o `?v=NNNN`** das tags correspondentes em `index.html` (hoje `app.js?v=1769`, `styles.css?v=1769`). Sem isso o navegador serve a versão velha.
+- **Estado de saúde (2026-06-28):** em produção e estável. A leva **v1.15→v1.18** entregou o fluxo **Orçamento → Proposta com base SINAPI** (múltiplos orçamentos, BDI flexível, licitação, hierarquia por disciplina, modelos), **SINAPI no PDF + export Excel**, **contrato a partir da proposta** (template 13 cláusulas + anexos assinados), **CEP autofill universal** (corrigindo a regressão do CSP), **endereço próprio da obra** e a **exclusão de análise de viabilidade**; além do **fix do asDate** (Viabilidade travando). Ver o changelog abaixo e `STATUS.md` para o que está FEITO vs PENDENTE.
+- **Arquitetura:** SPA sem build. Todo o frontend está em `app.js` (arquivo único, ~15 mil linhas) + `index.html` (shell) + `styles.css`. Todo o backend está em `api/index.php` (arquivo único, ~8,7 mil linhas). O banco é MariaDB/MySQL (`financeiro`).
 - **Convenções do backend (siga-as):** respostas via `respond(['ok' => true, 'data' => ...])` e erros via `fail($msg, $status)`; INSERT/UPDATE genéricos via `insert_dynamic()`/`update_dynamic()` (descartam colunas inexistentes — toleram diferenças de schema); auditoria via `server_audit()`. Muitas tabelas novas são criadas sob demanda por funções `ensure_*` no próprio `index.php` (além das migrations).
 - **Convenções do frontend:** chamadas autenticadas via `apiRequest()`; uploads via `fetchForm()`; toasts via `showToast()`; escape de HTML via `svgText()`/`escapeHtml()`. O token de sessão vai no header `Authorization: Bearer`.
 - **Deploy:** push na `main` → webhook GitHub → `deploy.php` roda `git pull` + backup pré-deploy. Em produção rode as migrations novas manualmente após o deploy. Nunca toque em `/etc/financeiro/config.php`, uploads, backups ou banco.
@@ -26,6 +26,35 @@ Esta seção orienta qualquer pessoa — ou outra IA — que precise continuar o
 ## Histórico de Versões
 
 Mapa de cada marco do produto, do mais novo ao mais antigo, com as features e as tabelas/arquivos envolvidos. Use-o para entender *o que existe e por quê* antes de mexer.
+
+### v1.18.0 — 2026-06-28 · Fluxo Orçamento → Proposta (SINAPI), contrato, CEP universal e correções
+
+> Consolidação da leva **v1.15 → v1.18** (commits `c55d713`, `4fe6974`, `b3bd75f`, `801d428`, `7674875`, `fe821e2`, `93fef84`, `a36ecea`, `21f8400`). **Nomes de tabelas/colunas abaixo conferidos no código** (não no doc antigo).
+
+- **Base SINAPI alimentando o orçamento e a proposta** (`c55d713`; migration `2026-06-28-orcamento-proposta-sinapi.sql`; `ensure_proposal_cost_columns`):
+  - Busca instantânea na base SINAPI completa: endpoint `GET api/sinapi-buscar?q=` (≤20, código por prefixo + descrição `LIKE`) + índices `idx_comp_code`/`idx_insumo_code`. A aba "Buscar SINAPI" do orçamento agora consulta o servidor (antes só os ~300 do cache).
+  - `proposta_itens` ganhou `custo_unitario`, `bdi_item`, `orcamento_item_id`, `sinapi_id` (a proposta passa a **registrar o custo** vindo do orçamento técnico).
+  - `commercial_proposals` ganhou `bdi_geral`, `bdi_tipo` ENUM(`percentual`/`valor_fixo`/`por_item`/`misto`), `custo_total_orcamentos`, `valor_bdi_total`, `modo_licitacao` ENUM(`Não`/`Sim`).
+- **Proposta com múltiplos orçamentos + BDI ponderado** (`4fe6974`): `proposta_orcamento_vinculos` estendida com `nome_grupo`, `bdi_grupo`, `custo_total`, `valor_venda`, `ordem`. Vincular vários orçamentos como grupos; totalizador com custo, **BDI médio ponderado**, venda e margem; resumo por grupo no PDF do cliente (sem expor custo).
+- **BDI flexível** (`b3bd75f`): seletor "Formação do preço (BDI)" no gerador — **automático** (mantém preço do orçamento), **geral %**, **por grupo**, **manual por item** (calcula o BDI resultante). Visão interna (custo+BDI+margem) alternável da visão do cliente.
+- **Modo licitação** (`801d428`): comparativo **referência SINAPI** (custo × BDI de referência) **× valor ofertado**, com o % de desconto por item e global ("Oferta com X% de desconto sobre a referência SINAPI").
+- **Correção do `asDate`** (`7674875`): passou a aceitar **datetime do MySQL** (`"2026-06-28 04:31:10"`) e datas inválidas/zeradas (`0000-00-00`) **sem lançar `RangeError`**. Corrigiu a aba **Viabilidade** que ficava eternamente "carregando" (o erro estourava dentro de um `.map` em `renderViabilidadeList`).
+- **CEP autofill universal + autofill de cadastro + endereço da obra** (`fe821e2`; migration `2026-06-28-obra-endereco-local.sql`; `ensure_obra_endereco_columns`):
+  - **CSP corrigido** — a regressão era o `connect-src 'self'` no `.htaccess` **bloqueando o fetch ao ViaCEP**. Agora `connect-src` libera `https://viacep.com.br https://brasilapi.com.br`.
+  - `bindCepInput`/`initFormEnhancers`: qualquer campo `.cep-input`/`[data-cep]`/`name=zipCode|cep|obra_cep` em **qualquer formulário/modal** (via `MutationObserver`) busca ViaCEP → **fallback BrasilAPI** e preenche `address`/`bairro`/`cidade`/`estado` por convenção de `name`, de forma **não-destrutiva**.
+  - `setupClientAutofill` e o novo `setupSupplierAutofill` são auto-ligados a selects `clientId`/`supplierId` em todos os forms.
+  - **Endereço próprio da obra:** `projects` ganhou `usa_endereco_empresa` (TINYINT default 1), `bairro`, `cidade`, `estado` — **reaproveitando** `projects.address` e `projects.zipCode` que **já existiam** (⚠️ NÃO há `obra_cep`/`obra_endereco`; o doc/branding antigo divergia). Toggle "A obra fica no mesmo endereço da empresa?"; PDFs usam o endereço próprio quando `usa_endereco_empresa=0`.
+- **Hierarquia de proposta por disciplina + modelos + SINAPI no PDF + export Excel** (`93fef84`; migration `2026-06-28-proposta-hierarquia-modelos.sql`; `ensure_proposta_hierarquia`):
+  - Nova `proposta_grupos` (`proposalId`, `parent_id`, `nivel`, `ordem`, `disciplina`, `nome`) — árvore por disciplina (Elétrico → Solar/Instalações/Subestação; Hidráulico; Civil → Fundação/Alvenaria). `proposta_orcamento_vinculos` ganhou `grupo_id`+`disciplina`; `proposta_itens` ganhou `grupo_id`. O PDF agrupa o investimento por disciplina com subtotais. *(A UI atual atribui disciplina por orçamento e agrupa; o editor drag-and-drop n-níveis ficou para evolução.)*
+  - Nova `proposta_modelos` (`nome`, `descricao`, `disciplina`, `estrutura_json`, `ativo`): "Salvar como modelo" serializa a estrutura (sem cliente) e "Aplicar modelo…" reaplica numa nova proposta.
+  - **SINAPI no PDF:** cada item com `sinapi_id` mostra código SINAPI + referência (mês/ano/UF, de `sinapi_referencias`) e há o anexo "Composições SINAPI utilizadas" (omitido se nenhum).
+  - **Export Excel** `GET api/sinapi-export-obra?obra_id=` (`handle_sinapi_export_obra`, **PhpSpreadsheet**): `.xlsx` dos itens de origem SINAPI da obra, agrupado por etapa/disciplina com subtotais; botão "Exportar SINAPI (Excel)".
+- **Contrato a partir da proposta + anexos assinados** (`a36ecea`; migration `2026-06-28-contrato-proposta-anexos.sql`; `ensure_contrato_columns`):
+  - `sales_contracts` **reaproveita** `proposalId` (origem) e ganhou `numero_contrato`, `data_contrato`, `valor_contrato`, `objeto`, `status_contrato` (rascunho/gerado/assinado), `proposta_assinada_path`, `contrato_gerado_path`, `contrato_assinado_path` e snapshot do cliente (`cliente_nome`, `cpf_cnpj`, `email`, `telefone`, `endereco`, `cidade`, `estado`, `cep`).
+  - "Gerar contrato" clona snapshot + valor (com BDI) + objeto consolidado por disciplina. **PDF do contrato gerado pelo NAVEGADOR** (igual proposta/RDO — não há lib de PDF server-side em PHP) no template **Prestação de Serviços Técnicos (13 cláusulas)**; campos sem dado viram placeholders editáveis.
+  - Anexos via `POST api/contrato-upload` / `GET api/contrato-download` em `/var/lib/financeiro/uploads/contratos` (PDF, `store_upload`); ao anexar o contrato assinado → `status_contrato='assinado'`.
+- **Excluir análise de viabilidade inteira** (`21f8400`; **sem migration**): `POST/DELETE api/?module=viabilidade&action=delete` — cascata transacional (rollback) **anexos → itens → grupos → análise** e remoção dos **arquivos físicos** do disco (com proteção path-traversal, só sob `/var/lib/financeiro/uploads/`). Botão lixeira na lista com confirmação irreversível.
+  - ⚠️ **Nuance de schema:** `viabilidade_anexos` referencia **`item_id`** (NÃO `analise_id`) — o anexo só se liga à análise **através do item** (`viabilidade_itens.analise_id`). Por isso o `SELECT`/`DELETE` dos anexos usa `JOIN viabilidade_itens it ON it.id = an.item_id WHERE it.analise_id = ?`.
 
 ### v1.14.0 — 2026-06-28 · Cotações, PBQP-H Fase 1, Viabilidade, dashboard Lucro×Caixa e correções
 - **Importação e comparação de cotações** (migration `2026-06-27-cotacao-importacao.sql`; tabelas `cotacao_fornecedor`/`cotacao_itens`; `ensure_cotacao_import_tables`; `?module=cotacoes&action=importar|comparar|salvarItens|exportarCsv`): CSV nativo (`fgetcsv`), **.xlsx/.xls via PhpSpreadsheet** e **PDF via pdftotext** (poppler-utils), com comparação automática contra o orçamento da obra por similaridade de descrição e classificação abaixo/igual/acima/muito_acima. Dependências documentadas no `CLAUDE.md`.

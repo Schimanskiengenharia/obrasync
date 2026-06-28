@@ -19,9 +19,10 @@ if (APP_ENV === "production" && location.protocol === "http:") {
   location.replace(location.href.replace(/^http:/, "https:"));
 }
 const APP_NAME = "ObraSync";
-const APP_VERSION = "v1.17.1";
+const APP_VERSION = "v1.18.0";
 const APP_VERSION_DATE = "2026-06-28";
 const APP_CHANGELOG = [
+  "Consolidação v1.18.0 (documentação de handoff): README/CLAUDE/STATUS sincronizados com o estado real do projeto, com os nomes reais de tabelas/colunas e o changelog completo da leva (asDate, CEP/autofill/obra, proposta por disciplina/modelos/SINAPI, contrato e exclusão de viabilidade).",
   "Análise de Viabilidade: botão \"Excluir\" em cada análise da lista remove a análise inteira em cascata (grupos, itens e anexos, inclusive os arquivos do disco) numa transação com rollback, após confirmação irreversível (v1.17.1).",
   "Contrato a partir da proposta: botão \"Gerar contrato\" na proposta cria/atualiza o contrato com snapshot do cliente, valor e objeto consolidado por disciplina; \"Contrato (PDF)\" gera o documento no template de Prestação de Serviços Técnicos com 13 cláusulas (cabeçalho/rodapé da empresa, campos faltantes como placeholders); e \"Anexos\" permite enviar a proposta assinada e o contrato assinado (PDF), marcando o contrato como assinado (v1.17.0).",
   "Proposta por disciplina + modelos + SINAPI: cada orçamento vinculado recebe uma disciplina (Elétrico, Hidráulico, Civil…) e o PDF passa a agrupar o investimento por disciplina com subtotais; \"Salvar como modelo\" e \"Aplicar modelo…\" reutilizam a estrutura da proposta (sem cliente); o PDF mostra código SINAPI + referência (mês/ano/UF) por item e um anexo de composições SINAPI utilizadas; e botão \"Exportar SINAPI (Excel)\" gera a planilha .xlsx da obra agrupada por etapa com subtotais (v1.16.0).",

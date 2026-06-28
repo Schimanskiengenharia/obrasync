@@ -1,6 +1,6 @@
 # STATUS — ObraSync
 
-> **Versão:** `v1.14.0` · 2026-06-28 · **Varredura:** 2026-06-27 · **Ambiente:** produção em `https://schimanskiengenharia.com.br/financeiro`
+> **Versão:** `v1.18.0` · 2026-06-28 · **Varredura:** 2026-06-27 · **Ambiente:** produção em `https://schimanskiengenharia.com.br/financeiro`
 
 ---
 
@@ -11,17 +11,22 @@ contabilidade gerencial para a Schimanski Engenharia. SPA em JavaScript puro
 (`app.js`), API única em PHP (`api/index.php`), banco MariaDB/MySQL. Sem
 frameworks e sem etapa de build.
 
-O sistema está **em produção e estável**. A sessão **v1.14.0 (2026-06-28)**
-entregou **cotações** (importação/comparação por PDF/Excel/CSV contra o
-orçamento), **PBQP-H Fase 1** (qualificação de fornecedores, rastreabilidade por
-lote, vínculo FVM↔pedido, PDF no PES), o **módulo de Viabilidade** por tipo de
-obra (checklist com bloqueio de proposta), o **dashboard Lucro Gerencial vs Caixa
-Real** recalculado e a **correção do erro 500** nas contas a pagar recorrentes
-(constante `PAYABLE_RECURRENCE_MAX` que ficava indefinida em runtime). A base
-herda a v1.12.0 (Orçamento de Obra profissional + dashboard de execução) e a
-**varredura completa de segurança/bugs**: todos os itens **CRÍTICOS/ALTOS** e os
-**bugs que quebravam fluxos** estão corrigidos; as pendências **MÉDIO/BAIXO**
-foram fechadas na v1.12.1.
+O sistema está **em produção e estável**. A leva **v1.15→v1.18 (2026-06-28)**
+entregou o fluxo **Orçamento → Proposta com base SINAPI**: busca rápida na base
+SINAPI, proposta usando o **custo do orçamento técnico**, **múltiplos orçamentos**
+com **BDI ponderado**, **BDI flexível** (geral/por grupo/manual por item), **modo
+licitação** (comparativo SINAPI × ofertado), **hierarquia por disciplina** e
+**modelos reutilizáveis** de proposta, **SINAPI no PDF** + **export Excel** por
+obra, e **contrato a partir da proposta** (template de 13 cláusulas + anexos
+assinados). Também: **CEP autofill universal** (corrigindo a regressão do CSP que
+bloqueava o ViaCEP) com **autofill de cadastro** de cliente/fornecedor em todos os
+forms e **endereço próprio da obra**, a **exclusão de análise de viabilidade**
+inteira (cascata + arquivos), e o **fix do `asDate`** (Viabilidade que travava no
+load). A v1.14.0 entregou cotações, PBQP-H Fase 1, Viabilidade e o dashboard
+Lucro×Caixa. A base herda a v1.12.0/v1.12.1 (Orçamento profissional + varredura de
+segurança completa). **Atenção:** parte da v1.18.0 (export Excel, anexos de
+contrato, PDF do contrato) **ainda não foi validada em runtime no servidor** — ver
+seção 3.
 
 ---
 
@@ -30,19 +35,19 @@ foram fechadas na v1.12.1.
 | Módulo | Status | Observação |
 |---|---|---|
 | Dashboard (geral + por obra) | 🟢 Estável | Painel de execução de obras (endpoint + tooltip combinado); Lucro Gerencial vs Caixa Real recalculado + alertas (v1.14.0) |
-| Cadastros (clientes, fornecedores, produtos, serviços, categorias, centros de custo, contas) | 🟢 Estável | Preenchimento automático de cliente, ViaCEP, endereço completo |
-| Orçamento de Obra | 🟢 Estável | Reestruturado: etapas/tipos/4 visões/BDI por etapa/CSV + Realizado vs Orçado |
-| SINAPI / composições / cotações / Curva ABC | 🟢 Estável | Importador XLSX/CSV + assíncrono; cotações por PDF/Excel/CSV comparadas ao orçamento (v1.14.0) |
+| Cadastros (clientes, fornecedores, produtos, serviços, categorias, centros de custo, contas) | 🟢 Estável | CEP autofill **universal** (`.cep-input`, ViaCEP+BrasilAPI) em todos os forms; autofill de cliente **e fornecedor**; endereço próprio da obra com toggle (v1.18.0) |
+| Orçamento de Obra | 🟢 Estável | Etapas/tipos/4 visões/BDI por etapa/CSV + Realizado vs Orçado; busca SINAPI na base completa (v1.18.0) |
+| SINAPI / composições / cotações / Curva ABC | 🟢 Estável | Importador XLSX/CSV + assíncrono; cotações (v1.14.0); busca rápida `sinapi-buscar` + **export Excel por obra** `sinapi-export-obra` (PhpSpreadsheet) (v1.18.0) |
 | Financeiro (a pagar, a receber, caixa, fluxo) | 🟢 Estável | Recorrentes (500 corrigido na v1.14.0), quitação antecipada, anti dupla contagem |
 | Conciliação OFX | 🟢 Estável | Match automático por FITID |
 | Pedidos de compra | 🟢 Estável | Itens detalhados, condições, impressão com identidade visual |
-| Comercial (propostas, gerador, modelos) | 🟢 Estável | Snapshot de cliente, PDF com identidade visual |
+| Comercial (propostas, gerador, modelos, contrato) | 🟢 Estável | Proposta usa custo do orçamento; **múltiplos orçamentos** + BDI ponderado; **BDI flexível**; **licitação**; **hierarquia por disciplina**; **modelos** (`proposta_modelos`); SINAPI no PDF + anexo; **contrato a partir da proposta** (13 cláusulas) + anexos assinados (v1.18.0) |
 | Cronograma / Gantt / MS Project | 🟡 Funcional | Aprovação de marco corrigida (era 500 determinístico) |
 | Agenda / Kanban | 🟢 Estável | Auto-curado por `ensure_agenda_tables`/`ensure_kanban_tables` (v1.12.1) |
 | Notas / Documentos fiscais + NFS-e | 🟢 Estável | Auto-curado por `ensure_fiscal_documents_table` (v1.12.1) |
 | Contabilidade gerencial (DRE, plano de contas, impostos) | 🟢 Estável | |
 | Qualidade (PBQP-H Nível B) | 🟢 Estável | Auto-curado; Fase 1: qualificação de fornecedores, rastreabilidade por lote, FVM↔pedido, PDF no PES (v1.14.0) |
-| Plugins / Seletividade / Viabilidade | 🟢 Estável | Viabilidade por tipo de obra com checklist e bloqueio de proposta (v1.14.0) |
+| Plugins / Seletividade / Viabilidade | 🟢 Estável | Viabilidade por tipo de obra com checklist e bloqueio de proposta (v1.14.0); **exclusão de análise inteira** em cascata + arquivos (v1.18.0) |
 | RDO | 🟢 Estável | Cabeçalho/rodapé da empresa |
 | Configurações / RBAC / Usuários / Backup / Auditoria | 🟢 Estável | |
 
@@ -51,6 +56,27 @@ foram fechadas na v1.12.1.
 ---
 
 ## 3. Problemas conhecidos e pendentes
+
+### v1.18.0 — FEITO vs PENDENTE (honesto)
+
+**✅ FEITO e validado em runtime** (o usuário confirmou "está funcionando"):
+- Fluxo proposta base SINAPI: múltiplos orçamentos, BDI flexível, licitação, busca SINAPI.
+- `asDate` corrigido — Viabilidade abre normal.
+- CEP autofill universal + CSP corrigido; autofill de cliente/fornecedor; toggle de endereço da obra.
+- Exclusão de análise de viabilidade.
+
+**🟡 FEITO mas PENDENTE de validação em runtime no servidor** (implementado + `php -l`/`node --check` OK, **mas não testado em produção** — exige dependências/arquivos do servidor):
+- **Export Excel SINAPI** (`sinapi-export-obra`): exige `composer require phpoffice/phpspreadsheet`. Sem ele → 422.
+- **Anexos de contrato** (`contrato-upload`/`download`): grava em `/var/lib/financeiro/uploads/contratos` (dono `www-data`) — validar permissões.
+- **PDF do contrato** (13 cláusulas): gerado pelo navegador; revisar o texto jurídico das cláusulas com o responsável antes de usar oficialmente.
+- **Anexo SINAPI no PDF da proposta:** depende da composição estar no cache do front (itens adicionados via SINAPI ficam; itens antigos podem não exibir a tag).
+
+**⏳ PENDENTE / próximos passos (não feito):**
+- **Hierarquia de proposta:** a UI agrupa por disciplina e persiste em `proposta_grupos`/vínculos, mas **falta o editor visual da árvore n-níveis com drag-and-drop** (reordenar item↔subitem). Hoje a disciplina é atribuída por orçamento.
+- **Modelos de proposta:** "Aplicar modelo" reusa a estrutura de orçamentos; a clonagem é por registros (não há endpoint transacional único de clonagem no servidor).
+- **PBQP-H Fases 2 e 3** (após a Fase 1 entregue).
+- **Dashboard Lucro Gerencial × Caixa Real:** recalculado na v1.14.0; revalidar os números com dados reais (o usuário já questionou casos "Lucro < Caixa" — são legítimos quando há contas a pagar abertas).
+- Rodar as 4 migrations da leva no servidor (idempotentes; `ensure_*` cobre, mas rodar dá consistência).
 
 ### Entregue / corrigido na v1.14.0 (2026-06-28)
 
