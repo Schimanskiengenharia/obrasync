@@ -4539,6 +4539,12 @@ menu {
   font-size: 0.85rem;
 }
 
+.proposal-bdi-form label.proposal-licitacao-toggle {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+
 .proposal-groups-summary {
   margin-top: 8px;
   font-size: 0.85rem;

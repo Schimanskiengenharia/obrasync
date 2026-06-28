@@ -19,9 +19,10 @@ if (APP_ENV === "production" && location.protocol === "http:") {
   location.replace(location.href.replace(/^http:/, "https:"));
 }
 const APP_NAME = "ObraSync";
-const APP_VERSION = "v1.15.2";
+const APP_VERSION = "v1.15.3";
 const APP_VERSION_DATE = "2026-06-28";
 const APP_CHANGELOG = [
+  "Modo licitação na proposta: comparativo com a referência SINAPI (custo × BDI de referência) versus o valor ofertado, com o percentual de desconto por item e global (\"Oferta com X% de desconto sobre a referência SINAPI\"), para propostas baseadas em preços SINAPI (v1.15.3).",
   "Formação de preço (BDI) flexível na proposta: BDI geral (%) para todos os itens, BDI por grupo/orçamento, ou venda manual por item com o BDI resultante calculado automaticamente — escolhido no seletor \"Formação do preço (BDI)\" do gerador (v1.15.2).",
   "Proposta com múltiplos orçamentos: vincule vários orçamentos de obra à mesma proposta, cada um como um grupo com BDI próprio (ex.: Cobertura 22%, Elétrica 25%), com totalizador de custo, BDI médio ponderado, valor de venda e margem, e resumo por grupo no PDF para o cliente (v1.15.1).",
   "Fluxo Orçamento → Proposta com base SINAPI: busca instantânea na base SINAPI completa (endpoint dedicado + índice de código) também dentro do orçamento de obra; a proposta passa a registrar o custo do orçamento técnico por item (custo unitário/BDI), com visão interna (custo + BDI + margem) alternável e separada da visão do cliente; estrutura de dados pronta para múltiplos orçamentos vinculados com BDI próprio por grupo (v1.15.0).",
@@ -11957,6 +11958,9 @@ async function openProposalGenerator(workBudgetId) {
     bdiMode: "auto",
     bdiGeral: Number(budget.bdiPercent || 0),
     itemOverrides: {},
+    // Modo licitação: compara o ofertado com a referência SINAPI (custo × BDI de ref.).
+    modoLicitacao: false,
+    bdiReferencia: Number(budget.bdiPercent || 0) || 25,
     modelId: model.id || "",
     date: today,
     validityDate,
@@ -12144,7 +12148,7 @@ function updateProposalPreview() {
   const calc = proposalGroupsCompute();
   const budgetForVars = { ...proposalGeneratorState.budget, totalPrice: calc.vendaTotal };
   const vars = proposalVariablesFor({ ...proposalGeneratorState, budget: budgetForVars, items: calc.combinedItems, model, project, client, input });
-  qs("proposalPreview").innerHTML = proposalDocumentHtml({ ...proposalGeneratorState, budget: budgetForVars, items: calc.combinedItems, calc, model, project, client, input, vars });
+  qs("proposalPreview").innerHTML = proposalDocumentHtml({ ...proposalGeneratorState, budget: budgetForVars, items: calc.combinedItems, calc, model, project, client, input, vars, licitacao: proposalGeneratorState.modoLicitacao, refBdi: proposalGeneratorState.bdiReferencia });
 }
 
 // Calcula os grupos (orçamentos vinculados) da proposta: custo, venda e BDI efetivo
@@ -12267,6 +12271,8 @@ function renderProposalGroupsPanel() {
       <div class="proposal-bdi-form no-print">
         <label>Formação do preço (BDI)<select id="proposalBdiMode">${modeOptions}</select></label>
         ${mode === "geral" ? `<label>BDI geral (%)<input id="proposalBdiGeral" inputmode="decimal" value="${escapeHtml(proposalGeneratorState.bdiGeral ?? 0)}" style="width:6rem"></label>` : ""}
+        <label class="proposal-licitacao-toggle"><input type="checkbox" id="proposalModoLicitacao" ${proposalGeneratorState.modoLicitacao ? "checked" : ""}> Proposta para licitação (referência SINAPI)</label>
+        ${proposalGeneratorState.modoLicitacao ? `<label>BDI de referência (%)<input id="proposalBdiReferencia" inputmode="decimal" value="${escapeHtml(proposalGeneratorState.bdiReferencia ?? 0)}" style="width:6rem"></label>` : ""}
       </div>
       ${!multi ? `<div class="proposal-groups-summary muted">Custo ${asMoney(calc.custoTotal)} · BDI ${asPercent(calc.bdiPonderado)} · Venda ${asMoney(calc.vendaTotal)} · Margem ${asMoney(margem)} (${asPercent(margemPct)})</div>` : ""}
       ${itemTable}
@@ -12280,6 +12286,16 @@ function renderProposalGroupsPanel() {
     const raw = String(e.target.value || "").trim().replace(",", ".");
     proposalGeneratorState.bdiGeral = raw === "" ? 0 : Number(raw);
     renderProposalGroupsPanel();
+    updateProposalPreview();
+  });
+  qs("proposalModoLicitacao")?.addEventListener("change", (e) => {
+    proposalGeneratorState.modoLicitacao = e.target.checked;
+    renderProposalGroupsPanel();
+    updateProposalPreview();
+  });
+  qs("proposalBdiReferencia")?.addEventListener("change", (e) => {
+    const raw = String(e.target.value || "").trim().replace(",", ".");
+    proposalGeneratorState.bdiReferencia = raw === "" ? 0 : Number(raw);
     updateProposalPreview();
   });
   panel.querySelectorAll(".pg-item-price").forEach((inp) => inp.addEventListener("change", (e) => {
@@ -12340,7 +12356,39 @@ function proposalInvestmentHtml(calc, vars) {
       </section>`;
 }
 
-function proposalDocumentHtml({ budget, project, client, items, model, input, vars, calc }) {
+// Seção de licitação: referência SINAPI (custo × BDI de referência) × valor ofertado,
+// com o % de desconto por item e global. Para propostas baseadas em preços SINAPI.
+function proposalLicitacaoHtml(calc, refBdi) {
+  const items = (calc && calc.combinedItems) || [];
+  if (!items.length) return "";
+  let refTotal = 0;
+  let offTotal = 0;
+  const rows = items.map((it, idx) => {
+    const custoU = Number(it.unitCost || 0);
+    const qty = Number(it.quantity || 0);
+    const ref = roundMoney(custoU * (1 + Number(refBdi || 0) / 100));
+    const refT = roundMoney(qty * ref);
+    const off = Number(it.unitPrice || 0);
+    const offT = Number(it.totalPrice || 0);
+    refTotal += refT;
+    offTotal += offT;
+    const desc = ref > 0 ? ((ref - off) / ref) * 100 : 0;
+    return `<tr><td>${idx + 1}</td><td>${svgText(it.description || "")}</td><td>${svgText(it.unit || "")}</td><td>${formatQuantity(it.quantity)}</td><td>${asMoney(ref)}</td><td>${asMoney(off)}</td><td>${asPercent(desc)}</td></tr>`;
+  }).join("");
+  const descGlobal = refTotal > 0 ? ((refTotal - offTotal) / refTotal) * 100 : 0;
+  return `
+    <section class="proposal-section">
+      <h2>Comparativo com a referência SINAPI (licitação)</h2>
+      <table class="proposal-items-table">
+        <thead><tr><th>Item</th><th>Descrição</th><th>Un.</th><th>Qtd.</th><th>Ref. SINAPI</th><th>Ofertado</th><th>Desc.</th></tr></thead>
+        <tbody>${rows}</tbody>
+        <tfoot><tr><th colspan="4">Total</th><th>${asMoney(refTotal)}</th><th>${asMoney(offTotal)}</th><th>${asPercent(descGlobal)}</th></tr></tfoot>
+      </table>
+      <p><strong>Oferta com ${asPercent(descGlobal)} de desconto sobre a referência SINAPI (BDI de referência ${asPercent(Number(refBdi || 0))}).</strong></p>
+    </section>`;
+}
+
+function proposalDocumentHtml({ budget, project, client, items, model, input, vars, calc, licitacao, refBdi }) {
   const value = (field) => renderTemplate(input[field] || "", vars);
   const proposalNumber = vars.numero_proposta;
   const company = (db.companySettings || [])[0] || {};
@@ -12381,6 +12429,7 @@ function proposalDocumentHtml({ budget, project, client, items, model, input, va
         ${proposalItemsHtml(items, input.itemDisplayMode || "Tabela resumida")}
       </section>
       ${proposalInvestmentHtml(calc || { grupos: [], vendaTotal: Number(budget.totalPrice || 0) }, vars)}
+      ${licitacao ? proposalLicitacaoHtml(calc, refBdi) : ""}
       ${proposalSection("Condições de pagamento", value("paymentCondition"))}
       ${proposalSection("Prazo de execução", value("executionDeadline"))}
       ${proposalSection("Itens inclusos", value("includedItems"))}
@@ -13068,7 +13117,7 @@ async function saveGeneratedProposal(statusOverride = "") {
       bdi_tipo: bdiTipo,
       custo_total_orcamentos: roundMoney(custoTotalOrcamentos),
       valor_bdi_total: roundMoney(valorBdiTotal),
-      modo_licitacao: "Não",
+      modo_licitacao: proposalGeneratorState.modoLicitacao ? "Sim" : "Não",
     });
     await createProposalLinkedRecords(proposal, { budget, project, client, model, items, vars, status, calc });
     alert(status === "Rascunho" ? "Rascunho de proposta salvo." : "Proposta gerada e finalizada.");
