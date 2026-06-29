@@ -19,9 +19,10 @@ if (APP_ENV === "production" && location.protocol === "http:") {
   location.replace(location.href.replace(/^http:/, "https:"));
 }
 const APP_NAME = "ObraSync";
-const APP_VERSION = "v1.24.3";
+const APP_VERSION = "v1.25.0";
 const APP_VERSION_DATE = "2026-06-28";
 const APP_CHANGELOG = [
+  "Fase B1 da IA — ponte para o Orçamento de Obra: botão \"Enviar para Orçamento de Obra\" no resultado do comparador e do de-para. Escolhe a obra de destino, o nome e se envia só os itens aceitos ou todos, e cria um orçamento de obra (rascunho) nas tabelas existentes (orcamentos_obras + orcamento_obra_itens): mapeia origem (SINAPI/Cotação manual/Item livre), tipo (material/mão de obra), etapa a partir do Setor, categoria por nome, código/sinapi_id do match, e usa como custo unitário o Custo Direto (sem BDI) > Material+M.O. > valor genérico. Os totais são recalculados com a mesma fórmula do orçamento de obra; nada é inventado (itens sem dado ficam com default neutro e nota). Depois é só abrir em Orçamentos de Obras para ajustar (v1.25.0).",
   "IA de-para e comparador: as colunas Material unit. e M.O. unit. das planilhas reais passam a ser exibidas nas telas (sob o valor) e no export Excel, além de Setor/Categoria/Tipo já mostrados (v1.24.3).",
   "Correção do comparador de orçamento IA: a diferença percentual deixava de ser gravada com erro \"Numeric value out of range\" quando o preço SINAPI era muito pequeno (a divisão gerava % gigante). Agora a % só é calculada quando o valor SINAPI e o valor da planilha são maiores que zero, com clamp de segurança, e a coluna foi ampliada para DECIMAL(12,2). A análise pode ser re-rodada (Reanalisar) para completar os itens que faltaram (v1.24.2).",
   "Correção do fluxo de caixa: a janela de meses passou a ser centrada no mês atual (mês corrente ± 6 meses) em vez de pegar os últimos 12 meses com datas existentes. Antes, uma única conta com data muito no futuro (ex.: conta a pagar em 2030) esticava o eixo e escondia os lançamentos do período atual; agora lançamentos fora da janela não aparecem sem distorcer o gráfico. Janela configurável por constante (v1.24.1).",
@@ -5224,7 +5225,7 @@ function renderIaBuscaResultados(rows) {
 // Fluxo: sobe planilha (.xlsx/.csv) → a IA classifica cada item contra a base
 // SINAPI (mesma busca semântica por cosseno, no worker) em ACHOU/REVISAR/COTAÇÃO
 // PRÓPRIA → o usuário revisa (Aceitar) → exporta o resultado em Excel.
-const iaDeparaState = { jobId: null, total: 0, colunas: [], status: "none", filtro: "todos", grupo: "todos", setor: "todos", counts: null, grupos: [], setores: [], abasLidas: [], abasIgnoradas: [] };
+const iaDeparaState = { jobId: null, total: 0, colunas: [], status: "none", filtro: "todos", grupo: "todos", setor: "todos", counts: null, grupos: [], setores: [], abasLidas: [], abasIgnoradas: [], nomeArquivo: "" };
 let iaDeparaTimer = null;
 
 const IA_DEPARA_SIT = {
@@ -5298,6 +5299,7 @@ async function iaDeparaUpload(event) {
     if (!d || !d.jobId) throw new Error((payload && payload.message) || "Falha ao ler a planilha.");
     iaDeparaState.jobId = d.jobId;
     iaDeparaState.total = d.total || 0;
+    iaDeparaState.nomeArquivo = file.name || "";
     iaDeparaState.colunas = d.colunasDetectadas || [];
     iaDeparaState.abasLidas = d.abasLidas || [];
     iaDeparaState.abasIgnoradas = d.abasIgnoradas || [];
@@ -5419,6 +5421,7 @@ function iaDeparaRenderResult(itens, counts) {
       ${bucket("divergente", "DIVERGENTE", "ia-dp-b-divergente")}
       ${bucket("cotacao_propria", "COTAÇÃO PRÓPRIA", "ia-dp-b-cotacao")}
       <button type="button" class="secondary ia-dp-export" id="iaDeparaExportBtn">⤓ Exportar resultado</button>
+      <button type="button" class="primary ia-dp-enviar" id="iaDeparaEnviarBtn">→ Enviar para Orçamento de Obra</button>
     </div>
     ${iaDeparaGrupoFilterHtml()}`;
   if (!itens.length) {
@@ -5437,6 +5440,7 @@ function iaDeparaRenderResult(itens, counts) {
   }
   box.querySelectorAll("[data-dp-filtro]").forEach((btn) => btn.addEventListener("click", () => iaDeparaLoadResults(btn.dataset.dpFiltro)));
   qs("iaDeparaExportBtn")?.addEventListener("click", iaDeparaExport);
+  qs("iaDeparaEnviarBtn")?.addEventListener("click", () => iaEnviarParaOrcamento("depara"));
   qs("iaDeparaGrupoSel")?.addEventListener("change", (e) => { iaDeparaState.grupo = e.target.value || "todos"; iaDeparaLoadResults(iaDeparaState.filtro); });
   qs("iaDeparaSetorSel")?.addEventListener("change", (e) => { iaDeparaState.setor = e.target.value || "todos"; iaDeparaLoadResults(iaDeparaState.filtro); });
   box.querySelectorAll("[data-dp-aceitar]").forEach((btn) => btn.addEventListener("click", () => iaDeparaAceitar(Number(btn.dataset.dpAceitar), btn)));
@@ -5574,7 +5578,7 @@ async function iaDeparaExport() {
 // semântica) e COMPARA o preço da planilha com o da SINAPI → relatório com baldes
 // por situação + resumo de economia/excesso + comparação por linha → export Excel.
 // Só análise nesta fase: não vira orçamento editável.
-const iaComparaState = { jobId: null, total: 0, colunas: [], status: "none", filtro: "todos", setor: "todos", counts: null, resumo: null, setores: [] };
+const iaComparaState = { jobId: null, total: 0, colunas: [], status: "none", filtro: "todos", setor: "todos", counts: null, resumo: null, setores: [], nomeArquivo: "" };
 let iaComparaTimer = null;
 
 const IA_COMPARA_SIT = {
@@ -5625,6 +5629,7 @@ async function iaComparaUpload(event) {
     if (!d || !d.jobId) throw new Error((payload && payload.message) || "Falha ao ler a planilha.");
     iaComparaState.jobId = d.jobId;
     iaComparaState.total = d.total || 0;
+    iaComparaState.nomeArquivo = file.name || "";
     iaComparaState.colunas = d.colunasDetectadas || [];
     iaComparaState.status = "uploaded";
     iaComparaState.filtro = "todos";
@@ -5763,6 +5768,7 @@ function iaComparaRenderResult(itens, counts, resumo) {
       ${bucket("divergente", "DIVERGENTE", "ia-dp-b-divergente")}
       ${bucket("cotacao_propria", "COTAÇÃO PRÓPRIA", "ia-dp-b-cotacao")}
       <button type="button" class="secondary ia-dp-export" id="iaComparaExportBtn">⤓ Exportar relatório</button>
+      <button type="button" class="primary ia-dp-enviar" id="iaComparaEnviarBtn">→ Enviar para Orçamento de Obra</button>
     </div>
     ${iaDeparaSelectFilter("iaComparaSetorSel", "Setor", iaComparaState.setores, iaComparaState.setor)}`;
   const resumoHtml = iaComparaResumoHtml(resumo || iaComparaState.resumo);
@@ -5783,6 +5789,7 @@ function iaComparaRenderResult(itens, counts, resumo) {
   }
   box.querySelectorAll("[data-cmp-filtro]").forEach((btn) => btn.addEventListener("click", () => iaComparaLoadResults(btn.dataset.cmpFiltro)));
   qs("iaComparaExportBtn")?.addEventListener("click", iaComparaExport);
+  qs("iaComparaEnviarBtn")?.addEventListener("click", () => iaEnviarParaOrcamento("compara"));
   qs("iaComparaSetorSel")?.addEventListener("change", (e) => { iaComparaState.setor = e.target.value || "todos"; iaComparaLoadResults(iaComparaState.filtro); });
   box.querySelectorAll("[data-cmp-aceitar]").forEach((btn) => btn.addEventListener("click", () => iaComparaAceitar(Number(btn.dataset.cmpAceitar), btn)));
 }
@@ -5898,6 +5905,76 @@ async function iaComparaExport() {
   } finally {
     if (btn) btn.disabled = false;
   }
+}
+
+// ── Fase B1: enviar a análise (comparador/de-para) para um Orçamento de Obra ──
+// Abre um modal pedindo a obra/projeto, nome e "só aceitos"; cria o orçamento de obra
+// (orcamentos_obras + orcamento_obra_itens) reusando as tabelas existentes.
+function iaEnviarParaOrcamento(origem) {
+  const st = origem === "compara" ? iaComparaState : iaDeparaState;
+  if (!st.jobId) { alert("Rode a análise antes de enviar para o orçamento."); return; }
+  const projetos = db.projects || [];
+  if (!projetos.length) { alert("Cadastre uma obra/projeto antes de gerar o orçamento."); return; }
+  const arquivo = (st.nomeArquivo || "").replace(/\.[^.]+$/, "");
+  const defName = `Orçamento IA${arquivo ? " - " + arquivo : ""}`.slice(0, 180);
+  const projOptions = projetos.map((p) => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name || ("Obra " + p.id))}</option>`).join("");
+  const { close, q } = viabilidadeDialog(`
+    <div class="viab-modal ia-enviar-modal">
+      <header class="viab-modal-head"><h3>Enviar para Orçamento de Obra</h3><button type="button" class="viab-x" data-close aria-label="Fechar">✕</button></header>
+      <div class="viab-modal-body ia-enviar-body">
+        <p class="muted">Cria um orçamento de obra (rascunho) com os itens desta análise. Os valores vêm da planilha/SINAPI — nada é inventado; itens sem dado ficam com default neutro e nota.</p>
+        <label class="full">Obra / projeto de destino
+          <select id="iaEnvProjeto">${projOptions}</select>
+        </label>
+        <label class="full">Nome do orçamento
+          <input type="text" id="iaEnvNome" value="${escapeHtml(defName)}" maxlength="180">
+        </label>
+        <label class="ia-enviar-check"><input type="checkbox" id="iaEnvAceitos"> Enviar só os itens aceitos</label>
+      </div>
+      <footer class="viab-modal-foot">
+        <button type="button" class="secondary" data-close>Cancelar</button>
+        <button type="button" class="primary" id="iaEnvConfirmar">Criar orçamento</button>
+      </footer>
+    </div>`);
+  q("#iaEnvConfirmar")?.addEventListener("click", async () => {
+    const projectId = Number(q("#iaEnvProjeto")?.value || 0);
+    if (!projectId) { alert("Selecione a obra/projeto de destino."); return; }
+    const name = (q("#iaEnvNome")?.value || "").trim();
+    const apenasAceitos = !!q("#iaEnvAceitos")?.checked;
+    const btn = q("#iaEnvConfirmar");
+    btn.disabled = true;
+    btn.textContent = "Criando…";
+    try {
+      const data = await apiModuleRequest("?module=ia&action=enviarParaOrcamento", {
+        method: "POST",
+        body: JSON.stringify({ jobId: st.jobId, projectId, name, apenasAceitos }),
+      });
+      close();
+      iaEnviarSucesso(data);
+    } catch (error) {
+      alert(`Não foi possível criar o orçamento: ${error.message}`);
+      btn.disabled = false;
+      btn.textContent = "Criar orçamento";
+    }
+  });
+}
+
+function iaEnviarSucesso(data) {
+  const n = Number(data?.itensCriados || 0);
+  const { close, q } = viabilidadeDialog(`
+    <div class="viab-modal ia-enviar-modal">
+      <header class="viab-modal-head"><h3>Orçamento criado ✅</h3><button type="button" class="viab-x" data-close aria-label="Fechar">✕</button></header>
+      <div class="viab-modal-body ia-enviar-body">
+        <p>Orçamento <strong>${escapeHtml(data?.name || "")}</strong> ${data?.version ? `(${escapeHtml(data.version)})` : ""} criado com <strong>${n.toLocaleString("pt-BR")}</strong> item(ns).</p>
+        <p class="muted">Abra em Orçamentos de Obras para ajustar quantidades, BDI e etapas. Itens divergentes/sem categoria ficam anotados.</p>
+      </div>
+      <footer class="viab-modal-foot">
+        <button type="button" class="secondary" data-close>Fechar</button>
+        ${canAccessModule("workBudgets") ? '<button type="button" class="primary" id="iaEnvAbrir">Abrir em Orçamentos de Obras</button>' : ""}
+      </footer>
+    </div>`);
+  q("#iaEnvAbrir")?.addEventListener("click", () => { close(); currentModule = "workBudgets"; render(); });
+  showToast(`Orçamento criado com ${n} item(ns).`);
 }
 
 function pluginCard(row, index, total, editable) {

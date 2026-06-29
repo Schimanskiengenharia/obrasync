@@ -1,8 +1,8 @@
 # CLAUDE.md — Guia para agentes de IA no projeto ObraSync
 
-> **Versão atual:** `v1.24.3` · 2026-06-28
+> **Versão atual:** `v1.25.0` · 2026-06-28
 > **Última varredura de código:** 2026-06-27 (3ª rodada — segurança, bugs, performance, qualidade, UX; itens MÉDIO/BAIXO fechados na v1.12.1)
-> **Handoff:** este doc foi atualizado na v1.24.0 (planilhas reais: cabeçalho + colunas ricas + divergente) — confira a seção **Sessão 2026-06-28 — v1.24.0** e **Operação/Deploy (handoff)** abaixo.
+> **Handoff:** este doc foi atualizado na v1.25.0 (Fase B1: ponte IA → Orçamento de Obra) — confira a seção **Sessão 2026-06-28 — v1.25.0** e **Operação/Deploy (handoff)** abaixo.
 >
 > **Patches v1.24.x:** `v1.24.1` — fluxo de caixa centra a janela de meses no mês atual (`collectMonths` = mês corrente ± `CASHFLOW_MONTHS_BACK`/`FORWARD`, default 6/6), uma data isolada no futuro não estica mais o eixo. `v1.24.2` — comparador IA: `diferencaPercent` ampliado para `DECIMAL(12,2)` (migration `2026-06-28-ia-compara-difpercent.sql` + guard em `ensure_ia_compara_tables`) e o worker só calcula a % quando `valorUnitOrigem > 0` E `matchValor > 0`, com clamp (`IA_COMPARA_DIFPERCENT_MAX`/`DIFVALOR_MAX`) — corrige `SQLSTATE[22003]` por base SINAPI ~zero. Re-rodar pelo "Reanalisar" é idempotente. `v1.24.3` — as colunas ricas **Material unit.** e **M.O. unit.** passam a ser exibidas nas telas (sob o valor) e no export Excel do de-para e do comparador (a captura/armazenamento já vinham da v1.24.0). Lembrete: o valor de comparação segue a prioridade `custoDiretoUnit > materialUnit+maoObraUnit > valor genérico` (custo SEM BDI vs custo SINAPI sem BDI) — ver `ia_planilha_ler_ricos`.
 
@@ -62,6 +62,20 @@ Leia também o `README.md` (seção "Para quem está retomando o projeto") e o
 > Pontos fortes confirmados (não re-sinalizar): prepared statements em todo SQL (sem SQLi), autorização por rota/perfil após `authenticate_request`, sessão com token CSPRNG + SHA-256 + idle/TTL, `password_hash`, rate limit de login/reset, CSRF mitigado por auth via header, uploads fora do docroot, deploy com HMAC + `escapeshellarg`.
 
 ---
+
+## Sessão 2026-06-28 — v1.25.0 (Fase B1: ponte IA → Orçamento de Obra)
+
+**Feature:** botão **"Enviar para Orçamento de Obra"** no resultado do comparador (`iaCompara`) e do de-para (`iaDepara`). Cria um orçamento de obra **nas tabelas existentes** (`orcamentos_obras` + `orcamento_obra_itens`) — NÃO há estrutura nova. Endpoint `POST ?module=ia&action=enviarParaOrcamento` `{jobId, projectId, name?, apenasAceitos?}` → `handle_ia_enviar_para_orcamento`.
+
+**Fluxo do endpoint:** detecta a origem do lote (busca o jobId em `ia_compara_jobs` → `ia_compara_itens` campo de valor `valorUnitOrigem`; senão `ia_depara_jobs` → `ia_depara_itens` campo `valorOrigem`). Cria o cabeçalho (`status='Rascunho'`, `version` única no projeto via loop no `uk projectId,name,version`, `sinapiReferenceId` = referência `isDefault`, `priceType` da referência). Para cada item (filtra `aceito=1` se `apenasAceitos`): cria `orcamento_obra_itens` com `insert_dynamic` (descarta colunas inexistentes) mapeando:
+- `description=descricaoOrigem`; `code`/`codigo`=matchCode (achou) ou codigoOrigem; `unit`=unidadeOrigem||matchUnit; `quantity`=quantidadeOrigem||1.
+- `unitCost` = **custoDiretoUnit > valorUnitOrigem/valorOrigem** (custo SEM BDI vs SINAPI sem BDI); `bdiPercent` da planilha.
+- `origin` enum: achou→`SINAPI`, cotacao_propria→`Cotação manual`, faltou_importar/divergente→`Item livre`.
+- `tipo` enum: material/M.O. pelo predomínio de materialUnit/maoObraUnit (default `material`).
+- `stageName`=setor + `etapa_id` (cria `orcamento_etapas` por setor distinto); `categoryId` casa `financial_categories.name` por nome (senão NULL + nota); `sinapi_id`=matchId **só** quando achou+composicao (a JOIN de export liga em `sinapi_composicoes`); `sinapiSnapshotJson` com rastreabilidade; `notes` com divergência/categoria não casada.
+- **Totais espelham `normalizeWorkBudgetItem`/`normalizeWorkBudget` do app.js** (não há recálculo no PHP): item `totalCost=qtd*unitCost`, `unitPrice=unitCost*(1+bdi/100)`, `totalPrice=qtd*unitPrice`; cabeçalho `directCost=ΣtotalCost`, `totalCost=directCost` (charges 0), `totalPrice=ΣtotalPrice` (discount 0). Tudo numa transação; `ensure_budget_structure` garante `tipo/etapa_id/sinapi_id/codigo`.
+
+**Frontend:** `iaEnviarParaOrcamento(origem)` abre modal (reusa `viabilidadeDialog`) com obra (`db.projects`), nome default (`Orçamento IA - <arquivo>`) e "só aceitos"; em sucesso `iaEnviarSucesso` oferece "Abrir em Orçamentos de Obras" (`currentModule='workBudgets'`). NÃO transforma em proposta nem faz agrupamentos multidimensionais (próximas fases).
 
 ## Sessão 2026-06-28 — v1.24.0 (Planilhas reais: cabeçalho + colunas ricas + divergente)
 

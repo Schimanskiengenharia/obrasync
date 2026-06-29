@@ -6236,3 +6236,16 @@ html[data-theme="dark"] .ia-cmp-low { color: #aee08a; }
 .ia-cmp-warn { color: #855107; cursor: help; }
 html[data-theme="dark"] .ia-cmp-warn { color: #f0c279; }
 .ia-cmp-table { font-size: 0.86rem; }
+.ia-dp-enviar { margin-left: 8px; }
+.ia-enviar-body { display: flex; flex-direction: column; gap: 12px; }
+.ia-enviar-body label.full { display: flex; flex-direction: column; gap: 5px; font-weight: 600; color: var(--ink); }
+.ia-enviar-body label.full select,
+.ia-enviar-body label.full input[type="text"] {
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--field);
+  color: var(--ink);
+  font: inherit;
+}
+.ia-enviar-check { display: flex; align-items: center; gap: 8px; color: var(--ink); }

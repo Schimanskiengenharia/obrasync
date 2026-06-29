@@ -9002,6 +9002,13 @@ function handle_ia_module(PDO $pdo, string $method, array $query, array $config,
         }
         handle_ia_compara_export($pdo);
     }
+    // Fase B1: ponte da análise (comparador/de-para) → Orçamento de Obra existente.
+    if ($action === 'enviarparaorcamento') {
+        if (strtoupper($method) !== 'POST') {
+            sinapi_module_respond(false, [], 'Método não permitido. Use POST.', 405);
+        }
+        handle_ia_enviar_para_orcamento($pdo, ia_read_json_body(), $authUser);
+    }
     sinapi_module_respond(false, [], 'Ação de IA não reconhecida.', 404);
 }
 
@@ -10460,6 +10467,303 @@ function handle_ia_compara_export(PDO $pdo): never
     $writer = new \PhpOffice\PhpSpreadsheet\Writer\Xlsx($ss);
     $writer->save('php://output');
     exit;
+}
+
+// ── Fase B1: ponte da análise (comparador/de-para) → Orçamento de Obra ──────
+// Pega os itens de um lote (ia_compara_itens OU ia_depara_itens) e cria um orçamento
+// de obra existente (orcamentos_obras + orcamento_obra_itens). NÃO inventa valores:
+// só transfere o que está na análise; onde falta dado usa default neutro + registra
+// em notes. Os totais espelham normalizeWorkBudgetItem/normalizeWorkBudget do frontend.
+function handle_ia_enviar_para_orcamento(PDO $pdo, array $payload, ?array $authUser): never
+{
+    @set_time_limit(120);
+    $jobId = trim((string) ($payload['jobId'] ?? ''));
+    $projectId = (int) ($payload['projectId'] ?? 0);
+    $apenasAceitos = !empty($payload['apenasAceitos']);
+    if ($jobId === '') {
+        sinapi_module_respond(false, [], 'Informe o lote (jobId).', 400);
+    }
+    if ($projectId <= 0) {
+        sinapi_module_respond(false, [], 'Selecione a obra/projeto de destino.', 400);
+    }
+    $pstmt = $pdo->prepare('SELECT id, name, clientId FROM projects WHERE id = ? LIMIT 1');
+    $pstmt->execute([$projectId]);
+    $project = $pstmt->fetch(PDO::FETCH_ASSOC);
+    if (!$project) {
+        sinapi_module_respond(false, [], 'Obra/projeto de destino não encontrado.', 404);
+    }
+
+    // Descobre a origem do lote (comparador ou de-para) e o campo de valor de cada um.
+    ensure_ia_compara_tables($pdo);
+    ensure_ia_depara_tables($pdo);
+    $origemLote = null;
+    $itensTable = null;
+    $valorField = null;
+    $jstmt = $pdo->prepare('SELECT * FROM ia_compara_jobs WHERE id = ? LIMIT 1');
+    $jstmt->execute([$jobId]);
+    $job = $jstmt->fetch(PDO::FETCH_ASSOC);
+    if ($job) {
+        $origemLote = 'compara';
+        $itensTable = 'ia_compara_itens';
+        $valorField = 'valorUnitOrigem';
+    } else {
+        $jstmt = $pdo->prepare('SELECT * FROM ia_depara_jobs WHERE id = ? LIMIT 1');
+        $jstmt->execute([$jobId]);
+        $job = $jstmt->fetch(PDO::FETCH_ASSOC);
+        if ($job) {
+            $origemLote = 'depara';
+            $itensTable = 'ia_depara_itens';
+            $valorField = 'valorOrigem';
+        }
+    }
+    if (!$job) {
+        sinapi_module_respond(false, [], 'Lote de análise não encontrado.', 404);
+    }
+
+    $sql = "SELECT * FROM {$itensTable} WHERE jobId = ?";
+    if ($apenasAceitos) {
+        $sql .= ' AND aceito = 1';
+    }
+    $sql .= ' ORDER BY id';
+    $istmt = $pdo->prepare($sql);
+    $istmt->execute([$jobId]);
+    $itens = $istmt->fetchAll(PDO::FETCH_ASSOC);
+    if (!$itens) {
+        sinapi_module_respond(false, [], $apenasAceitos
+            ? 'Nenhum item aceito neste lote para enviar. Aceite itens ou envie todos.'
+            : 'O lote não tem itens para enviar.', 400);
+    }
+
+    // Garante as colunas extras do orçamento de obra (tipo/etapa_id/sinapi_id/codigo + snapshot).
+    ensure_budget_structure($pdo);
+    try {
+        $pdo->exec('ALTER TABLE orcamento_obra_itens ADD COLUMN IF NOT EXISTS sinapiSnapshotJson LONGTEXT NULL');
+    } catch (Throwable $ignored) {
+    }
+
+    // Referência SINAPI ativa (isDefault); fallback para a mais recente.
+    $ref = null;
+    try {
+        $ref = $pdo->query("SELECT id, priceType FROM sinapi_referencias WHERE isDefault = 1 ORDER BY id DESC LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+        if (!$ref) {
+            $ref = $pdo->query("SELECT id, priceType FROM sinapi_referencias ORDER BY isDefault DESC, referenceYear DESC, referenceMonth DESC, id DESC LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+        }
+    } catch (Throwable $ignored) {
+        $ref = null;
+    }
+    $refId = $ref ? (int) $ref['id'] : null;
+    $priceTypeEnum = ['Onerado', 'Desonerado', 'Sem desoneração', 'Com desoneração', 'Sem encargos sociais'];
+    $priceType = ($ref && in_array((string) ($ref['priceType'] ?? ''), $priceTypeEnum, true)) ? (string) $ref['priceType'] : 'Sem desoneração';
+
+    // Nome do orçamento (default) + versão única no projeto (uk projectId,name,version).
+    $nome = mb_substr(trim((string) ($payload['name'] ?? '')), 0, 180);
+    if ($nome === '') {
+        $arq = trim((string) ($job['nomeArquivo'] ?? ''));
+        $nome = mb_substr('Orçamento IA' . ($arq !== '' ? ' - ' . $arq : ' - ' . $jobId), 0, 180);
+    }
+    $version = 'v1';
+    $vchk = $pdo->prepare('SELECT 1 FROM orcamentos_obras WHERE projectId = ? AND name = ? AND version = ? LIMIT 1');
+    for ($vn = 1; $vn <= 200; $vn++) {
+        $version = 'v' . $vn;
+        $vchk->execute([$projectId, $nome, $version]);
+        if (!$vchk->fetchColumn()) {
+            break;
+        }
+    }
+
+    // Categorias por nome (lower) → id, para casar a categoria da planilha.
+    $catMap = [];
+    try {
+        foreach ($pdo->query('SELECT id, name FROM financial_categories')->fetchAll(PDO::FETCH_ASSOC) as $c) {
+            $catMap[mb_strtolower(trim((string) $c['name']))] = (int) $c['id'];
+        }
+    } catch (Throwable $ignored) {
+    }
+
+    $temEtapas = (bool) resolve_existing_table($pdo, ['orcamento_etapas'], false);
+
+    $pdo->beginTransaction();
+    try {
+        $workBudgetId = insert_dynamic($pdo, 'orcamentos_obras', [
+            'projectId' => $projectId,
+            'clientId' => ($project['clientId'] ?? null) ?: null,
+            'name' => $nome,
+            'version' => $version,
+            'budgetDate' => date('Y-m-d'),
+            'sinapiReferenceId' => $refId,
+            'priceType' => $priceType,
+            'status' => 'Rascunho',
+            'bdiPercent' => 0,
+            'chargesPercent' => 0,
+            'discountPercent' => 0,
+            'directCost' => 0,
+            'totalCost' => 0,
+            'totalPrice' => 0,
+            'notes' => 'Gerado pela IA (' . ($origemLote === 'compara' ? 'comparador' : 'de-para') . ') a partir da análise ' . $jobId . '.',
+            'createdByUserId' => (int) ($authUser['id'] ?? 0) ?: null,
+        ]);
+
+        // Etapas a partir dos setores distintos (cada setor = 1 etapa); vincula etapa_id.
+        $etapaMap = [];
+        if ($temEtapas) {
+            $ordemEtapa = 0;
+            foreach ($itens as $it) {
+                $setor = trim((string) ($it['setor'] ?? ''));
+                if ($setor === '' || isset($etapaMap[$setor])) {
+                    continue;
+                }
+                $etapaMap[$setor] = insert_dynamic($pdo, 'orcamento_etapas', [
+                    'orcamento_id' => $workBudgetId,
+                    'obra_id' => $projectId,
+                    'nome' => mb_substr($setor, 0, 200),
+                    'ordem' => $ordemEtapa++,
+                ]);
+            }
+        }
+
+        $directCost = 0.0;
+        $somaTotalPrice = 0.0;
+        $criados = 0;
+        foreach ($itens as $it) {
+            $status = (string) ($it['statusClassificacao'] ?? '');
+            $matchOrigem = (string) ($it['matchOrigem'] ?? '');
+            $codigoOrigem = trim((string) ($it['codigoOrigem'] ?? ''));
+            $matchCode = trim((string) ($it['matchCode'] ?? ''));
+            // Código: o do match SINAPI quando ACHOU; senão o informado na planilha.
+            $codeFinal = ($status === 'achou' && $matchCode !== '') ? $matchCode : ($codigoOrigem !== '' ? $codigoOrigem : $matchCode);
+
+            // Quantidade: compara usa quantidadeOrigem; de-para usa quantidade. Default 1.
+            $qtdRaw = $it['quantidadeOrigem'] ?? $it['quantidade'] ?? null;
+            $qtd = ($qtdRaw !== null && (float) $qtdRaw > 0) ? (float) $qtdRaw : 1.0;
+
+            // Valor unitário (custo SEM BDI): Custo Direto > valor da planilha (já priorizado
+            // no upload: custo direto > material+m.o. > genérico). Documentado em ia_planilha_ler_ricos.
+            $custoDireto = ($it['custoDiretoUnit'] ?? null) !== null ? (float) $it['custoDiretoUnit'] : null;
+            $valorPlan = ($it[$valorField] ?? null) !== null ? (float) $it[$valorField] : null;
+            $unitCost = $custoDireto !== null ? $custoDireto : ($valorPlan !== null ? $valorPlan : 0.0);
+
+            $bdi = ($it['bdiPercent'] ?? null) !== null ? (float) $it['bdiPercent'] : 0.0;
+
+            // Totais — espelham normalizeWorkBudgetItem (frontend): totalCost = qtd*unitCost,
+            // unitPrice = unitCost*(1+bdi/100), totalPrice = qtd*unitPrice (2 casas).
+            $totalCost = round($qtd * $unitCost, 2);
+            $unitPrice = round($unitCost * (1 + $bdi / 100), 2);
+            $totalPrice = round($qtd * $unitPrice, 2);
+
+            // origin (enum do orçamento de obra).
+            $origin = 'Item livre';
+            if ($status === 'achou') {
+                $origin = 'SINAPI';
+            } elseif ($status === 'cotacao_propria') {
+                $origin = 'Cotação manual';
+            }
+            // 'faltou_importar' e 'divergente' → 'Item livre' (tem código mas correspondência incerta).
+
+            // tipo (enum): deriva de material/M.O.; default 'material' quando ambíguo.
+            $mat = ($it['materialUnit'] ?? null) !== null ? (float) $it['materialUnit'] : 0.0;
+            $mo = ($it['maoObraUnit'] ?? null) !== null ? (float) $it['maoObraUnit'] : 0.0;
+            $tipo = 'material';
+            if ($mat > 0 && $mo > 0) {
+                $tipo = $mat >= $mo ? 'material' : 'mao_de_obra';
+            } elseif ($mo > 0 && $mat <= 0) {
+                $tipo = 'mao_de_obra';
+            }
+
+            // Categoria por nome; se não casar, NULL e registra a string em notes.
+            $categoria = trim((string) ($it['categoria'] ?? ''));
+            $categoryId = $categoria !== '' ? ($catMap[mb_strtolower($categoria)] ?? null) : null;
+
+            $notas = [];
+            if ($categoria !== '' && $categoryId === null) {
+                $notas[] = 'Categoria da planilha: "' . $categoria . '" (não encontrada no cadastro).';
+            }
+            if ($status === 'divergente') {
+                $notas[] = 'DIVERGENTE: código informado (' . ($codigoOrigem !== '' ? $codigoOrigem : '—') . ') diverge da descrição — revisar.';
+            } elseif ($status === 'faltou_importar') {
+                $notas[] = 'Código informado não está na base SINAPI importada — revisar.';
+            }
+            if (($it['tipoOrigem'] ?? '') !== '') {
+                $notas[] = 'Tipo (origem): ' . (string) $it['tipoOrigem'] . '.';
+            }
+            $notes = $notas ? implode(' ', $notas) : null;
+
+            $setor = trim((string) ($it['setor'] ?? ''));
+            $etapaId = ($setor !== '' && isset($etapaMap[$setor])) ? $etapaMap[$setor] : null;
+            // sinapi_id só para composição ACHOU (a JOIN de export liga em sinapi_composicoes).
+            $sinapiId = ($status === 'achou' && $matchOrigem === 'composicao' && !empty($it['matchId'])) ? (int) $it['matchId'] : null;
+            $unit = mb_substr(trim((string) (($it['unidadeOrigem'] ?? '') !== '' ? $it['unidadeOrigem'] : ($it['matchUnit'] ?? ''))), 0, 40);
+
+            $snapshot = json_encode([
+                'fonte' => 'ia_' . $origemLote,
+                'jobId' => $jobId,
+                'statusClassificacao' => $status,
+                'similaridade' => ($it['similaridade'] ?? null) !== null ? (float) $it['similaridade'] : null,
+                'matchOrigem' => $matchOrigem !== '' ? $matchOrigem : null,
+                'matchId' => !empty($it['matchId']) ? (int) $it['matchId'] : null,
+                'matchCode' => $matchCode !== '' ? $matchCode : null,
+                'matchDescription' => ($it['matchDescription'] ?? null) ?: null,
+                'matchValor' => ($it['matchValor'] ?? null) !== null ? (float) $it['matchValor'] : null,
+                'codigoOrigem' => $codigoOrigem !== '' ? $codigoOrigem : null,
+                'materialUnit' => $mat > 0 ? $mat : null,
+                'maoObraUnit' => $mo > 0 ? $mo : null,
+                'custoDiretoUnit' => $custoDireto,
+                'tipoOrigem' => ($it['tipoOrigem'] ?? null) ?: null,
+            ], JSON_UNESCAPED_UNICODE);
+
+            insert_dynamic($pdo, 'orcamento_obra_itens', [
+                'workBudgetId' => $workBudgetId,
+                'projectId' => $projectId,
+                'origin' => $origin,
+                'sinapiReferenceId' => $status === 'achou' ? $refId : null,
+                'code' => $codeFinal !== '' ? mb_substr($codeFinal, 0, 80) : null,
+                'codigo' => $codeFinal !== '' ? mb_substr($codeFinal, 0, 20) : null,
+                'description' => (string) ($it['descricaoOrigem'] ?? ''),
+                'unit' => $unit !== '' ? $unit : null,
+                'quantity' => $qtd,
+                'unitCost' => $unitCost,
+                'totalCost' => $totalCost,
+                'bdiPercent' => $bdi,
+                'unitPrice' => $unitPrice,
+                'totalPrice' => $totalPrice,
+                'stageName' => $setor !== '' ? mb_substr($setor, 0, 180) : null,
+                'etapa_id' => $etapaId,
+                'sinapi_id' => $sinapiId,
+                'tipo' => $tipo,
+                'categoryId' => $categoryId,
+                'notes' => $notes,
+                'sinapiSnapshotJson' => $snapshot,
+                'ordem' => $criados,
+            ]);
+            $directCost += $totalCost;
+            $somaTotalPrice += $totalPrice;
+            $criados++;
+        }
+
+        // Cabeçalho — espelha normalizeWorkBudget (chargesPercent/discountPercent = 0).
+        $directCost = round($directCost, 2);
+        update_dynamic($pdo, 'orcamentos_obras', $workBudgetId, [
+            'directCost' => $directCost,
+            'totalCost' => $directCost,
+            'totalPrice' => round($somaTotalPrice, 2),
+        ]);
+
+        $pdo->commit();
+    } catch (Throwable $error) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        sinapi_module_respond(false, [], 'Falha ao criar o orçamento de obra: ' . $error->getMessage(), 500);
+    }
+
+    server_audit($pdo, $authUser, 'create', 'workBudgets', (string) $workBudgetId,
+        'Orçamento de obra criado pela IA (' . $origemLote . ', lote ' . $jobId . ', ' . $criados . ' itens)');
+    sinapi_module_respond(true, [
+        'workBudgetId' => $workBudgetId,
+        'itensCriados' => $criados,
+        'projectId' => $projectId,
+        'name' => $nome,
+        'version' => $version,
+    ], 'Orçamento de obra criado com ' . $criados . ' item(ns).');
 }
 
 // Dispara o worker CLI de análise do comparador em background (nohup + nice -19).
