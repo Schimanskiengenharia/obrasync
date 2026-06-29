@@ -19,9 +19,10 @@ if (APP_ENV === "production" && location.protocol === "http:") {
   location.replace(location.href.replace(/^http:/, "https:"));
 }
 const APP_NAME = "ObraSync";
-const APP_VERSION = "v1.24.1";
+const APP_VERSION = "v1.24.2";
 const APP_VERSION_DATE = "2026-06-28";
 const APP_CHANGELOG = [
+  "Correção do comparador de orçamento IA: a diferença percentual deixava de ser gravada com erro \"Numeric value out of range\" quando o preço SINAPI era muito pequeno (a divisão gerava % gigante). Agora a % só é calculada quando o valor SINAPI e o valor da planilha são maiores que zero, com clamp de segurança, e a coluna foi ampliada para DECIMAL(12,2). A análise pode ser re-rodada (Reanalisar) para completar os itens que faltaram (v1.24.2).",
   "Correção do fluxo de caixa: a janela de meses passou a ser centrada no mês atual (mês corrente ± 6 meses) em vez de pegar os últimos 12 meses com datas existentes. Antes, uma única conta com data muito no futuro (ex.: conta a pagar em 2030) esticava o eixo e escondia os lançamentos do período atual; agora lançamentos fora da janela não aparecem sem distorcer o gráfico. Janela configurável por constante (v1.24.1).",
   "IA de-para e comparador — leitura de planilhas reais: a linha de cabeçalho passa a ser detectada automaticamente (não assume mais a linha 1 — ignora títulos/subtítulos antes do cabeçalho), e as colunas ricas dos orçamentos (Setor, Categoria, Tipo, Material Unit., M.O. Unit., Custo Direto Unit., BDI %) são aproveitadas quando existem. O valor unitário usado na comparação segue a prioridade Custo Direto > Material + M.O. > valor genérico. A IA agora confere TODOS os itens (mesmo os com código): se a descrição apontar para um código SINAPI diferente do informado, o item é marcado DIVERGENTE para revisão. As telas mostram Setor/Categoria/Tipo e permitem filtrar por Setor (ala/parte da obra); o export inclui essas colunas (v1.24.0).",
   "De-para em lote: passa a ler TODAS as abas do Excel (não só a primeira), usando o nome de cada aba como grupo/categoria (ex.: Elétrica, Hidráulica, Pavimento 1). Abas sem coluna de descrição reconhecível (capa/resumo/índice) são puladas e listadas no resumo pós-upload. A coluna \"Grupo\" aparece na tabela de resultado e no export, e há um filtro por grupo (aba) além dos baldes de situação (v1.23.0).",

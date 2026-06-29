@@ -251,15 +251,19 @@ try {
             }
         }
 
-        // 3c) Comparação de preço — só quando ACHOU e há os dois valores.
+        // 3c) Comparação de preço — só quando ACHOU e os DOIS valores são > 0.
+        // Dividir por um valor SINAPI ~zero gera % gigante (estourava o DECIMAL e dava
+        // SQLSTATE[22003]); por isso só comparamos com base SINAPI estritamente positiva.
         $precoMaisBaixo = 'sem_comparacao';
         $diferencaValor = null;
         $diferencaPercent = null;
         $matchValor = $match['valor'] ?? null;
-        if ($status === 'achou' && $valorPlanilha !== null && $matchValor !== null && $matchValor > 0) {
-            $diferencaValor = round($valorPlanilha - $matchValor, 4);
-            $diferencaPercent = round(($diferencaValor / $matchValor) * 100, 2);
-            $rel = abs($diferencaValor) / $matchValor;
+        if ($status === 'achou' && $valorPlanilha !== null && $valorPlanilha > 0 && $matchValor !== null && $matchValor > 0) {
+            // Clamp como rede de segurança contra overflow do DECIMAL (base mínima ainda
+            // gera % enorme); a regra principal acima já evita dividir por ~zero.
+            $diferencaValor = max(-IA_COMPARA_DIFVALOR_MAX, min(IA_COMPARA_DIFVALOR_MAX, round($valorPlanilha - $matchValor, 4)));
+            $diferencaPercent = max(-IA_COMPARA_DIFPERCENT_MAX, min(IA_COMPARA_DIFPERCENT_MAX, round((($valorPlanilha - $matchValor) / $matchValor) * 100, 2)));
+            $rel = abs($valorPlanilha - $matchValor) / $matchValor;
             if ($rel <= IA_COMPARA_PRECO_TOLERANCIA) {
                 $precoMaisBaixo = 'igual';
             } elseif ($valorPlanilha < $matchValor) {

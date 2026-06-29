@@ -1,8 +1,10 @@
 # CLAUDE.md — Guia para agentes de IA no projeto ObraSync
 
-> **Versão atual:** `v1.24.0` · 2026-06-28
+> **Versão atual:** `v1.24.2` · 2026-06-28
 > **Última varredura de código:** 2026-06-27 (3ª rodada — segurança, bugs, performance, qualidade, UX; itens MÉDIO/BAIXO fechados na v1.12.1)
 > **Handoff:** este doc foi atualizado na v1.24.0 (planilhas reais: cabeçalho + colunas ricas + divergente) — confira a seção **Sessão 2026-06-28 — v1.24.0** e **Operação/Deploy (handoff)** abaixo.
+>
+> **Patches v1.24.x:** `v1.24.1` — fluxo de caixa centra a janela de meses no mês atual (`collectMonths` = mês corrente ± `CASHFLOW_MONTHS_BACK`/`FORWARD`, default 6/6), uma data isolada no futuro não estica mais o eixo. `v1.24.2` — comparador IA: `diferencaPercent` ampliado para `DECIMAL(12,2)` (migration `2026-06-28-ia-compara-difpercent.sql` + guard em `ensure_ia_compara_tables`) e o worker só calcula a % quando `valorUnitOrigem > 0` E `matchValor > 0`, com clamp (`IA_COMPARA_DIFPERCENT_MAX`/`DIFVALOR_MAX`) — corrige `SQLSTATE[22003]` por base SINAPI ~zero. Re-rodar pelo "Reanalisar" é idempotente.
 
 Este arquivo orienta qualquer agente (ou pessoa) que continue o desenvolvimento.
 Leia também o `README.md` (seção "Para quem está retomando o projeto") e o

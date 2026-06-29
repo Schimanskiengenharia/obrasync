@@ -63,6 +63,10 @@ const IA_COMPARA_ACHOU_MIN = 0.80;       // top1 >= → ACHOU
 const IA_COMPARA_REVISAR_MIN = 0.60;     // 60–80% → ACHOU (similaridade baixa: revisar); < → COTAÇÃO PRÓPRIA
 const IA_COMPARA_PRECO_TOLERANCIA = 0.005; // |dif|/sinapi <= 0,5% → preços "iguais"
 const IA_COMPARA_COMMIT_EVERY = 25;
+// Tetos de salvaguarda contra overflow ao gravar (cabem em DECIMAL(12,2) e DECIMAL(15,4)).
+// A regra principal é NÃO dividir por valor SINAPI ~zero; o clamp é só rede de segurança.
+const IA_COMPARA_DIFPERCENT_MAX = 9999999999.99;   // DECIMAL(12,2)
+const IA_COMPARA_DIFVALOR_MAX = 99999999999.9999;  // DECIMAL(15,4)
 
 $config = load_config();
 $pdo = db($config);
@@ -9221,7 +9225,7 @@ function ensure_ia_compara_tables(PDO $pdo): void
             similaridade DECIMAL(5,2) NULL,
             precoMaisBaixo ENUM(\'planilha\',\'sinapi\',\'igual\',\'sem_comparacao\') NULL,
             diferencaValor DECIMAL(15,4) NULL,
-            diferencaPercent DECIMAL(7,2) NULL,
+            diferencaPercent DECIMAL(12,2) NULL,
             aceito TINYINT NOT NULL DEFAULT 0,
             createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             KEY idx_job (jobId),
@@ -9229,6 +9233,16 @@ function ensure_ia_compara_tables(PDO $pdo): void
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
     );
     ia_ensure_planilha_rich_columns($pdo, 'ia_compara_itens', "ENUM('achou','faltou_importar','divergente','cotacao_propria')");
+    // Amplia diferencaPercent de DECIMAL(7,2) → DECIMAL(12,2) (só quando ainda estreita,
+    // via INFORMATION_SCHEMA, para não rebuildar a tabela a cada request). Evita o
+    // SQLSTATE[22003] quando o % estoura por base SINAPI muito pequena.
+    try {
+        $col = $pdo->query("SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ia_compara_itens' AND COLUMN_NAME = 'diferencaPercent'")->fetchColumn();
+        if ($col && stripos((string) $col, 'decimal(12,2)') === false) {
+            $pdo->exec('ALTER TABLE ia_compara_itens MODIFY diferencaPercent DECIMAL(12,2) NULL');
+        }
+    } catch (Throwable $ignored) {
+    }
     $done = true;
 }
 

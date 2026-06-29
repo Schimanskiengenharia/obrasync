@@ -1129,7 +1129,7 @@ CREATE TABLE IF NOT EXISTS ia_compara_itens (
   similaridade DECIMAL(5,2) NULL,
   precoMaisBaixo ENUM('planilha','sinapi','igual','sem_comparacao') NULL,
   diferencaValor DECIMAL(15,4) NULL,
-  diferencaPercent DECIMAL(7,2) NULL,
+  diferencaPercent DECIMAL(12,2) NULL,
   aceito TINYINT NOT NULL DEFAULT 0,
   createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_compara_item_job FOREIGN KEY (jobId) REFERENCES ia_compara_jobs(id) ON DELETE CASCADE,
