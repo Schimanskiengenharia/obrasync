@@ -19,9 +19,10 @@ if (APP_ENV === "production" && location.protocol === "http:") {
   location.replace(location.href.replace(/^http:/, "https:"));
 }
 const APP_NAME = "ObraSync";
-const APP_VERSION = "v1.24.0";
+const APP_VERSION = "v1.24.1";
 const APP_VERSION_DATE = "2026-06-28";
 const APP_CHANGELOG = [
+  "Correção do fluxo de caixa: a janela de meses passou a ser centrada no mês atual (mês corrente ± 6 meses) em vez de pegar os últimos 12 meses com datas existentes. Antes, uma única conta com data muito no futuro (ex.: conta a pagar em 2030) esticava o eixo e escondia os lançamentos do período atual; agora lançamentos fora da janela não aparecem sem distorcer o gráfico. Janela configurável por constante (v1.24.1).",
   "IA de-para e comparador — leitura de planilhas reais: a linha de cabeçalho passa a ser detectada automaticamente (não assume mais a linha 1 — ignora títulos/subtítulos antes do cabeçalho), e as colunas ricas dos orçamentos (Setor, Categoria, Tipo, Material Unit., M.O. Unit., Custo Direto Unit., BDI %) são aproveitadas quando existem. O valor unitário usado na comparação segue a prioridade Custo Direto > Material + M.O. > valor genérico. A IA agora confere TODOS os itens (mesmo os com código): se a descrição apontar para um código SINAPI diferente do informado, o item é marcado DIVERGENTE para revisão. As telas mostram Setor/Categoria/Tipo e permitem filtrar por Setor (ala/parte da obra); o export inclui essas colunas (v1.24.0).",
   "De-para em lote: passa a ler TODAS as abas do Excel (não só a primeira), usando o nome de cada aba como grupo/categoria (ex.: Elétrica, Hidráulica, Pavimento 1). Abas sem coluna de descrição reconhecível (capa/resumo/índice) são puladas e listadas no resumo pós-upload. A coluna \"Grupo\" aparece na tabela de resultado e no export, e há um filtro por grupo (aba) além dos baldes de situação (v1.23.0).",
   "Comparador de orçamento com IA (Fase A — análise): nova tela em IA → Comparador de orçamento. Suba um orçamento externo em Excel/CSV; para cada item a IA encontra o equivalente na base SINAPI (por código ou por busca semântica) e COMPARA o preço da planilha com o da SINAPI, indicando qual é mais baixo e a diferença (R$ e %). Classifica em ACHOU, FALTOU IMPORTAR (código SINAPI que não está na nossa base) e COTAÇÃO PRÓPRIA. Relatório com baldes coloridos por situação, resumo de economia/excesso estimado (diferença × quantidade), tabela com valor planilha × valor SINAPI e destaque do mais barato, e exportação em Excel. Fase de análise — ainda não gera orçamento editável (v1.22.0).",
@@ -3708,18 +3709,24 @@ function signedCashAmount(row) {
   return -Number(row.amount || 0);
 }
 
+// Janela do fluxo de caixa: RELATIVA ao mês atual (mês corrente ± N meses), para que
+// uma conta isolada num futuro/passado distante (ex.: uma conta a pagar em 2030) não
+// estique o eixo e esconda os lançamentos do período atual. Ajustáveis aqui.
+const CASHFLOW_MONTHS_BACK = 6;     // meses ANTES do mês atual exibidos no fluxo
+const CASHFLOW_MONTHS_FORWARD = 6;  // meses DEPOIS do mês atual exibidos no fluxo
+
+// Monta a lista contígua de meses (YYYY-MM) da janela centrada no mês corrente —
+// independente dos dados. Lançamentos fora dessa janela simplesmente não aparecem
+// (os geradores filtram por mês), sem distorcer o gráfico. currentMonthKey() é o centro.
 function collectMonths() {
-  const months = new Set();
-  [
-    ...dashboardRows("receivable").flatMap((row) => [row.dueDate, row.receivedDate, row.issueDate]),
-    ...dashboardRows("payable").flatMap((row) => [row.dueDate, row.paidDate, row.issueDate]),
-    ...dashboardRows("cashMoves").map((row) => row.date),
-  ].forEach((date) => {
-    const key = monthKey(date);
-    if (key) months.add(key);
-  });
-  months.add(currentMonthKey());
-  return [...months].sort().slice(-12);
+  const [baseYear, baseMonth] = currentMonthKey().split("-").map(Number);
+  const months = [];
+  for (let offset = -CASHFLOW_MONTHS_BACK; offset <= CASHFLOW_MONTHS_FORWARD; offset++) {
+    // Date.UTC normaliza estouro/subfluxo de mês (ex.: mês -1 vira dezembro do ano anterior).
+    const d = new Date(Date.UTC(baseYear, (baseMonth - 1) + offset, 1));
+    months.push(`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`);
+  }
+  return months;
 }
 
 function monthlyCashFlowRows() {
