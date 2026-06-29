@@ -1,6 +1,6 @@
 # CLAUDE.md — Guia para agentes de IA no projeto ObraSync
 
-> **Versão atual:** `v1.25.0` · 2026-06-28
+> **Versão atual:** `v1.25.1` · 2026-06-28
 > **Última varredura de código:** 2026-06-27 (3ª rodada — segurança, bugs, performance, qualidade, UX; itens MÉDIO/BAIXO fechados na v1.12.1)
 > **Handoff:** este doc foi atualizado na v1.25.0 (Fase B1: ponte IA → Orçamento de Obra) — confira a seção **Sessão 2026-06-28 — v1.25.0** e **Operação/Deploy (handoff)** abaixo.
 >
@@ -62,6 +62,14 @@ Leia também o `README.md` (seção "Para quem está retomando o projeto") e o
 > Pontos fortes confirmados (não re-sinalizar): prepared statements em todo SQL (sem SQLi), autorização por rota/perfil após `authenticate_request`, sessão com token CSPRNG + SHA-256 + idle/TTL, `password_hash`, rate limit de login/reset, CSRF mitigado por auth via header, uploads fora do docroot, deploy com HMAC + `escapeshellarg`.
 
 ---
+
+## Sessão 2026-06-28 — v1.25.1 (Correção da leitura de valor: detecção exata de coluna)
+
+**Bug grave corrigido:** o comparador/de-para gravava valor unitário ERRADO (cabo 1,5mm² → R$ 8.484; correto R$ 2,80 da coluna "Custo Direto Unit. (R$)"), gerando "excesso" irreal de milhões. Causa: `ia_depara_map_header` casava por "contém" ("Material Unit." casava com "Total Material"; colunas de Total viravam valor unitário).
+
+**Fix:** `ia_depara_norm` agora remove a marca monetária `(R$)`/`R$`/`$` e `%` antes de limpar a pontuação. `ia_depara_map_header` casa por **chave normalizada EXATA** num dicionário (não "contém"); qualquer coluna que comece com "total" → `null` (nunca é valor unitário); só a descrição tem fallback fuzzy. Prioridade do valor unitário inalterada (`custodireto` > `material+maoobra` > `valor`), agora com as colunas certas. Testado com o cabeçalho real AltoQi (linha 4): G→descricao, F→codigo, H→unidade, I→quantidade, J→material, K→maoobra, **L→custodireto**, P→bdi, Total* → ignoradas. **Debug:** `comparaUpload`/`deparaUpload` retornam `mapaColunas` (campo→letra) + `headerLinha`, exibidos na tela ("Colunas detectadas: L → Custo direto unit., ..."). Helpers novos `ia_col_letter`/`ia_depara_mapa_colunas`.
+
+**PENDENTE (próxima sessão):** comparação UNITÁRIA × TOTAL no comparador (totalOrigem/totalSinapi/diferencaTotal) + botão "Aceitar todos"/"só ACHOU"/"Desmarcar". Ver `docs/sessoes/2026-06-28-ia-comparador-faseB.md`.
 
 ## Sessão 2026-06-28 — v1.25.0 (Fase B1: ponte IA → Orçamento de Obra)
 

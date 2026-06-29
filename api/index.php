@@ -9571,7 +9571,7 @@ function handle_ia_depara_upload(PDO $pdo, array $config, array $authUser): neve
             ];
             $lidasNaAba++;
         }
-        $abasLidas[] = ['nome' => (string) $sheetName, 'linhas' => $lidasNaAba, 'colunasDetectadas' => array_keys($cols)];
+        $abasLidas[] = ['nome' => (string) $sheetName, 'linhas' => $lidasNaAba, 'colunasDetectadas' => array_keys($cols), 'headerLinha' => $headerIdx + 1, 'mapaColunas' => ia_depara_mapa_colunas($cols)];
     }
     if (!$itens) {
         @unlink($path);
@@ -9610,54 +9610,80 @@ function handle_ia_depara_upload(PDO $pdo, array $config, array $authUser): neve
         'colunasDetectadas' => $colunasDetectadas,
         'abasLidas' => $abasLidas,
         'abasIgnoradas' => $abasIgnoradas,
+        // Depuração: mapa coluna→campo (primeira aba lida) para conferir a detecção.
+        'mapaColunas' => $abasLidas[0]['mapaColunas'] ?? [],
+        'headerLinha' => $abasLidas[0]['headerLinha'] ?? null,
     ], 'Planilha lida: ' . count($itens) . ' itens em ' . count($abasLidas) . ' aba(s).');
 }
 
-// Normaliza um texto de cabeçalho: minúsculo, sem acento, sem pontuação.
+// Normaliza um cabeçalho para comparação: minúsculo, sem acento, SEM a marca
+// monetária "(R$)"/"R$"/"$" e SEM "%", sem pontuação, espaços colapsados. Assim
+// "Custo Direto Unit. (R$)" → "custo direto unit" e "BDI %" → "bdi".
 function ia_depara_norm(string $s): string
 {
     $s = mb_strtolower(trim($s));
     $from = ['á','à','â','ã','ä','é','ê','è','ë','í','ì','î','ï','ó','ô','õ','ò','ö','ú','ù','û','ü','ç','ñ'];
     $to   = ['a','a','a','a','a','e','e','e','e','i','i','i','i','o','o','o','o','o','u','u','u','u','c','n'];
     $s = str_replace($from, $to, $s);
+    // Remove a marca monetária antes de limpar a pontuação (não deixa "r" sozinho).
+    $s = str_replace(['r$', '$'], '', $s);
+    $s = str_replace('%', ' ', $s);
     $s = preg_replace('/[^a-z0-9 ]+/', ' ', $s);
     return trim(preg_replace('/\s+/', ' ', $s));
 }
 
-// Mapeia um cabeçalho normalizado para um campo conhecido. Variantes curtas (<4
-// chars: un, cod, qtd, cd) exigem match exato; as longas casam por substring. A ORDEM
-// importa: campos específicos (custo direto, material, m.o.) vêm ANTES do 'valor'
-// genérico para não serem capturados por ele ("Custo Direto Unit." → custodireto, não valor).
+// Mapeia um cabeçalho para um campo conhecido por CHAVE NORMALIZADA EXATA (não por
+// "contém") — assim "Material Unit." (→ material) NUNCA casa com "Total Material",
+// e colunas de TOTAL nunca viram valor UNITÁRIO. Só a descrição tem fallback fuzzy
+// (varia muito). Colunas que começam com "total" são explicitamente ignoradas.
 function ia_depara_map_header(string $h): ?string
 {
     $h = ia_depara_norm($h);
     if ($h === '') {
         return null;
     }
-    $map = [
-        // 'item'/'servico'/'produto' são sinais FRACOS de descrição (ver detecção): em
-        // planilhas reais "Item" costuma ser o número WBS, e "Descrição" é o texto.
-        'descricao' => ['descricao', 'description', 'discriminacao', 'especificacao', 'servico', 'servicos', 'produto', 'item'],
-        'codigo' => ['codigo', 'cod', 'code', 'cd', 'codigo sinapi', 'cod sinapi'],
-        'setor' => ['setor', 'ala'],
-        'categoria' => ['categoria'],
-        'tipo' => ['tipo'],
-        'quantidade' => ['quantidade', 'qtd', 'qty', 'qtde', 'quant'],
-        'unidade' => ['unidade', 'unid', 'und', 'un', 'medida'],
-        'custodireto' => ['custo direto', 'custo direto unit', 'custo unitario direto', 'custo direto unitario'],
-        'material' => ['material unit', 'material unitario', 'material'],
-        'maoobra' => ['mao de obra', 'mao obra', 'maodeobra', 'm o unit', 'mo unit', 'm o', 'mo'],
-        'bdi' => ['bdi'],
-        'valor' => ['valor unitario', 'preco unitario', 'valor unit', 'preco unit', 'custo unitario', 'custo unit', 'unitario', 'valor', 'preco', 'custo', 'vlr'],
+    // Nunca tratar uma coluna de TOTAL como valor unitário/descrição.
+    if (str_starts_with($h, 'total ') || $h === 'total') {
+        return null;
+    }
+    static $exact = [
+        // descrição (forte)
+        'descricao' => 'descricao', 'descricao dos servicos' => 'descricao', 'descricao do servico' => 'descricao',
+        'descricao do item' => 'descricao', 'discriminacao' => 'descricao', 'especificacao' => 'descricao',
+        'servico' => 'descricao', 'servicos' => 'descricao', 'produto' => 'descricao',
+        // descrição (fraca — "Item" costuma ser o nº WBS; só vira descrição se não houver forte)
+        'item' => 'descricao',
+        // código
+        'codigo' => 'codigo', 'cod' => 'codigo', 'code' => 'codigo', 'cd' => 'codigo',
+        'codigo sinapi' => 'codigo', 'cod sinapi' => 'codigo', 'codigo do servico' => 'codigo',
+        // setor / categoria / tipo
+        'setor' => 'setor', 'ala' => 'setor',
+        'categoria' => 'categoria',
+        'tipo' => 'tipo',
+        // quantidade
+        'qtde' => 'quantidade', 'qtd' => 'quantidade', 'quantidade' => 'quantidade', 'quant' => 'quantidade', 'qty' => 'quantidade',
+        // unidade
+        'unid' => 'unidade', 'unidade' => 'unidade', 'und' => 'unidade', 'un' => 'unidade', 'medida' => 'unidade',
+        // custo direto UNITÁRIO → prioridade 1 do valor unitário
+        'custo direto unit' => 'custodireto', 'custo direto unitario' => 'custodireto', 'custo direto' => 'custodireto',
+        'custo unitario direto' => 'custodireto', 'custo direto unit total' => 'custodireto',
+        // material / m.o. UNITÁRIOS → prioridade 2 (material + m.o.)
+        'material unit' => 'material', 'material unitario' => 'material', 'mat unit' => 'material',
+        'm o unit' => 'maoobra', 'mo unit' => 'maoobra', 'mao de obra unit' => 'maoobra',
+        'mao de obra unitario' => 'maoobra', 'mao de obra' => 'maoobra', 'm o unitario' => 'maoobra',
+        // bdi
+        'bdi' => 'bdi',
+        // valor genérico → prioridade 3
+        'valor unitario' => 'valor', 'preco unitario' => 'valor', 'valor unit' => 'valor', 'preco unit' => 'valor',
+        'custo unitario' => 'valor', 'valor' => 'valor', 'preco' => 'valor', 'unitario' => 'valor', 'vlr' => 'valor',
     ];
-    foreach ($map as $field => $variants) {
-        foreach ($variants as $v) {
-            if ($h === $v) {
-                return $field;
-            }
-            if (mb_strlen($v) >= 4 && str_contains($h, $v)) {
-                return $field;
-            }
+    if (isset($exact[$h])) {
+        return $exact[$h];
+    }
+    // Fallback SÓ para descrição (cabeçalhos de descrição variam muito); nunca pega "total ...".
+    foreach (['descricao', 'discriminacao', 'especificacao'] as $t) {
+        if (str_contains($h, $t)) {
+            return 'descricao';
         }
     }
     return null;
@@ -9668,12 +9694,40 @@ function ia_depara_map_header(string $h): ?string
 function ia_depara_header_is_strong_desc(string $h): bool
 {
     $h = ia_depara_norm($h);
-    foreach (['descricao', 'description', 'discriminacao', 'especificacao', 'servico', 'produto'] as $t) {
+    if ($h === '' || str_starts_with($h, 'total ')) {
+        return false;
+    }
+    foreach (['descricao', 'discriminacao', 'especificacao', 'servico', 'produto'] as $t) {
         if ($h === $t || str_contains($h, $t)) {
             return true;
         }
     }
     return false;
+}
+
+// Converte um índice de coluna 0-based para a letra estilo Excel (0→A, 25→Z, 26→AA).
+// Usado no mapeamento de depuração coluna→campo devolvido no upload.
+function ia_col_letter(int $idx): string
+{
+    $idx = max(0, $idx);
+    $letter = '';
+    $n = $idx + 1;
+    while ($n > 0) {
+        $rem = ($n - 1) % 26;
+        $letter = chr(65 + $rem) . $letter;
+        $n = intdiv($n - 1, 26);
+    }
+    return $letter;
+}
+
+// Monta o mapa de depuração { campo => letra da coluna } a partir do mapa campo=>índice.
+function ia_depara_mapa_colunas(array $cols): array
+{
+    $mapa = [];
+    foreach ($cols as $campo => $idx) {
+        $mapa[$campo] = ia_col_letter((int) $idx);
+    }
+    return $mapa;
 }
 
 // Procura a LINHA DE CABEÇALHO (não assume linha 1): varre as primeiras ~15 linhas e
@@ -10178,6 +10232,9 @@ function handle_ia_compara_upload(PDO $pdo, array $config, array $authUser): nev
         'jobId' => $jobId,
         'total' => count($itens),
         'colunasDetectadas' => $colunasDetectadas,
+        // Depuração: mapa coluna→campo + linha do cabeçalho, para conferir a detecção.
+        'mapaColunas' => ia_depara_mapa_colunas($cols),
+        'headerLinha' => $headerIdx + 1,
     ], 'Planilha lida: ' . count($itens) . ' itens prontos para analisar.');
 }
 

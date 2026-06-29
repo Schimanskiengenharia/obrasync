@@ -19,9 +19,10 @@ if (APP_ENV === "production" && location.protocol === "http:") {
   location.replace(location.href.replace(/^http:/, "https:"));
 }
 const APP_NAME = "ObraSync";
-const APP_VERSION = "v1.25.0";
+const APP_VERSION = "v1.25.1";
 const APP_VERSION_DATE = "2026-06-28";
 const APP_CHANGELOG = [
+  "Correção crítica na leitura de valor do comparador/de-para: a detecção de colunas passou a casar por chave normalizada EXATA (sem acento/caixa, removendo \"(R$)\" e \"%\") em vez de \"contém\" — assim \"Material Unit.\" não casa mais com \"Total Material\" e nenhuma coluna de Total é lida como valor unitário. O valor unitário segue a prioridade Custo Direto Unit. > Material+M.O. > genérico (ex.: cabo 1,5mm² agora lê R$ 2,80, não R$ 8.484). O upload mostra o mapa coluna→campo detectado (ex.: \"L → Custo direto unit.\") para conferência (v1.25.1).",
   "Fase B1 da IA — ponte para o Orçamento de Obra: botão \"Enviar para Orçamento de Obra\" no resultado do comparador e do de-para. Escolhe a obra de destino, o nome e se envia só os itens aceitos ou todos, e cria um orçamento de obra (rascunho) nas tabelas existentes (orcamentos_obras + orcamento_obra_itens): mapeia origem (SINAPI/Cotação manual/Item livre), tipo (material/mão de obra), etapa a partir do Setor, categoria por nome, código/sinapi_id do match, e usa como custo unitário o Custo Direto (sem BDI) > Material+M.O. > valor genérico. Os totais são recalculados com a mesma fórmula do orçamento de obra; nada é inventado (itens sem dado ficam com default neutro e nota). Depois é só abrir em Orçamentos de Obras para ajustar (v1.25.0).",
   "IA de-para e comparador: as colunas Material unit. e M.O. unit. das planilhas reais passam a ser exibidas nas telas (sob o valor) e no export Excel, além de Setor/Categoria/Tipo já mostrados (v1.24.3).",
   "Correção do comparador de orçamento IA: a diferença percentual deixava de ser gravada com erro \"Numeric value out of range\" quando o preço SINAPI era muito pequeno (a divisão gerava % gigante). Agora a % só é calculada quando o valor SINAPI e o valor da planilha são maiores que zero, com clamp de segurança, e a coluna foi ampliada para DECIMAL(12,2). A análise pode ser re-rodada (Reanalisar) para completar os itens que faltaram (v1.24.2).",
@@ -5225,7 +5226,7 @@ function renderIaBuscaResultados(rows) {
 // Fluxo: sobe planilha (.xlsx/.csv) → a IA classifica cada item contra a base
 // SINAPI (mesma busca semântica por cosseno, no worker) em ACHOU/REVISAR/COTAÇÃO
 // PRÓPRIA → o usuário revisa (Aceitar) → exporta o resultado em Excel.
-const iaDeparaState = { jobId: null, total: 0, colunas: [], status: "none", filtro: "todos", grupo: "todos", setor: "todos", counts: null, grupos: [], setores: [], abasLidas: [], abasIgnoradas: [], nomeArquivo: "" };
+const iaDeparaState = { jobId: null, total: 0, colunas: [], status: "none", filtro: "todos", grupo: "todos", setor: "todos", counts: null, grupos: [], setores: [], abasLidas: [], abasIgnoradas: [], nomeArquivo: "", mapaColunas: {}, headerLinha: null };
 let iaDeparaTimer = null;
 
 const IA_DEPARA_SIT = {
@@ -5238,6 +5239,15 @@ const IA_DEPARA_SIT = {
 function iaDeparaColLabel(c) {
   return ({ descricao: "Descrição", codigo: "Código", quantidade: "Quantidade", unidade: "Unidade", valor: "Valor",
     setor: "Setor", categoria: "Categoria", tipo: "Tipo", material: "Material unit.", maoobra: "M.O. unit.", custodireto: "Custo direto unit.", bdi: "BDI %" })[c] || c;
+}
+
+// Debug visível: mostra o mapeamento detectado coluna(letra)→campo, para o usuário
+// conferir que a leitura pegou as colunas certas (ex.: L → Custo direto unit.).
+function iaMapaColunasHtml(mapa, headerLinha) {
+  const entradas = Object.entries(mapa || {});
+  if (!entradas.length) return "";
+  const chips = entradas.map(([campo, letra]) => `<span class="ia-dp-chip-col">${escapeHtml(letra)} → ${escapeHtml(iaDeparaColLabel(campo))}</span>`).join(" ");
+  return `<p class="field-hint ia-dp-mapa">Colunas detectadas${headerLinha ? ` (cabeçalho na linha ${Number(headerLinha)})` : ""}: ${chips}</p>`;
 }
 
 // Resumo das abas lidas/ignoradas (mostrado após o upload, antes de classificar).
@@ -5300,6 +5310,8 @@ async function iaDeparaUpload(event) {
     iaDeparaState.jobId = d.jobId;
     iaDeparaState.total = d.total || 0;
     iaDeparaState.nomeArquivo = file.name || "";
+    iaDeparaState.mapaColunas = d.mapaColunas || {};
+    iaDeparaState.headerLinha = d.headerLinha || null;
     iaDeparaState.colunas = d.colunasDetectadas || [];
     iaDeparaState.abasLidas = d.abasLidas || [];
     iaDeparaState.abasIgnoradas = d.abasIgnoradas || [];
@@ -5328,6 +5340,7 @@ function iaDeparaRenderReady() {
     <div class="ia-dp-ready">
       <h3>2. Classificar com IA</h3>
       <p><strong>${iaDeparaState.total.toLocaleString("pt-BR")}</strong> itens lidos. Colunas detectadas: ${cols}</p>
+      ${iaMapaColunasHtml(iaDeparaState.mapaColunas, iaDeparaState.headerLinha)}
       ${iaDeparaAbasResumoHtml()}
       <p class="field-hint">A IA gera o embedding de cada descrição e compara por significado com a base SINAPI (~1–2s por item; roda em segundo plano, em baixa prioridade). Itens com código SINAPI válido casam direto pelo código.</p>
       <div id="iaDeparaProgress" class="hidden">
@@ -5578,7 +5591,7 @@ async function iaDeparaExport() {
 // semântica) e COMPARA o preço da planilha com o da SINAPI → relatório com baldes
 // por situação + resumo de economia/excesso + comparação por linha → export Excel.
 // Só análise nesta fase: não vira orçamento editável.
-const iaComparaState = { jobId: null, total: 0, colunas: [], status: "none", filtro: "todos", setor: "todos", counts: null, resumo: null, setores: [], nomeArquivo: "" };
+const iaComparaState = { jobId: null, total: 0, colunas: [], status: "none", filtro: "todos", setor: "todos", counts: null, resumo: null, setores: [], nomeArquivo: "", mapaColunas: {}, headerLinha: null };
 let iaComparaTimer = null;
 
 const IA_COMPARA_SIT = {
@@ -5630,6 +5643,8 @@ async function iaComparaUpload(event) {
     iaComparaState.jobId = d.jobId;
     iaComparaState.total = d.total || 0;
     iaComparaState.nomeArquivo = file.name || "";
+    iaComparaState.mapaColunas = d.mapaColunas || {};
+    iaComparaState.headerLinha = d.headerLinha || null;
     iaComparaState.colunas = d.colunasDetectadas || [];
     iaComparaState.status = "uploaded";
     iaComparaState.filtro = "todos";
@@ -5651,11 +5666,12 @@ function iaComparaRenderReady() {
   const cols = iaComparaState.colunas.length
     ? iaComparaState.colunas.map((c) => `<span class="ia-dp-chip-col">${escapeHtml(iaDeparaColLabel(c))}</span>`).join(" ")
     : '<span class="muted">nenhuma além da descrição</span>';
-  const temValor = iaComparaState.colunas.includes("valor");
+  const temValor = ["valor", "custodireto", "material", "maoobra"].some((c) => iaComparaState.colunas.includes(c));
   area.innerHTML = `
     <div class="ia-dp-ready">
       <h3>2. Analisar com IA</h3>
       <p><strong>${iaComparaState.total.toLocaleString("pt-BR")}</strong> itens lidos. Colunas detectadas: ${cols}</p>
+      ${iaMapaColunasHtml(iaComparaState.mapaColunas, iaComparaState.headerLinha)}
       ${temValor ? "" : '<p class="field-hint" style="color:#855107">⚠ Nenhuma coluna de valor foi detectada — os itens serão classificados, mas sem comparação de preço.</p>'}
       <p class="field-hint">A IA gera o embedding de cada descrição e compara por significado com a base SINAPI (~1–2s por item; roda em segundo plano). Itens com código SINAPI válido casam direto pelo código.</p>
       <div id="iaComparaProgress" class="hidden">
