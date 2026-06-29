@@ -220,12 +220,12 @@ try {
         $top1 = $top3[0] ?? null;
         $bestSim = isset($best[0]) ? (float) $best[0][0] : null; // 0-1 cru, p/ os limiares
 
-        // 3c) Regra de classificação.
+        // 3c) Regra de classificação — a IA confere TODOS os itens (também os com código).
         $status = 'cotacao_propria';
         $match = null;
         $sim = null;
         if ($codigo !== '') {
-            // Código na planilha: existe na base? (match por código > semântica)
+            // Código na planilha: existe na base?
             $codeMatch = null;
             if (isset($compCodeToId[$codigo])) {
                 $id = $compCodeToId[$codigo];
@@ -235,9 +235,22 @@ try {
                 $codeMatch = ['origem' => 'insumo', 'origemId' => $id] + $insById[$id];
             }
             if ($codeMatch) {
-                $status = 'achou';
-                $match = $codeMatch;
-                $sim = 100.00; // match exato por código
+                // A IA confere se o código informado bate com a descrição.
+                if ($top1 !== null && (string) $top1['code'] === $codigo) {
+                    $status = 'achou'; // top-match semântico É o mesmo código → confirmado
+                    $match = $codeMatch;
+                    $sim = $top1['similaridade'];
+                } elseif ($top1 !== null && $bestSim !== null && $bestSim >= IA_DEPARA_ACHOU_MIN && (string) $top1['code'] !== $codigo) {
+                    // Descrição aponta forte para OUTRO código → código informado pode estar errado.
+                    $status = 'divergente';
+                    $match = $top1; // mostra o que a descrição sugere (o informado fica em codigoOrigem)
+                    $sim = $top1['similaridade'];
+                } else {
+                    // Semântica fraca/ambígua: confia no código informado.
+                    $status = 'achou';
+                    $match = $codeMatch;
+                    $sim = 100.00;
+                }
             } else {
                 // Tem código mas não está na base — faltou importar: REVISAR.
                 $status = 'revisar';

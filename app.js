@@ -19,9 +19,10 @@ if (APP_ENV === "production" && location.protocol === "http:") {
   location.replace(location.href.replace(/^http:/, "https:"));
 }
 const APP_NAME = "ObraSync";
-const APP_VERSION = "v1.23.0";
+const APP_VERSION = "v1.24.0";
 const APP_VERSION_DATE = "2026-06-28";
 const APP_CHANGELOG = [
+  "IA de-para e comparador — leitura de planilhas reais: a linha de cabeçalho passa a ser detectada automaticamente (não assume mais a linha 1 — ignora títulos/subtítulos antes do cabeçalho), e as colunas ricas dos orçamentos (Setor, Categoria, Tipo, Material Unit., M.O. Unit., Custo Direto Unit., BDI %) são aproveitadas quando existem. O valor unitário usado na comparação segue a prioridade Custo Direto > Material + M.O. > valor genérico. A IA agora confere TODOS os itens (mesmo os com código): se a descrição apontar para um código SINAPI diferente do informado, o item é marcado DIVERGENTE para revisão. As telas mostram Setor/Categoria/Tipo e permitem filtrar por Setor (ala/parte da obra); o export inclui essas colunas (v1.24.0).",
   "De-para em lote: passa a ler TODAS as abas do Excel (não só a primeira), usando o nome de cada aba como grupo/categoria (ex.: Elétrica, Hidráulica, Pavimento 1). Abas sem coluna de descrição reconhecível (capa/resumo/índice) são puladas e listadas no resumo pós-upload. A coluna \"Grupo\" aparece na tabela de resultado e no export, e há um filtro por grupo (aba) além dos baldes de situação (v1.23.0).",
   "Comparador de orçamento com IA (Fase A — análise): nova tela em IA → Comparador de orçamento. Suba um orçamento externo em Excel/CSV; para cada item a IA encontra o equivalente na base SINAPI (por código ou por busca semântica) e COMPARA o preço da planilha com o da SINAPI, indicando qual é mais baixo e a diferença (R$ e %). Classifica em ACHOU, FALTOU IMPORTAR (código SINAPI que não está na nossa base) e COTAÇÃO PRÓPRIA. Relatório com baldes coloridos por situação, resumo de economia/excesso estimado (diferença × quantidade), tabela com valor planilha × valor SINAPI e destaque do mais barato, e exportação em Excel. Fase de análise — ainda não gera orçamento editável (v1.22.0).",
   "De-para em lote da IA: nova tela em IA → De-para em lote. Suba um orçamento externo em Excel/CSV; a IA lê a planilha (detectando automaticamente as colunas de descrição, código, quantidade, unidade e valor), classifica cada item contra a base SINAPI pela mesma busca semântica (cosseno) em ACHOU (alta similaridade ou código SINAPI válido), REVISAR (similaridade média, ou código informado que não existe na base) e COTAÇÃO PRÓPRIA (sem equivalente). A classificação roda em segundo plano com barra de progresso; o resultado vem em baldes coloridos por situação, tabela com o match sugerido (código + descrição + valor SINAPI) e similaridade, botões Aceitar por item e exportação do resultado em Excel (v1.21.0).",
@@ -5214,17 +5215,19 @@ function renderIaBuscaResultados(rows) {
 // Fluxo: sobe planilha (.xlsx/.csv) → a IA classifica cada item contra a base
 // SINAPI (mesma busca semântica por cosseno, no worker) em ACHOU/REVISAR/COTAÇÃO
 // PRÓPRIA → o usuário revisa (Aceitar) → exporta o resultado em Excel.
-const iaDeparaState = { jobId: null, total: 0, colunas: [], status: "none", filtro: "todos", grupo: "todos", counts: null, grupos: [], abasLidas: [], abasIgnoradas: [] };
+const iaDeparaState = { jobId: null, total: 0, colunas: [], status: "none", filtro: "todos", grupo: "todos", setor: "todos", counts: null, grupos: [], setores: [], abasLidas: [], abasIgnoradas: [] };
 let iaDeparaTimer = null;
 
 const IA_DEPARA_SIT = {
   achou: { label: "ACHOU", cls: "ia-dp-achou" },
   revisar: { label: "REVISAR", cls: "ia-dp-revisar" },
+  divergente: { label: "DIVERGENTE", cls: "ia-dp-divergente" },
   cotacao_propria: { label: "COTAÇÃO PRÓPRIA", cls: "ia-dp-cotacao" },
 };
 
 function iaDeparaColLabel(c) {
-  return ({ descricao: "Descrição", codigo: "Código", quantidade: "Quantidade", unidade: "Unidade", valor: "Valor" })[c] || c;
+  return ({ descricao: "Descrição", codigo: "Código", quantidade: "Quantidade", unidade: "Unidade", valor: "Valor",
+    setor: "Setor", categoria: "Categoria", tipo: "Tipo", material: "Material unit.", maoobra: "M.O. unit.", custodireto: "Custo direto unit.", bdi: "BDI %" })[c] || c;
 }
 
 // Resumo das abas lidas/ignoradas (mostrado após o upload, antes de classificar).
@@ -5292,7 +5295,9 @@ async function iaDeparaUpload(event) {
     iaDeparaState.status = "uploaded";
     iaDeparaState.filtro = "todos";
     iaDeparaState.grupo = "todos";
+    iaDeparaState.setor = "todos";
     iaDeparaState.grupos = [];
+    iaDeparaState.setores = [];
     iaDeparaState.counts = null;
     iaDeparaRenderReady();
   } catch (error) {
@@ -5375,9 +5380,10 @@ async function iaDeparaLoadResults(filtro) {
   if (!box) return;
   box.innerHTML = '<p class="muted">Carregando resultados…</p>';
   try {
-    const data = await apiModuleRequest(`?module=ia&action=deparaItens&job=${encodeURIComponent(iaDeparaState.jobId)}&situacao=${encodeURIComponent(iaDeparaState.filtro)}&grupo=${encodeURIComponent(iaDeparaState.grupo || "todos")}`);
+    const data = await apiModuleRequest(`?module=ia&action=deparaItens&job=${encodeURIComponent(iaDeparaState.jobId)}&situacao=${encodeURIComponent(iaDeparaState.filtro)}&grupo=${encodeURIComponent(iaDeparaState.grupo || "todos")}&setor=${encodeURIComponent(iaDeparaState.setor || "todos")}`);
     iaDeparaState.counts = data.counts || iaDeparaState.counts;
     iaDeparaState.grupos = data.grupos || iaDeparaState.grupos;
+    iaDeparaState.setores = data.setores || iaDeparaState.setores;
     iaDeparaRenderResult(data.itens || [], data.counts || {});
   } catch (error) {
     box.innerHTML = `<p style="color:#b42318">Não foi possível carregar os resultados: ${escapeHtml(error.message)}</p>`;
@@ -5401,6 +5407,7 @@ function iaDeparaRenderResult(itens, counts) {
       </button>
       ${bucket("achou", "ACHOU", "ia-dp-b-achou")}
       ${bucket("revisar", "REVISAR", "ia-dp-b-revisar")}
+      ${bucket("divergente", "DIVERGENTE", "ia-dp-b-divergente")}
       ${bucket("cotacao_propria", "COTAÇÃO PRÓPRIA", "ia-dp-b-cotacao")}
       <button type="button" class="secondary ia-dp-export" id="iaDeparaExportBtn">⤓ Exportar resultado</button>
     </div>
@@ -5412,7 +5419,7 @@ function iaDeparaRenderResult(itens, counts) {
       <div class="ia-dp-table-wrap">
         <table class="ia-dp-table">
           <thead><tr>
-            <th>#</th><th>Grupo</th><th>Descrição (origem)</th><th>Cód.</th><th></th>
+            <th>#</th><th>Grupo / Setor</th><th>Descrição (origem)</th><th>Cód.</th><th></th>
             <th>Sim.</th><th>Match SINAPI</th><th>Valor</th><th>Ação</th>
           </tr></thead>
           <tbody>${itens.map(iaDeparaRowHtml).join("")}</tbody>
@@ -5422,29 +5429,43 @@ function iaDeparaRenderResult(itens, counts) {
   box.querySelectorAll("[data-dp-filtro]").forEach((btn) => btn.addEventListener("click", () => iaDeparaLoadResults(btn.dataset.dpFiltro)));
   qs("iaDeparaExportBtn")?.addEventListener("click", iaDeparaExport);
   qs("iaDeparaGrupoSel")?.addEventListener("change", (e) => { iaDeparaState.grupo = e.target.value || "todos"; iaDeparaLoadResults(iaDeparaState.filtro); });
+  qs("iaDeparaSetorSel")?.addEventListener("change", (e) => { iaDeparaState.setor = e.target.value || "todos"; iaDeparaLoadResults(iaDeparaState.filtro); });
   box.querySelectorAll("[data-dp-aceitar]").forEach((btn) => btn.addEventListener("click", () => iaDeparaAceitar(Number(btn.dataset.dpAceitar), btn)));
   box.querySelectorAll("[data-dp-criar]").forEach((btn) => btn.addEventListener("click", () => iaDeparaCriarComposicao(btn.dataset.dpCriar)));
 }
 
-// Seletor de grupo (aba) — só aparece quando há mais de um grupo no lote.
+// Seletores de grupo (aba) e de setor (ala/parte da obra) — cada um só aparece
+// quando há mais de um valor no lote.
 function iaDeparaGrupoFilterHtml() {
-  const grupos = (iaDeparaState.grupos || []).filter((g) => (g.nome || "") !== "");
-  if (grupos.length <= 1) return "";
-  const sel = iaDeparaState.grupo || "todos";
-  const totalTodos = grupos.reduce((acc, g) => acc + Number(g.total || 0), 0);
-  const opts = [`<option value="todos" ${sel === "todos" ? "selected" : ""}>Todos os grupos (${totalTodos})</option>`]
-    .concat(grupos.map((g) => `<option value="${escapeHtml(g.nome)}" ${sel === g.nome ? "selected" : ""}>${escapeHtml(g.nome)} (${Number(g.total || 0)})</option>`))
+  return iaDeparaSelectFilter("iaDeparaGrupoSel", "Grupo (aba)", iaDeparaState.grupos, iaDeparaState.grupo)
+    + iaDeparaSelectFilter("iaDeparaSetorSel", "Setor", iaDeparaState.setores, iaDeparaState.setor);
+}
+
+function iaDeparaSelectFilter(id, label, lista, selecionado) {
+  const itens = (lista || []).filter((g) => (g.nome || "") !== "");
+  if (itens.length <= 1) return "";
+  const sel = selecionado || "todos";
+  const total = itens.reduce((acc, g) => acc + Number(g.total || 0), 0);
+  const opts = [`<option value="todos" ${sel === "todos" ? "selected" : ""}>Todos (${total})</option>`]
+    .concat(itens.map((g) => `<option value="${escapeHtml(g.nome)}" ${sel === g.nome ? "selected" : ""}>${escapeHtml(g.nome)} (${Number(g.total || 0)})</option>`))
     .join("");
-  return `
-    <div class="ia-dp-grupo-filter">
-      <label>Grupo (aba) <select id="iaDeparaGrupoSel">${opts}</select></label>
-    </div>`;
+  return `<div class="ia-dp-grupo-filter"><label>${escapeHtml(label)} <select id="${id}">${opts}</select></label></div>`;
 }
 
 function iaDeparaRowHtml(it) {
   const sit = IA_DEPARA_SIT[it.statusClassificacao] || { label: "—", cls: "" };
   const tag = `<span class="ia-dp-sit ${sit.cls}">${sit.label}</span>`;
-  const grupo = it.grupoAba ? `<span class="ia-dp-grupo-tag">${escapeHtml(it.grupoAba)}</span>` : '<span class="muted">—</span>';
+  const grupoTags = [
+    it.grupoAba ? `<span class="ia-dp-grupo-tag">${escapeHtml(it.grupoAba)}</span>` : "",
+    it.setor ? `<span class="ia-dp-setor-tag">${escapeHtml(it.setor)}</span>` : "",
+  ].filter(Boolean).join(" ");
+  const grupo = grupoTags || '<span class="muted">—</span>';
+  const catTipo = [
+    it.categoria ? escapeHtml(it.categoria) : "",
+    it.tipoOrigem ? escapeHtml(it.tipoOrigem) : "",
+  ].filter(Boolean).join(" · ");
+  const divergHint = it.statusClassificacao === "divergente"
+    ? `<div class="ia-dp-diverg-hint">código informado: ${escapeHtml(it.codigoOrigem || "—")} — a descrição parece ser outro item</div>` : "";
   const codOrigem = it.codigoOrigem ? `<div class="ia-dp-cod">${escapeHtml(it.codigoOrigem)}</div>` : '<span class="muted">—</span>';
   const sim = it.similaridade != null ? iaSimBadge(it.similaridade) : '<span class="muted">—</span>';
   let matchCell = '<span class="muted">—</span>';
@@ -5471,8 +5492,8 @@ function iaDeparaRowHtml(it) {
   return `
     <tr class="ia-dp-tr ${Number(it.aceito) === 1 ? "is-aceito" : ""}">
       <td class="ia-dp-linha">${it.linhaPlanilha ?? ""}</td>
-      <td>${grupo}</td>
-      <td class="ia-dp-desc">${tag}<div>${escapeHtml(it.descricaoOrigem || "")}</div>${extras ? `<span class="muted ia-dp-un">${extras}</span>` : ""}</td>
+      <td>${grupo}${catTipo ? `<div class="muted ia-dp-un">${catTipo}</div>` : ""}</td>
+      <td class="ia-dp-desc">${tag}<div>${escapeHtml(it.descricaoOrigem || "")}</div>${extras ? `<span class="muted ia-dp-un">${extras}</span>` : ""}${divergHint}</td>
       <td>${codOrigem}</td>
       <td class="ia-dp-arrow">→</td>
       <td>${sim}</td>
@@ -5542,12 +5563,13 @@ async function iaDeparaExport() {
 // semântica) e COMPARA o preço da planilha com o da SINAPI → relatório com baldes
 // por situação + resumo de economia/excesso + comparação por linha → export Excel.
 // Só análise nesta fase: não vira orçamento editável.
-const iaComparaState = { jobId: null, total: 0, colunas: [], status: "none", filtro: "todos", counts: null, resumo: null };
+const iaComparaState = { jobId: null, total: 0, colunas: [], status: "none", filtro: "todos", setor: "todos", counts: null, resumo: null, setores: [] };
 let iaComparaTimer = null;
 
 const IA_COMPARA_SIT = {
   achou: { label: "ACHOU", cls: "ia-dp-achou" },
   faltou_importar: { label: "FALTOU IMPORTAR", cls: "ia-dp-revisar" },
+  divergente: { label: "DIVERGENTE", cls: "ia-dp-divergente" },
   cotacao_propria: { label: "COTAÇÃO PRÓPRIA", cls: "ia-dp-cotacao" },
 };
 
@@ -5595,8 +5617,10 @@ async function iaComparaUpload(event) {
     iaComparaState.colunas = d.colunasDetectadas || [];
     iaComparaState.status = "uploaded";
     iaComparaState.filtro = "todos";
+    iaComparaState.setor = "todos";
     iaComparaState.counts = null;
     iaComparaState.resumo = null;
+    iaComparaState.setores = [];
     iaComparaRenderReady();
   } catch (error) {
     if (area) area.innerHTML = `<p style="color:#b42318"><strong>❌ ${escapeHtml(error.message || "Não foi possível ler a planilha.")}</strong></p>`;
@@ -5679,9 +5703,10 @@ async function iaComparaLoadResults(filtro) {
   if (!box) return;
   box.innerHTML = '<p class="muted">Carregando relatório…</p>';
   try {
-    const data = await apiModuleRequest(`?module=ia&action=comparaItens&job=${encodeURIComponent(iaComparaState.jobId)}&situacao=${encodeURIComponent(iaComparaState.filtro)}`);
+    const data = await apiModuleRequest(`?module=ia&action=comparaItens&job=${encodeURIComponent(iaComparaState.jobId)}&situacao=${encodeURIComponent(iaComparaState.filtro)}&setor=${encodeURIComponent(iaComparaState.setor || "todos")}`);
     iaComparaState.counts = data.counts || iaComparaState.counts;
     iaComparaState.resumo = data.resumo || iaComparaState.resumo;
+    iaComparaState.setores = data.setores || iaComparaState.setores;
     iaComparaRenderResult(data.itens || [], data.counts || {}, data.resumo);
   } catch (error) {
     box.innerHTML = `<p style="color:#b42318">Não foi possível carregar o relatório: ${escapeHtml(error.message)}</p>`;
@@ -5724,9 +5749,11 @@ function iaComparaRenderResult(itens, counts, resumo) {
       </button>
       ${bucket("achou", "ACHOU", "ia-dp-b-achou")}
       ${bucket("faltou_importar", "FALTOU IMPORTAR", "ia-dp-b-revisar")}
+      ${bucket("divergente", "DIVERGENTE", "ia-dp-b-divergente")}
       ${bucket("cotacao_propria", "COTAÇÃO PRÓPRIA", "ia-dp-b-cotacao")}
       <button type="button" class="secondary ia-dp-export" id="iaComparaExportBtn">⤓ Exportar relatório</button>
-    </div>`;
+    </div>
+    ${iaDeparaSelectFilter("iaComparaSetorSel", "Setor", iaComparaState.setores, iaComparaState.setor)}`;
   const resumoHtml = iaComparaResumoHtml(resumo || iaComparaState.resumo);
   if (!itens.length) {
     box.innerHTML = resumoHtml + head + '<p class="empty">Nenhum item nesta situação.</p>';
@@ -5735,7 +5762,7 @@ function iaComparaRenderResult(itens, counts, resumo) {
       <div class="ia-dp-table-wrap">
         <table class="ia-dp-table ia-cmp-table">
           <thead><tr>
-            <th>#</th><th>Descrição (planilha)</th><th>Cód.</th><th>Un</th><th>Qtd</th>
+            <th>#</th><th>Setor / Cat. / Tipo</th><th>Descrição (planilha)</th><th>Cód.</th><th>Un</th><th>Qtd</th>
             <th>Valor planilha</th><th></th><th>Match SINAPI</th><th>Valor SINAPI</th>
             <th>Sim.</th><th>Comparação</th><th>Ação</th>
           </tr></thead>
@@ -5745,6 +5772,7 @@ function iaComparaRenderResult(itens, counts, resumo) {
   }
   box.querySelectorAll("[data-cmp-filtro]").forEach((btn) => btn.addEventListener("click", () => iaComparaLoadResults(btn.dataset.cmpFiltro)));
   qs("iaComparaExportBtn")?.addEventListener("click", iaComparaExport);
+  qs("iaComparaSetorSel")?.addEventListener("change", (e) => { iaComparaState.setor = e.target.value || "todos"; iaComparaLoadResults(iaComparaState.filtro); });
   box.querySelectorAll("[data-cmp-aceitar]").forEach((btn) => btn.addEventListener("click", () => iaComparaAceitar(Number(btn.dataset.cmpAceitar), btn)));
 }
 
@@ -5767,6 +5795,14 @@ function iaComparaRowHtml(it) {
   const tag = `<span class="ia-dp-sit ${sit.cls}">${sit.label}</span>`;
   const simWarn = (it.statusClassificacao === "achou" && it.similaridade != null && it.similaridade < 80)
     ? ' <span class="ia-cmp-warn" title="similaridade baixa — revise o match">⚠</span>' : "";
+  const grupoTags = [
+    it.setor ? `<span class="ia-dp-setor-tag">${escapeHtml(it.setor)}</span>` : "",
+    it.categoria ? `<span class="ia-dp-grupo-tag">${escapeHtml(it.categoria)}</span>` : "",
+  ].filter(Boolean).join(" ");
+  const tipoTxt = it.tipoOrigem ? `<div class="muted ia-dp-un">${escapeHtml(it.tipoOrigem)}</div>` : "";
+  const grupoCell = (grupoTags || tipoTxt) ? `${grupoTags}${tipoTxt}` : '<span class="muted">—</span>';
+  const divergHint = it.statusClassificacao === "divergente"
+    ? `<div class="ia-dp-diverg-hint">código informado: ${escapeHtml(it.codigoOrigem || "—")} — a descrição parece ser outro item</div>` : "";
   const codOrigem = it.codigoOrigem ? `<span class="ia-dp-cod">${escapeHtml(it.codigoOrigem)}</span>` : '<span class="muted">—</span>';
   const sim = it.similaridade != null ? `${iaSimBadge(it.similaridade)}${simWarn}` : '<span class="muted">—</span>';
   let matchCell = '<span class="muted">—</span>';
@@ -5788,7 +5824,8 @@ function iaComparaRowHtml(it) {
   return `
     <tr class="ia-dp-tr ${aceito ? "is-aceito" : ""}">
       <td class="ia-dp-linha">${it.linhaPlanilha ?? ""}</td>
-      <td class="ia-dp-desc">${tag}<div>${escapeHtml(it.descricaoOrigem || "")}</div></td>
+      <td>${grupoCell}</td>
+      <td class="ia-dp-desc">${tag}<div>${escapeHtml(it.descricaoOrigem || "")}</div>${divergHint}</td>
       <td>${codOrigem}</td>
       <td>${it.unidadeOrigem ? escapeHtml(it.unidadeOrigem) : ""}</td>
       <td class="ia-dp-valor">${it.quantidadeOrigem != null ? escapeHtml(String(it.quantidadeOrigem)) : ""}</td>

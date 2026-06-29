@@ -9065,6 +9065,32 @@ function ensure_ia_tables(PDO $pdo): void
     $done = true;
 }
 
+// Auto-cura: colunas "ricas" das planilhas reais (setor/categoria/tipo/material/
+// m.o./custo direto/BDI) + o valor 'divergente' no enum de classificação. Idempotente
+// (ADD COLUMN IF NOT EXISTS; o MODIFY do enum só roda se 'divergente' ainda faltar,
+// para não rebuildar a tabela a cada request). $table/$statusEnum são literais.
+function ia_ensure_planilha_rich_columns(PDO $pdo, string $table, string $statusEnum): void
+{
+    try {
+        $pdo->exec("ALTER TABLE {$table}
+            ADD COLUMN IF NOT EXISTS setor VARCHAR(160) NULL,
+            ADD COLUMN IF NOT EXISTS categoria VARCHAR(160) NULL,
+            ADD COLUMN IF NOT EXISTS tipoOrigem VARCHAR(120) NULL,
+            ADD COLUMN IF NOT EXISTS materialUnit DECIMAL(15,4) NULL,
+            ADD COLUMN IF NOT EXISTS maoObraUnit DECIMAL(15,4) NULL,
+            ADD COLUMN IF NOT EXISTS custoDiretoUnit DECIMAL(15,4) NULL,
+            ADD COLUMN IF NOT EXISTS bdiPercent DECIMAL(7,2) NULL");
+    } catch (Throwable $ignored) {
+    }
+    try {
+        $col = $pdo->query("SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{$table}' AND COLUMN_NAME = 'statusClassificacao'")->fetchColumn();
+        if ($col && stripos((string) $col, "'divergente'") === false) {
+            $pdo->exec("ALTER TABLE {$table} MODIFY COLUMN statusClassificacao {$statusEnum} NULL");
+        }
+    } catch (Throwable $ignored) {
+    }
+}
+
 // Auto-cura das tabelas do de-para em lote (mesma estratégia ensure_*_table do resto
 // do arquivo + migração migrations/2026-06-28-ia-depara-lote.sql).
 function ensure_ia_depara_tables(PDO $pdo): void
@@ -9100,7 +9126,14 @@ function ensure_ia_depara_tables(PDO $pdo): void
             quantidade DECIMAL(15,4) NULL,
             unidadeOrigem VARCHAR(40) NULL,
             valorOrigem DECIMAL(15,4) NULL,
-            statusClassificacao ENUM(\'achou\',\'revisar\',\'cotacao_propria\') NULL,
+            setor VARCHAR(160) NULL,
+            categoria VARCHAR(160) NULL,
+            tipoOrigem VARCHAR(120) NULL,
+            materialUnit DECIMAL(15,4) NULL,
+            maoObraUnit DECIMAL(15,4) NULL,
+            custoDiretoUnit DECIMAL(15,4) NULL,
+            bdiPercent DECIMAL(7,2) NULL,
+            statusClassificacao ENUM(\'achou\',\'revisar\',\'divergente\',\'cotacao_propria\') NULL,
             matchOrigem ENUM(\'composicao\',\'insumo\') NULL,
             matchId BIGINT UNSIGNED NULL,
             matchCode VARCHAR(80) NULL,
@@ -9115,11 +9148,12 @@ function ensure_ia_depara_tables(PDO $pdo): void
             KEY idx_job_status (jobId, statusClassificacao)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
     );
-    // Auto-cura para instalações já existentes (multi-aba/grupo — v1.23).
+    // Auto-cura para instalações já existentes (multi-aba/grupo + colunas ricas + divergente).
     try {
         $pdo->exec('ALTER TABLE ia_depara_itens ADD COLUMN IF NOT EXISTS grupoAba VARCHAR(160) NULL');
     } catch (Throwable $ignored) {
     }
+    ia_ensure_planilha_rich_columns($pdo, 'ia_depara_itens', "ENUM('achou','revisar','divergente','cotacao_propria')");
     $done = true;
 }
 
@@ -9170,7 +9204,14 @@ function ensure_ia_compara_tables(PDO $pdo): void
             unidadeOrigem VARCHAR(40) NULL,
             quantidadeOrigem DECIMAL(18,4) NULL,
             valorUnitOrigem DECIMAL(15,4) NULL,
-            statusClassificacao ENUM(\'achou\',\'faltou_importar\',\'cotacao_propria\') NULL,
+            setor VARCHAR(160) NULL,
+            categoria VARCHAR(160) NULL,
+            tipoOrigem VARCHAR(120) NULL,
+            materialUnit DECIMAL(15,4) NULL,
+            maoObraUnit DECIMAL(15,4) NULL,
+            custoDiretoUnit DECIMAL(15,4) NULL,
+            bdiPercent DECIMAL(7,2) NULL,
+            statusClassificacao ENUM(\'achou\',\'faltou_importar\',\'divergente\',\'cotacao_propria\') NULL,
             matchOrigem ENUM(\'composicao\',\'insumo\') NULL,
             matchId BIGINT UNSIGNED NULL,
             matchCode VARCHAR(80) NULL,
@@ -9187,6 +9228,7 @@ function ensure_ia_compara_tables(PDO $pdo): void
             KEY idx_job_status (jobId, statusClassificacao)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
     );
+    ia_ensure_planilha_rich_columns($pdo, 'ia_compara_itens', "ENUM('achou','faltou_importar','divergente','cotacao_propria')");
     $done = true;
 }
 
@@ -9494,6 +9536,7 @@ function handle_ia_depara_upload(PDO $pdo, array $config, array $authUser): neve
             if ($desc === '') {
                 continue;
             }
+            $ricos = ia_planilha_ler_ricos($cols, $r);
             $itens[] = [
                 'grupoAba' => mb_substr((string) $sheetName, 0, 160),
                 'linha' => $i + 1, // 1-based dentro da aba
@@ -9501,7 +9544,9 @@ function handle_ia_depara_upload(PDO $pdo, array $config, array $authUser): neve
                 'codigoOrigem' => isset($cols['codigo']) ? (mb_substr(trim((string) ($r[$cols['codigo']] ?? '')), 0, 80) ?: null) : null,
                 'quantidade' => isset($cols['quantidade']) ? cotacao_num($r[$cols['quantidade']] ?? '') : null,
                 'unidadeOrigem' => isset($cols['unidade']) ? (mb_substr(trim((string) ($r[$cols['unidade']] ?? '')), 0, 40) ?: null) : null,
-                'valorOrigem' => isset($cols['valor']) ? cotacao_num($r[$cols['valor']] ?? '') : null,
+                // Valor unitário pela prioridade Custo Direto > Material+M.O. > genérico.
+                'valorOrigem' => $ricos['valorEfetivo'],
+                'ricos' => $ricos,
             ];
             $lidasNaAba++;
         }
@@ -9527,10 +9572,12 @@ function handle_ia_depara_upload(PDO $pdo, array $config, array $authUser): neve
             json_encode(['colunas' => $colunasDetectadas, 'abasLidas' => $abasLidas, 'abasIgnoradas' => $abasIgnoradas], JSON_UNESCAPED_UNICODE),
             (int) ($authUser['id'] ?? 0) ?: null,
         ]);
-    $ins = $pdo->prepare('INSERT INTO ia_depara_itens (jobId, grupoAba, linhaPlanilha, descricaoOrigem, codigoOrigem, quantidade, unidadeOrigem, valorOrigem) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+    $ins = $pdo->prepare('INSERT INTO ia_depara_itens (jobId, grupoAba, linhaPlanilha, descricaoOrigem, codigoOrigem, quantidade, unidadeOrigem, valorOrigem, setor, categoria, tipoOrigem, materialUnit, maoObraUnit, custoDiretoUnit, bdiPercent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
     $pdo->beginTransaction();
     foreach ($itens as $it) {
-        $ins->execute([$jobId, $it['grupoAba'], $it['linha'], $it['descricaoOrigem'], $it['codigoOrigem'], $it['quantidade'], $it['unidadeOrigem'], $it['valorOrigem']]);
+        $ric = $it['ricos'];
+        $ins->execute([$jobId, $it['grupoAba'], $it['linha'], $it['descricaoOrigem'], $it['codigoOrigem'], $it['quantidade'], $it['unidadeOrigem'], $it['valorOrigem'],
+            $ric['setor'], $ric['categoria'], $ric['tipoOrigem'], $ric['materialUnit'], $ric['maoObraUnit'], $ric['custoDiretoUnit'], $ric['bdiPercent']]);
     }
     $pdo->commit();
 
@@ -9557,7 +9604,9 @@ function ia_depara_norm(string $s): string
 }
 
 // Mapeia um cabeçalho normalizado para um campo conhecido. Variantes curtas (<4
-// chars: un, cod, qtd, ref) exigem match exato; as longas casam por substring.
+// chars: un, cod, qtd, cd) exigem match exato; as longas casam por substring. A ORDEM
+// importa: campos específicos (custo direto, material, m.o.) vêm ANTES do 'valor'
+// genérico para não serem capturados por ele ("Custo Direto Unit." → custodireto, não valor).
 function ia_depara_map_header(string $h): ?string
 {
     $h = ia_depara_norm($h);
@@ -9565,11 +9614,20 @@ function ia_depara_map_header(string $h): ?string
         return null;
     }
     $map = [
-        'descricao' => ['descricao', 'description', 'item', 'servico', 'servicos', 'produto', 'material', 'especificacao', 'discriminacao', 'insumo', 'composicao'],
+        // 'item'/'servico'/'produto' são sinais FRACOS de descrição (ver detecção): em
+        // planilhas reais "Item" costuma ser o número WBS, e "Descrição" é o texto.
+        'descricao' => ['descricao', 'description', 'discriminacao', 'especificacao', 'servico', 'servicos', 'produto', 'item'],
         'codigo' => ['codigo', 'cod', 'code', 'cd', 'codigo sinapi', 'cod sinapi'],
+        'setor' => ['setor', 'ala'],
+        'categoria' => ['categoria'],
+        'tipo' => ['tipo'],
         'quantidade' => ['quantidade', 'qtd', 'qty', 'qtde', 'quant'],
         'unidade' => ['unidade', 'unid', 'und', 'un', 'medida'],
-        'valor' => ['valor', 'preco', 'valor unitario', 'preco unitario', 'valor unit', 'preco unit', 'unitario', 'custo', 'vlr'],
+        'custodireto' => ['custo direto', 'custo direto unit', 'custo unitario direto', 'custo direto unitario'],
+        'material' => ['material unit', 'material unitario', 'material'],
+        'maoobra' => ['mao de obra', 'mao obra', 'maodeobra', 'm o unit', 'mo unit', 'm o', 'mo'],
+        'bdi' => ['bdi'],
+        'valor' => ['valor unitario', 'preco unitario', 'valor unit', 'preco unit', 'custo unitario', 'custo unit', 'unitario', 'valor', 'preco', 'custo', 'vlr'],
     ];
     foreach ($map as $field => $variants) {
         foreach ($variants as $v) {
@@ -9584,28 +9642,105 @@ function ia_depara_map_header(string $h): ?string
     return null;
 }
 
-// Procura, nas primeiras linhas, a linha de cabeçalho (a que contém ao menos a
-// coluna de descrição) e devolve o mapa campo => índice de coluna.
+// Termo FORTE de descrição: usado para preferir a coluna "Descrição" real à coluna
+// "Item" (número) quando ambas existem na mesma linha de cabeçalho.
+function ia_depara_header_is_strong_desc(string $h): bool
+{
+    $h = ia_depara_norm($h);
+    foreach (['descricao', 'description', 'discriminacao', 'especificacao', 'servico', 'produto'] as $t) {
+        if ($h === $t || str_contains($h, $t)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Procura a LINHA DE CABEÇALHO (não assume linha 1): varre as primeiras ~15 linhas e
+// escolhe a primeira que tenha a coluna de descrição E pelo menos 2 colunas
+// reconhecíveis (assim linhas de título/subtítulo são ignoradas). Devolve o mapa
+// campo => índice de coluna.
 function ia_depara_detect_columns(array $rows): array
 {
-    $headerIdx = -1;
-    $cols = [];
     $scan = min(count($rows), 15);
     for ($i = 0; $i < $scan; $i++) {
         $m = [];
+        $descStrong = null;
+        $descWeak = null;
         foreach ((array) $rows[$i] as $ci => $cell) {
             $f = ia_depara_map_header((string) $cell);
-            if ($f && !isset($m[$f])) {
+            if (!$f) {
+                continue;
+            }
+            if ($f === 'descricao') {
+                // Prefere a coluna de descrição "forte" (Descrição) à fraca (Item).
+                if (ia_depara_header_is_strong_desc((string) $cell)) {
+                    if ($descStrong === null) {
+                        $descStrong = $ci;
+                    }
+                } elseif ($descWeak === null) {
+                    $descWeak = $ci;
+                }
+                continue;
+            }
+            if (!isset($m[$f])) {
                 $m[$f] = $ci;
             }
         }
-        if (isset($m['descricao'])) {
-            $headerIdx = $i;
-            $cols = $m;
-            break;
+        $descCol = $descStrong ?? $descWeak;
+        if ($descCol !== null) {
+            $m['descricao'] = $descCol;
+        }
+        // Cabeçalho válido: tem descrição E pelo menos 2 colunas reconhecíveis no total.
+        if (isset($m['descricao']) && count($m) >= 2) {
+            return ['ok' => true, 'headerIdx' => $i, 'cols' => $m];
         }
     }
-    return ['ok' => $headerIdx >= 0, 'headerIdx' => $headerIdx, 'cols' => $cols];
+    return ['ok' => false, 'headerIdx' => -1, 'cols' => []];
+}
+
+// Lê os campos "ricos" de uma linha de orçamento (padrão AltoQi etc.) conforme as
+// colunas detectadas. NÃO inventa: coluna ausente → null. Define também o valor
+// unitário EFETIVO pela prioridade: Custo Direto Unit. > (Material + M.O.) > valor
+// genérico — usado na comparação de preço. 'fonteValor' documenta qual foi usada.
+function ia_planilha_ler_ricos(array $cols, array $r): array
+{
+    $txt = static function (string $k) use ($cols, $r): ?string {
+        if (!isset($cols[$k])) {
+            return null;
+        }
+        $v = trim((string) ($r[$cols[$k]] ?? ''));
+        return $v === '' ? null : $v;
+    };
+    $num = static function (string $k) use ($cols, $r): ?float {
+        return isset($cols[$k]) ? cotacao_num($r[$cols[$k]] ?? '') : null;
+    };
+    $material = $num('material');
+    $maoObra = $num('maoobra');
+    $custoDireto = $num('custodireto');
+    $valorGen = $num('valor');
+    $valorEfetivo = null;
+    $fonte = null;
+    if ($custoDireto !== null) {
+        $valorEfetivo = $custoDireto;
+        $fonte = 'custo_direto';
+    } elseif ($material !== null || $maoObra !== null) {
+        $valorEfetivo = (float) $material + (float) $maoObra; // nulls contam como 0
+        $fonte = 'material_mo';
+    } elseif ($valorGen !== null) {
+        $valorEfetivo = $valorGen;
+        $fonte = 'valor';
+    }
+    return [
+        'setor' => ($s = $txt('setor')) !== null ? mb_substr($s, 0, 160) : null,
+        'categoria' => ($s = $txt('categoria')) !== null ? mb_substr($s, 0, 160) : null,
+        'tipoOrigem' => ($s = $txt('tipo')) !== null ? mb_substr($s, 0, 120) : null,
+        'materialUnit' => $material,
+        'maoObraUnit' => $maoObra,
+        'custoDiretoUnit' => $custoDireto,
+        'bdiPercent' => $num('bdi'),
+        'valorEfetivo' => $valorEfetivo,
+        'fonteValor' => $fonte,
+    ];
 }
 
 // Dispara a classificação do lote em background (worker CLI nohup + nice -19).
@@ -9672,7 +9807,7 @@ function handle_ia_depara_status(PDO $pdo): never
 // Contagem por situação (baldes do frontend).
 function ia_depara_counts(PDO $pdo, string $jobId): array
 {
-    $counts = ['achou' => 0, 'revisar' => 0, 'cotacao_propria' => 0, 'total' => 0, 'classificados' => 0];
+    $counts = ['achou' => 0, 'revisar' => 0, 'divergente' => 0, 'cotacao_propria' => 0, 'total' => 0, 'classificados' => 0];
     $stmt = $pdo->prepare('SELECT statusClassificacao s, COUNT(*) c FROM ia_depara_itens WHERE jobId = ? GROUP BY statusClassificacao');
     $stmt->execute([$jobId]);
     foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
@@ -9696,18 +9831,24 @@ function handle_ia_depara_items(PDO $pdo): never
     }
     $filtro = strtolower((string) ($_GET['situacao'] ?? 'todos'));
     $grupo = (string) ($_GET['grupo'] ?? '');
+    $setor = (string) ($_GET['setor'] ?? '');
     $sql = 'SELECT id, grupoAba, linhaPlanilha, descricaoOrigem, codigoOrigem, quantidade, unidadeOrigem, valorOrigem,
+                   setor, categoria, tipoOrigem, materialUnit, maoObraUnit, custoDiretoUnit, bdiPercent,
                    statusClassificacao, matchOrigem, matchId, matchCode, matchDescription, matchUnit, matchValor,
                    similaridade, aceito
             FROM ia_depara_itens WHERE jobId = ?';
     $params = [$jobId];
-    if (in_array($filtro, ['achou', 'revisar', 'cotacao_propria'], true)) {
+    if (in_array($filtro, ['achou', 'revisar', 'divergente', 'cotacao_propria'], true)) {
         $sql .= ' AND statusClassificacao = ?';
         $params[] = $filtro;
     }
     if ($grupo !== '' && strtolower($grupo) !== 'todos') {
         $sql .= ' AND grupoAba = ?';
         $params[] = $grupo;
+    }
+    if ($setor !== '' && strtolower($setor) !== 'todos') {
+        $sql .= ' AND setor = ?';
+        $params[] = $setor;
     }
     $sql .= ' ORDER BY id';
     $stmt = $pdo->prepare($sql);
@@ -9723,6 +9864,13 @@ function handle_ia_depara_items(PDO $pdo): never
             'quantidade' => $r['quantidade'] !== null ? (float) $r['quantidade'] : null,
             'unidadeOrigem' => $r['unidadeOrigem'],
             'valorOrigem' => $r['valorOrigem'] !== null ? (float) $r['valorOrigem'] : null,
+            'setor' => $r['setor'],
+            'categoria' => $r['categoria'],
+            'tipoOrigem' => $r['tipoOrigem'],
+            'materialUnit' => $r['materialUnit'] !== null ? (float) $r['materialUnit'] : null,
+            'maoObraUnit' => $r['maoObraUnit'] !== null ? (float) $r['maoObraUnit'] : null,
+            'custoDiretoUnit' => $r['custoDiretoUnit'] !== null ? (float) $r['custoDiretoUnit'] : null,
+            'bdiPercent' => $r['bdiPercent'] !== null ? (float) $r['bdiPercent'] : null,
             'statusClassificacao' => $r['statusClassificacao'],
             'matchOrigem' => $r['matchOrigem'],
             'matchId' => $r['matchId'] !== null ? (int) $r['matchId'] : null,
@@ -9737,14 +9885,17 @@ function handle_ia_depara_items(PDO $pdo): never
     sinapi_module_respond(true, [
         'itens' => $itens,
         'counts' => ia_depara_counts($pdo, $jobId),
-        'grupos' => ia_depara_grupos($pdo, $jobId),
+        'grupos' => ia_depara_grupos($pdo, $jobId, 'grupoAba'),
+        'setores' => ia_depara_grupos($pdo, $jobId, 'setor'),
     ], 'OK');
 }
 
-// Lista os grupos (nomes de aba) do lote + a contagem de itens de cada um.
-function ia_depara_grupos(PDO $pdo, string $jobId): array
+// Lista os valores distintos de uma coluna de agrupamento (grupoAba ou setor) do lote
+// + a contagem de cada um. $coluna é literal controlado (allowlist) — seguro interpolar.
+function ia_depara_grupos(PDO $pdo, string $jobId, string $coluna = 'grupoAba'): array
 {
-    $stmt = $pdo->prepare("SELECT COALESCE(grupoAba, '') g, COUNT(*) c FROM ia_depara_itens WHERE jobId = ? GROUP BY grupoAba ORDER BY g");
+    $coluna = in_array($coluna, ['grupoAba', 'setor'], true) ? $coluna : 'grupoAba';
+    $stmt = $pdo->prepare("SELECT COALESCE({$coluna}, '') g, COUNT(*) c FROM ia_depara_itens WHERE jobId = ? GROUP BY {$coluna} ORDER BY g");
     $stmt->execute([$jobId]);
     $out = [];
     foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
@@ -9797,7 +9948,7 @@ function handle_ia_depara_export(PDO $pdo): never
     $stmt->execute([$jobId]);
     $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    $labels = ['achou' => 'ACHOU', 'revisar' => 'REVISAR', 'cotacao_propria' => 'COTAÇÃO PRÓPRIA'];
+    $labels = ['achou' => 'ACHOU', 'revisar' => 'REVISAR', 'divergente' => 'DIVERGENTE', 'cotacao_propria' => 'COTAÇÃO PRÓPRIA'];
     $ss = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
     $sheet = $ss->getActiveSheet();
     $sheet->setTitle('De-para IA');
@@ -9805,7 +9956,7 @@ function handle_ia_depara_export(PDO $pdo): never
     $sheet->setCellValue('A' . $row, 'De-para IA — base SINAPI'); $row++;
     $sheet->setCellValue('A' . $row, 'Arquivo: ' . (string) ($job['nomeArquivo'] ?? '')); $row++;
     $sheet->setCellValue('A' . $row, 'Gerado em ' . date('Y-m-d H:i')); $row += 2;
-    $headers = ['Grupo (aba)', 'Linha', 'Descrição (origem)', 'Código (origem)', 'Qtd', 'Unid (origem)', 'Valor (origem)',
+    $headers = ['Grupo (aba)', 'Setor', 'Categoria', 'Tipo (origem)', 'Linha', 'Descrição (origem)', 'Código (origem)', 'Qtd', 'Unid (origem)', 'Valor (origem)',
         'Situação', 'Match', 'Código SINAPI', 'Descrição SINAPI', 'Unid SINAPI', 'Valor SINAPI', 'Similaridade %', 'Aceito'];
     $cols = [];
     $c = 'A';
@@ -9816,6 +9967,9 @@ function handle_ia_depara_export(PDO $pdo): never
     foreach ($rows as $r) {
         $vals = [
             (string) ($r['grupoAba'] ?? ''),
+            (string) ($r['setor'] ?? ''),
+            (string) ($r['categoria'] ?? ''),
+            (string) ($r['tipoOrigem'] ?? ''),
             (int) ($r['linhaPlanilha'] ?? 0),
             (string) $r['descricaoOrigem'],
             (string) ($r['codigoOrigem'] ?? ''),
@@ -9958,13 +10112,16 @@ function handle_ia_compara_upload(PDO $pdo, array $config, array $authUser): nev
         if ($desc === '') {
             continue;
         }
+        $ricos = ia_planilha_ler_ricos($cols, $r);
         $itens[] = [
             'linha' => $i + 1,
             'descricaoOrigem' => mb_substr($desc, 0, 1000),
             'codigoOrigem' => isset($cols['codigo']) ? (mb_substr(trim((string) ($r[$cols['codigo']] ?? '')), 0, 80) ?: null) : null,
             'unidadeOrigem' => isset($cols['unidade']) ? (mb_substr(trim((string) ($r[$cols['unidade']] ?? '')), 0, 40) ?: null) : null,
             'quantidadeOrigem' => isset($cols['quantidade']) ? cotacao_num($r[$cols['quantidade']] ?? '') : null,
-            'valorUnitOrigem' => isset($cols['valor']) ? cotacao_num($r[$cols['valor']] ?? '') : null,
+            // Valor unitário pela prioridade Custo Direto > Material+M.O. > genérico.
+            'valorUnitOrigem' => $ricos['valorEfetivo'],
+            'ricos' => $ricos,
         ];
     }
     if (!$itens) {
@@ -9983,10 +10140,12 @@ function handle_ia_compara_upload(PDO $pdo, array $config, array $authUser): nev
             json_encode($colunasDetectadas, JSON_UNESCAPED_UNICODE),
             (int) ($authUser['id'] ?? 0) ?: null,
         ]);
-    $ins = $pdo->prepare('INSERT INTO ia_compara_itens (jobId, linhaPlanilha, descricaoOrigem, codigoOrigem, unidadeOrigem, quantidadeOrigem, valorUnitOrigem) VALUES (?, ?, ?, ?, ?, ?, ?)');
+    $ins = $pdo->prepare('INSERT INTO ia_compara_itens (jobId, linhaPlanilha, descricaoOrigem, codigoOrigem, unidadeOrigem, quantidadeOrigem, valorUnitOrigem, setor, categoria, tipoOrigem, materialUnit, maoObraUnit, custoDiretoUnit, bdiPercent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
     $pdo->beginTransaction();
     foreach ($itens as $it) {
-        $ins->execute([$jobId, $it['linha'], $it['descricaoOrigem'], $it['codigoOrigem'], $it['unidadeOrigem'], $it['quantidadeOrigem'], $it['valorUnitOrigem']]);
+        $ric = $it['ricos'];
+        $ins->execute([$jobId, $it['linha'], $it['descricaoOrigem'], $it['codigoOrigem'], $it['unidadeOrigem'], $it['quantidadeOrigem'], $it['valorUnitOrigem'],
+            $ric['setor'], $ric['categoria'], $ric['tipoOrigem'], $ric['materialUnit'], $ric['maoObraUnit'], $ric['custoDiretoUnit'], $ric['bdiPercent']]);
     }
     $pdo->commit();
 
@@ -10061,7 +10220,7 @@ function handle_ia_compara_status(PDO $pdo): never
 // Contagem por situação (baldes do frontend).
 function ia_compara_counts(PDO $pdo, string $jobId): array
 {
-    $counts = ['achou' => 0, 'faltou_importar' => 0, 'cotacao_propria' => 0, 'total' => 0, 'classificados' => 0];
+    $counts = ['achou' => 0, 'faltou_importar' => 0, 'divergente' => 0, 'cotacao_propria' => 0, 'total' => 0, 'classificados' => 0];
     $stmt = $pdo->prepare('SELECT statusClassificacao s, COUNT(*) c FROM ia_compara_itens WHERE jobId = ? GROUP BY statusClassificacao');
     $stmt->execute([$jobId]);
     foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
@@ -10111,14 +10270,20 @@ function handle_ia_compara_items(PDO $pdo): never
         sinapi_module_respond(false, [], 'Informe o jobId.', 400);
     }
     $filtro = strtolower((string) ($_GET['situacao'] ?? 'todos'));
+    $setor = (string) ($_GET['setor'] ?? '');
     $sql = 'SELECT id, linhaPlanilha, descricaoOrigem, codigoOrigem, unidadeOrigem, quantidadeOrigem, valorUnitOrigem,
+                   setor, categoria, tipoOrigem, materialUnit, maoObraUnit, custoDiretoUnit, bdiPercent,
                    statusClassificacao, matchOrigem, matchId, matchCode, matchDescription, matchUnit, matchValor,
                    similaridade, precoMaisBaixo, diferencaValor, diferencaPercent, aceito
             FROM ia_compara_itens WHERE jobId = ?';
     $params = [$jobId];
-    if (in_array($filtro, ['achou', 'faltou_importar', 'cotacao_propria'], true)) {
+    if (in_array($filtro, ['achou', 'faltou_importar', 'divergente', 'cotacao_propria'], true)) {
         $sql .= ' AND statusClassificacao = ?';
         $params[] = $filtro;
+    }
+    if ($setor !== '' && strtolower($setor) !== 'todos') {
+        $sql .= ' AND setor = ?';
+        $params[] = $setor;
     }
     $sql .= ' ORDER BY id';
     $stmt = $pdo->prepare($sql);
@@ -10133,6 +10298,13 @@ function handle_ia_compara_items(PDO $pdo): never
             'unidadeOrigem' => $r['unidadeOrigem'],
             'quantidadeOrigem' => $r['quantidadeOrigem'] !== null ? (float) $r['quantidadeOrigem'] : null,
             'valorUnitOrigem' => $r['valorUnitOrigem'] !== null ? (float) $r['valorUnitOrigem'] : null,
+            'setor' => $r['setor'],
+            'categoria' => $r['categoria'],
+            'tipoOrigem' => $r['tipoOrigem'],
+            'materialUnit' => $r['materialUnit'] !== null ? (float) $r['materialUnit'] : null,
+            'maoObraUnit' => $r['maoObraUnit'] !== null ? (float) $r['maoObraUnit'] : null,
+            'custoDiretoUnit' => $r['custoDiretoUnit'] !== null ? (float) $r['custoDiretoUnit'] : null,
+            'bdiPercent' => $r['bdiPercent'] !== null ? (float) $r['bdiPercent'] : null,
             'statusClassificacao' => $r['statusClassificacao'],
             'matchOrigem' => $r['matchOrigem'],
             'matchId' => $r['matchId'] !== null ? (int) $r['matchId'] : null,
@@ -10151,7 +10323,20 @@ function handle_ia_compara_items(PDO $pdo): never
         'itens' => $itens,
         'counts' => ia_compara_counts($pdo, $jobId),
         'resumo' => ia_compara_resumo($pdo, $jobId),
+        'setores' => ia_compara_setores($pdo, $jobId),
     ], 'OK');
+}
+
+// Lista os setores (ala/parte da obra) do lote + a contagem de itens de cada um.
+function ia_compara_setores(PDO $pdo, string $jobId): array
+{
+    $stmt = $pdo->prepare("SELECT COALESCE(setor, '') s, COUNT(*) c FROM ia_compara_itens WHERE jobId = ? GROUP BY setor ORDER BY s");
+    $stmt->execute([$jobId]);
+    $out = [];
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
+        $out[] = ['nome' => (string) $r['s'], 'total' => (int) $r['c']];
+    }
+    return $out;
 }
 
 // Aceita (confirma) ou desmarca um item da análise.
@@ -10197,7 +10382,7 @@ function handle_ia_compara_export(PDO $pdo): never
     $stmt->execute([$jobId]);
     $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    $sitLabels = ['achou' => 'ACHOU', 'faltou_importar' => 'FALTOU IMPORTAR', 'cotacao_propria' => 'COTAÇÃO PRÓPRIA'];
+    $sitLabels = ['achou' => 'ACHOU', 'faltou_importar' => 'FALTOU IMPORTAR', 'divergente' => 'DIVERGENTE', 'cotacao_propria' => 'COTAÇÃO PRÓPRIA'];
     $precoLabels = ['planilha' => 'Planilha mais barata', 'sinapi' => 'SINAPI mais barata', 'igual' => 'Iguais', 'sem_comparacao' => 'Sem comparação'];
     $resumo = ia_compara_resumo($pdo, $jobId);
 
@@ -10211,7 +10396,7 @@ function handle_ia_compara_export(PDO $pdo): never
     $sheet->setCellValue('A' . $row, sprintf('Planilha mais barata em %d itens · SINAPI mais barata em %d · iguais %d', $resumo['planilhaMaisBarata'], $resumo['sinapiMaisBarata'], $resumo['iguais'])); $row++;
     $sheet->setCellValue('A' . $row, sprintf('Economia estimada R$ %s · Excesso estimado R$ %s', number_format($resumo['economiaTotal'], 2, ',', '.'), number_format($resumo['excessoTotal'], 2, ',', '.'))); $row += 2;
 
-    $headers = ['Linha', 'Descrição (planilha)', 'Cód. origem', 'Unid', 'Qtd', 'Valor unit. planilha',
+    $headers = ['Setor', 'Categoria', 'Tipo (origem)', 'Linha', 'Descrição (planilha)', 'Cód. origem', 'Unid', 'Qtd', 'Valor unit. planilha',
         'Situação', 'Match', 'Código SINAPI', 'Descrição SINAPI', 'Unid SINAPI', 'Valor SINAPI',
         'Similaridade %', 'Preço mais baixo', 'Diferença R$', 'Diferença %', 'Aceito'];
     $cols = [];
@@ -10222,6 +10407,9 @@ function handle_ia_compara_export(PDO $pdo): never
     $row++;
     foreach ($rows as $r) {
         $vals = [
+            (string) ($r['setor'] ?? ''),
+            (string) ($r['categoria'] ?? ''),
+            (string) ($r['tipoOrigem'] ?? ''),
             (int) ($r['linhaPlanilha'] ?? 0),
             (string) $r['descricaoOrigem'],
             (string) ($r['codigoOrigem'] ?? ''),

@@ -202,12 +202,12 @@ try {
             }
         }
 
-        // 3b) Classificação.
+        // 3b) Classificação — a IA confere TODOS os itens (também os com código).
         $status = 'cotacao_propria';
         $match = null;
         $sim = null;
         if ($codigo !== '') {
-            // Código na planilha: existe na base? (match por código)
+            // Código na planilha: existe na base?
             $codeMatch = null;
             if (isset($compCodeToId[$codigo])) {
                 $id = $compCodeToId[$codigo];
@@ -217,9 +217,22 @@ try {
                 $codeMatch = ['origem' => 'insumo', 'origemId' => $id] + $insById[$id];
             }
             if ($codeMatch) {
-                $status = 'achou';
-                $match = $codeMatch;
-                $sim = 100.00; // match exato por código
+                // A IA confere se o código informado bate com a descrição.
+                if ($semMatch !== null && (string) $semMatch['code'] === $codigo) {
+                    $status = 'achou'; // top-match semântico É o mesmo código → confirmado
+                    $match = $codeMatch;
+                    $sim = $semMatch['similaridade'];
+                } elseif ($semMatch !== null && $bestSim !== null && $bestSim >= IA_COMPARA_ACHOU_MIN && (string) $semMatch['code'] !== $codigo) {
+                    // Descrição aponta forte para OUTRO código → código informado pode estar errado.
+                    $status = 'divergente';
+                    $match = $semMatch; // o informado fica em codigoOrigem para o usuário comparar
+                    $sim = $semMatch['similaridade'];
+                } else {
+                    // Semântica fraca/ambígua: confia no código informado.
+                    $status = 'achou';
+                    $match = $codeMatch;
+                    $sim = 100.00;
+                }
             } else {
                 // Tem código SINAPI mas não está na nossa base — faltou importar.
                 $status = 'faltou_importar';

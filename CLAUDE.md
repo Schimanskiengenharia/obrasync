@@ -1,8 +1,8 @@
 # CLAUDE.md — Guia para agentes de IA no projeto ObraSync
 
-> **Versão atual:** `v1.23.0` · 2026-06-28
+> **Versão atual:** `v1.24.0` · 2026-06-28
 > **Última varredura de código:** 2026-06-27 (3ª rodada — segurança, bugs, performance, qualidade, UX; itens MÉDIO/BAIXO fechados na v1.12.1)
-> **Handoff:** este doc foi atualizado na v1.23.0 (de-para multi-aba + grupo) — confira a seção **Sessão 2026-06-28 — v1.23.0** e **Operação/Deploy (handoff)** abaixo.
+> **Handoff:** este doc foi atualizado na v1.24.0 (planilhas reais: cabeçalho + colunas ricas + divergente) — confira a seção **Sessão 2026-06-28 — v1.24.0** e **Operação/Deploy (handoff)** abaixo.
 
 Este arquivo orienta qualquer agente (ou pessoa) que continue o desenvolvimento.
 Leia também o `README.md` (seção "Para quem está retomando o projeto") e o
@@ -60,6 +60,18 @@ Leia também o `README.md` (seção "Para quem está retomando o projeto") e o
 > Pontos fortes confirmados (não re-sinalizar): prepared statements em todo SQL (sem SQLi), autorização por rota/perfil após `authenticate_request`, sessão com token CSPRNG + SHA-256 + idle/TTL, `password_hash`, rate limit de login/reset, CSRF mitigado por auth via header, uploads fora do docroot, deploy com HMAC + `escapeshellarg`.
 
 ---
+
+## Sessão 2026-06-28 — v1.24.0 (Planilhas reais: cabeçalho + colunas ricas + divergente)
+
+**Correções na leitura das planilhas reais (AltoQi) nos módulos `iaDepara` e `iaCompara`:**
+
+1. **Detecção de cabeçalho** (`ia_depara_detect_columns`, usada pelos dois): não assume mais a linha 1 — varre as primeiras 15 linhas e elege a primeira que tenha a coluna de descrição **e ≥2 colunas reconhecíveis** (títulos/subtítulos antes são ignorados). Prefere a coluna "Descrição" forte à coluna "Item" (número WBS) via `ia_depara_header_is_strong_desc`.
+
+2. **Colunas ricas** (`ia_depara_map_header` ampliado, ordem específica ANTES de `valor`): Setor, Categoria, Tipo, Material Unit., M.O. Unit., Custo Direto Unit., BDI %. ⚠️ `'material'` foi REMOVIDO das variantes de `descricao` (colidia com "Material Unit."). Helper `ia_planilha_ler_ricos` lê esses campos e define o **valor unitário efetivo** pela prioridade **Custo Direto > Material + M.O. > valor genérico** (`fonteValor` documenta). Novas colunas em `ia_depara_itens`/`ia_compara_itens` (setor, categoria, tipoOrigem, materialUnit, maoObraUnit, custoDiretoUnit, bdiPercent) — migration `2026-06-28-ia-planilhas-ricas.sql` + `ia_ensure_planilha_rich_columns` (ADD COLUMN IF NOT EXISTS + MODIFY do enum só quando falta 'divergente', via INFORMATION_SCHEMA, p/ não rebuildar a cada request).
+
+3. **Classificação confere TODOS os itens** (workers): mesmo com código, roda a semântica. Código existente: top1.code == informado → **achou** (confirmado); descrição aponta forte (≥ACHOU_MIN) para outro código → **divergente** (match = sugestão; o informado fica em `codigoOrigem`); senão confia no código → achou. Novo valor de enum **`divergente`** nos dois `statusClassificacao`. Comparação de preço (compara) segue só para `achou`.
+
+4. **Exibição:** colunas Setor/Categoria/Tipo nas tabelas e no export; filtro por **Setor** (ala/parte da obra) — `ia_depara_grupos($pdo,$jobId,'setor')` / `ia_compara_setores`; balde/badge **DIVERGENTE** (laranja) com dica "código informado X — a descrição parece ser outro item". `iaDeparaSelectFilter` genérico (reusado por grupo e setor). CSS `.ia-dp-divergente`/`.ia-dp-setor-tag`/`.ia-dp-diverg-hint`.
 
 ## Sessão 2026-06-28 — v1.23.0 (De-para em lote: multi-aba + grupo)
 
