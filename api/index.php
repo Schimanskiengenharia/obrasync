@@ -9970,7 +9970,7 @@ function handle_ia_depara_export(PDO $pdo): never
     $sheet->setCellValue('A' . $row, 'De-para IA — base SINAPI'); $row++;
     $sheet->setCellValue('A' . $row, 'Arquivo: ' . (string) ($job['nomeArquivo'] ?? '')); $row++;
     $sheet->setCellValue('A' . $row, 'Gerado em ' . date('Y-m-d H:i')); $row += 2;
-    $headers = ['Grupo (aba)', 'Setor', 'Categoria', 'Tipo (origem)', 'Linha', 'Descrição (origem)', 'Código (origem)', 'Qtd', 'Unid (origem)', 'Valor (origem)',
+    $headers = ['Grupo (aba)', 'Setor', 'Categoria', 'Tipo (origem)', 'Linha', 'Descrição (origem)', 'Código (origem)', 'Qtd', 'Unid (origem)', 'Valor (origem)', 'Material unit.', 'M.O. unit.',
         'Situação', 'Match', 'Código SINAPI', 'Descrição SINAPI', 'Unid SINAPI', 'Valor SINAPI', 'Similaridade %', 'Aceito'];
     $cols = [];
     $c = 'A';
@@ -9990,6 +9990,8 @@ function handle_ia_depara_export(PDO $pdo): never
             $r['quantidade'] !== null ? (float) $r['quantidade'] : '',
             (string) ($r['unidadeOrigem'] ?? ''),
             $r['valorOrigem'] !== null ? (float) $r['valorOrigem'] : '',
+            $r['materialUnit'] !== null ? (float) $r['materialUnit'] : '',
+            $r['maoObraUnit'] !== null ? (float) $r['maoObraUnit'] : '',
             $labels[$r['statusClassificacao']] ?? '',
             (string) ($r['matchOrigem'] ?? ''),
             (string) ($r['matchCode'] ?? ''),
@@ -10410,7 +10412,7 @@ function handle_ia_compara_export(PDO $pdo): never
     $sheet->setCellValue('A' . $row, sprintf('Planilha mais barata em %d itens · SINAPI mais barata em %d · iguais %d', $resumo['planilhaMaisBarata'], $resumo['sinapiMaisBarata'], $resumo['iguais'])); $row++;
     $sheet->setCellValue('A' . $row, sprintf('Economia estimada R$ %s · Excesso estimado R$ %s', number_format($resumo['economiaTotal'], 2, ',', '.'), number_format($resumo['excessoTotal'], 2, ',', '.'))); $row += 2;
 
-    $headers = ['Setor', 'Categoria', 'Tipo (origem)', 'Linha', 'Descrição (planilha)', 'Cód. origem', 'Unid', 'Qtd', 'Valor unit. planilha',
+    $headers = ['Setor', 'Categoria', 'Tipo (origem)', 'Linha', 'Descrição (planilha)', 'Cód. origem', 'Unid', 'Qtd', 'Valor unit. planilha', 'Material unit.', 'M.O. unit.',
         'Situação', 'Match', 'Código SINAPI', 'Descrição SINAPI', 'Unid SINAPI', 'Valor SINAPI',
         'Similaridade %', 'Preço mais baixo', 'Diferença R$', 'Diferença %', 'Aceito'];
     $cols = [];
@@ -10430,6 +10432,8 @@ function handle_ia_compara_export(PDO $pdo): never
             (string) ($r['unidadeOrigem'] ?? ''),
             $r['quantidadeOrigem'] !== null ? (float) $r['quantidadeOrigem'] : '',
             $r['valorUnitOrigem'] !== null ? (float) $r['valorUnitOrigem'] : '',
+            $r['materialUnit'] !== null ? (float) $r['materialUnit'] : '',
+            $r['maoObraUnit'] !== null ? (float) $r['maoObraUnit'] : '',
             $sitLabels[$r['statusClassificacao']] ?? '',
             (string) ($r['matchOrigem'] ?? ''),
             (string) ($r['matchCode'] ?? ''),

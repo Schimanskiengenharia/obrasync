@@ -19,9 +19,10 @@ if (APP_ENV === "production" && location.protocol === "http:") {
   location.replace(location.href.replace(/^http:/, "https:"));
 }
 const APP_NAME = "ObraSync";
-const APP_VERSION = "v1.24.2";
+const APP_VERSION = "v1.24.3";
 const APP_VERSION_DATE = "2026-06-28";
 const APP_CHANGELOG = [
+  "IA de-para e comparador: as colunas Material unit. e M.O. unit. das planilhas reais passam a ser exibidas nas telas (sob o valor) e no export Excel, além de Setor/Categoria/Tipo já mostrados (v1.24.3).",
   "Correção do comparador de orçamento IA: a diferença percentual deixava de ser gravada com erro \"Numeric value out of range\" quando o preço SINAPI era muito pequeno (a divisão gerava % gigante). Agora a % só é calculada quando o valor SINAPI e o valor da planilha são maiores que zero, com clamp de segurança, e a coluna foi ampliada para DECIMAL(12,2). A análise pode ser re-rodada (Reanalisar) para completar os itens que faltaram (v1.24.2).",
   "Correção do fluxo de caixa: a janela de meses passou a ser centrada no mês atual (mês corrente ± 6 meses) em vez de pegar os últimos 12 meses com datas existentes. Antes, uma única conta com data muito no futuro (ex.: conta a pagar em 2030) esticava o eixo e escondia os lançamentos do período atual; agora lançamentos fora da janela não aparecem sem distorcer o gráfico. Janela configurável por constante (v1.24.1).",
   "IA de-para e comparador — leitura de planilhas reais: a linha de cabeçalho passa a ser detectada automaticamente (não assume mais a linha 1 — ignora títulos/subtítulos antes do cabeçalho), e as colunas ricas dos orçamentos (Setor, Categoria, Tipo, Material Unit., M.O. Unit., Custo Direto Unit., BDI %) são aproveitadas quando existem. O valor unitário usado na comparação segue a prioridade Custo Direto > Material + M.O. > valor genérico. A IA agora confere TODOS os itens (mesmo os com código): se a descrição apontar para um código SINAPI diferente do informado, o item é marcado DIVERGENTE para revisão. As telas mostram Setor/Categoria/Tipo e permitem filtrar por Setor (ala/parte da obra); o export inclui essas colunas (v1.24.0).",
@@ -5496,6 +5497,8 @@ function iaDeparaRowHtml(it) {
   const extras = [
     it.unidadeOrigem ? `un: ${escapeHtml(it.unidadeOrigem)}` : "",
     it.quantidade != null ? `qtd: ${escapeHtml(String(it.quantidade))}` : "",
+    it.materialUnit != null ? `Mat ${asMoney(it.materialUnit)}` : "",
+    it.maoObraUnit != null ? `M.O. ${asMoney(it.maoObraUnit)}` : "",
   ].filter(Boolean).join(" · ");
   return `
     <tr class="ia-dp-tr ${Number(it.aceito) === 1 ? "is-aceito" : ""}">
@@ -5821,6 +5824,13 @@ function iaComparaRowHtml(it) {
     matchCell = `<div class="ia-dp-match">${mtag}<strong>${escapeHtml(it.matchCode || "")}</strong>${it.matchUnit ? ` <span class="ia-result-unit">${escapeHtml(it.matchUnit)}</span>` : ""}<div class="ia-dp-match-desc">${escapeHtml(it.matchDescription || "")}</div></div>`;
   }
   const low = it.precoMaisBaixo;
+  // Detalhe da composição do valor da planilha (Material + M.O.), quando presente.
+  const matMo = (it.materialUnit != null || it.maoObraUnit != null)
+    ? `<div class="muted ia-dp-un">${[
+        it.materialUnit != null ? `Mat ${asMoney(it.materialUnit)}` : "",
+        it.maoObraUnit != null ? `M.O. ${asMoney(it.maoObraUnit)}` : "",
+      ].filter(Boolean).join(" + ")}</div>`
+    : "";
   const valPlanilha = it.valorUnitOrigem != null
     ? `<span class="${low === "planilha" ? "ia-cmp-low" : ""}">${asMoney(it.valorUnitOrigem)}</span>`
     : '<span class="muted">—</span>';
@@ -5837,7 +5847,7 @@ function iaComparaRowHtml(it) {
       <td>${codOrigem}</td>
       <td>${it.unidadeOrigem ? escapeHtml(it.unidadeOrigem) : ""}</td>
       <td class="ia-dp-valor">${it.quantidadeOrigem != null ? escapeHtml(String(it.quantidadeOrigem)) : ""}</td>
-      <td class="ia-dp-valor">${valPlanilha}</td>
+      <td class="ia-dp-valor">${valPlanilha}${matMo}</td>
       <td class="ia-dp-arrow">→</td>
       <td>${matchCell}</td>
       <td class="ia-dp-valor">${valSinapi}</td>
