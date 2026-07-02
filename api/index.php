@@ -12489,6 +12489,31 @@ function create_milestone_billing_event(PDO $pdo, array $milestone, array $proje
     return $eventId;
 }
 
+// Amplia o ENUM de obra_notificacoes.type para aceitar 'ALERTA_VENCIMENTO' (alertas
+// automáticos de vencimento gerados pelo cron em create_due_alerts). Sem isso, em
+// sql_mode estrito o INSERT do alerta falha (valor fora do enum) e derrubava a cadeia
+// de jobs. Só faz o MODIFY quando o valor ainda não está no enum (via INFORMATION_SCHEMA),
+// evitando rebuildar a coluna a cada chamada. Idempotente — espelha a migration
+// 2026-07-01-obra-notificacoes-alerta-vencimento.sql.
+function ensure_obra_notificacoes_alert_type(PDO $pdo): void
+{
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    $done = true;
+    try {
+        if (!resolve_existing_table($pdo, ['obra_notificacoes'], false)) {
+            return;
+        }
+        $col = $pdo->query("SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'obra_notificacoes' AND COLUMN_NAME = 'type'")->fetchColumn();
+        if ($col && stripos((string) $col, "'ALERTA_VENCIMENTO'") === false) {
+            $pdo->exec("ALTER TABLE obra_notificacoes MODIFY COLUMN `type` ENUM('WhatsApp manual','ALERTA_VENCIMENTO') NOT NULL DEFAULT 'WhatsApp manual'");
+        }
+    } catch (Throwable $ignored) {
+    }
+}
+
 function create_event_day_notification(PDO $pdo, array $event): ?int
 {
     // Automação auxiliar executada APÓS o evento já estar salvo: uma falha aqui

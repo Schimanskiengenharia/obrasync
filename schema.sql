@@ -216,7 +216,7 @@ CREATE TABLE IF NOT EXISTS obra_notificacoes (
   milestoneId BIGINT UNSIGNED NULL,
   recipient VARCHAR(180) NOT NULL,
   phone VARCHAR(40),
-  `type` ENUM('WhatsApp manual') NOT NULL DEFAULT 'WhatsApp manual',
+  `type` ENUM('WhatsApp manual', 'ALERTA_VENCIMENTO') NOT NULL DEFAULT 'WhatsApp manual',
   message TEXT,
   generatedLink TEXT,
   status ENUM('Preparado', 'Enviado manualmente', 'Cancelado') NOT NULL DEFAULT 'Preparado',

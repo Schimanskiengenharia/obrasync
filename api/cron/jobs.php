@@ -19,17 +19,27 @@ if (PHP_SAPI !== 'cli') {
 // EMULATE_PREPARES = false, derrubando todos os jobs na primeira consulta.
 require __DIR__ . '/../index.php';
 
-try {
-    expire_proposals($pdo);
-    create_due_alerts($pdo);
-    consolidate_monthly_dre($pdo);
-    purge_old_audit_data($pdo);
-    echo '[' . date('c') . "] jobs concluídos\n";
-} catch (Throwable $error) {
-    error_log('[ObraSync cron] ' . $error->getMessage());
-    echo '[' . date('c') . '] erro: ' . $error->getMessage() . "\n";
-    exit(1);
+// Cada job roda ISOLADO no seu próprio try/catch: uma falha (ex.: um INSERT que
+// esbarra em sql_mode estrito) é logada e o cron segue para os próximos. Antes um
+// único job quebrado abortava a cadeia inteira e purge/DRE nunca rodavam.
+$jobs = [
+    'expire_proposals' => static fn () => expire_proposals($pdo),
+    'create_due_alerts' => static fn () => create_due_alerts($pdo),
+    'consolidate_monthly_dre' => static fn () => consolidate_monthly_dre($pdo),
+    'purge_old_audit_data' => static fn () => purge_old_audit_data($pdo),
+];
+$failures = 0;
+foreach ($jobs as $name => $job) {
+    try {
+        $job();
+    } catch (Throwable $error) {
+        $failures++;
+        error_log('[ObraSync cron] job "' . $name . '" falhou: ' . $error->getMessage());
+        echo '[' . date('c') . '] job "' . $name . '" falhou: ' . $error->getMessage() . "\n";
+    }
 }
+echo '[' . date('c') . '] jobs concluídos' . ($failures ? " ({$failures} com falha)" : '') . "\n";
+exit($failures ? 1 : 0);
 
 function expire_proposals(PDO $pdo): void
 {
@@ -44,6 +54,9 @@ function expire_proposals(PDO $pdo): void
 function create_due_alerts(PDO $pdo): void
 {
     $notificationTable = resolve_existing_table($pdo, ['obra_notificacoes']);
+    // Garante que o ENUM de `type` aceita 'ALERTA_VENCIMENTO' antes de inserir; em
+    // sql_mode estrito um valor fora do enum abortaria o INSERT (auto-cura em produção).
+    ensure_obra_notificacoes_alert_type($pdo);
     foreach ([['accounts_receivable', 'CONTA_RECEBER'], ['accounts_payable', 'CONTA_PAGAR']] as [$tableName, $kind]) {
         $table = resolve_existing_table($pdo, [$tableName]);
         $cols = table_columns($pdo, $table);
@@ -57,17 +70,19 @@ function create_due_alerts(PDO $pdo): void
         foreach ($stmt->fetchAll() as $row) {
             if (notification_exists_today($pdo, $notificationTable, $kind, (int) $row['id'])) continue;
             $projectId = value_from($row, ['obra_id', 'projectId', 'project_id']);
+            // obra_notificacoes.projectId é NOT NULL (FK para projects): conta sem obra
+            // vinculada não gera notificação — apenas pula (não derruba o job).
+            if (empty($projectId)) continue;
+            // Colunas reais do schema (camelCase inglês): projectId, recipient (NOT NULL),
+            // type (enum), message, generatedLink, status (enum). recipient não vem da
+            // conta, então usa um remetente-placeholder claro; status usa valor válido do enum.
             insert_dynamic($pdo, $notificationTable, [
-                'obra_id' => $projectId,
                 'projectId' => $projectId,
-                'project_id' => $projectId,
-                'tipo' => 'ALERTA_VENCIMENTO',
+                'recipient' => 'Alerta automático',
                 'type' => 'ALERTA_VENCIMENTO',
-                'mensagem' => due_alert_message($kind, $row),
                 'message' => due_alert_message($kind, $row),
                 'generatedLink' => $kind . ':' . $row['id'],
-                'generated_link' => $kind . ':' . $row['id'],
-                'status' => 'Pendente',
+                'status' => 'Preparado',
             ]);
         }
     }
