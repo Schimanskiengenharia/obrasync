@@ -123,14 +123,14 @@ try {
 
     $module = strtolower((string) ($_GET['module'] ?? ''));
     if (in_array($module, ['agenda', 'agenda_eventos', 'agenda-eventos'], true)) {
-        authorize_request($pdo, $authUser, 'agenda', action_for_method($method));
+        authorize_request($pdo, $authUser, 'agenda', module_request_action($method, $_GET));
         handle_agenda_module($pdo, $method, $_GET);
     }
 
     // Busca pontual de um cliente por id, usada pelo preenchimento automático de
     // dados do cliente ao montar uma obra/projeto. Ex.: ?module=clients&action=get&id=5
     if (in_array($module, ['clients', 'cliente', 'clientes'], true)) {
-        authorize_request($pdo, $authUser, 'clients', action_for_method($method));
+        authorize_request($pdo, $authUser, 'clients', module_request_action($method, $_GET));
         handle_clients_module($pdo, $method, $_GET);
     }
 
@@ -139,7 +139,7 @@ try {
     //   POST ?module=payable&action=early_settlement
     //   GET  ?module=payable&action=group&recorrencia_id=...
     if (in_array($module, ['payable', 'accounts_payable', 'contas-pagar'], true)) {
-        authorize_request($pdo, $authUser, 'payable', action_for_method($method));
+        authorize_request($pdo, $authUser, 'payable', module_request_action($method, $_GET));
         handle_payable_module($pdo, $method, $_GET, $authUser);
     }
 
@@ -147,7 +147,7 @@ try {
     // O CRUD genérico (/centros-custo) continua funcionando; este endpoint expõe
     // as mesmas operações no padrão ?module=costCenters&action=...
     if (in_array($module, ['costcenters', 'cost_centers', 'centros-custo', 'centros_custo'], true)) {
-        authorize_request($pdo, $authUser, 'costCenters', action_for_method($method));
+        authorize_request($pdo, $authUser, 'costCenters', module_request_action($method, $_GET));
         handle_cost_centers_module($pdo, $method, $_GET, $resources['costCenters'], $authUser);
     }
 
@@ -155,7 +155,7 @@ try {
     //   POST ?module=cashMoves&action=create  (cria o caixa e baixa a conta a pagar)
     //   POST ?module=cashMoves&action=link    (vincula caixa e conta a pagar já existentes)
     if (in_array($module, ['cashmoves', 'cash_bank_movements', 'movimentacoes-caixa', 'caixa'], true)) {
-        authorize_request($pdo, $authUser, 'cashMoves', action_for_method($method));
+        authorize_request($pdo, $authUser, 'cashMoves', module_request_action($method, $_GET));
         handle_cash_moves_module($pdo, $method, $_GET, $authUser);
     }
 
@@ -167,19 +167,19 @@ try {
 
     // Itens detalhados do pedido de compra (list/create/update/delete/saveBulk).
     if (in_array($module, ['purchaseorderitems', 'purchase_order_items', 'itens-pedido-compra'], true)) {
-        authorize_request($pdo, $authUser, 'purchaseOrders', action_for_method($method));
+        authorize_request($pdo, $authUser, 'purchaseOrders', module_request_action($method, $_GET));
         handle_purchase_order_items_module($pdo, $method, $_GET, $authUser);
     }
 
     // Execução (realizado vs orçado) dos itens do orçamento de obra.
     if (in_array($module, ['workbudgetexecution', 'execucao-orcamento'], true)) {
-        authorize_request($pdo, $authUser, 'workBudgets', action_for_method($method));
+        authorize_request($pdo, $authUser, 'workBudgets', module_request_action($method, $_GET));
         handle_work_budget_execution_module($pdo, $method, $_GET, $authUser);
     }
 
     // Resumo de execução das obras para o Dashboard (previsto vs realizado).
     if (in_array($module, ['dashboardexecution', 'execucao-dashboard'], true)) {
-        authorize_request($pdo, $authUser, 'dashboard', action_for_method($method));
+        authorize_request($pdo, $authUser, 'dashboard', module_request_action($method, $_GET));
         handle_dashboard_execution_module($pdo, $method, $_GET);
     }
 
@@ -190,7 +190,7 @@ try {
     //   DELETE ?module=viabilidade&action=delete_item
     // Reaproveita a permissão do módulo viabilityAnalyses (mesmos perfis).
     if (in_array($module, ['viabilidade', 'viabilidade-obra', 'viabilidade_obra'], true)) {
-        authorize_request($pdo, $authUser, 'viabilityAnalyses', action_for_method($method));
+        authorize_request($pdo, $authUser, 'viabilityAnalyses', module_request_action($method, $_GET));
         handle_viabilidade_module($pdo, $method, $_GET, $config, $authUser);
     }
 
@@ -198,7 +198,7 @@ try {
     //   POST ?module=procedimentosExecucao&action=uploadPdf  (multipart: pesId + file)
     //   GET  ?module=procedimentosExecucao&action=downloadPdf&id=<pesId>
     if (in_array($module, ['procedimentosexecucao', 'procedimentos-execucao'], true)) {
-        authorize_request($pdo, $authUser, 'qualidadePes', action_for_method($method));
+        authorize_request($pdo, $authUser, 'qualidadePes', module_request_action($method, $_GET));
         if (strtolower(trim((string) ($_GET['action'] ?? ''))) === 'downloadpdf') {
             handle_pes_pdf_download($pdo, (int) ($_GET['id'] ?? 0));
         }
@@ -208,7 +208,7 @@ try {
     // Importação e comparação de cotações de fornecedores (PDF/Excel/CSV).
     //   POST ?module=cotacoes&action=importar|salvarItens|comparar   GET …=list|get|exportarCsv
     if (in_array($module, ['cotacoes', 'cotacao', 'cotacoes-importacao'], true)) {
-        authorize_request($pdo, $authUser, 'purchaseOrders', action_for_method($method));
+        authorize_request($pdo, $authUser, 'purchaseOrders', module_request_action($method, $_GET));
         handle_cotacoes_module($pdo, $method, $_GET, $config, $authUser);
     }
 
@@ -216,16 +216,16 @@ try {
     //   POST ?module=sinapi&action=previewPacote|processarPacote|ativarReferencia
     //   GET  ?module=sinapi&action=statusImportacao|listarReferencias
     if (in_array($module, ['sinapi', 'base-sinapi'], true)) {
-        authorize_request($pdo, $authUser, 'sinapiReferences', action_for_method($method));
+        authorize_request($pdo, $authUser, 'sinapiReferences', module_request_action($method, $_GET));
         handle_sinapi_module($pdo, $method, $_GET, $config, $authUser);
     }
 
-    // Integração com IA local (Ollama). Por ora só a fundação + ping de teste:
-    //   GET ?module=ia&action=ping → valida geração e embeddings server-side.
-    // Autenticação IDÊNTICA aos demais módulos: a sessão já foi validada acima por
-    // authenticate_request (token no header). NÃO exigimos uma permissão de módulo
-    // 'ia' — ela não existe em nenhum papel e devolvia 403 ao usuário logado; basta
-    // a sessão válida, como em check-session/bootstrap.
+    // Integração com IA local (Ollama): busca semântica, de-para, comparador e a
+    // ponte de envio para Orçamento de Obra. Além da sessão (validada acima por
+    // authenticate_request), a AUTORIZAÇÃO POR PAPEL é aplicada dentro de
+    // handle_ia_module: a IA existe para alimentar o Orçamento de Obra, então reusa
+    // a permissão de 'workBudgets' (leitura para consultas; criação para uploads,
+    // indexação, aceitar e enviarParaOrcamento — que grava orcamentos_obras).
     if ($module === 'ia') {
         handle_ia_module($pdo, $method, $_GET, $config, $authUser);
     }
@@ -500,7 +500,8 @@ try {
     }
     if ($resource === 'obra-disciplinas-delete') {
         require_method($method, ['POST']);
-        authorize_request($pdo, $authUser, 'rdo', 'edit');
+        // Exclusão sempre exige permissão de exclusão, mesmo chegando por POST.
+        authorize_request($pdo, $authUser, 'rdo', 'delete');
         handle_obra_disciplinas_delete($pdo, $authUser, (int) (read_json()['id'] ?? 0));
     }
 
@@ -7700,6 +7701,35 @@ function action_for_method(string $method): string
     };
 }
 
+// Resolve a permissão exigida a partir da AÇÃO REAL do endpoint ?module=, e não só
+// do método HTTP. Fecha o furo em que uma exclusão enviada por POST (?action=delete)
+// era autorizada como 'create', driblando o canDelete de quem só tinha permissão de
+// criar. Regra: ações destrutivas (delete/remove/cancel/excluir) SEMPRE exigem
+// 'delete'; atualizações (update*/early_settlement) exigem 'edit'; leituras
+// (list/get/download/export/status/…) exigem 'view'; o resto herda o método HTTP
+// (POST→create etc.). Em dúvida, escala para a permissão mais restritiva.
+function module_request_action(string $method, array $query): string
+{
+    $action = strtolower(trim((string) ($query['action'] ?? '')));
+    if ($action === '') {
+        return action_for_method($method);
+    }
+    if (str_starts_with($action, 'delete') || str_starts_with($action, 'remove')
+        || str_starts_with($action, 'cancel') || str_starts_with($action, 'excluir')) {
+        return 'delete';
+    }
+    if (str_starts_with($action, 'update') || $action === 'early_settlement') {
+        return 'edit';
+    }
+    if (str_starts_with($action, 'list') || str_starts_with($action, 'get')
+        || str_starts_with($action, 'download') || str_starts_with($action, 'export')
+        || str_starts_with($action, 'status')
+        || in_array($action, ['feed', 'group', 'summary', 'history', 'check_bloqueio', 'listarreferencias'], true)) {
+        return 'view';
+    }
+    return action_for_method($method);
+}
+
 // Sub-recursos herdam a permissão do módulo principal correspondente do frontend.
 function permission_module_key(string $key): string
 {
@@ -8898,12 +8928,46 @@ function ollama_embed(string $text): array
 
 function handle_ia_module(PDO $pdo, string $method, array $query, array $config, ?array $authUser): never
 {
-    // Exige apenas a sessão logada (autenticada acima por authenticate_request, igual
-    // aos demais módulos). Respostas no padrão {success, data, message} do resto da API.
+    // Exige a sessão logada (autenticada acima por authenticate_request). Respostas
+    // no padrão {success, data, message} do resto da API.
     if (!$authUser) {
         sinapi_module_respond(false, [], 'Não autenticado. Faça login para acessar a API.', 401);
     }
     $action = strtolower((string) ($query['action'] ?? ''));
+
+    // Autorização POR PAPEL (a sessão já foi validada). A IA existe para alimentar o
+    // Orçamento de Obra, então reusa a permissão de 'workBudgets' — o mesmo mecanismo
+    // (user_can → override por usuário/role_can) usado pelos demais módulos, sem
+    // inventar uma permissão nova. Antes, qualquer sessão válida (inclusive papéis
+    // mínimos como consulta/cliente_obra/fornecedor_terceiro) escrevia orçamento e
+    // disparava workers pesados.
+    //   • ESCRITA (uploads, indexação, start*, aceitar, enviarParaOrcamento) → 'create' de workBudgets.
+    //   • LEITURA (ping, status, itens, busca, export) → 'view' de workBudgets.
+    $iaWriteActions = [
+        'startindex', 'deparaupload', 'deparastart', 'deparaaceitar',
+        'comparaupload', 'comparastart', 'comparaaceitar', 'enviarparaorcamento',
+    ];
+    $iaNeedsWrite = in_array($action, $iaWriteActions, true);
+    if (!user_can($pdo, $authUser, 'workBudgets', $iaNeedsWrite ? 'create' : 'view')) {
+        sinapi_module_respond(
+            false,
+            [],
+            'Permissão negada: esta ação de IA exige acesso ao módulo de Orçamento de Obra.',
+            403
+        );
+    }
+    // enviarParaOrcamento grava numa obra específica: além de poder criar orçamento,
+    // o usuário precisa enxergar obras/projetos (mesmo escopo de projeto exigido pelo
+    // fluxo normal de Orçamento de Obra; o sistema não tem ACL por obra individual).
+    if ($action === 'enviarparaorcamento' && !user_can($pdo, $authUser, 'projects', 'view')) {
+        sinapi_module_respond(
+            false,
+            [],
+            'Permissão negada: você não tem acesso às obras/projetos de destino.',
+            403
+        );
+    }
+
     if ($action === 'ping') {
         if (strtoupper($method) !== 'GET') {
             sinapi_module_respond(false, [], 'Método não permitido para o ping de IA.', 405);
