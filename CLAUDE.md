@@ -2,6 +2,8 @@
 
 > **Sessão 28/06/2026:** IA semântica (busca + de-para + comparador) e Fase B1 (ponte análise → orçamento). 2 pendentes críticos — ver [`docs/sessoes/2026-06-28-ia-comparador-faseB.md`](docs/sessoes/2026-06-28-ia-comparador-faseB.md).
 >
+> **Visão futura** — Cronograma Físico-Financeiro completo (EAP, dependências MS Project, medição, baseline, risco, curvas S): [`docs/specs/cronograma-fisico-financeiro.md`](docs/specs/cronograma-fisico-financeiro.md). Não iniciar antes de fechar os graves da revisão.
+>
 > **Versão atual:** `v1.25.1` · 2026-06-28
 > **Última varredura de código:** 2026-06-27 (3ª rodada — segurança, bugs, performance, qualidade, UX; itens MÉDIO/BAIXO fechados na v1.12.1)
 > **Handoff:** este doc foi atualizado na v1.25.0 (Fase B1: ponte IA → Orçamento de Obra) — confira a seção **Sessão 2026-06-28 — v1.25.0** e **Operação/Deploy (handoff)** abaixo.
