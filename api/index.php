@@ -543,6 +543,26 @@ try {
         ensure_users_extra_columns($pdo);
     }
 
+    // G3: obra NUNCA é apagada fisicamente — o DELETE vira ARQUIVAMENTO (deletedAt),
+    // preservando notas fiscais, contas e orçamentos vinculados. Desarquivar:
+    // POST /api/obras/{id}/restore (mesma permissão de excluir).
+    if ($key === 'projects') {
+        ensure_project_soft_delete($pdo);
+        if ($method === 'DELETE' && $id) {
+            $reason = trim((string) ($_GET['reason'] ?? ''));
+            archive_project($pdo, (int) $id, $authUser, $reason !== '' ? mb_substr($reason, 0, 255) : null);
+            server_audit($pdo, $authUser, 'archive', $key, $id);
+            respond(['ok' => true, 'archived' => true]);
+        }
+        if ($id && strtolower((string) ($segments[2] ?? '')) === 'restore') {
+            require_method($method, ['POST']);
+            authorize_request($pdo, $authUser, 'projects', 'delete');
+            $record = restore_project($pdo, (int) $id);
+            server_audit($pdo, $authUser, 'restore', $key, $id);
+            respond(['ok' => true, 'record' => $record]);
+        }
+    }
+
     if ($key === 'fiscalDocuments' && $id && isset($segments[2]) && $method === 'GET') {
         handle_fiscal_download($pdo, (int) $id, $segments[2]);
     }
@@ -1818,6 +1838,11 @@ function list_records(PDO $pdo, array $meta): array
     $params = [];
     $columns = table_columns($pdo, $meta['table']);
     $query = normalize_payload_aliases($_GET);
+    // G3: obras arquivadas (soft-delete) ficam fora das listagens normais;
+    // ?archived=1 devolve SÓ as arquivadas (tela "Obras arquivadas").
+    if ($meta['table'] === 'projects' && in_array('deletedAt', $columns, true)) {
+        $where[] = empty($_GET['archived']) ? '`deletedAt` IS NULL' : '`deletedAt` IS NOT NULL';
+    }
     foreach ($meta['fields'] as $field) {
         if (!in_array($field, $columns, true)) {
             continue;
@@ -2048,6 +2073,11 @@ function update_record(PDO $pdo, array $meta, int $id, array $payload): array
 
 function delete_record(PDO $pdo, array $meta, int $id): void
 {
+    // G3: trava de fundo — obra jamais passa pelo DELETE físico genérico (o
+    // roteamento intercepta antes e arquiva; se algo chegar aqui, é bug).
+    if ($meta['table'] === 'projects') {
+        fail('Obras não são apagadas fisicamente. Use o arquivamento (soft-delete).', 422);
+    }
     $stmt = $pdo->prepare('DELETE FROM `' . $meta['table'] . '` WHERE id = ?');
     $stmt->execute([$id]);
     if ($stmt->rowCount() === 0) {
@@ -2446,6 +2476,11 @@ function bootstrap_data(PDO $pdo, array $resources, ?array $authUser = null, boo
             && !in_array('usa_endereco_empresa', table_columns($pdo, 'projects'), true)) {
             ensure_obra_endereco_columns($pdo);
         }
+        // G3: colunas de arquivamento (soft-delete) da obra + FKs sem cascata destrutiva.
+        if (resolve_existing_table($pdo, ['projects'], false)
+            && !in_array('deletedAt', table_columns($pdo, 'projects'), true)) {
+            ensure_project_soft_delete($pdo);
+        }
         // Hierarquia de proposta por disciplina + modelos de proposta.
         if (!resolve_existing_table($pdo, ['proposta_grupos'], false)
             || !resolve_existing_table($pdo, ['proposta_modelos'], false)
@@ -2492,6 +2527,16 @@ function bootstrap_data(PDO $pdo, array $resources, ?array $authUser = null, boo
             // passa de 100 mil linhas): o bootstrap leva só um recorte recente e a
             // base completa é consultada sob demanda via ?search=&limit= (módulo
             // Base SINAPI). Sem isso, o JSON do bootstrap inviabiliza o login.
+            // G3: db.projects leva só obras ATIVAS (alimenta todos os dropdowns e
+            // telas); as arquivadas vão em separado (aba "Obras arquivadas" +
+            // resolução de nome em registros antigos). Backup ($full) leva tudo.
+            if ($key === 'projects' && !$full && in_array('deletedAt', table_columns($pdo, 'projects'), true)) {
+                $stmt = $pdo->query('SELECT * FROM projects WHERE deletedAt IS NULL ORDER BY id DESC');
+                $data[$key] = array_map(fn ($record) => sanitize_record($meta, $record), $stmt->fetchAll());
+                $stmt = $pdo->query('SELECT * FROM projects WHERE deletedAt IS NOT NULL ORDER BY deletedAt DESC');
+                $data['projectsArchived'] = array_map(fn ($record) => sanitize_record($meta, $record), $stmt->fetchAll());
+                continue;
+            }
             $limit = !$full && in_array($key, sinapi_heavy_resources(), true) ? ' LIMIT ' . SINAPI_BOOTSTRAP_LIMIT : '';
             $stmt = $pdo->query('SELECT * FROM `' . $meta['table'] . '` ORDER BY id DESC' . $limit);
             $data[$key] = array_map(fn ($record) => sanitize_record($meta, $record), $stmt->fetchAll());
@@ -2800,6 +2845,88 @@ function ensure_obra_endereco_columns(PDO $pdo): void
     } catch (Throwable $error) {
         error_log('[ObraSync] ensure_obra_endereco_columns: ' . $error->getMessage());
     }
+}
+
+// G3 (soft-delete de obras): colunas de arquivamento em projects e conversão das
+// FKs destrutivas que apontam para projects (fiscal_documents/orcamentos_obras
+// com ON DELETE CASCADE) para RESTRICT — nota fiscal e orçamento NUNCA mais são
+// arrastados por exclusão de obra; o fluxo oficial arquiva (deletedAt) em vez de
+// apagar. Idempotente; espelha migrations/2026-07-03-obra-soft-delete.sql.
+function ensure_project_soft_delete(PDO $pdo): void
+{
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    $done = true;
+    try {
+        if (!resolve_existing_table($pdo, ['projects'], false)) {
+            return;
+        }
+        $pdo->exec(
+            "ALTER TABLE projects
+                ADD COLUMN IF NOT EXISTS deletedAt DATETIME NULL,
+                ADD COLUMN IF NOT EXISTS deletedBy BIGINT UNSIGNED NULL,
+                ADD COLUMN IF NOT EXISTS archivedReason VARCHAR(255) NULL"
+        );
+        $pdo->exec('ALTER TABLE projects ADD INDEX IF NOT EXISTS idx_projects_deleted (deletedAt)');
+    } catch (Throwable $error) {
+        error_log('[ObraSync] ensure_project_soft_delete (colunas): ' . $error->getMessage());
+    }
+    foreach ([['fiscal_documents', 'fk_fiscal_project'], ['orcamentos_obras', 'fk_orc_obra_project']] as [$table, $canonical]) {
+        try {
+            if (!resolve_existing_table($pdo, [$table], false)) {
+                continue;
+            }
+            // Localiza pelo nome REAL no banco (produção pode ter FK da migration
+            // antiga, do schema ou nenhuma): só converte quando a regra é CASCADE.
+            $stmt = $pdo->prepare(
+                "SELECT CONSTRAINT_NAME FROM information_schema.REFERENTIAL_CONSTRAINTS
+                 WHERE CONSTRAINT_SCHEMA = DATABASE() AND TABLE_NAME = ?
+                   AND REFERENCED_TABLE_NAME = 'projects' AND DELETE_RULE = 'CASCADE'"
+            );
+            $stmt->execute([$table]);
+            $cascades = $stmt->fetchAll(PDO::FETCH_COLUMN);
+            foreach ($cascades as $fk) {
+                $pdo->exec("ALTER TABLE `$table` DROP FOREIGN KEY `$fk`");
+            }
+            if ($cascades) {
+                $pdo->exec("ALTER TABLE `$table` ADD CONSTRAINT `$canonical` FOREIGN KEY (projectId) REFERENCES projects(id) ON DELETE RESTRICT");
+            }
+        } catch (Throwable $error) {
+            error_log("[ObraSync] ensure_project_soft_delete (FK $table): " . $error->getMessage());
+        }
+    }
+}
+
+// Arquiva a obra (soft-delete): nada vinculado é apagado; a obra apenas sai das
+// listagens normais. Idempotente — arquivar de novo mantém o deletedAt original.
+function archive_project(PDO $pdo, int $id, ?array $authUser, ?string $reason = null): void
+{
+    $stmt = $pdo->prepare('SELECT id, deletedAt FROM projects WHERE id = ? LIMIT 1');
+    $stmt->execute([$id]);
+    $row = $stmt->fetch();
+    if (!$row) {
+        fail('Registro não encontrado.', 404);
+    }
+    if (!empty($row['deletedAt'])) {
+        return; // já arquivada
+    }
+    $stmt = $pdo->prepare('UPDATE projects SET deletedAt = NOW(), deletedBy = ?, archivedReason = ? WHERE id = ?');
+    $stmt->execute([isset($authUser['id']) ? (int) $authUser['id'] : null, $reason, $id]);
+}
+
+function restore_project(PDO $pdo, int $id): array
+{
+    $stmt = $pdo->prepare('UPDATE projects SET deletedAt = NULL, deletedBy = NULL, archivedReason = NULL WHERE id = ?');
+    $stmt->execute([$id]);
+    $get = $pdo->prepare('SELECT * FROM projects WHERE id = ? LIMIT 1');
+    $get->execute([$id]);
+    $record = $get->fetch();
+    if (!$record) {
+        fail('Registro não encontrado.', 404);
+    }
+    return $record;
 }
 
 // Auto-cura da hierarquia de proposta (grupos por disciplina) e dos modelos de proposta.
@@ -5149,6 +5276,9 @@ function handle_dashboard_execution_module(PDO $pdo, string $method, array $quer
         $totReal = 0.0;
         $ready = resolve_existing_table($pdo, ['orcamento_obra_itens'], false)
             && in_array('quantidade_realizada', table_columns($pdo, 'orcamento_obra_itens'), true);
+        // G3: obra arquivada (soft-delete) não entra no resumo de execução.
+        $semArquivadas = in_array('deletedAt', table_columns($pdo, 'projects'), true)
+            ? ' AND p.deletedAt IS NULL' : '';
         if ($ready) {
             $sql = "SELECT p.id, p.name,
                         COALESCE(SUM(i.totalPrice),0) AS previsto,
@@ -5156,7 +5286,7 @@ function handle_dashboard_execution_module(PDO $pdo, string $method, array $quer
                         COALESCE(SUM(CASE WHEN i.quantidade_realizada > i.quantity THEN 1 ELSE 0 END),0) AS itens_estouro
                     FROM projects p
                     JOIN orcamento_obra_itens i ON i.projectId = p.id
-                    WHERE p.status = 'Em andamento'
+                    WHERE p.status = 'Em andamento'{$semArquivadas}
                     GROUP BY p.id, p.name
                     ORDER BY p.name";
             foreach ($pdo->query($sql)->fetchAll() as $row) {
@@ -5179,7 +5309,7 @@ function handle_dashboard_execution_module(PDO $pdo, string $method, array $quer
                           (i.quantidade_realizada / NULLIF(i.quantity,0)) * 100 AS percentual
                        FROM orcamento_obra_itens i
                        JOIN projects p ON p.id = i.projectId
-                       WHERE p.status = 'Em andamento' AND i.quantidade_realizada > i.quantity
+                       WHERE p.status = 'Em andamento'{$semArquivadas} AND i.quantidade_realizada > i.quantity
                        ORDER BY percentual DESC
                        LIMIT 200";
             foreach ($pdo->query($estSql)->fetchAll() as $row) {

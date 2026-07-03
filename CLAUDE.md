@@ -4,7 +4,9 @@
 >
 > **Visão futura** — Cronograma Físico-Financeiro completo (EAP, dependências MS Project, medição, baseline, risco, curvas S): [`docs/specs/cronograma-fisico-financeiro.md`](docs/specs/cronograma-fisico-financeiro.md). Não iniciar antes de fechar os graves da revisão.
 >
-> **Versão atual:** `v1.25.1` · 2026-06-28
+> **Versão atual:** `v1.26.0` · 2026-07-03
+>
+> **Sessão 03/07/2026 — G3 (soft-delete de obras):** excluir obra agora ARQUIVA (`projects.deletedAt/deletedBy/archivedReason`; migration `2026-07-03-obra-soft-delete.sql` + `ensure_project_soft_delete`). Nenhum DELETE físico em `projects` (guarda em `delete_record` + FKs `fiscal_documents`/`orcamentos_obras` convertidas para `ON DELETE RESTRICT`). `db.projects` só traz ativas (bootstrap/list filtram `deletedAt IS NULL`; `?archived=1` lista arquivadas); `db.projectsArchived` alimenta o painel "Obras arquivadas" (tela Obras) com Desarquivar via `POST api/obras/{id}/restore` (permissão canDelete). `byId("projects")` tem fallback no arquivo para resolver nomes em registros antigos.
 > **Última varredura de código:** 2026-06-27 (3ª rodada — segurança, bugs, performance, qualidade, UX; itens MÉDIO/BAIXO fechados na v1.12.1)
 > **Handoff:** este doc foi atualizado na v1.25.0 (Fase B1: ponte IA → Orçamento de Obra) — confira a seção **Sessão 2026-06-28 — v1.25.0** e **Operação/Deploy (handoff)** abaixo.
 >

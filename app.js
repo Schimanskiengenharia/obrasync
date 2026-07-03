@@ -19,9 +19,10 @@ if (APP_ENV === "production" && location.protocol === "http:") {
   location.replace(location.href.replace(/^http:/, "https:"));
 }
 const APP_NAME = "ObraSync";
-const APP_VERSION = "v1.25.1";
-const APP_VERSION_DATE = "2026-06-28";
+const APP_VERSION = "v1.26.0";
+const APP_VERSION_DATE = "2026-07-03";
 const APP_CHANGELOG = [
+  "Exclusão segura de obras (G3): excluir uma obra agora ARQUIVA em vez de apagar — notas fiscais, contas e orçamentos vinculados permanecem intactos no sistema. A obra arquivada sai de todas as listas e dropdowns e vai para o painel \"Obras arquivadas\" (na tela Obras/Projetos), de onde pode ser restaurada a qualquer momento por quem tem permissão de exclusão. No banco, as cascatas destrutivas (obra → notas fiscais/orçamentos) foram desarmadas: nenhum DELETE físico arrasta mais documento fiscal (v1.26.0).",
   "Correção crítica na leitura de valor do comparador/de-para: a detecção de colunas passou a casar por chave normalizada EXATA (sem acento/caixa, removendo \"(R$)\" e \"%\") em vez de \"contém\" — assim \"Material Unit.\" não casa mais com \"Total Material\" e nenhuma coluna de Total é lida como valor unitário. O valor unitário segue a prioridade Custo Direto Unit. > Material+M.O. > genérico (ex.: cabo 1,5mm² agora lê R$ 2,80, não R$ 8.484). O upload mostra o mapa coluna→campo detectado (ex.: \"L → Custo direto unit.\") para conferência (v1.25.1).",
   "Fase B1 da IA — ponte para o Orçamento de Obra: botão \"Enviar para Orçamento de Obra\" no resultado do comparador e do de-para. Escolhe a obra de destino, o nome e se envia só os itens aceitos ou todos, e cria um orçamento de obra (rascunho) nas tabelas existentes (orcamentos_obras + orcamento_obra_itens): mapeia origem (SINAPI/Cotação manual/Item livre), tipo (material/mão de obra), etapa a partir do Setor, categoria por nome, código/sinapi_id do match, e usa como custo unitário o Custo Direto (sem BDI) > Material+M.O. > valor genérico. Os totais são recalculados com a mesma fórmula do orçamento de obra; nada é inventado (itens sem dado ficam com default neutro e nota). Depois é só abrir em Orçamentos de Obras para ajustar (v1.25.0).",
   "IA de-para e comparador: as colunas Material unit. e M.O. unit. das planilhas reais passam a ser exibidas nas telas (sob o valor) e no export Excel, além de Setor/Categoria/Tipo já mostrados (v1.24.3).",
@@ -1588,6 +1589,7 @@ const seed = {
     { id: "ob1", name: "Residencial Primavera", clientId: "c1", address: "Av. Principal, 100", responsible: "Alef Schimanski", startDate: "2026-05-01", endForecast: "2026-09-30", status: "Em andamento", budgetForecast: 85000, revenueContracted: 128000, costForecast: 92000, notes: "Obra modelo para análise por projeto." },
     { id: "ob2", name: "Adequação Clínica Horizonte", clientId: "c2", address: "Rua das Flores, 250", responsible: "Rafael", startDate: "2026-06-01", endForecast: "2026-08-15", status: "Planejamento", budgetForecast: 42000, revenueContracted: 64000, costForecast: 39000, notes: "Projeto em fase de planejamento." },
   ],
+  projectsArchived: [],
   workTypes: [
     { id: "wt1", name: "Construção Civil", description: "Obras residenciais, comerciais, reformas e ampliações.", status: "Ativo", sortOrder: 1 },
     { id: "wt2", name: "Energia Solar Fotovoltaica", description: "Projetos, homologação, instalação e comissionamento solar.", status: "Ativo", sortOrder: 2 },
@@ -2108,7 +2110,13 @@ function qs(id) {
 }
 
 function byId(collection, id) {
-  return (db[collection] || []).find((item) => sameId(item.id, id));
+  const hit = (db[collection] || []).find((item) => sameId(item.id, id));
+  // G3: registros antigos (notas/contas) podem apontar para obra ARQUIVADA, que
+  // não está mais em db.projects — o nome continua resolvendo pelo arquivo.
+  if (!hit && collection === "projects") {
+    return (db.projectsArchived || []).find((item) => sameId(item.id, id));
+  }
+  return hit;
 }
 
 function nameOf(collection, id) {
@@ -6597,12 +6605,14 @@ function renderCrud(key) {
     ${key === "fiscalDocuments" ? fiscalStatusLegend() : ""}
     ${key === "payable" ? payableGroupsPanelHtml(rows) : ""}
     ${table(config.title, rows, tableFields, editable, key)}
+    ${key === "projects" ? archivedProjectsPanelHtml() : ""}
     ${docTitle ? generateDocumentFooter() : ""}
   `;
   if (key === "payable") setupPayableGroupActions();
   qs("newRecord")?.addEventListener("click", () => openForm(key));
   qs("content").querySelectorAll("[data-edit]").forEach((button) => button.addEventListener("click", () => openForm(key, button.dataset.edit)));
   qs("content").querySelectorAll("[data-delete]").forEach((button) => button.addEventListener("click", () => removeRecord(key, button.dataset.delete)));
+  qs("content").querySelectorAll("[data-unarchive]").forEach((button) => button.addEventListener("click", () => unarchiveProject(button.dataset.unarchive)));
   qs("content").querySelectorAll("[data-toggle-block]").forEach((btn) => btn.addEventListener("click", () => toggleUserBlock(btn.dataset.toggleBlock, btn.dataset.blockState !== "1")));
   qs("content").querySelectorAll("[data-user-perms]").forEach((btn) => btn.addEventListener("click", () => abrirPermissoesUsuario(btn.dataset.userPerms)));
   qs("content").querySelectorAll(".reveal-btn").forEach((btn) => btn.addEventListener("click", () => { btn.parentElement.innerHTML = svgText(btn.dataset.original); }));
@@ -6655,7 +6665,9 @@ function table(title, rows, fields, actions = false, actionKey = "") {
         ${rows.map((row) => {
           const extra = extraRowActions(actionKey, row);
           const editBtn = canEdit ? `<button class="secondary" type="button" data-action-key="${actionKey}" data-edit="${row.id}">Editar</button>` : "";
-          const delBtn = canDel ? `<button class="danger" type="button" data-action-key="${actionKey}" data-delete="${row.id}">Excluir</button>` : "";
+          // G3: obra é arquivada (soft-delete), nunca excluída — o rótulo diz a verdade.
+          const delLabel = actionKey === "projects" ? "Arquivar" : "Excluir";
+          const delBtn = canDel ? `<button class="danger" type="button" data-action-key="${actionKey}" data-delete="${row.id}">${delLabel}</button>` : "";
           const noAction = !extra && !canEdit && !canDel ? '<span class="muted">Somente leitura</span>' : "";
           return `<tr>${fields.map((field) => `<td>${tableCell(field, row, actionKey)}</td>`).join("")}${actions ? `<td><div class="row-actions">${extra}${editBtn}${delBtn}${noAction}</div></td>` : ""}</tr>`;
         }).join("")}
@@ -7119,7 +7131,17 @@ function inputFor(key, field, label, type, options, value = "", row = {}) {
     projectMilestone: ["projectMilestones", "Selecione"],
     kanbanColumn: ["kanbanColumns", "Selecione"],
   }[type];
-  if (lookup) return `<label>${label}<select name="${field}" ${required}><option value="">${lookup[1]}</option>${db[lookup[0]].map((row) => `<option value="${escapeHtml(row.id)}" ${String(row.id) === String(value) ? "selected" : ""}>${escapeHtml(`${row.code ? `${row.code} - ` : ""}${row.name || row.number || row.document || row.username || row.id}`)}</option>`).join("")}</select></label>`;
+  if (lookup) {
+    let lookupRows = db[lookup[0]] || [];
+    // G3: registro em edição vinculado a obra ARQUIVADA — mantém a obra visível
+    // e selecionável neste select (senão salvar resetaria o vínculo). Obras
+    // arquivadas não aparecem para vínculos novos.
+    if (type === "project" && value && !lookupRows.some((row) => sameId(row.id, value))) {
+      const archived = (db.projectsArchived || []).find((row) => sameId(row.id, value));
+      if (archived) lookupRows = lookupRows.concat([{ ...archived, name: `${archived.name} (arquivada)` }]);
+    }
+    return `<label>${label}<select name="${field}" ${required}><option value="">${lookup[1]}</option>${lookupRows.map((row) => `<option value="${escapeHtml(row.id)}" ${String(row.id) === String(value) ? "selected" : ""}>${escapeHtml(`${row.code ? `${row.code} - ` : ""}${row.name || row.number || row.document || row.username || row.id}`)}</option>`).join("")}</select></label>`;
+  }
   if (isMoneyField(field) || type === "money") return `<label>${label}<input name="${field}" type="text" inputmode="decimal" value="${formatMoneyInput(value)}" placeholder="${placeholder}" data-format="money" ${required}></label>`;
   if (isPercentField(field)) return `<label>${label}<input name="${field}" type="text" inputmode="decimal" value="${formatPercentInput(value)}" placeholder="${placeholder}" data-format="percent" ${required}></label>`;
   if (type === "datetime-local") return `<label>${label}<input name="${field}" type="${type}" value="${escapeHtml(String(value || "").replace(" ", "T").slice(0, 16))}" placeholder="${placeholder}" ${required}></label>`;
@@ -8513,6 +8535,8 @@ function roundMoney(value) {
 }
 
 async function removeRecord(key, id) {
+  // G3: obra nunca é excluída fisicamente — o fluxo vira arquivamento.
+  if (key === "projects") return archiveProject(id);
   if (!canEditModule(key)) return;
   if (!canDeleteRecord(key)) return alert("Seu perfil não tem permissão para excluir registros.");
   const removed = byId(key, id);
@@ -8539,6 +8563,83 @@ async function removeRecord(key, id) {
   // Exclusões não disparam automação no servidor e o db local já foi filtrado:
   // re-renderizar basta, sem refazer o bootstrap inteiro.
   render();
+}
+
+// ── G3: arquivar/desarquivar obra (soft-delete) ───────────────────────────
+// Nada vinculado é apagado: notas fiscais, contas e orçamentos permanecem; a
+// obra apenas sai das listas ativas e pode ser restaurada quando quiser.
+async function archiveProject(id) {
+  if (!canEditModule("projects")) return;
+  if (!canDeleteRecord("projects")) return alert("Seu perfil não tem permissão para arquivar obras.");
+  const obra = byId("projects", id);
+  if (!obra) return;
+  const msg = `Arquivar a obra "${obra.name || id}"?\n\nA obra e seus documentos serão ARQUIVADOS (não apagados): notas fiscais, contas e orçamentos vinculados permanecem no sistema. A obra sai das listas ativas e pode ser restaurada a qualquer momento no painel "Obras arquivadas".`;
+  if (!confirm(msg)) return;
+  try {
+    if (serverMode && apiResources.projects) {
+      await apiRequest(`${apiResources.projects}/${id}`, { method: "DELETE" });
+    }
+    db.projects = db.projects.filter((row) => !sameId(row.id, id));
+    db.projectsArchived = db.projectsArchived || [];
+    db.projectsArchived.unshift({
+      ...obra,
+      deletedAt: new Date().toISOString().slice(0, 19).replace("T", " "),
+      deletedBy: currentUser?.id ?? null,
+    });
+    saveDb();
+    logAudit("archive", "projects", String(obra.name || id));
+    if (typeof showToast === "function") showToast(`Obra "${obra.name}" arquivada. Restaure quando quiser em Obras arquivadas.`);
+  } catch (error) {
+    alert(`Não foi possível arquivar: ${error.message}`);
+    return;
+  }
+  render();
+}
+
+async function unarchiveProject(id) {
+  if (!canDeleteRecord("projects")) return alert("Seu perfil não tem permissão para desarquivar obras.");
+  const obra = (db.projectsArchived || []).find((row) => sameId(row.id, id));
+  if (!obra) return;
+  try {
+    let restored = { ...obra, deletedAt: null, deletedBy: null, archivedReason: null };
+    if (serverMode && apiResources.projects) {
+      const payload = await apiRequest(`${apiResources.projects}/${id}/restore`, { method: "POST" });
+      if (payload?.record) restored = payload.record;
+    }
+    db.projectsArchived = (db.projectsArchived || []).filter((row) => !sameId(row.id, id));
+    db.projects.unshift(restored);
+    saveDb();
+    logAudit("restore", "projects", String(obra.name || id));
+    if (typeof showToast === "function") showToast(`Obra "${obra.name}" desarquivada.`);
+  } catch (error) {
+    alert(`Não foi possível desarquivar: ${error.message}`);
+    return;
+  }
+  render();
+}
+
+function archivedProjectsPanelHtml() {
+  const rows = db.projectsArchived || [];
+  if (!rows.length) return "";
+  const canRestore = canDeleteRecord("projects");
+  const fmtData = (value) => String(value || "").replace("T", " ").slice(0, 16) || "—";
+  const userName = (uid) => { const u = byId("users", uid); return u ? (u.fullName || u.username || "—") : "—"; };
+  return `<details class="table-wrap" data-export-title="Obras arquivadas">
+    <summary style="cursor:pointer;padding:10px 6px;font-weight:600">${tiIcon("archive")} Obras arquivadas (${rows.length}) — preservadas com notas, contas e orçamentos</summary>
+    <table>
+      <thead><tr><th>Obra</th><th>Cliente</th><th>Arquivada em</th><th>Por</th><th>Motivo</th>${canRestore ? "<th>Ações</th>" : ""}</tr></thead>
+      <tbody>
+        ${rows.map((row) => `<tr>
+          <td>${escapeHtml(row.name || row.id)}</td>
+          <td>${escapeHtml(nameOf("clients", row.clientId) || "—")}</td>
+          <td>${escapeHtml(fmtData(row.deletedAt))}</td>
+          <td>${escapeHtml(userName(row.deletedBy))}</td>
+          <td>${escapeHtml(row.archivedReason || "—")}</td>
+          ${canRestore ? `<td><button class="secondary" type="button" data-unarchive="${escapeHtml(row.id)}">Desarquivar</button></td>` : ""}
+        </tr>`).join("")}
+      </tbody>
+    </table>
+  </details>`;
 }
 
 async function createIntegratedRecord(key, data) {

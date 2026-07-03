@@ -153,12 +153,16 @@ CREATE TABLE IF NOT EXISTS projects (
   bairro VARCHAR(120) NULL,
   cidade VARCHAR(120) NULL,
   estado VARCHAR(2) NULL,
+  deletedAt DATETIME NULL COMMENT 'Soft-delete (G3): NULL = obra ativa; preenchida = arquivada (nunca apagar fisicamente)',
+  deletedBy BIGINT UNSIGNED NULL,
+  archivedReason VARCHAR(255) NULL,
   CONSTRAINT fk_projects_client FOREIGN KEY (clientId) REFERENCES clients(id) ON DELETE SET NULL,
   CONSTRAINT fk_projects_manager FOREIGN KEY (projectManagerId) REFERENCES system_users(id) ON DELETE SET NULL,
   CONSTRAINT fk_projects_commercial_user FOREIGN KEY (commercialUserId) REFERENCES system_users(id) ON DELETE SET NULL,
   CONSTRAINT fk_projects_financial_user FOREIGN KEY (financialUserId) REFERENCES system_users(id) ON DELETE SET NULL,
   INDEX idx_projects_client (clientId),
-  INDEX idx_projects_status (status)
+  INDEX idx_projects_status (status),
+  INDEX idx_projects_deleted (deletedAt)
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS project_schedule (
@@ -762,7 +766,7 @@ CREATE TABLE IF NOT EXISTS fiscal_documents (
   notes TEXT,
   createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updatedAt TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
-  CONSTRAINT fk_fiscal_project FOREIGN KEY (projectId) REFERENCES projects(id) ON DELETE CASCADE,
+  CONSTRAINT fk_fiscal_project FOREIGN KEY (projectId) REFERENCES projects(id) ON DELETE RESTRICT,
   CONSTRAINT fk_fiscal_supplier FOREIGN KEY (supplierId) REFERENCES suppliers(id) ON DELETE SET NULL,
   CONSTRAINT fk_fiscal_payable FOREIGN KEY (payableId) REFERENCES accounts_payable(id) ON DELETE SET NULL,
   CONSTRAINT fk_fiscal_receivable FOREIGN KEY (receivableId) REFERENCES accounts_receivable(id) ON DELETE SET NULL,
@@ -1355,7 +1359,7 @@ CREATE TABLE IF NOT EXISTS orcamentos_obras (
   commercialUserId BIGINT UNSIGNED NULL,
   createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updatedAt TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
-  CONSTRAINT fk_orc_obra_project FOREIGN KEY (projectId) REFERENCES projects(id) ON DELETE CASCADE,
+  CONSTRAINT fk_orc_obra_project FOREIGN KEY (projectId) REFERENCES projects(id) ON DELETE RESTRICT,
   CONSTRAINT fk_orc_obra_client FOREIGN KEY (clientId) REFERENCES clients(id) ON DELETE SET NULL,
   CONSTRAINT fk_orc_obra_ref FOREIGN KEY (sinapiReferenceId) REFERENCES sinapi_referencias(id) ON DELETE SET NULL,
   CONSTRAINT fk_orc_obra_creator FOREIGN KEY (createdByUserId) REFERENCES system_users(id) ON DELETE SET NULL,
