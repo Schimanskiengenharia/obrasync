@@ -255,33 +255,25 @@ mysql -u root -p financeiro < /var/www/financeiro/schema.sql
 
 ### Migrações incrementais
 
-Execute em ordem em bancos existentes (use `IF NOT EXISTS` — não reseta dados):
+Execute em ordem **alfabética de nome de arquivo** em bancos existentes (todas usam
+`IF NOT EXISTS` — não resetam dados). Desde a correção G4 (2026-07-03) a ordem
+alfabética é autossuficiente: nenhuma migration depende de tabela criada só em
+runtime ou por migration posterior.
 
 ```bash
-mysql -u root -p financeiro < /var/www/financeiro/migrations/2026-06-06-contact-fields.sql
-mysql -u root -p financeiro < /var/www/financeiro/migrations/2026-06-06-fiscal-documents.sql
-mysql -u root -p financeiro < /var/www/financeiro/migrations/2026-06-06-integrated-management-proposals-rbac.sql
-mysql -u root -p financeiro < /var/www/financeiro/migrations/2026-06-07-obrasync-integration-review.sql
-mysql -u root -p financeiro < /var/www/financeiro/migrations/2026-06-07-physical-financial-schedule-whatsapp.sql
-mysql -u root -p financeiro < /var/www/financeiro/migrations/2026-06-08-proposal-generator-from-work-budget.sql
-mysql -u root -p financeiro < /var/www/financeiro/migrations/2026-06-08-sinapi-2026-04-ms-importer.sql
-mysql -u root -p financeiro < /var/www/financeiro/migrations/2026-06-08-sinapi-msproject-editable-structures.sql
-mysql -u root -p financeiro < /var/www/financeiro/migrations/2026-06-09-agenda-kanban.sql
-mysql -u root -p financeiro < /var/www/financeiro/migrations/2026-06-10-api-auth-sessions.sql
-mysql -u root -p financeiro < /var/www/financeiro/migrations/2026-06-10-fix-agenda-enums.sql
-mysql -u root -p financeiro < /var/www/financeiro/migrations/2026-06-10-fix-login-usuarios-iniciais.sql
-mysql -u root -p financeiro < /var/www/financeiro/migrations/2026-06-10-password-strength.sql
-mysql -u root -p financeiro < /var/www/financeiro/migrations/2026-06-10-system-plugins.sql
-mysql -u root -p financeiro < /var/www/financeiro/migrations/2026-06-10-viability-analyses.sql
-mysql -u root -p financeiro < /var/www/financeiro/migrations/2026-06-11-sinapi-import-jobs.sql
-mysql -u root -p financeiro < /var/www/financeiro/migrations/2026-06-11-usuarios-cpf-nascimento-celular.sql
-mysql -u root -p financeiro < /var/www/financeiro/migrations/2026-06-12-ofx-conciliacao.sql
-mysql -u root -p financeiro < /var/www/financeiro/migrations/2026-06-13-nfse-fiscal-documents-permissions.sql
+cd /var/www/financeiro
+for f in migrations/*.sql; do
+  echo "== $f"
+  mysql -u root -p financeiro < "$f" || break
+done
 ```
+
+(O `-p` pergunta a senha a cada arquivo; para rodar sem prompts, use um
+`~/.my.cnf` com as credenciais ou `mysql --defaults-extra-file=...`.)
 
 A migration `2026-06-10-password-strength.sql` adiciona `email` e `mustChangePassword` em `system_users` e cria `password_reset_tokens`. Todos os usuários existentes ficam marcados para redefinir a senha no próximo login.
 
-> **Ordem importa**: rode na ordem cronológica acima. Todas usam `IF NOT EXISTS`/`ADD COLUMN` idempotentes — repetir não reseta dados. As tabelas de qualidade (PBQP-H) e algumas colunas novas também têm fallback `ensure_*` no `api/index.php`, mas rodar a migration é o caminho recomendado em produção.
+> **Ordem importa**: rode na ordem alfabética (que coincide com a cronológica). Todas usam `IF NOT EXISTS`/`ADD COLUMN` idempotentes — repetir não reseta dados. As tabelas de qualidade (PBQP-H) e algumas colunas novas também têm fallback `ensure_*` no `api/index.php`, mas rodar a migration é o caminho recomendado em produção. Nota: `2026-06-08-sinapi-2026-04-ms-importer.sql` foi renomeada para `2026-06-09-sinapi-2026-04-ms-importer.sql` (precisa rodar depois da `2026-06-08-sinapi-msproject-editable-structures.sql`, que cria as tabelas que ela altera).
 
 ---
 

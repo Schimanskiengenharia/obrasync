@@ -1,5 +1,11 @@
 -- Schema MariaDB/MySQL para o sistema financeiro.
 -- Os dados ficam no banco; arquivos/anexos/backups devem ficar fora de /var/www/financeiro.
+--
+-- Regenerado em 2026-07-03 (correção G4 da revisão geral): agora contém TODAS as
+-- tabelas/colunas do estado atual do código — incluindo as que antes só existiam em
+-- migrations/ ou nos ensure_* do api/index.php (qualidade_*, obra_rdo_*, ofx_*,
+-- audit_log, login_attempts, user_permissions, viabilidade_*, cotacao_*, etc.).
+-- Instalação nova = este arquivo + migrations/ em ordem alfabética (todas idempotentes).
 
 CREATE DATABASE IF NOT EXISTS financeiro
   CHARACTER SET utf8mb4
@@ -35,6 +41,11 @@ CREATE TABLE IF NOT EXISTS clients (
   phone VARCHAR(40),
   status VARCHAR(30) NOT NULL DEFAULT 'Ativo',
   createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  numero VARCHAR(20) NULL,
+  complemento VARCHAR(100) NULL,
+  bairro VARCHAR(100) NULL,
+  cidade VARCHAR(100) NULL,
+  estado VARCHAR(2) NULL,
   INDEX idx_clients_name (name),
   INDEX idx_clients_document (document)
 ) ENGINE=InnoDB;
@@ -49,6 +60,24 @@ CREATE TABLE IF NOT EXISTS suppliers (
   phone VARCHAR(40),
   status VARCHAR(30) NOT NULL DEFAULT 'Ativo',
   createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  numero VARCHAR(20) NULL,
+  complemento VARCHAR(100) NULL,
+  bairro VARCHAR(100) NULL,
+  cidade VARCHAR(100) NULL,
+  estado VARCHAR(2) NULL,
+  pbqph_nivel ENUM('nao_avaliado','aprovado','em_avaliacao','suspenso','reprovado') DEFAULT 'nao_avaliado',
+  pbqph_letra VARCHAR(2) NULL COMMENT 'Nível do PBQP-H: A/B/C/D',
+  pbqph_validade DATE NULL,
+  iso9001 TINYINT(1) DEFAULT 0,
+  iso9001_validade DATE NULL,
+  datec TINYINT(1) DEFAULT 0 COMMENT 'Possui Documento de Avaliacao Tecnica SiNAT',
+  datec_numero VARCHAR(50) NULL,
+  abnt_marca TINYINT(1) DEFAULT 0 COMMENT 'Possui marca de conformidade ABNT',
+  avaliacao_pontualidade TINYINT UNSIGNED NULL COMMENT 'Nota 1-5',
+  avaliacao_qualidade TINYINT UNSIGNED NULL COMMENT 'Nota 1-5',
+  avaliacao_preco TINYINT UNSIGNED NULL COMMENT 'Nota 1-5',
+  avaliacao_data DATE NULL,
+  avaliacao_responsavel VARCHAR(100) NULL,
   INDEX idx_suppliers_name (name),
   INDEX idx_suppliers_document (document)
 ) ENGINE=InnoDB;
@@ -59,6 +88,9 @@ CREATE TABLE IF NOT EXISTS cost_centers (
   name VARCHAR(140) NOT NULL,
   manager VARCHAR(140),
   status VARCHAR(30) NOT NULL DEFAULT 'Ativo',
+  tipo ENUM('operacional','administrativo','tecnico','financeiro','fiscal_tributario') NOT NULL DEFAULT 'administrativo',
+  descricao_uso TEXT NULL COMMENT 'O que deve ser lançado neste centro de custo',
+  exemplos TEXT NULL COMMENT 'Exemplos de lançamentos para este centro',
   UNIQUE KEY uk_cost_centers_code (code),
   INDEX idx_cost_centers_name (name)
 ) ENGINE=InnoDB;
@@ -117,6 +149,10 @@ CREATE TABLE IF NOT EXISTS projects (
   notes TEXT,
   createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updatedAt TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  usa_endereco_empresa TINYINT(1) NOT NULL DEFAULT 1 COMMENT '1 = usa endereço da empresa (company_settings); 0 = endereço próprio da obra',
+  bairro VARCHAR(120) NULL,
+  cidade VARCHAR(120) NULL,
+  estado VARCHAR(2) NULL,
   CONSTRAINT fk_projects_client FOREIGN KEY (clientId) REFERENCES clients(id) ON DELETE SET NULL,
   CONSTRAINT fk_projects_manager FOREIGN KEY (projectManagerId) REFERENCES system_users(id) ON DELETE SET NULL,
   CONSTRAINT fk_projects_commercial_user FOREIGN KEY (commercialUserId) REFERENCES system_users(id) ON DELETE SET NULL,
@@ -170,6 +206,9 @@ CREATE TABLE IF NOT EXISTS obra_cronograma_etapas (
   notes TEXT,
   createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updatedAt TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  servicoSiacId TINYINT UNSIGNED NULL,
+  fvsId BIGINT UNSIGNED NULL,
+  qualidadeBloqueada TINYINT(1) NOT NULL DEFAULT 0,
   CONSTRAINT fk_obra_crono_project FOREIGN KEY (projectId) REFERENCES projects(id) ON DELETE CASCADE,
   INDEX idx_obra_crono_project (projectId),
   INDEX idx_obra_crono_dates (plannedStartDate, plannedEndDate),
@@ -309,6 +348,8 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
   notes TEXT,
   createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updatedAt TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  condicoes_pagamento VARCHAR(200) NULL COMMENT 'Ex: 30 dias, À vista, 50% entrada + 50% entrega',
+  desconto DECIMAL(10,2) DEFAULT 0,
   CONSTRAINT fk_purchase_project FOREIGN KEY (projectId) REFERENCES projects(id) ON DELETE SET NULL,
   CONSTRAINT fk_purchase_supplier FOREIGN KEY (supplierId) REFERENCES suppliers(id) ON DELETE SET NULL,
   CONSTRAINT fk_purchase_cost_center FOREIGN KEY (costCenterId) REFERENCES cost_centers(id) ON DELETE SET NULL,
@@ -481,6 +522,19 @@ CREATE TABLE IF NOT EXISTS commercial_proposals (
   status VARCHAR(40) NOT NULL DEFAULT 'Rascunho',
   createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updatedAt TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  cliente_nome VARCHAR(200) NULL,
+  cliente_cpf_cnpj VARCHAR(20) NULL,
+  cliente_email VARCHAR(150) NULL,
+  cliente_telefone VARCHAR(20) NULL,
+  cliente_endereco TEXT NULL,
+  cliente_cidade VARCHAR(100) NULL,
+  cliente_estado VARCHAR(2) NULL,
+  cliente_cep VARCHAR(10) NULL,
+  bdi_geral DECIMAL(8,4) DEFAULT 0 COMMENT 'BDI geral aplicado sobre todos os itens',
+  bdi_tipo ENUM('percentual','valor_fixo','por_item','misto') DEFAULT 'percentual' COMMENT 'Tipo de BDI aplicado (A=percentual, B=por_item/grupo, C=valor manual, D=misto)',
+  custo_total_orcamentos DECIMAL(15,2) DEFAULT 0 COMMENT 'Soma dos custos dos orçamentos vinculados',
+  valor_bdi_total DECIMAL(15,2) DEFAULT 0 COMMENT 'Valor total do BDI aplicado',
+  modo_licitacao ENUM('Não','Sim') NOT NULL DEFAULT 'Não' COMMENT 'Proposta para licitação: usa preços SINAPI como referência máxima',
   CONSTRAINT fk_proposal_client FOREIGN KEY (clientId) REFERENCES clients(id) ON DELETE SET NULL,
   CONSTRAINT fk_proposal_project FOREIGN KEY (projectId) REFERENCES projects(id) ON DELETE SET NULL,
   CONSTRAINT fk_proposal_budget FOREIGN KEY (budgetId) REFERENCES budgets(id) ON DELETE SET NULL,
@@ -513,6 +567,11 @@ CREATE TABLE IF NOT EXISTS proposta_itens (
   visibleToClient ENUM('Não', 'Sim') NOT NULL DEFAULT 'Sim',
   notes TEXT,
   createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  custo_unitario DECIMAL(15,4) NULL COMMENT 'Custo real do item (base SINAPI ou orçamento)',
+  bdi_item DECIMAL(8,4) NULL COMMENT 'BDI específico deste item, se diferente do geral',
+  orcamento_item_id BIGINT UNSIGNED NULL COMMENT 'Item do orçamento técnico de origem (orcamento_obra_itens.id)',
+  sinapi_id BIGINT UNSIGNED NULL COMMENT 'Composição SINAPI de origem (sinapi_composicoes.id)',
+  grupo_id BIGINT UNSIGNED NULL COMMENT 'proposta_grupos.id',
   CONSTRAINT fk_prop_item_proposal FOREIGN KEY (proposalId) REFERENCES commercial_proposals(id) ON DELETE CASCADE,
   INDEX idx_prop_item_proposal (proposalId)
 ) ENGINE=InnoDB;
@@ -553,6 +612,13 @@ CREATE TABLE IF NOT EXISTS proposta_orcamento_vinculos (
   proposalModelId BIGINT UNSIGNED NULL,
   responsibleUserId BIGINT UNSIGNED NULL,
   createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  nome_grupo VARCHAR(200) NULL COMMENT 'Nome do grupo na proposta, ex: Cobertura Metálica',
+  bdi_grupo DECIMAL(8,4) NULL COMMENT 'BDI específico deste grupo/orçamento (sobrepõe o geral)',
+  custo_total DECIMAL(15,2) DEFAULT 0 COMMENT 'Custo total do orçamento vinculado',
+  valor_venda DECIMAL(15,2) DEFAULT 0 COMMENT 'Valor de venda do grupo (custo + BDI)',
+  ordem INT DEFAULT 0 COMMENT 'Ordem de exibição na proposta',
+  grupo_id BIGINT UNSIGNED NULL COMMENT 'proposta_grupos.id (nível 2)',
+  disciplina VARCHAR(60) NULL COMMENT 'Disciplina do grupo',
   CONSTRAINT fk_prop_link_proposal FOREIGN KEY (proposalId) REFERENCES commercial_proposals(id) ON DELETE CASCADE,
   INDEX idx_prop_link_budget (workBudgetId),
   UNIQUE KEY uk_prop_budget_link (proposalId, workBudgetId)
@@ -581,6 +647,29 @@ CREATE TABLE IF NOT EXISTS sales_contracts (
   amount DECIMAL(15,2) NOT NULL DEFAULT 0,
   cost DECIMAL(15,2) NOT NULL DEFAULT 0,
   status VARCHAR(30) NOT NULL DEFAULT 'Aberto',
+  cliente_nome VARCHAR(200) NULL,
+  cliente_cpf_cnpj VARCHAR(20) NULL,
+  cliente_email VARCHAR(150) NULL,
+  cliente_telefone VARCHAR(20) NULL,
+  cliente_endereco TEXT NULL,
+  cliente_cidade VARCHAR(100) NULL,
+  cliente_estado VARCHAR(2) NULL,
+  cliente_cep VARCHAR(10) NULL,
+  numero_contrato VARCHAR(40) NULL,
+  data_contrato DATE NULL,
+  valor_contrato DECIMAL(14,2) NULL,
+  objeto TEXT NULL COMMENT 'Objeto/escopo consolidado',
+  status_contrato VARCHAR(30) NULL DEFAULT 'rascunho' COMMENT 'rascunho/gerado/assinado',
+  proposta_assinada_path VARCHAR(255) NULL,
+  contrato_gerado_path VARCHAR(255) NULL,
+  contrato_assinado_path VARCHAR(255) NULL,
+  cpf_cnpj VARCHAR(40) NULL,
+  email VARCHAR(160) NULL,
+  telefone VARCHAR(40) NULL,
+  endereco VARCHAR(255) NULL,
+  cidade VARCHAR(120) NULL,
+  estado VARCHAR(2) NULL,
+  cep VARCHAR(9) NULL,
   CONSTRAINT fk_sales_client FOREIGN KEY (clientId) REFERENCES clients(id) ON DELETE SET NULL,
   CONSTRAINT fk_sales_project FOREIGN KEY (projectId) REFERENCES projects(id) ON DELETE SET NULL,
   CONSTRAINT fk_sales_proposal FOREIGN KEY (proposalId) REFERENCES commercial_proposals(id) ON DELETE SET NULL,
@@ -603,6 +692,10 @@ CREATE TABLE IF NOT EXISTS accounts_receivable (
   bankAccount VARCHAR(140),
   amount DECIMAL(15,2) NOT NULL DEFAULT 0,
   status VARCHAR(30) NOT NULL DEFAULT 'Aberto',
+  ofxFitid VARCHAR(100) NULL COMMENT 'FITID do OFX vinculado — evita dupla contagem',
+  ofxImportId BIGINT UNSIGNED NULL COMMENT 'ID em ofx_imports',
+  referencia_tipo VARCHAR(30) NULL,
+  referencia_id BIGINT UNSIGNED NULL,
   CONSTRAINT fk_receivable_client FOREIGN KEY (clientId) REFERENCES clients(id) ON DELETE SET NULL,
   CONSTRAINT fk_receivable_project FOREIGN KEY (projectId) REFERENCES projects(id) ON DELETE SET NULL,
   CONSTRAINT fk_receivable_proposal FOREIGN KEY (proposalId) REFERENCES commercial_proposals(id) ON DELETE SET NULL,
@@ -610,7 +703,8 @@ CREATE TABLE IF NOT EXISTS accounts_receivable (
   CONSTRAINT fk_receivable_cost_center FOREIGN KEY (costCenterId) REFERENCES cost_centers(id) ON DELETE SET NULL,
   INDEX idx_receivable_due_status (dueDate, status),
   INDEX idx_receivable_project (projectId),
-  INDEX idx_receivable_client (clientId)
+  INDEX idx_receivable_client (clientId),
+  INDEX idx_rec_fitid (ofxFitid)
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS accounts_payable (
@@ -626,18 +720,32 @@ CREATE TABLE IF NOT EXISTS accounts_payable (
   bankAccount VARCHAR(140),
   amount DECIMAL(15,2) NOT NULL DEFAULT 0,
   status VARCHAR(30) NOT NULL DEFAULT 'Aberto',
+  recorrencia_id VARCHAR(36) NULL COMMENT 'UUID do grupo de recorrência',
+  parcela_numero INT NULL COMMENT 'Número da parcela ex: 1',
+  parcela_total INT NULL COMMENT 'Total de parcelas ex: 12 (NULL = indeterminado)',
+  recorrencia_tipo ENUM('mensal','bimestral','trimestral','semestral','anual') NULL,
+  juros_aplicado DECIMAL(10,2) NULL COMMENT 'Valor de juros aplicado na quitação antecipada',
+  valor_original DECIMAL(10,2) NULL COMMENT 'Valor original antes de juros ou desconto',
+  referencia_tipo VARCHAR(30) NULL COMMENT 'Ex.: CAIXA_MANUAL quando foi baixada por um lançamento de caixa',
+  referencia_id BIGINT UNSIGNED NULL COMMENT 'Id do registro referenciado (ex.: cash_bank_movements.id)',
+  ofxFitid VARCHAR(100) NULL COMMENT 'FITID do OFX vinculado — evita dupla contagem',
+  ofxImportId BIGINT UNSIGNED NULL COMMENT 'ID em ofx_imports',
   CONSTRAINT fk_payable_supplier FOREIGN KEY (supplierId) REFERENCES suppliers(id) ON DELETE SET NULL,
   CONSTRAINT fk_payable_project FOREIGN KEY (projectId) REFERENCES projects(id) ON DELETE SET NULL,
   CONSTRAINT fk_payable_category FOREIGN KEY (categoryId) REFERENCES financial_categories(id) ON DELETE SET NULL,
   CONSTRAINT fk_payable_cost_center FOREIGN KEY (costCenterId) REFERENCES cost_centers(id) ON DELETE SET NULL,
   INDEX idx_payable_due_status (dueDate, status),
   INDEX idx_payable_project (projectId),
-  INDEX idx_payable_supplier (supplierId)
+  INDEX idx_payable_supplier (supplierId),
+  INDEX idx_recorrencia (recorrencia_id),
+  INDEX idx_payable_referencia (referencia_tipo, referencia_id),
+  INDEX idx_pay_fitid (ofxFitid)
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS fiscal_documents (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  projectId BIGINT UNSIGNED NULL, -- opcional: lote de NFS-e pode ter obras diferentes ou nenhuma
+  projectId BIGINT UNSIGNED NULL,
+  -- opcional: lote de NFS-e pode ter obras diferentes ou nenhuma
   supplierId BIGINT UNSIGNED NULL,
   documentNumber VARCHAR(100) NOT NULL,
   issueDate DATE NOT NULL,
@@ -679,11 +787,14 @@ CREATE TABLE IF NOT EXISTS cash_bank_movements (
   amount DECIMAL(15,2) NOT NULL DEFAULT 0,
   originDocument VARCHAR(100),
   status VARCHAR(30) NOT NULL DEFAULT 'Confirmado',
+  referencia_tipo VARCHAR(30) NULL COMMENT 'Ex.: CONTA_PAGAR quando o caixa quita uma conta a pagar',
+  referencia_id BIGINT UNSIGNED NULL COMMENT 'Id do registro referenciado (ex.: accounts_payable.id)',
   CONSTRAINT fk_cash_category FOREIGN KEY (categoryId) REFERENCES financial_categories(id) ON DELETE SET NULL,
   CONSTRAINT fk_cash_project FOREIGN KEY (projectId) REFERENCES projects(id) ON DELETE SET NULL,
   CONSTRAINT fk_cash_cost_center FOREIGN KEY (costCenterId) REFERENCES cost_centers(id) ON DELETE SET NULL,
   INDEX idx_cash_date (`date`),
-  INDEX idx_cash_project (projectId)
+  INDEX idx_cash_project (projectId),
+  INDEX idx_cash_referencia (referencia_tipo, referencia_id)
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS journal_entries (
@@ -741,7 +852,15 @@ CREATE TABLE IF NOT EXISTS company_settings (
   email VARCHAR(160),
   phone VARCHAR(40),
   city VARCHAR(140),
-  status VARCHAR(30) NOT NULL DEFAULT 'Ativo'
+  status VARCHAR(30) NOT NULL DEFAULT 'Ativo',
+  numero VARCHAR(20) NULL,
+  complemento VARCHAR(100) NULL,
+  bairro VARCHAR(100) NULL,
+  estado VARCHAR(2) NULL,
+  logo_url VARCHAR(500) NULL COMMENT 'Arquivo da logo salvo no servidor (ex.: logo.png)',
+  website VARCHAR(200) NULL COMMENT 'Site da empresa ex: www.schimanskiengenharia.com.br',
+  instagram VARCHAR(200) NULL,
+  whatsapp VARCHAR(20) NULL COMMENT 'Número WhatsApp para contato ex: 5567999999999'
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS role_permissions (
@@ -900,7 +1019,8 @@ CREATE TABLE IF NOT EXISTS sinapi_insumos (
   updatedAt TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
   CONSTRAINT fk_insumo_ref FOREIGN KEY (sinapiReferenceId) REFERENCES sinapi_referencias(id) ON DELETE CASCADE,
   UNIQUE KEY uk_insumo_ref_code (sinapiReferenceId, code),
-  FULLTEXT KEY ft_insumo_description (description)
+  FULLTEXT KEY ft_insumo_description (description),
+  INDEX idx_insumo_code (code)
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS sinapi_composicoes (
@@ -921,7 +1041,8 @@ CREATE TABLE IF NOT EXISTS sinapi_composicoes (
   updatedAt TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
   CONSTRAINT fk_composicao_ref FOREIGN KEY (sinapiReferenceId) REFERENCES sinapi_referencias(id) ON DELETE CASCADE,
   UNIQUE KEY uk_composicao_ref_code (sinapiReferenceId, code),
-  FULLTEXT KEY ft_composicao_description (description)
+  FULLTEXT KEY ft_composicao_description (description),
+  INDEX idx_comp_code (code)
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS sinapi_composicao_itens (
@@ -1267,6 +1388,13 @@ CREATE TABLE IF NOT EXISTS orcamento_obra_itens (
   sinapiSnapshotJson LONGTEXT NULL,
   createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updatedAt TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  quantidade_realizada DECIMAL(18,4) NOT NULL DEFAULT 0,
+  codigo VARCHAR(20) NULL COMMENT 'Código hierárquico ex: 1.1.001',
+  tipo ENUM('material','mao_de_obra','equipamento','subempreiteiro','outros') DEFAULT 'material' COMMENT 'Tipo do custo do item',
+  etapa_id BIGINT UNSIGNED NULL COMMENT 'Etapa do orçamento (orcamento_etapas.id)',
+  sinapi_id BIGINT UNSIGNED NULL COMMENT 'Composição SINAPI de origem',
+  composicao_propria_id BIGINT UNSIGNED NULL COMMENT 'Composição própria de origem',
+  ordem INT DEFAULT 0 COMMENT 'Ordem de exibição dentro da etapa',
   CONSTRAINT fk_orc_item_budget FOREIGN KEY (workBudgetId) REFERENCES orcamentos_obras(id) ON DELETE CASCADE,
   CONSTRAINT fk_orc_item_project FOREIGN KEY (projectId) REFERENCES projects(id) ON DELETE SET NULL,
   CONSTRAINT fk_orc_item_sinapi_ref FOREIGN KEY (sinapiReferenceId) REFERENCES sinapi_referencias(id) ON DELETE SET NULL,
@@ -1546,7 +1674,7 @@ CREATE TABLE IF NOT EXISTS password_reset_tokens (
   usedAt     TIMESTAMP       NULL DEFAULT NULL,
   createdAt  TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY uk_prt_token (tokenHash),
-  KEY        idx_prt_user  (userId)
+  KEY idx_prt_user (userId)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Análises de viabilidade por obra/projeto (margem, payback, VPL, TIR e parecer).
@@ -1600,3 +1728,517 @@ INSERT INTO system_plugins (name, url, icon, description, roles, sortOrder, stat
 SELECT 'Portal do Cliente', 'https://schimanskiengenharia.com.br/portal', '🌐',
        'Acesso ao portal externo do cliente (URL configurável).', '', 1, 'Ativo'
 WHERE NOT EXISTS (SELECT 1 FROM system_plugins);
+
+-- ============================================================================
+-- Tabelas criadas por migrations e/ou ensure_* (api/index.php) e que faltavam
+-- aqui — incorporadas na regeneração do schema (correção G4, 2026-07-03).
+-- Ordem respeita as dependências de FK.
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS eventos_automacao (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  tipo_evento VARCHAR(60) NOT NULL,
+  entidade_origem_tipo VARCHAR(60) NULL,
+  entidade_origem_id BIGINT UNSIGNED NULL,
+  entidade_gerada_tipo VARCHAR(60) NULL,
+  entidade_gerada_id BIGINT UNSIGNED NULL,
+  status VARCHAR(30) NOT NULL DEFAULT 'OK',
+  mensagem_erro TEXT NULL,
+  usuario_id BIGINT UNSIGNED NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_eventos_automacao_tipo (tipo_evento),
+  INDEX idx_eventos_automacao_origem (entidade_origem_tipo, entidade_origem_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS orcamento_item_execucao_log (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  item_id BIGINT UNSIGNED NOT NULL,
+  quantidade_anterior DECIMAL(18,4) NOT NULL DEFAULT 0,
+  quantidade_nova DECIMAL(18,4) NOT NULL DEFAULT 0,
+  origem VARCHAR(30) DEFAULT 'manual' COMMENT 'manual | pedido_compra',
+  motivo VARCHAR(255) NULL,
+  usuario_id BIGINT UNSIGNED NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_exec_item (item_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS orcamento_etapas (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  orcamento_id BIGINT UNSIGNED NOT NULL,
+  obra_id BIGINT UNSIGNED NOT NULL,
+  nome VARCHAR(200) NOT NULL,
+  codigo VARCHAR(10) NULL COMMENT 'Ex: 1, 2, 3',
+  ordem INT DEFAULT 0,
+  bdi_especifico DECIMAL(5,2) NULL
+    COMMENT 'BDI específico desta etapa — se nulo usa o BDI geral',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_orcamento (orcamento_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS purchase_order_items (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  purchase_order_id BIGINT UNSIGNED NOT NULL,
+  descricao VARCHAR(300) NOT NULL,
+  unidade VARCHAR(20) DEFAULT 'un',
+  quantidade DECIMAL(10,3) NOT NULL DEFAULT 1,
+  valor_unitario DECIMAL(10,2) NOT NULL DEFAULT 0,
+  valor_total DECIMAL(16,2) GENERATED ALWAYS AS (quantidade * valor_unitario) STORED,
+  work_budget_item_id BIGINT UNSIGNED NULL
+    COMMENT 'Vínculo opcional ao item do orçamento (orcamento_obra_itens.id)',
+  observacao VARCHAR(200) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_pedido (purchase_order_id),
+  INDEX idx_poi_budget_item (work_budget_item_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS cotacao_fornecedor (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  obra_id BIGINT UNSIGNED NULL,
+  purchase_order_id BIGINT UNSIGNED NULL,
+  fornecedor_id BIGINT UNSIGNED NULL,
+  fornecedor_nome VARCHAR(200) NOT NULL COMMENT 'Nome mesmo que nao seja cadastrado',
+  data_cotacao DATE NULL,
+  validade_cotacao DATE NULL,
+  arquivo_original VARCHAR(500) NULL COMMENT 'Caminho do PDF ou Excel original',
+  arquivo_nome VARCHAR(200) NULL,
+  arquivo_tipo VARCHAR(10) NULL COMMENT 'pdf, xlsx, xls, csv',
+  status ENUM('importada','comparada','aprovada','reprovada') DEFAULT 'importada',
+  score DECIMAL(5,2) NULL COMMENT 'Score geral da comparacao (% itens <= orcamento)',
+  observacoes TEXT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_cf_obra (obra_id),
+  INDEX idx_cf_pedido (purchase_order_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS cotacao_itens (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  cotacao_id BIGINT UNSIGNED NOT NULL,
+  descricao VARCHAR(500) NOT NULL,
+  unidade VARCHAR(20) NULL,
+  quantidade DECIMAL(15,4) NULL,
+  valor_unitario DECIMAL(15,4) NULL,
+  valor_total DECIMAL(15,4) NULL,
+  marca VARCHAR(100) NULL,
+  prazo_entrega VARCHAR(100) NULL,
+  observacao VARCHAR(300) NULL,
+  orcamento_item_id BIGINT UNSIGNED NULL COMMENT 'Item do orcamento de obra vinculado',
+  diferenca_percentual DECIMAL(8,2) NULL COMMENT 'Diferenca % em relacao ao orcamento',
+  status_comparacao ENUM('nao_comparado','abaixo','igual','acima','muito_acima') DEFAULT 'nao_comparado',
+  INDEX idx_cotacao (cotacao_id),
+  INDEX idx_orcamento_item (orcamento_item_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS qualidade_politica (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  conteudo TEXT NOT NULL,
+  versao VARCHAR(20) NOT NULL DEFAULT '1.0',
+  aprovadoPor VARCHAR(120) NULL,
+  dataAprovacao DATE NULL,
+  status VARCHAR(20) NOT NULL DEFAULT 'Rascunho',
+  createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updatedAt TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS qualidade_pes (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  servicoSiacId TINYINT UNSIGNED NOT NULL,
+  servicoNome VARCHAR(200) NOT NULL,
+  servicoGrupo VARCHAR(100) NOT NULL DEFAULT '',
+  versao VARCHAR(20) NOT NULL DEFAULT '1.0',
+  objetivo TEXT NULL,
+  materiaisNecessarios TEXT NULL,
+  equipamentosEpi TEXT NULL,
+  procedimento LONGTEXT NULL,
+  criteriosAceitacao TEXT NULL,
+  normasReferencia VARCHAR(500) NULL,
+  responsavelElaboracao VARCHAR(120) NULL,
+  dataElaboracao DATE NULL,
+  status VARCHAR(20) NOT NULL DEFAULT 'Rascunho',
+  createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updatedAt TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  arquivoPdf VARCHAR(500) NULL COMMENT 'Caminho do PDF do procedimento',
+  arquivoNome VARCHAR(200) NULL,
+  arquivoData TIMESTAMP NULL,
+  KEY idx_pes_servico (servicoSiacId)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS qualidade_pqo (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  projectId BIGINT UNSIGNED NOT NULL,
+  versao VARCHAR(20) NOT NULL DEFAULT '1.0',
+  responsavelTecnico VARCHAR(120) NULL,
+  crea VARCHAR(60) NULL,
+  dataInicioPrevisto DATE NULL,
+  dataFimPrevisto DATE NULL,
+  escopo TEXT NULL,
+  servicosControlados LONGTEXT NULL,
+  materiaisControlados LONGTEXT NULL,
+  metasQualidade TEXT NULL,
+  status VARCHAR(20) NOT NULL DEFAULT 'Rascunho',
+  dataAprovacao DATE NULL,
+  aprovadoPor VARCHAR(120) NULL,
+  createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updatedAt TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_pqo_project (projectId)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS qualidade_fvs (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  pqoId BIGINT UNSIGNED NULL,
+  projectId BIGINT UNSIGNED NOT NULL,
+  etapaId BIGINT UNSIGNED NULL,
+  pesId BIGINT UNSIGNED NULL,
+  servicoSiacId TINYINT UNSIGNED NOT NULL,
+  servicoNome VARCHAR(200) NOT NULL DEFAULT '',
+  dataExecucao DATE NULL,
+  localObra VARCHAR(200) NULL,
+  responsavelExecucao VARCHAR(120) NULL,
+  responsavelInspecao VARCHAR(120) NULL,
+  itensVerificacao LONGTEXT NULL,
+  resultado VARCHAR(30) NULL,
+  observacoes TEXT NULL,
+  acaoCorretiva TEXT NULL,
+  dataInspecao DATE NULL,
+  assinaturaExecutor VARCHAR(120) NULL,
+  assinaturaInspetor VARCHAR(120) NULL,
+  status VARCHAR(20) NOT NULL DEFAULT 'Pendente',
+  createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updatedAt TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  KEY idx_fvs_project (projectId),
+  KEY idx_fvs_etapa (etapaId)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS qualidade_fvm (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  pqoId BIGINT UNSIGNED NULL,
+  projectId BIGINT UNSIGNED NOT NULL,
+  materialNome VARCHAR(200) NOT NULL,
+  materialCodigo VARCHAR(80) NULL,
+  fornecedor VARCHAR(200) NULL,
+  notaFiscal VARCHAR(80) NULL,
+  quantidade DECIMAL(14,3) NULL,
+  unidade VARCHAR(40) NULL,
+  dataRecebimento DATE NULL,
+  responsavelRecebimento VARCHAR(120) NULL,
+  itensVerificacao LONGTEXT NULL,
+  resultado VARCHAR(30) NULL,
+  observacoes TEXT NULL,
+  status VARCHAR(20) NOT NULL DEFAULT 'Pendente',
+  createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updatedAt TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  lote VARCHAR(100) NULL,
+  fabricante VARCHAR(200) NULL,
+  dataFabricacao DATE NULL,
+  validade DATE NULL,
+  localAplicacao VARCHAR(300) NULL COMMENT 'Ex: Bloco A - 2 pavimento - fachada norte',
+  certificadoQualidade TINYINT(1) DEFAULT 0 COMMENT 'Certificado do produto recebido',
+  purchaseOrderId BIGINT UNSIGNED NULL COMMENT 'Vínculo com purchase_orders.id',
+  KEY idx_fvm_project (projectId)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS qualidade_nc (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  projectId BIGINT UNSIGNED NOT NULL,
+  pqoId BIGINT UNSIGNED NULL,
+  numero VARCHAR(20) NOT NULL,
+  origem VARCHAR(20) NOT NULL DEFAULT 'Manual',
+  fvsId BIGINT UNSIGNED NULL,
+  fvmId BIGINT UNSIGNED NULL,
+  descricaoNC TEXT NOT NULL,
+  servicoSiacId TINYINT UNSIGNED NULL,
+  servicoNome VARCHAR(200) NULL,
+  localObra VARCHAR(200) NULL,
+  grau VARCHAR(20) NOT NULL DEFAULT 'Menor',
+  responsavelDeteccao VARCHAR(120) NULL,
+  dataDeteccao DATE NOT NULL,
+  prazoAcao DATE NULL,
+  acaoCorretiva TEXT NULL,
+  responsavelAcao VARCHAR(120) NULL,
+  dataAcao DATE NULL,
+  verificacaoEficacia TEXT NULL,
+  responsavelVerificacao VARCHAR(120) NULL,
+  dataVerificacao DATE NULL,
+  status VARCHAR(20) NOT NULL DEFAULT 'Aberta',
+  createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updatedAt TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_nc_numero (numero),
+  KEY idx_nc_project (projectId),
+  KEY idx_nc_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS qualidade_treinamentos (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  projectId BIGINT UNSIGNED NOT NULL,
+  pqoId BIGINT UNSIGNED NULL,
+  servicoSiacId TINYINT UNSIGNED NOT NULL,
+  servicoNome VARCHAR(200) NULL,
+  dataTreinamento DATE NOT NULL,
+  instrutor VARCHAR(120) NULL,
+  participantes TEXT NULL,
+  conteudo TEXT NULL,
+  cargaHoraria DECIMAL(5,1) NULL,
+  observacoes TEXT NULL,
+  createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updatedAt TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  KEY idx_treino_project (projectId)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS qualidade_auditorias (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  projectId BIGINT UNSIGNED NULL,
+  tipo VARCHAR(20) NOT NULL DEFAULT 'Obra',
+  dataAuditoria DATE NOT NULL,
+  auditor VARCHAR(120) NULL,
+  escopo TEXT NULL,
+  checklistSiac LONGTEXT NULL,
+  totalItens INT NOT NULL DEFAULT 0,
+  itensConformes INT NOT NULL DEFAULT 0,
+  ncsAbertas INT NOT NULL DEFAULT 0,
+  resultado VARCHAR(30) NULL,
+  relatorioTexto TEXT NULL,
+  status VARCHAR(30) NOT NULL DEFAULT 'Agendada',
+  createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updatedAt TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  KEY idx_audit_project (projectId)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS viabilidade_analises (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  obra_id BIGINT UNSIGNED NULL,
+  proposta_id BIGINT UNSIGNED NULL,
+  cliente_id BIGINT UNSIGNED NULL,
+  tipo_obra VARCHAR(50) NOT NULL
+    COMMENT 'energia_solar, obra_civil, eletrica, ar_condicionado, cobertura, hidraulica, manutencao, outro',
+  nome VARCHAR(200) NOT NULL,
+  status ENUM('em_andamento','aprovada','bloqueada','concluida') DEFAULT 'em_andamento',
+  progresso_geral DECIMAL(5,2) DEFAULT 0,
+  responsavel_id BIGINT UNSIGNED NULL,
+  observacoes TEXT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_obra (obra_id),
+  INDEX idx_proposta (proposta_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS viabilidade_grupos (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  analise_id BIGINT UNSIGNED NOT NULL,
+  nome VARCHAR(100) NOT NULL
+    COMMENT 'Ex: Técnica, Financeira, Concessionária',
+  tipo VARCHAR(50) NOT NULL
+    COMMENT 'tecnica, financeira, legal, ambiental, concessionaria, operacional, mercado',
+  obrigatorio TINYINT(1) DEFAULT 1
+    COMMENT '1 = obrigatório bloqueia proposta, 0 = opcional',
+  ordem INT DEFAULT 0,
+  progresso DECIMAL(5,2) DEFAULT 0,
+  INDEX idx_analise (analise_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS viabilidade_itens (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  grupo_id BIGINT UNSIGNED NOT NULL,
+  analise_id BIGINT UNSIGNED NOT NULL,
+  descricao VARCHAR(300) NOT NULL,
+  status ENUM('nao_iniciado','em_andamento','aguardando_terceiro',
+    'aprovado','reprovado') DEFAULT 'nao_iniciado',
+  obrigatorio TINYINT(1) DEFAULT 1,
+  responsavel VARCHAR(100) NULL,
+  prazo DATE NULL
+    COMMENT 'Prazo para itens aguardando terceiro',
+  data_verificacao DATE NULL,
+  observacao TEXT NULL,
+  terceiro_nome VARCHAR(100) NULL
+    COMMENT 'Ex: ENERGISA, Prefeitura, Condomínio',
+  ordem INT DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_grupo (grupo_id),
+  INDEX idx_analise (analise_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS viabilidade_anexos (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  item_id BIGINT UNSIGNED NOT NULL,
+  nome_arquivo VARCHAR(200) NOT NULL,
+  caminho VARCHAR(500) NOT NULL,
+  tipo_arquivo VARCHAR(50) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_item (item_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS proposta_grupos (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  proposalId BIGINT UNSIGNED NOT NULL,
+  parent_id BIGINT UNSIGNED NULL COMMENT 'FK lógica p/ proposta_grupos.id (aninhamento)',
+  nivel TINYINT NOT NULL DEFAULT 1,
+  ordem INT NOT NULL DEFAULT 0,
+  disciplina VARCHAR(60) NULL COMMENT 'Elétrico, Hidráulico, Civil, etc.',
+  nome VARCHAR(200) NOT NULL,
+  createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_pg_proposal (proposalId),
+  INDEX idx_pg_parent (parent_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS proposta_modelos (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  nome VARCHAR(160) NOT NULL,
+  descricao TEXT NULL,
+  disciplina VARCHAR(60) NULL,
+  estrutura_json LONGTEXT NULL COMMENT 'Snapshot da árvore grupos/orçamentos/itens, sem cliente nem valores finais',
+  ativo TINYINT(1) NOT NULL DEFAULT 1,
+  createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updatedAt TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_pm_ativo (ativo)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS seletividade_estudos (
+  id        BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  userId    BIGINT UNSIGNED NOT NULL,
+  nome      VARCHAR(200) NOT NULL COMMENT 'Nome do projeto/estudo',
+  dadosJson LONGTEXT NOT NULL COMMENT 'Todos os campos do formulário em JSON',
+  calcJson  LONGTEXT NULL COMMENT 'Resultado do último cálculo em JSON',
+  updatedAt TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_sel_user (userId),
+  KEY idx_sel_nome (nome)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS ofx_fitids (
+  id            BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  fitid         VARCHAR(100)    NOT NULL,
+  bankAccountId BIGINT UNSIGNED NOT NULL,
+  cashMoveId    BIGINT UNSIGNED NULL COMMENT 'ID em cash_bank_movements',
+  importedAt    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_fitid_account (fitid, bankAccountId),
+  KEY idx_ofx_account (bankAccountId)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS ofx_imports (
+  id              BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  bankAccountId   BIGINT UNSIGNED NOT NULL,
+  bankAccountName VARCHAR(140)    NOT NULL,
+  fileName        VARCHAR(300)    NOT NULL,
+  dateStart       DATE            NULL,
+  dateEnd         DATE            NULL,
+  totalRecords    INT             NOT NULL DEFAULT 0,
+  imported        INT             NOT NULL DEFAULT 0,
+  skipped         INT             NOT NULL DEFAULT 0,
+  importedBy      BIGINT UNSIGNED NULL,
+  importedAt      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_ofx_import_account (bankAccountId)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS obra_disciplinas (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  projectId BIGINT UNSIGNED NOT NULL,
+  nome VARCHAR(80) NOT NULL,
+  responsavelUserId BIGINT UNSIGNED NULL,
+  responsavelNome VARCHAR(120) NULL,
+  status ENUM('Ativa','Inativa') NOT NULL DEFAULT 'Ativa',
+  createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updatedAt TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_disc_project (projectId),
+  UNIQUE KEY uk_disc_obra_nome (projectId, nome)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS obra_rdo (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  projectId BIGINT UNSIGNED NOT NULL,
+  etapaId BIGINT UNSIGNED NULL,
+  data DATE NOT NULL,
+  numeroSequencial INT NULL,
+  climaManha VARCHAR(40) NULL,
+  climaTarde VARCHAR(40) NULL,
+  climaNoite VARCHAR(40) NULL,
+  condicaoTrabalho ENUM('Praticável','Parcialmente praticável','Impraticável') NULL DEFAULT 'Praticável',
+  atividades LONGTEXT NULL,
+  ocorrencias LONGTEXT NULL,
+  observacoes LONGTEXT NULL,
+  efetivo JSON NULL,
+  equipamentos JSON NULL,
+  responsavelGeralNome VARCHAR(120) NULL,
+  responsavelGeralUserId BIGINT UNSIGNED NULL,
+  createdByUserId BIGINT UNSIGNED NULL,
+  status ENUM('Rascunho','Aguardando assinaturas','Finalizado') NOT NULL DEFAULT 'Rascunho',
+  createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updatedAt TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_rdo_obra_dia (projectId, data),
+  INDEX idx_rdo_project (projectId),
+  INDEX idx_rdo_data (data),
+  INDEX idx_rdo_etapa (etapaId)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS obra_rdo_disciplinas (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  rdoId BIGINT UNSIGNED NOT NULL,
+  disciplinaId BIGINT UNSIGNED NULL,
+  disciplinaNome VARCHAR(80) NOT NULL,
+  responsavelUserId BIGINT UNSIGNED NULL,
+  responsavelNome VARCHAR(120) NULL,
+  atuouNoDia TINYINT(1) NOT NULL DEFAULT 1,
+  assinado TINYINT(1) NOT NULL DEFAULT 0,
+  assinadoEm TIMESTAMP NULL DEFAULT NULL,
+  assinadoPorUserId BIGINT UNSIGNED NULL,
+  INDEX idx_rdodisc_rdo (rdoId)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS obra_rdo_assinaturas (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  rdoId BIGINT UNSIGNED NOT NULL,
+  tipo ENUM('Geral','Disciplina') NOT NULL,
+  disciplinaNome VARCHAR(80) NULL,
+  assinanteNome VARCHAR(120) NULL,
+  assinanteUserId BIGINT UNSIGNED NULL,
+  evento ENUM('Assinatura','Reabertura') NOT NULL DEFAULT 'Assinatura',
+  assinadoEm TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_rdoass_rdo (rdoId)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS obra_rdo_fotos (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  rdoId BIGINT UNSIGNED NOT NULL,
+  caminho VARCHAR(300) NOT NULL,
+  legenda VARCHAR(200) NULL,
+  createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_rdo_foto (rdoId)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS audit_log (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  userId BIGINT UNSIGNED NULL,
+  username VARCHAR(120) NOT NULL DEFAULT '',
+  role VARCHAR(40) NOT NULL DEFAULT '',
+  action VARCHAR(20) NOT NULL,
+  module VARCHAR(60) NOT NULL DEFAULT '',
+  recordId VARCHAR(40) NULL,
+  details VARCHAR(400) NOT NULL DEFAULT '',
+  ip VARCHAR(45) NOT NULL DEFAULT '',
+  createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_audit_created (createdAt),
+  KEY idx_audit_user (userId)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS login_attempts (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  context VARCHAR(20) NOT NULL DEFAULT 'login',
+  username VARCHAR(190) NOT NULL DEFAULT '',
+  ip VARCHAR(45) NOT NULL DEFAULT '',
+  createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_attempt_user (context, username, createdAt),
+  KEY idx_attempt_ip (context, ip, createdAt)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS user_permissions (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  userId BIGINT UNSIGNED NOT NULL,
+  module VARCHAR(60) NOT NULL,
+  canView TINYINT(1) NOT NULL DEFAULT 0,
+  canCreate TINYINT(1) NOT NULL DEFAULT 0,
+  canEdit TINYINT(1) NOT NULL DEFAULT 0,
+  canDelete TINYINT(1) NOT NULL DEFAULT 0,
+  createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updatedAt TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_userperm (userId, module),
+  INDEX idx_userperm_user (userId)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

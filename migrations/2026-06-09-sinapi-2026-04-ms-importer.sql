@@ -1,5 +1,11 @@
 -- Migração segura v1.8.0 - Importador SINAPI 04/2026 MS.
 -- Execute no banco existente depois de backup. Não rode schema.sql por cima de dados reais.
+--
+-- RENOMEADA de 2026-06-08-sinapi-2026-04-ms-importer.sql na correção G4 (2026-07-03):
+-- altera sinapi_referencias/orcamentos_obras, criadas por
+-- 2026-06-08-sinapi-msproject-editable-structures.sql, que ordenava DEPOIS dela
+-- alfabeticamente — num provisionamento só por migrations a sequência abortava aqui.
+-- O conteúdo não mudou; o novo nome garante a ordem correta.
 
 USE financeiro;
 
