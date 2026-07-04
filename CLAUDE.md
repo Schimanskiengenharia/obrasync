@@ -4,7 +4,9 @@
 >
 > **Visão futura** — Cronograma Físico-Financeiro completo (EAP, dependências MS Project, medição, baseline, risco, curvas S): [`docs/specs/cronograma-fisico-financeiro.md`](docs/specs/cronograma-fisico-financeiro.md). Não iniciar antes de fechar os graves da revisão.
 >
-> **Versão atual:** `v1.26.0` · 2026-07-03
+> **Versão atual:** `v1.26.1` · 2026-07-04
+>
+> **Sessão 04/07/2026 — timezone (M10/M11/M12):** front alinhado ao fuso LOCAL. `asDate()` formata data pura (YYYY-MM-DD) pela string (nunca desloca o dia); helper `hojeLocal()` (= `localDateString(new Date())`) substituiu `new Date().toISOString().slice(0,10)` em TODAS as comparações com datas do banco e defaults gravados (isOverdue, prazos NC via `qHoje()`, cotações vencendo — `parseLocalDate`+`startOfLocalDay`); `currentMonthKey()` em local. Nomes de arquivo de export mantiveram toISOString (cosmético). Ao criar código novo: **nunca** use `toISOString()` para "hoje"/data de negócio — use `hojeLocal()`/`localDateString`.
 >
 > **Sessão 03/07/2026 — G3 (soft-delete de obras):** excluir obra agora ARQUIVA (`projects.deletedAt/deletedBy/archivedReason`; migration `2026-07-03-obra-soft-delete.sql` + `ensure_project_soft_delete`). Nenhum DELETE físico em `projects` (guarda em `delete_record` + FKs `fiscal_documents`/`orcamentos_obras` convertidas para `ON DELETE RESTRICT`). `db.projects` só traz ativas (bootstrap/list filtram `deletedAt IS NULL`; `?archived=1` lista arquivadas); `db.projectsArchived` alimenta o painel "Obras arquivadas" (tela Obras) com Desarquivar via `POST api/obras/{id}/restore` (permissão canDelete). `byId("projects")` tem fallback no arquivo para resolver nomes em registros antigos.
 > **Última varredura de código:** 2026-06-27 (3ª rodada — segurança, bugs, performance, qualidade, UX; itens MÉDIO/BAIXO fechados na v1.12.1)

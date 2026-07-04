@@ -19,9 +19,10 @@ if (APP_ENV === "production" && location.protocol === "http:") {
   location.replace(location.href.replace(/^http:/, "https:"));
 }
 const APP_NAME = "ObraSync";
-const APP_VERSION = "v1.26.0";
-const APP_VERSION_DATE = "2026-07-03";
+const APP_VERSION = "v1.26.1";
+const APP_VERSION_DATE = "2026-07-04";
 const APP_CHANGELOG = [
+  "Correção de fuso horário nas datas (M10/M11/M12): datas puras (ex.: vencimentos) passam a exibir SEMPRE o mesmo dia gravado no banco, em qualquer hora — antes, à noite, a conversão UTC podia deslocar 1 dia. O \"hoje\" usado em comparações (conta vencida, prazos de NC, cotações vencendo em 7 dias) e nos preenchimentos automáticos de data agora é o dia LOCAL (America/Campo_Grande): uma conta que vence hoje não aparece mais como Vencida às 22h, e o mês do dashboard/fluxo de caixa não vira antes da hora. A janela do fluxo de caixa segue centrada no mês atual local (v1.26.1).",
   "Exclusão segura de obras (G3): excluir uma obra agora ARQUIVA em vez de apagar — notas fiscais, contas e orçamentos vinculados permanecem intactos no sistema. A obra arquivada sai de todas as listas e dropdowns e vai para o painel \"Obras arquivadas\" (na tela Obras/Projetos), de onde pode ser restaurada a qualquer momento por quem tem permissão de exclusão. No banco, as cascatas destrutivas (obra → notas fiscais/orçamentos) foram desarmadas: nenhum DELETE físico arrasta mais documento fiscal (v1.26.0).",
   "Correção crítica na leitura de valor do comparador/de-para: a detecção de colunas passou a casar por chave normalizada EXATA (sem acento/caixa, removendo \"(R$)\" e \"%\") em vez de \"contém\" — assim \"Material Unit.\" não casa mais com \"Total Material\" e nenhuma coluna de Total é lida como valor unitário. O valor unitário segue a prioridade Custo Direto Unit. > Material+M.O. > genérico (ex.: cabo 1,5mm² agora lê R$ 2,80, não R$ 8.484). O upload mostra o mapa coluna→campo detectado (ex.: \"L → Custo direto unit.\") para conferência (v1.25.1).",
   "Fase B1 da IA — ponte para o Orçamento de Obra: botão \"Enviar para Orçamento de Obra\" no resultado do comparador e do de-para. Escolhe a obra de destino, o nome e se envia só os itens aceitos ou todos, e cria um orçamento de obra (rascunho) nas tabelas existentes (orcamentos_obras + orcamento_obra_itens): mapeia origem (SINAPI/Cotação manual/Item livre), tipo (material/mão de obra), etapa a partir do Setor, categoria por nome, código/sinapi_id do match, e usa como custo unitário o Custo Direto (sem BDI) > Material+M.O. > valor genérico. Os totais são recalculados com a mesma fórmula do orçamento de obra; nada é inventado (itens sem dado ficam com default neutro e nota). Depois é só abrir em Orçamentos de Obras para ajustar (v1.25.0).",
@@ -2135,8 +2136,15 @@ function asDate(value) {
   if (value === null || value === undefined || value === "") return "";
   const s = String(value).trim().replace(" ", "T");
   if (s === "" || s.startsWith("0000-00-00")) return "";
-  const iso = s.length === 10 ? `${s}T00:00:00Z` : s;
-  const d = new Date(iso);
+  // Data PURA (YYYY-MM-DD): formata pela própria string, sem passar por Date/UTC —
+  // o dia exibido é SEMPRE o dia gravado no banco, em qualquer hora e fuso (M10).
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    const [year, month, day] = s.split("-").map(Number);
+    const check = new Date(year, month - 1, day);
+    if (check.getFullYear() !== year || check.getMonth() !== month - 1 || check.getDate() !== day) return "";
+    return `${String(day).padStart(2, "0")}/${String(month).padStart(2, "0")}/${year}`;
+  }
+  const d = new Date(s);
   return isNaN(d.getTime()) ? "" : dateFmt.format(d);
 }
 
@@ -3521,7 +3529,7 @@ function scheduleMetrics(projectId, rows = scheduleRowsForProject(projectId)) {
   const actualPhysical = activeRows.reduce((total, row) => total + Number(row.actualPhysicalPercent || row.physicalProgress || 0), 0) / count;
   const plannedFinancial = activeRows.reduce((total, row) => total + Number(row.plannedFinancialAmount || 0), 0);
   const actualFinancial = activeRows.reduce((total, row) => total + Number(row.actualFinancialAmount || 0), 0);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = hojeLocal();
   const delayedRows = activeRows.filter((row) => {
     if (normalizedText(row.status).includes("atras")) return true;
     if (!row.plannedEndDate || row.actualEndDate || row.status === "Concluída") return false;
@@ -3673,7 +3681,17 @@ function dashboardMetrics() {
 }
 
 function currentMonthKey() {
-  return new Date().toISOString().slice(0, 7);
+  // Mês atual no fuso LOCAL: toISOString() é UTC e, à noite no Brasil, virava o
+  // mês do dashboard/fluxo de caixa antes da hora (M11).
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+}
+
+// "Hoje" (YYYY-MM-DD) no fuso LOCAL. new Date().toISOString() é data UTC: a partir
+// das ~20h locais vira o dia seguinte — conta que vence hoje aparecia "Vencida" à
+// noite e datas default eram gravadas com o dia de amanhã (M11/M12).
+function hojeLocal() {
+  return localDateString(new Date());
 }
 
 function monthKey(value) {
@@ -3703,7 +3721,7 @@ function isOverdue(row, type) {
   if (isRecebido(row.status) || isPago(row.status) || isCancelado(row.status)) return false;
   const dueDate = row.dueDate;
   if (!dueDate) return false;
-  return dueDate < new Date().toISOString().slice(0, 10) && (type === "receivable" ? !row.receivedDate : !row.paidDate);
+  return dueDate < hojeLocal() && (type === "receivable" ? !row.receivedDate : !row.paidDate);
 }
 
 function bankOpeningBalance() {
@@ -4948,7 +4966,7 @@ function normalizeViabilityAnalysis(data) {
     return `Informe a justificativa: o parecer manual "${data.verdict}" difere do parecer sugerido "${m.autoVerdict}".`;
   }
   data.finalVerdict = isManual ? data.verdict : m.autoVerdict;
-  if (!data.analysisDate) data.analysisDate = new Date().toISOString().slice(0, 10);
+  if (!data.analysisDate) data.analysisDate = hojeLocal();
   if (!data.responsibleUserId) data.responsibleUserId = currentUser?.id || "";
   const previous = editing?.id ? byId("viabilityAnalyses", editing.id) : null;
   const previousVerdict = previous ? (previous.finalVerdict || viabilityFinalVerdict(previous)) : "";
@@ -6460,7 +6478,7 @@ async function linkCashPayable(cashId, payableId) {
   if (cash) { cash.referencia_tipo = "CONTA_PAGAR"; cash.referencia_id = payableId; }
   if (p && p.status !== "Cancelado") {
     p.status = "Pago";
-    if (!p.paidDate) p.paidDate = (cash?.date) || new Date().toISOString().slice(0, 10);
+    if (!p.paidDate) p.paidDate = (cash?.date) || hojeLocal();
     p.referencia_tipo = "CAIXA_MANUAL";
     p.referencia_id = cashId;
   }
@@ -6478,7 +6496,7 @@ async function submitLinkedCashMove(data, payableId) {
       const p = byId("payable", payableId);
       if (p && p.status !== "Cancelado") {
         p.status = "Pago";
-        if (!p.paidDate) p.paidDate = data.date || new Date().toISOString().slice(0, 10);
+        if (!p.paidDate) p.paidDate = data.date || hojeLocal();
         p.referencia_tipo = "CAIXA_MANUAL";
         p.referencia_id = cashId;
       }
@@ -6697,7 +6715,7 @@ async function generateContractFromProposal(proposalId) {
   const objeto = buildContractObjeto(proposal, links, project);
   const existing = (db.sales || []).find((s) => sameId(s.proposalId, proposalId));
   if (existing && !confirm("Já existe um contrato gerado desta proposta. Deseja ATUALIZAR os dados dele em vez de duplicar?")) return;
-  const today = new Date().toISOString().slice(0, 10);
+  const today = hojeLocal();
   const numero = existing?.numero_contrato || `CT-${today.replaceAll("-", "")}-${String(Date.now()).slice(-4)}`;
   const data = {
     number: existing?.number || `VEN-${today.replaceAll("-", "")}-${String(Date.now()).slice(-4)}`,
@@ -7077,7 +7095,7 @@ function openForm(key, id = null) {
     row.ordem = Date.now();
   }
   if (!id && key === "viabilityAnalyses") {
-    row.analysisDate = new Date().toISOString().slice(0, 10);
+    row.analysisDate = hojeLocal();
     row.responsibleUserId = currentUser?.id || "";
     row.status = "Em análise";
     row.verdict = "Automático";
@@ -7745,7 +7763,7 @@ function setupPayableRecurrence() {
   toggle.addEventListener("change", () => {
     fields.classList.toggle("hidden", !toggle.checked);
     if (toggle.checked) {
-      if (!box.querySelector("#recPrimeiraData").value) box.querySelector("#recPrimeiraData").value = (dueInput?.value || new Date().toISOString().slice(0, 10));
+      if (!box.querySelector("#recPrimeiraData").value) box.querySelector("#recPrimeiraData").value = (dueInput?.value || hojeLocal());
       if (!box.querySelector("#recValorPrimeira").value && amountInput?.value) box.querySelector("#recValorPrimeira").value = amountInput.value;
       updatePreview();
     }
@@ -7792,7 +7810,7 @@ async function submitPayableRecurrence(data) {
   const descricao = String(data.document || "").trim();
   if (!descricao) { alert("Informe o documento/descrição da conta."); return false; }
   if (!(cfg.valorPrimeira > 0) && !(cfg.valorDemais > 0)) { alert("Informe o valor das parcelas."); return false; }
-  const today = new Date().toISOString().slice(0, 10);
+  const today = hojeLocal();
   try {
     if (serverMode) {
       await apiModuleRequest("?module=payable&action=create_recurrence", {
@@ -8064,7 +8082,7 @@ async function runEarlySettlement(rid, ids, juros, desconto, bankAccount) {
     await refreshAndRender();
     return;
   }
-  const today = new Date().toISOString().slice(0, 10);
+  const today = hojeLocal();
   const idset = new Set(ids.map(String));
   const selected = (db.payable || []).filter((p) => sameId(p.recorrencia_id, rid) && idset.has(String(p.id)) && p.status !== "Pago" && p.status !== "Cancelado");
   const original = selected.reduce((s, p) => s + Number(p.amount || 0), 0);
@@ -8336,7 +8354,7 @@ async function saveForm(event) {
   if (editing.key === "proposals" && previousRecord && previousRecord.status !== data.status) {
     await createIntegratedRecord("proposalStatusHistory", {
       proposalId: editing.id,
-      date: new Date().toISOString().slice(0, 10),
+      date: hojeLocal(),
       userId: currentUser?.id || "",
       previousStatus: previousRecord.status || "",
       newStatus: data.status || "",
@@ -8669,7 +8687,7 @@ async function convertProposalToSale(id) {
   const proposal = byId("proposals", id);
   if (!proposal) return;
   if (!confirm("Converter esta proposta aprovada em venda/contrato?")) return;
-  const today = new Date().toISOString().slice(0, 10);
+  const today = hojeLocal();
   const number = `VEN-${today.replaceAll("-", "")}-${String(Date.now()).slice(-4)}`;
   try {
     await createIntegratedRecord("sales", {
@@ -8697,7 +8715,7 @@ async function createReceivableFromSale(id) {
   const sale = byId("sales", id);
   if (!sale) return;
   if (!confirm("Gerar conta a receber para esta venda/contrato?")) return;
-  const today = new Date().toISOString().slice(0, 10);
+  const today = hojeLocal();
   try {
     await createIntegratedRecord("receivable", {
       document: sale.number || `REC-${String(Date.now()).slice(-6)}`,
@@ -8725,7 +8743,7 @@ async function createReceivablesFromProposal(id) {
   if (!proposal) return;
   if (proposal.status !== "Aprovada") return alert("Apenas propostas aprovadas podem gerar contas a receber.");
   if (!confirm("Gerar contas a receber a partir desta proposta aprovada?")) return;
-  const today = new Date().toISOString().slice(0, 10);
+  const today = hojeLocal();
   const terms = proposal.paymentCondition || proposal.paymentTerms || "";
   const percentages = [...String(terms).matchAll(/(\d+(?:[,.]\d+)?)\s*%/g)].map((match) => Number(match[1].replace(",", "."))).filter((value) => value > 0);
   const total = Number(proposal.amount || 0);
@@ -9577,7 +9595,7 @@ function scheduleStepCards(rows) {
   return `
     <section class="schedule-cards">
       ${rows.map((row) => {
-        const delay = row.plannedEndDate && !row.actualEndDate && row.plannedEndDate < new Date().toISOString().slice(0, 10) ? daysBetween(row.plannedEndDate, new Date().toISOString().slice(0, 10)) : 0;
+        const delay = row.plannedEndDate && !row.actualEndDate && row.plannedEndDate < hojeLocal() ? daysBetween(row.plannedEndDate, hojeLocal()) : 0;
         return `
           <article class="schedule-card">
             <header>
@@ -9608,7 +9626,7 @@ function ganttChart(rows) {
   const minDate = dates[0];
   const maxDate = dates.at(-1);
   const totalDays = Math.max(1, daysBetween(minDate, maxDate) + 1);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = hojeLocal();
   const todayOffset = today >= minDate && today <= maxDate ? Math.min(100, Math.max(0, (daysBetween(minDate, today) / totalDays) * 100)) : null;
   const bar = (start, end, cls, title) => {
     if (!start || !end) return "";
@@ -9651,7 +9669,7 @@ function exportMsProjectXml(project, rows) {
   const uidById = Object.fromEntries(sorted.map((row, index) => [row.id, index + 1]));
   const tasks = sorted.map((row, index) => {
     const uid = index + 1;
-    const start = row.plannedStartDate || row.actualStartDate || new Date().toISOString().slice(0, 10);
+    const start = row.plannedStartDate || row.actualStartDate || hojeLocal();
     const finish = row.plannedEndDate || row.actualEndDate || start;
     const durationDays = Number(row.durationDays || 0) || Math.max(1, daysBetween(start, finish) + 1);
     const predecessors = String(row.predecessorIds || "")
@@ -11394,7 +11412,7 @@ function qjson(value, fallback) {
 }
 
 function qHoje() {
-  return new Date().toISOString().slice(0, 10);
+  return hojeLocal(); // fuso local — antes era data UTC e virava "amanhã" à noite (M12)
 }
 
 function servicoSiac(id) {
@@ -12414,7 +12432,7 @@ function renderQualidadeNc() {
         <button class="secondary" type="button" id="qFormCancelar">Cancelar</button>
       </div>
     </section>` : "";
-  const listRows = rows.map((r) => ({ ...r, prazo: r.prazoAcao ? (r.status === "Fechada" ? r.prazoAcao : r.prazoAcao < hoje ? `🔴 ${r.prazoAcao}` : r.prazoAcao <= new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10) ? `🟡 ${r.prazoAcao}` : `🟢 ${r.prazoAcao}`) : "—" }));
+  const listRows = rows.map((r) => ({ ...r, prazo: r.prazoAcao ? (r.status === "Fechada" ? r.prazoAcao : r.prazoAcao < hoje ? `🔴 ${r.prazoAcao}` : r.prazoAcao <= localDateString(addDays(new Date(), 3)) ? `🟡 ${r.prazoAcao}` : `🟢 ${r.prazoAcao}`) : "—" }));
   qs("content").innerHTML = `
     ${qualidadeHead(key, "Não Conformidades (NC)", "Registro e tratamento de NCs (SiAC 8.7 e 10.2). NC fechada vinculada a FVS aprovada desbloqueia a etapa do cronograma automaticamente.")}
     <section class="q-kpis">
@@ -12591,7 +12609,7 @@ async function importSinapiCsvLocal({ type, sheetName, uf, referenceMonth, refer
     return;
   }
   const reference = (db.sinapiReferences || []).find((row) => row.uf === uf && Number(row.referenceMonth) === referenceMonth && Number(row.referenceYear) === referenceYear && row.priceType === referenceType)
-    || { id: crypto.randomUUID(), uf, referenceMonth, referenceYear, priceType: referenceType, source: "SINAPI/CAIXA", defaultUf: uf, locationName: "Campo Grande/MS", issueDate: "2026-05-12", availableTypes: "Sem desoneração; Com desoneração; Sem encargos sociais", importDate: new Date().toISOString().slice(0, 10), importUserId: currentUser?.id || "", status: "Ativo" };
+    || { id: crypto.randomUUID(), uf, referenceMonth, referenceYear, priceType: referenceType, source: "SINAPI/CAIXA", defaultUf: uf, locationName: "Campo Grande/MS", issueDate: "2026-05-12", availableTypes: "Sem desoneração; Com desoneração; Sem encargos sociais", importDate: hojeLocal(), importUserId: currentUser?.id || "", status: "Ativo" };
   if (!byId("sinapiReferences", reference.id)) db.sinapiReferences.push(reference);
   const text = await file.text();
   const rows = parseCsv(text);
@@ -12790,7 +12808,9 @@ async function renderCotacaoLista() {
   }
   if (currentModule !== "cotacoes" || cotacaoOpenId) return;
   cotacaoList = list;
-  const vencendo = list.filter((c) => { if (!c.validade_cotacao) return false; const d = Math.ceil((new Date(c.validade_cotacao) - new Date()) / 86400000); return d >= 0 && d <= 7; });
+  // M12: as duas pontas em meia-noite LOCAL — antes misturava meia-noite UTC da
+  // validade com o agora local, e a cotação que vence hoje sumia do alerta à noite.
+  const vencendo = list.filter((c) => { const val = parseLocalDate(c.validade_cotacao); if (!val) return false; const d = Math.round((val - startOfLocalDay(new Date())) / 86400000); return d >= 0 && d <= 7; });
   const rows = list.map((c) => `
     <tr>
       <td>${svgText(c.fornecedor_nome)}</td>
@@ -13704,7 +13724,7 @@ async function openProposalGenerator(workBudgetId) {
   const client = byId("clients", budget.clientId || project.clientId) || {};
   const models = (db.proposalModels || []).filter((model) => model.status !== "Inativo");
   const model = models[0] || {};
-  const today = new Date().toISOString().slice(0, 10);
+  const today = hojeLocal();
   const validityDate = addDateStringDays(today, Number(model.validityDays || 15));
   const items = budgetItemsFor(budget.id, false);
   proposalGeneratorState = {
@@ -14399,7 +14419,7 @@ function proposalVariablesFor({ budget, project, client, items, model, input = {
   const discountPercent = Number(budget.discountPercent || 0);
   const discountValue = discountPercent ? (totalPrice / Math.max(0.01, 1 - discountPercent / 100)) * (discountPercent / 100) : 0;
   const totals = proposalItemTotals(items);
-  const proposalDate = input.date || new Date().toISOString().slice(0, 10);
+  const proposalDate = input.date || hojeLocal();
   return {
     numero_proposta: proposalNumber || `PROP-OBRA-${proposalDate.replaceAll("-", "")}-${String(Date.now()).slice(-4)}`,
     nome_cliente: client.name || "",
@@ -14990,7 +15010,7 @@ async function saveGeneratedProposal(statusOverride = "") {
   try {
     const proposal = await createIntegratedRecord("proposals", {
       number: vars.numero_proposta,
-      date: new Date().toISOString().slice(0, 10),
+      date: hojeLocal(),
       clientId: client.id || "",
       projectId: project.id || "",
       budgetId: "",
@@ -15057,7 +15077,7 @@ async function createProposalLinkedRecords(proposal, { budget, project, client, 
   }
   await createIntegratedRecord("proposalStatusHistory", {
     proposalId: proposal.id,
-    date: new Date().toISOString().slice(0, 10),
+    date: hojeLocal(),
     userId: currentUser?.id || "",
     previousStatus: "",
     newStatus: status,
