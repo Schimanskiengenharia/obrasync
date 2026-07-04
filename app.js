@@ -19,9 +19,10 @@ if (APP_ENV === "production" && location.protocol === "http:") {
   location.replace(location.href.replace(/^http:/, "https:"));
 }
 const APP_NAME = "ObraSync";
-const APP_VERSION = "v1.26.1";
+const APP_VERSION = "v1.26.2";
 const APP_VERSION_DATE = "2026-07-04";
 const APP_CHANGELOG = [
+  "Comparador IA — comparação por TOTAL e aceite em lote: cada item agora mostra Qtde, unitário planilha × SINAPI, diferença unitária (R$ e %), Total planilha (qtd × unitário), Total SINAPI e diferença total; o resumo de economia/excesso soma a diferença por TOTAL dos itens comparados (números realistas — nada de milhões irreais) e exibe o total planilha × total SINAPI dos comparados. O export Excel ganhou as colunas de total. Botões novos no comparador e no de-para: Aceitar todos, Aceitar só ACHOU e Desmarcar todos (resolve o \"nenhum item aceito\" ao enviar para o orçamento). Lotes antigos: o resumo continua correto por fallback; para preencher os totais por item, use Reanalisar (v1.26.2).",
   "Correção de fuso horário nas datas (M10/M11/M12): datas puras (ex.: vencimentos) passam a exibir SEMPRE o mesmo dia gravado no banco, em qualquer hora — antes, à noite, a conversão UTC podia deslocar 1 dia. O \"hoje\" usado em comparações (conta vencida, prazos de NC, cotações vencendo em 7 dias) e nos preenchimentos automáticos de data agora é o dia LOCAL (America/Campo_Grande): uma conta que vence hoje não aparece mais como Vencida às 22h, e o mês do dashboard/fluxo de caixa não vira antes da hora. A janela do fluxo de caixa segue centrada no mês atual local (v1.26.1).",
   "Exclusão segura de obras (G3): excluir uma obra agora ARQUIVA em vez de apagar — notas fiscais, contas e orçamentos vinculados permanecem intactos no sistema. A obra arquivada sai de todas as listas e dropdowns e vai para o painel \"Obras arquivadas\" (na tela Obras/Projetos), de onde pode ser restaurada a qualquer momento por quem tem permissão de exclusão. No banco, as cascatas destrutivas (obra → notas fiscais/orçamentos) foram desarmadas: nenhum DELETE físico arrasta mais documento fiscal (v1.26.0).",
   "Correção crítica na leitura de valor do comparador/de-para: a detecção de colunas passou a casar por chave normalizada EXATA (sem acento/caixa, removendo \"(R$)\" e \"%\") em vez de \"contém\" — assim \"Material Unit.\" não casa mais com \"Total Material\" e nenhuma coluna de Total é lida como valor unitário. O valor unitário segue a prioridade Custo Direto Unit. > Material+M.O. > genérico (ex.: cabo 1,5mm² agora lê R$ 2,80, não R$ 8.484). O upload mostra o mapa coluna→campo detectado (ex.: \"L → Custo direto unit.\") para conferência (v1.25.1).",
@@ -5459,6 +5460,9 @@ function iaDeparaRenderResult(itens, counts) {
       ${bucket("revisar", "REVISAR", "ia-dp-b-revisar")}
       ${bucket("divergente", "DIVERGENTE", "ia-dp-b-divergente")}
       ${bucket("cotacao_propria", "COTAÇÃO PRÓPRIA", "ia-dp-b-cotacao")}
+      <button type="button" class="secondary ia-dp-export" id="iaDeparaAceitarTodosBtn">✓ Aceitar todos</button>
+      <button type="button" class="secondary ia-dp-export" id="iaDeparaAceitarAchouBtn">✓ Aceitar só ACHOU</button>
+      <button type="button" class="secondary ia-dp-export" id="iaDeparaDesmarcarBtn">✗ Desmarcar todos</button>
       <button type="button" class="secondary ia-dp-export" id="iaDeparaExportBtn">⤓ Exportar resultado</button>
       <button type="button" class="primary ia-dp-enviar" id="iaDeparaEnviarBtn">→ Enviar para Orçamento de Obra</button>
     </div>
@@ -5478,6 +5482,9 @@ function iaDeparaRenderResult(itens, counts) {
       </div>`;
   }
   box.querySelectorAll("[data-dp-filtro]").forEach((btn) => btn.addEventListener("click", () => iaDeparaLoadResults(btn.dataset.dpFiltro)));
+  qs("iaDeparaAceitarTodosBtn")?.addEventListener("click", () => iaDeparaAceitarTodos("todos"));
+  qs("iaDeparaAceitarAchouBtn")?.addEventListener("click", () => iaDeparaAceitarTodos("achou"));
+  qs("iaDeparaDesmarcarBtn")?.addEventListener("click", () => iaDeparaAceitarTodos("nenhum"));
   qs("iaDeparaExportBtn")?.addEventListener("click", iaDeparaExport);
   qs("iaDeparaEnviarBtn")?.addEventListener("click", () => iaEnviarParaOrcamento("depara"));
   qs("iaDeparaGrupoSel")?.addEventListener("change", (e) => { iaDeparaState.grupo = e.target.value || "todos"; iaDeparaLoadResults(iaDeparaState.filtro); });
@@ -5787,7 +5794,10 @@ function iaComparaResumoHtml(resumo) {
         <span class="ia-cmp-r-num">${Number(resumo.iguais || 0)}</span>
         <span class="ia-cmp-r-lbl">Preços equivalentes<br><span class="muted">${Number(resumo.comparados || 0)} itens comparados</span></span>
       </div>
-    </div>`;
+    </div>
+    ${(resumo.totalPlanilhaComparado || resumo.totalSinapiComparado)
+      ? `<div class="muted" style="margin:2px 0 10px">Itens comparados (qtd × unitário): total planilha ${asMoney(resumo.totalPlanilhaComparado || 0)} × total SINAPI ${asMoney(resumo.totalSinapiComparado || 0)}</div>`
+      : ""}`;
 }
 
 function iaComparaRenderResult(itens, counts, resumo) {
@@ -5809,6 +5819,9 @@ function iaComparaRenderResult(itens, counts, resumo) {
       ${bucket("faltou_importar", "FALTOU IMPORTAR", "ia-dp-b-revisar")}
       ${bucket("divergente", "DIVERGENTE", "ia-dp-b-divergente")}
       ${bucket("cotacao_propria", "COTAÇÃO PRÓPRIA", "ia-dp-b-cotacao")}
+      <button type="button" class="secondary ia-dp-export" id="iaComparaAceitarTodosBtn">✓ Aceitar todos</button>
+      <button type="button" class="secondary ia-dp-export" id="iaComparaAceitarAchouBtn">✓ Aceitar só ACHOU</button>
+      <button type="button" class="secondary ia-dp-export" id="iaComparaDesmarcarBtn">✗ Desmarcar todos</button>
       <button type="button" class="secondary ia-dp-export" id="iaComparaExportBtn">⤓ Exportar relatório</button>
       <button type="button" class="primary ia-dp-enviar" id="iaComparaEnviarBtn">→ Enviar para Orçamento de Obra</button>
     </div>
@@ -5822,14 +5835,18 @@ function iaComparaRenderResult(itens, counts, resumo) {
         <table class="ia-dp-table ia-cmp-table">
           <thead><tr>
             <th>#</th><th>Setor / Cat. / Tipo</th><th>Descrição (planilha)</th><th>Cód.</th><th>Un</th><th>Qtd</th>
-            <th>Valor planilha</th><th></th><th>Match SINAPI</th><th>Valor SINAPI</th>
-            <th>Sim.</th><th>Comparação</th><th>Ação</th>
+            <th>Unit. planilha</th><th></th><th>Match SINAPI</th><th>Unit. SINAPI</th>
+            <th>Total planilha</th><th>Total SINAPI</th><th>Dif. total</th>
+            <th>Sim.</th><th>Dif. unit.</th><th>Ação</th>
           </tr></thead>
           <tbody>${itens.map(iaComparaRowHtml).join("")}</tbody>
         </table>
       </div>`;
   }
   box.querySelectorAll("[data-cmp-filtro]").forEach((btn) => btn.addEventListener("click", () => iaComparaLoadResults(btn.dataset.cmpFiltro)));
+  qs("iaComparaAceitarTodosBtn")?.addEventListener("click", () => iaComparaAceitarTodos("todos"));
+  qs("iaComparaAceitarAchouBtn")?.addEventListener("click", () => iaComparaAceitarTodos("achou"));
+  qs("iaComparaDesmarcarBtn")?.addEventListener("click", () => iaComparaAceitarTodos("nenhum"));
   qs("iaComparaExportBtn")?.addEventListener("click", iaComparaExport);
   qs("iaComparaEnviarBtn")?.addEventListener("click", () => iaEnviarParaOrcamento("compara"));
   qs("iaComparaSetorSel")?.addEventListener("change", (e) => { iaComparaState.setor = e.target.value || "todos"; iaComparaLoadResults(iaComparaState.filtro); });
@@ -5886,6 +5903,14 @@ function iaComparaRowHtml(it) {
   const valSinapi = it.matchValor != null
     ? `<span class="${low === "sinapi" ? "ia-cmp-low" : ""}">${asMoney(it.matchValor)}</span>`
     : '<span class="muted">—</span>';
+  // Totais (qtd × unitário) e a diferença por total — verde quando a planilha
+  // economiza (dif negativa), vermelho quando está mais cara que a SINAPI.
+  const totPlanilha = it.totalOrigem != null ? asMoney(it.totalOrigem) : '<span class="muted">—</span>';
+  const totSinapi = it.totalSinapi != null ? asMoney(it.totalSinapi) : '<span class="muted">—</span>';
+  const dt = it.diferencaTotal;
+  const difTotal = dt != null
+    ? `<span class="ia-cmp-badge ${dt < 0 ? "ia-cmp-planilha" : (dt > 0 ? "ia-cmp-sinapi" : "ia-cmp-igual")}">${dt > 0 ? "+" : (dt < 0 ? "−" : "")}${asMoney(Math.abs(dt))}</span>`
+    : '<span class="muted">—</span>';
   const aceito = Number(it.aceito) === 1;
   const acao = `<button class="${aceito ? "ia-dp-aceito" : "secondary"} ia-dp-mini" type="button" data-cmp-aceitar="${it.id}">${aceito ? "✓ Aceito" : "Aceitar"}</button>`;
   return `
@@ -5900,10 +5925,37 @@ function iaComparaRowHtml(it) {
       <td class="ia-dp-arrow">→</td>
       <td>${matchCell}</td>
       <td class="ia-dp-valor">${valSinapi}</td>
+      <td class="ia-dp-valor">${totPlanilha}</td>
+      <td class="ia-dp-valor">${totSinapi}</td>
+      <td class="ia-dp-valor">${difTotal}</td>
       <td>${sim}</td>
       <td>${iaComparaBadge(it)}</td>
       <td>${acao}</td>
     </tr>`;
+}
+
+// Aceite em lote: 'todos' marca tudo, 'achou' deixa aceitos só os ACHOU, 'nenhum'
+// desmarca. Recarrega o relatório para refletir o estado salvo no servidor.
+async function iaComparaAceitarTodos(modo) {
+  if (!iaComparaState.jobId) return;
+  try {
+    const data = await apiModuleRequest("?module=ia&action=comparaAceitar", { method: "POST", body: JSON.stringify({ jobId: iaComparaState.jobId, modo }) });
+    if (typeof showToast === "function") showToast(`${Number(data.aceitos || 0)} item(ns) aceito(s).`);
+    iaComparaLoadResults(iaComparaState.filtro);
+  } catch (error) {
+    alert(`Não foi possível atualizar os aceites: ${error.message}`);
+  }
+}
+
+async function iaDeparaAceitarTodos(modo) {
+  if (!iaDeparaState.jobId) return;
+  try {
+    const data = await apiModuleRequest("?module=ia&action=deparaAceitar", { method: "POST", body: JSON.stringify({ jobId: iaDeparaState.jobId, modo }) });
+    if (typeof showToast === "function") showToast(`${Number(data.aceitos || 0)} item(ns) aceito(s).`);
+    iaDeparaLoadResults(iaDeparaState.filtro);
+  } catch (error) {
+    alert(`Não foi possível atualizar os aceites: ${error.message}`);
+  }
 }
 
 async function iaComparaAceitar(itemId, btn) {

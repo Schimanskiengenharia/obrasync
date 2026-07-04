@@ -131,10 +131,11 @@ try {
         'UPDATE ia_compara_itens
             SET statusClassificacao = ?, matchOrigem = ?, matchId = ?, matchCode = ?,
                 matchDescription = ?, matchUnit = ?, matchValor = ?, similaridade = ?,
-                precoMaisBaixo = ?, diferencaValor = ?, diferencaPercent = ?
+                precoMaisBaixo = ?, diferencaValor = ?, diferencaPercent = ?,
+                totalOrigem = ?, totalSinapi = ?, diferencaTotal = ?
           WHERE id = ?'
     );
-    $items = $pdo->prepare('SELECT id, descricaoOrigem, codigoOrigem, valorUnitOrigem FROM ia_compara_itens WHERE jobId = ? AND statusClassificacao IS NULL ORDER BY id');
+    $items = $pdo->prepare('SELECT id, descricaoOrigem, codigoOrigem, valorUnitOrigem, quantidadeOrigem FROM ia_compara_itens WHERE jobId = ? AND statusClassificacao IS NULL ORDER BY id');
     $items->execute([$jobId]);
     $items = $items->fetchAll(PDO::FETCH_ASSOC);
 
@@ -251,27 +252,12 @@ try {
             }
         }
 
-        // 3c) Comparação de preço — só quando ACHOU e os DOIS valores são > 0.
-        // Dividir por um valor SINAPI ~zero gera % gigante (estourava o DECIMAL e dava
-        // SQLSTATE[22003]); por isso só comparamos com base SINAPI estritamente positiva.
-        $precoMaisBaixo = 'sem_comparacao';
-        $diferencaValor = null;
-        $diferencaPercent = null;
+        // 3c) Comparação de preço no UNITÁRIO e no TOTAL (qtd × unitário) — a regra
+        // (só compara quando ACHOU e os DOIS unitários são > 0, clamps de DECIMAL)
+        // vive em ia_compara_calcula_precos() no api/index.php (pura e testável).
         $matchValor = $match['valor'] ?? null;
-        if ($status === 'achou' && $valorPlanilha !== null && $valorPlanilha > 0 && $matchValor !== null && $matchValor > 0) {
-            // Clamp como rede de segurança contra overflow do DECIMAL (base mínima ainda
-            // gera % enorme); a regra principal acima já evita dividir por ~zero.
-            $diferencaValor = max(-IA_COMPARA_DIFVALOR_MAX, min(IA_COMPARA_DIFVALOR_MAX, round($valorPlanilha - $matchValor, 4)));
-            $diferencaPercent = max(-IA_COMPARA_DIFPERCENT_MAX, min(IA_COMPARA_DIFPERCENT_MAX, round((($valorPlanilha - $matchValor) / $matchValor) * 100, 2)));
-            $rel = abs($valorPlanilha - $matchValor) / $matchValor;
-            if ($rel <= IA_COMPARA_PRECO_TOLERANCIA) {
-                $precoMaisBaixo = 'igual';
-            } elseif ($valorPlanilha < $matchValor) {
-                $precoMaisBaixo = 'planilha';
-            } else {
-                $precoMaisBaixo = 'sinapi';
-            }
-        }
+        $qtd = $item['quantidadeOrigem'] !== null ? (float) $item['quantidadeOrigem'] : null;
+        $precos = ia_compara_calcula_precos($valorPlanilha, $matchValor !== null ? (float) $matchValor : null, $qtd, $status);
 
         $upd->execute([
             $status,
@@ -282,9 +268,12 @@ try {
             $match['unit'] ?? null,
             $matchValor,
             $sim,
-            $precoMaisBaixo,
-            $diferencaValor,
-            $diferencaPercent,
+            $precos['precoMaisBaixo'],
+            $precos['diferencaValor'],
+            $precos['diferencaPercent'],
+            $precos['totalOrigem'],
+            $precos['totalSinapi'],
+            $precos['diferencaTotal'],
             $itemId,
         ]);
         $processed++;

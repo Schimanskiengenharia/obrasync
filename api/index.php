@@ -9427,6 +9427,9 @@ function ensure_ia_compara_tables(PDO $pdo): void
             precoMaisBaixo ENUM(\'planilha\',\'sinapi\',\'igual\',\'sem_comparacao\') NULL,
             diferencaValor DECIMAL(15,4) NULL,
             diferencaPercent DECIMAL(12,2) NULL,
+            totalOrigem DECIMAL(18,2) NULL,
+            totalSinapi DECIMAL(18,2) NULL,
+            diferencaTotal DECIMAL(18,2) NULL,
             aceito TINYINT NOT NULL DEFAULT 0,
             createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             KEY idx_job (jobId),
@@ -9442,6 +9445,15 @@ function ensure_ia_compara_tables(PDO $pdo): void
         if ($col && stripos((string) $col, 'decimal(12,2)') === false) {
             $pdo->exec('ALTER TABLE ia_compara_itens MODIFY diferencaPercent DECIMAL(12,2) NULL');
         }
+    } catch (Throwable $ignored) {
+    }
+    // Comparação por TOTAL (qtd × unitário): totalOrigem/totalSinapi/diferencaTotal —
+    // migration 2026-07-04-ia-compara-totais.sql espelhada aqui (auto-cura).
+    try {
+        $pdo->exec('ALTER TABLE ia_compara_itens
+            ADD COLUMN IF NOT EXISTS totalOrigem DECIMAL(18,2) NULL,
+            ADD COLUMN IF NOT EXISTS totalSinapi DECIMAL(18,2) NULL,
+            ADD COLUMN IF NOT EXISTS diferencaTotal DECIMAL(18,2) NULL');
     } catch (Throwable $ignored) {
     }
     $done = true;
@@ -10174,9 +10186,42 @@ function ia_depara_grupos(PDO $pdo, string $jobId, string $coluna = 'grupoAba'):
 }
 
 // Aceita (confirma) ou desmarca o match sugerido para um item.
+// Aceite em LOTE (comparador e de-para): payload {jobId, modo: 'todos'|'achou'|'nenhum'}.
+// 'achou' deixa o lote no estado exato do botão (zera e marca só os ACHOU). Responde e
+// encerra quando é ação em lote; sem {jobId, modo} retorna e o fluxo por item segue.
+function ia_accept_bulk(PDO $pdo, string $table, array $payload): void
+{
+    $modo = strtolower(trim((string) ($payload['modo'] ?? '')));
+    $jobId = trim((string) ($payload['jobId'] ?? ''));
+    if ($modo === '' || $jobId === '') {
+        return;
+    }
+    if (!in_array($modo, ['todos', 'achou', 'nenhum'], true)) {
+        sinapi_module_respond(false, [], "Modo inválido: use 'todos', 'achou' ou 'nenhum'.", 400);
+    }
+    $chk = $pdo->prepare("SELECT COUNT(*) FROM `$table` WHERE jobId = ?");
+    $chk->execute([$jobId]);
+    if ((int) $chk->fetchColumn() === 0) {
+        sinapi_module_respond(false, [], 'Lote não encontrado ou sem itens.', 404);
+    }
+    if ($modo === 'todos') {
+        $pdo->prepare("UPDATE `$table` SET aceito = 1 WHERE jobId = ?")->execute([$jobId]);
+    } elseif ($modo === 'nenhum') {
+        $pdo->prepare("UPDATE `$table` SET aceito = 0 WHERE jobId = ?")->execute([$jobId]);
+    } else {
+        $pdo->prepare("UPDATE `$table` SET aceito = 0 WHERE jobId = ?")->execute([$jobId]);
+        $pdo->prepare("UPDATE `$table` SET aceito = 1 WHERE jobId = ? AND statusClassificacao = 'achou'")->execute([$jobId]);
+    }
+    $cnt = $pdo->prepare("SELECT COUNT(*) FROM `$table` WHERE jobId = ? AND aceito = 1");
+    $cnt->execute([$jobId]);
+    $aceitos = (int) $cnt->fetchColumn();
+    sinapi_module_respond(true, ['jobId' => $jobId, 'modo' => $modo, 'aceitos' => $aceitos], "{$aceitos} item(ns) aceito(s).");
+}
+
 function handle_ia_depara_accept(PDO $pdo, array $payload, array $authUser): never
 {
     ensure_ia_depara_tables($pdo);
+    ia_accept_bulk($pdo, 'ia_depara_itens', $payload);
     $itemId = (int) ($payload['itemId'] ?? $payload['id'] ?? 0);
     if ($itemId <= 0) {
         sinapi_module_respond(false, [], 'Informe o item.', 400);
@@ -10510,17 +10555,56 @@ function ia_compara_counts(PDO $pdo, string $jobId): array
 
 // Resumo de preços: quantos itens a planilha está mais barata/cara que a SINAPI e
 // a economia/excesso total estimado (diferença × quantidade, quando houver qtd).
+// Comparação de preço planilha × SINAPI de UM item, no UNITÁRIO e no TOTAL
+// (qtd × unitário). Pura (sem I/O) — o worker usa e o teste exercita isolada.
+// NUNCA inventa: só compara quando os DOIS unitários são > 0 (dividir por base
+// SINAPI ~zero gerava % gigante/SQLSTATE[22003]); totais só com quantidade > 0.
+function ia_compara_calcula_precos(?float $valorPlanilha, ?float $matchValor, ?float $qtd, ?string $status): array
+{
+    $out = [
+        'precoMaisBaixo' => 'sem_comparacao',
+        'diferencaValor' => null,
+        'diferencaPercent' => null,
+        'totalOrigem' => null,
+        'totalSinapi' => null,
+        'diferencaTotal' => null,
+    ];
+    if ($qtd !== null && $qtd > 0 && $valorPlanilha !== null && $valorPlanilha > 0) {
+        $out['totalOrigem'] = round($qtd * $valorPlanilha, 2);
+    }
+    if ($status !== 'achou' || $valorPlanilha === null || $valorPlanilha <= 0 || $matchValor === null || $matchValor <= 0) {
+        return $out;
+    }
+    // Clamp como rede de segurança contra overflow do DECIMAL; a regra principal
+    // acima já evita dividir por ~zero.
+    $out['diferencaValor'] = max(-IA_COMPARA_DIFVALOR_MAX, min(IA_COMPARA_DIFVALOR_MAX, round($valorPlanilha - $matchValor, 4)));
+    $out['diferencaPercent'] = max(-IA_COMPARA_DIFPERCENT_MAX, min(IA_COMPARA_DIFPERCENT_MAX, round((($valorPlanilha - $matchValor) / $matchValor) * 100, 2)));
+    $rel = abs($valorPlanilha - $matchValor) / $matchValor;
+    $out['precoMaisBaixo'] = $rel <= IA_COMPARA_PRECO_TOLERANCIA ? 'igual' : ($valorPlanilha < $matchValor ? 'planilha' : 'sinapi');
+    if ($qtd !== null && $qtd > 0) {
+        $out['totalSinapi'] = round($qtd * $matchValor, 2);
+        if ($out['totalOrigem'] !== null) {
+            $out['diferencaTotal'] = max(-IA_COMPARA_DIFVALOR_MAX, min(IA_COMPARA_DIFVALOR_MAX, round($out['totalOrigem'] - $out['totalSinapi'], 2)));
+        }
+    }
+    return $out;
+}
+
 function ia_compara_resumo(PDO $pdo, string $jobId): array
 {
+    // Economia/excesso REALISTAS: soma da diferença por TOTAL (qtd × unitário) dos
+    // itens comparados. COALESCE cobre lotes analisados ANTES das colunas de total
+    // (sem re-rodar): cai no mesmo diferencaValor × quantidade de antes.
+    $difTotal = 'COALESCE(diferencaTotal, CASE WHEN diferencaValor IS NOT NULL AND quantidadeOrigem IS NOT NULL THEN diferencaValor * quantidadeOrigem END)';
     $sql = "SELECT
                 SUM(precoMaisBaixo = 'planilha') AS planilhaMaisBarata,
                 SUM(precoMaisBaixo = 'sinapi') AS sinapiMaisBarata,
                 SUM(precoMaisBaixo = 'igual') AS iguais,
                 SUM(precoMaisBaixo IN ('planilha','sinapi','igual')) AS comparados,
-                SUM(CASE WHEN diferencaValor IS NOT NULL AND quantidadeOrigem IS NOT NULL AND diferencaValor < 0
-                         THEN -diferencaValor * quantidadeOrigem ELSE 0 END) AS economiaTotal,
-                SUM(CASE WHEN diferencaValor IS NOT NULL AND quantidadeOrigem IS NOT NULL AND diferencaValor > 0
-                         THEN diferencaValor * quantidadeOrigem ELSE 0 END) AS excessoTotal
+                SUM(CASE WHEN $difTotal < 0 THEN -($difTotal) ELSE 0 END) AS economiaTotal,
+                SUM(CASE WHEN $difTotal > 0 THEN $difTotal ELSE 0 END) AS excessoTotal,
+                SUM(CASE WHEN precoMaisBaixo IN ('planilha','sinapi','igual') THEN totalOrigem END) AS totalPlanilhaComparado,
+                SUM(CASE WHEN precoMaisBaixo IN ('planilha','sinapi','igual') THEN totalSinapi END) AS totalSinapiComparado
             FROM ia_compara_itens WHERE jobId = ?";
     $stmt = $pdo->prepare($sql);
     $stmt->execute([$jobId]);
@@ -10532,6 +10616,8 @@ function ia_compara_resumo(PDO $pdo, string $jobId): array
         'comparados' => (int) ($r['comparados'] ?? 0),
         'economiaTotal' => round((float) ($r['economiaTotal'] ?? 0), 2),
         'excessoTotal' => round((float) ($r['excessoTotal'] ?? 0), 2),
+        'totalPlanilhaComparado' => round((float) ($r['totalPlanilhaComparado'] ?? 0), 2),
+        'totalSinapiComparado' => round((float) ($r['totalSinapiComparado'] ?? 0), 2),
     ];
 }
 
@@ -10548,7 +10634,8 @@ function handle_ia_compara_items(PDO $pdo): never
     $sql = 'SELECT id, linhaPlanilha, descricaoOrigem, codigoOrigem, unidadeOrigem, quantidadeOrigem, valorUnitOrigem,
                    setor, categoria, tipoOrigem, materialUnit, maoObraUnit, custoDiretoUnit, bdiPercent,
                    statusClassificacao, matchOrigem, matchId, matchCode, matchDescription, matchUnit, matchValor,
-                   similaridade, precoMaisBaixo, diferencaValor, diferencaPercent, aceito
+                   similaridade, precoMaisBaixo, diferencaValor, diferencaPercent,
+                   totalOrigem, totalSinapi, diferencaTotal, aceito
             FROM ia_compara_itens WHERE jobId = ?';
     $params = [$jobId];
     if (in_array($filtro, ['achou', 'faltou_importar', 'divergente', 'cotacao_propria'], true)) {
@@ -10590,6 +10677,9 @@ function handle_ia_compara_items(PDO $pdo): never
             'precoMaisBaixo' => $r['precoMaisBaixo'],
             'diferencaValor' => $r['diferencaValor'] !== null ? (float) $r['diferencaValor'] : null,
             'diferencaPercent' => $r['diferencaPercent'] !== null ? (float) $r['diferencaPercent'] : null,
+            'totalOrigem' => $r['totalOrigem'] !== null ? (float) $r['totalOrigem'] : null,
+            'totalSinapi' => $r['totalSinapi'] !== null ? (float) $r['totalSinapi'] : null,
+            'diferencaTotal' => $r['diferencaTotal'] !== null ? (float) $r['diferencaTotal'] : null,
             'aceito' => (int) $r['aceito'],
         ];
     }
@@ -10613,10 +10703,12 @@ function ia_compara_setores(PDO $pdo, string $jobId): array
     return $out;
 }
 
-// Aceita (confirma) ou desmarca um item da análise.
+// Aceita (confirma) ou desmarca um item da análise; com {jobId, modo} age no LOTE
+// inteiro: 'todos' marca tudo, 'achou' deixa aceitos SÓ os ACHOU, 'nenhum' desmarca.
 function handle_ia_compara_accept(PDO $pdo, array $payload, array $authUser): never
 {
     ensure_ia_compara_tables($pdo);
+    ia_accept_bulk($pdo, 'ia_compara_itens', $payload);
     $itemId = (int) ($payload['itemId'] ?? $payload['id'] ?? 0);
     if ($itemId <= 0) {
         sinapi_module_respond(false, [], 'Informe o item.', 400);
@@ -10671,8 +10763,9 @@ function handle_ia_compara_export(PDO $pdo): never
     $sheet->setCellValue('A' . $row, sprintf('Economia estimada R$ %s · Excesso estimado R$ %s', number_format($resumo['economiaTotal'], 2, ',', '.'), number_format($resumo['excessoTotal'], 2, ',', '.'))); $row += 2;
 
     $headers = ['Setor', 'Categoria', 'Tipo (origem)', 'Linha', 'Descrição (planilha)', 'Cód. origem', 'Unid', 'Qtd', 'Valor unit. planilha', 'Material unit.', 'M.O. unit.',
-        'Situação', 'Match', 'Código SINAPI', 'Descrição SINAPI', 'Unid SINAPI', 'Valor SINAPI',
-        'Similaridade %', 'Preço mais baixo', 'Diferença R$', 'Diferença %', 'Aceito'];
+        'Situação', 'Match', 'Código SINAPI', 'Descrição SINAPI', 'Unid SINAPI', 'Valor unit. SINAPI',
+        'Similaridade %', 'Preço mais baixo', 'Dif. unit. R$', 'Dif. unit. %',
+        'Total planilha', 'Total SINAPI', 'Dif. total R$', 'Aceito'];
     $cols = [];
     $c = 'A';
     foreach ($headers as $h) { $cols[] = $c; $c++; }
@@ -10702,6 +10795,9 @@ function handle_ia_compara_export(PDO $pdo): never
             $precoLabels[$r['precoMaisBaixo']] ?? '',
             $r['diferencaValor'] !== null ? (float) $r['diferencaValor'] : '',
             $r['diferencaPercent'] !== null ? (float) $r['diferencaPercent'] : '',
+            $r['totalOrigem'] !== null ? (float) $r['totalOrigem'] : '',
+            $r['totalSinapi'] !== null ? (float) $r['totalSinapi'] : '',
+            $r['diferencaTotal'] !== null ? (float) $r['diferencaTotal'] : '',
             !empty($r['aceito']) ? 'Sim' : '',
         ];
         foreach ($vals as $i => $v) { $sheet->setCellValue($cols[$i] . $row, $v); }

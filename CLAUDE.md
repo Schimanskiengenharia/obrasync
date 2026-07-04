@@ -4,7 +4,9 @@
 >
 > **Visão futura** — Cronograma Físico-Financeiro completo (EAP, dependências MS Project, medição, baseline, risco, curvas S): [`docs/specs/cronograma-fisico-financeiro.md`](docs/specs/cronograma-fisico-financeiro.md). Não iniciar antes de fechar os graves da revisão.
 >
-> **Versão atual:** `v1.26.1` · 2026-07-04
+> **Versão atual:** `v1.26.2` · 2026-07-04
+>
+> **Sessão 04/07/2026 — comparador IA (totais + aceite em lote):** colunas novas `ia_compara_itens.totalOrigem/totalSinapi/diferencaTotal` (migration `2026-07-04-ia-compara-totais.sql` + `ensure_ia_compara_tables`); cálculo de preço centralizado na função PURA `ia_compara_calcula_precos()` (api/index.php — unitário E total, worker usa ela). `ia_compara_resumo` soma diferença por TOTAL (fallback `diferencaValor×quantidade` p/ lotes antigos; "Reanalisar" preenche). Aceite em LOTE via payload `{jobId, modo: todos|achou|nenhum}` no `comparaAceitar`/`deparaAceitar` (`ia_accept_bulk`); botões nas duas telas. A detecção de coluna por chave exata (v1.25.1) NÃO mudou.
 >
 > **Sessão 04/07/2026 — timezone (M10/M11/M12):** front alinhado ao fuso LOCAL. `asDate()` formata data pura (YYYY-MM-DD) pela string (nunca desloca o dia); helper `hojeLocal()` (= `localDateString(new Date())`) substituiu `new Date().toISOString().slice(0,10)` em TODAS as comparações com datas do banco e defaults gravados (isOverdue, prazos NC via `qHoje()`, cotações vencendo — `parseLocalDate`+`startOfLocalDay`); `currentMonthKey()` em local. Nomes de arquivo de export mantiveram toISOString (cosmético). Ao criar código novo: **nunca** use `toISOString()` para "hoje"/data de negócio — use `hojeLocal()`/`localDateString`.
 >
