@@ -9725,7 +9725,9 @@ function handle_ia_depara_upload(PDO $pdo, array $config, array $authUser): neve
             $sheetsData = [$sheetName => cotacao_parse_csv($path)];
         } else {
             sinapi_require_phpspreadsheet();
-            $sheetsData = read_xlsx_sheets($path); // [tituloDaAba => linhas]
+            // calculateFormulas: orçamentos reais têm colunas de FÓRMULA (=J+K no
+            // Custo Direto) — sem calcular, a fórmula vira texto e o número sai lixo.
+            $sheetsData = read_xlsx_sheets($path, null, true); // [tituloDaAba => linhas]
         }
     } catch (Throwable $error) {
         @unlink($path);
@@ -9983,6 +9985,23 @@ function ia_depara_detect_columns(array $rows): array
 // colunas detectadas. NÃO inventa: coluna ausente → null. Define também o valor
 // unitário EFETIVO pela prioridade: Custo Direto Unit. > (Material + M.O.) > valor
 // genérico — usado na comparação de preço. 'fonteValor' documenta qual foi usada.
+// O custo direto lido é confiável como valor UNITÁRIO? Sem material/M.O. na planilha
+// não há com o que comparar — aceita (ex.: estrutura carport a 49.000 é legítima).
+// Com material e/ou M.O. presentes, um custo direto ordens de grandeza acima da soma
+// parcial deles é lixo de fórmula mal lida (ex.: "=J93+K93" → 9393 contra 48,33+4,56)
+// e é descartado — o chamador cai para material+M.O.
+function ia_custo_direto_plausivel(?float $custoDireto, ?float $material, ?float $maoObra): bool
+{
+    if ($custoDireto === null) {
+        return false;
+    }
+    $parcial = (float) $material + (float) $maoObra;
+    if ($parcial <= 0) {
+        return true;
+    }
+    return $custoDireto <= $parcial * 100;
+}
+
 function ia_planilha_ler_ricos(array $cols, array $r): array
 {
     $txt = static function (string $k) use ($cols, $r): ?string {
@@ -9999,9 +10018,19 @@ function ia_planilha_ler_ricos(array $cols, array $r): array
     $maoObra = $num('maoobra');
     $custoDireto = $num('custodireto');
     $valorGen = $num('valor');
+    // REDE DE SEGURANÇA da escolha do unitário: quando material E M.O. existem, o
+    // custo direto confiável é a SOMA deles (é a definição de custo direto, e vem
+    // de células de VALOR); a coluna "Custo Direto" costuma ser FÓRMULA (=J+K) e,
+    // mal lida, virava lixo tipo 9393 (dígitos dos números de linha). Nesse caso a
+    // soma também sobrescreve custoDiretoUnit (coerência do que fica no banco).
+    // Custo direto isolado só entra quando plausível frente ao material/M.O. parcial.
     $valorEfetivo = null;
     $fonte = null;
-    if ($custoDireto !== null) {
+    if ($material !== null && $maoObra !== null) {
+        $valorEfetivo = round($material + $maoObra, 4);
+        $custoDireto = $valorEfetivo;
+        $fonte = 'material_mo';
+    } elseif (ia_custo_direto_plausivel($custoDireto, $material, $maoObra)) {
         $valorEfetivo = $custoDireto;
         $fonte = 'custo_direto';
     } elseif ($material !== null || $maoObra !== null) {
@@ -10398,7 +10427,8 @@ function handle_ia_compara_upload(PDO $pdo, array $config, array $authUser): nev
             $rows = cotacao_parse_csv($path);
         } else {
             sinapi_require_phpspreadsheet();
-            $sheets = read_xlsx_sheets($path);
+            // calculateFormulas: idem deparaUpload — fórmulas viram valor calculado.
+            $sheets = read_xlsx_sheets($path, null, true);
             $rows = $sheets ? (array) reset($sheets) : [];
         }
     } catch (Throwable $error) {
@@ -12127,7 +12157,7 @@ function read_csv_matrix(string $path): array
 //                      spreadsheet entre os blocos, para o pico de memória do
 //                      PhpSpreadsheet não acompanhar o tamanho do arquivo (a
 //                      Referência ~13 MB estourava o memory_limit de 512 MB).
-function read_xlsx_sheets(string $path, ?int $maxRows = null): array
+function read_xlsx_sheets(string $path, ?int $maxRows = null, bool $calculateFormulas = false): array
 {
     sinapi_require_phpspreadsheet();
     try {
@@ -12150,21 +12180,21 @@ function read_xlsx_sheets(string $path, ?int $maxRows = null): array
         }
         $sheets = [];
         foreach ($spreadsheet->getWorksheetIterator() as $sheet) {
-            $sheets[$sheet->getTitle()] = sinapi_rows_from_sheet($sheet);
+            $sheets[$sheet->getTitle()] = sinapi_rows_from_sheet($sheet, $calculateFormulas);
         }
         $spreadsheet->disconnectWorksheets();
         unset($spreadsheet);
         return $sheets;
     }
 
-    return read_xlsx_sheets_chunked($reader, $path);
+    return read_xlsx_sheets_chunked($reader, $path, $calculateFormulas);
 }
 
 // Importação real: lê aba por aba, em blocos de SINAPI_IMPORT_CHUNK_ROWS linhas,
 // extraindo cada bloco para arrays simples e liberando a memória do PhpSpreadsheet
 // (disconnectWorksheets + unset) antes do próximo. O contrato de retorno é idêntico
 // ao read completo anterior — só o pico de memória muda.
-function read_xlsx_sheets_chunked($reader, string $path): array
+function read_xlsx_sheets_chunked($reader, string $path, bool $calculateFormulas = false): array
 {
     $sheets = [];
     foreach ($reader->listWorksheetInfo($path) as $meta) {
@@ -12175,7 +12205,7 @@ function read_xlsx_sheets_chunked($reader, string $path): array
         for ($start = 1; $start <= $totalRows; $start += SINAPI_IMPORT_CHUNK_ROWS) {
             $reader->setReadFilter(sinapi_xlsx_row_filter($start, $start + SINAPI_IMPORT_CHUNK_ROWS - 1));
             $spreadsheet = $reader->load($path);
-            foreach (sinapi_rows_from_sheet($spreadsheet->getActiveSheet()) as $row) {
+            foreach (sinapi_rows_from_sheet($spreadsheet->getActiveSheet(), $calculateFormulas) as $row) {
                 $rows[] = $row;
             }
             $spreadsheet->disconnectWorksheets();
@@ -12188,11 +12218,51 @@ function read_xlsx_sheets_chunked($reader, string $path): array
 }
 
 // Extrai as linhas não vazias de uma aba já carregada para um array simples.
-function sinapi_rows_from_sheet($sheet): array
+//   $calculateFormulas = true (uploads do comparador/de-para da IA): célula com
+//   FÓRMULA devolve o valor CALCULADO — sem isso "=J93+K93" (a coluna Custo Direto
+//   da planilha AltoQi é fórmula) chegava como TEXTO e o parser numérico extraía
+//   os dígitos dos números de linha ("9393"). Fallback POR CÉLULA: cálculo falhou →
+//   valor cacheado gravado pelo Excel → valor bruto (uma fórmula problemática nunca
+//   derruba a leitura inteira). O caminho SINAPI (arquivos oficiais gigantes, sem
+//   fórmulas) segue no toArray sem cálculo — zero custo extra.
+function sinapi_rows_from_sheet($sheet, bool $calculateFormulas = false): array
 {
     $rows = [];
-    foreach ($sheet->toArray('', false, false, false) as $row) {
-        $values = array_map(static fn ($value) => trim(str_replace(["\r", "\n"], ' ', (string) $value)), $row);
+    if (!$calculateFormulas) {
+        foreach ($sheet->toArray('', false, false, false) as $row) {
+            $values = array_map(static fn ($value) => trim(str_replace(["\r", "\n"], ' ', (string) $value)), $row);
+            if (array_filter($values, static fn ($value) => $value !== '')) {
+                $rows[] = $values;
+            }
+        }
+        return $rows;
+    }
+    $highestRow = (int) $sheet->getHighestRow();
+    $highestCol = 0;
+    foreach (str_split(strtoupper((string) $sheet->getHighestColumn())) as $ch) {
+        $highestCol = $highestCol * 26 + (ord($ch) - 64);
+    }
+    for ($rowIdx = 1; $rowIdx <= $highestRow; $rowIdx++) {
+        $values = [];
+        for ($colIdx = 1; $colIdx <= $highestCol; $colIdx++) {
+            // índice → letra (1=A, 27=AA) sem depender da classe Coordinate
+            $letters = '';
+            $n = $colIdx;
+            while ($n > 0) {
+                $letters = chr(65 + (($n - 1) % 26)) . $letters;
+                $n = intdiv($n - 1, 26);
+            }
+            $cell = $sheet->getCell($letters . $rowIdx);
+            try {
+                $value = $cell->getCalculatedValue();
+            } catch (Throwable $ignored) {
+                $value = $cell->getOldCalculatedValue();
+                if ($value === null || $value === '') {
+                    $value = $cell->getValue();
+                }
+            }
+            $values[] = trim(str_replace(["\r", "\n"], ' ', (string) $value));
+        }
         if (array_filter($values, static fn ($value) => $value !== '')) {
             $rows[] = $values;
         }

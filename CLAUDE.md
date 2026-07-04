@@ -4,7 +4,9 @@
 >
 > **Visão futura** — Cronograma Físico-Financeiro completo (EAP, dependências MS Project, medição, baseline, risco, curvas S): [`docs/specs/cronograma-fisico-financeiro.md`](docs/specs/cronograma-fisico-financeiro.md). Não iniciar antes de fechar os graves da revisão.
 >
-> **Versão atual:** `v1.26.2` · 2026-07-04
+> **Versão atual:** `v1.26.3` · 2026-07-04
+>
+> **v1.26.3 — fórmulas do Excel (bug raiz do 9393):** `sinapi_rows_from_sheet($sheet, $calculateFormulas)` — uploads da IA (depara/compara) leem com `getCalculatedValue()` + fallback POR CÉLULA (`getOldCalculatedValue()` → `getValue()`); caminho SINAPI segue `toArray(..., false, ...)` sem custo. `ia_planilha_ler_ricos`: material+M.O. presentes → valorEfetivo E custoDiretoUnit = soma (SEMPRE); custoDireto isolado só se `ia_custo_direto_plausivel()` (≤100× a soma parcial). Lotes antigos com 9393/9292 exigem novo upload ou Reanalisar.
 >
 > **Sessão 04/07/2026 — comparador IA (totais + aceite em lote):** colunas novas `ia_compara_itens.totalOrigem/totalSinapi/diferencaTotal` (migration `2026-07-04-ia-compara-totais.sql` + `ensure_ia_compara_tables`); cálculo de preço centralizado na função PURA `ia_compara_calcula_precos()` (api/index.php — unitário E total, worker usa ela). `ia_compara_resumo` soma diferença por TOTAL (fallback `diferencaValor×quantidade` p/ lotes antigos; "Reanalisar" preenche). Aceite em LOTE via payload `{jobId, modo: todos|achou|nenhum}` no `comparaAceitar`/`deparaAceitar` (`ia_accept_bulk`); botões nas duas telas. A detecção de coluna por chave exata (v1.25.1) NÃO mudou.
 >
