@@ -4,6 +4,8 @@
 >
 > **Visão futura** — Cronograma Físico-Financeiro completo (EAP, dependências MS Project, medição, baseline, risco, curvas S): [`docs/specs/cronograma-fisico-financeiro.md`](docs/specs/cronograma-fisico-financeiro.md). Não iniciar antes de fechar os graves da revisão.
 >
+> **Mapa de arquitetura (estado atual 04/07/2026)** — módulos e conexões: eixo central já ligado (SINAPI→comparador IA→orçamento→proposta→contrato→financeiro), pontas soltas (cotações/comparador de fornecedores/pedido de compra) e pendências para retomar: [`docs/arquitetura/mapa-modulos-conexoes.md`](docs/arquitetura/mapa-modulos-conexoes.md).
+>
 > **Versão atual:** `v1.26.3` · 2026-07-04
 >
 > **v1.26.3 — fórmulas do Excel (bug raiz do 9393):** `sinapi_rows_from_sheet($sheet, $calculateFormulas)` — uploads da IA (depara/compara) leem com `getCalculatedValue()` + fallback POR CÉLULA (`getOldCalculatedValue()` → `getValue()`); caminho SINAPI segue `toArray(..., false, ...)` sem custo. `ia_planilha_ler_ricos`: material+M.O. presentes → valorEfetivo E custoDiretoUnit = soma (SEMPRE); custoDireto isolado só se `ia_custo_direto_plausivel()` (≤100× a soma parcial). Lotes antigos com 9393/9292 exigem novo upload ou Reanalisar.
