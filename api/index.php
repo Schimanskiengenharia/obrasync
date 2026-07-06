@@ -682,26 +682,77 @@ try {
                 ? mb_substr((string) $proposal['description'], 0, 180)
                 : 'Projeto - Proposta ' . $proposal['number'];
 
-            $stmt = $pdo->prepare(
-                'INSERT INTO projects (name, clientId, status, revenueContracted, commercialUserId, notes)
-                 VALUES (?, ?, ?, ?, ?, ?)'
-            );
-            $stmt->execute([
-                $projectName,
-                $proposal['clientId'] ?: null,
-                'Planejamento',
-                $proposal['amount'],
-                $proposal['commercialUserId'] ?: null,
-                'Criado automaticamente a partir da proposta ' . $proposal['number'],
-            ]);
-            $projectId = (int) $pdo->lastInsertId();
-            ensure_project_kanban_boards($pdo, $projectId, $projectName);
-
-            if (empty($proposal['projectId'])) {
+            // F4a-1: REUSA a obra quando a proposta já está vinculada a uma
+            // (proposal.projectId) — antes sempre criava obra + orçamento novos,
+            // duplicando o caso normal (proposta gerada de orçamento que já tem
+            // obra). Cria obra nova só quando não há nenhuma válida (sem vínculo,
+            // ou a obra vinculada foi arquivada).
+            $projectId = (int) ($proposal['projectId'] ?? 0);
+            $obraReusada = false;
+            if ($projectId > 0) {
+                $pchk = $pdo->prepare('SELECT id, name, status, revenueContracted FROM projects WHERE id = ? AND deletedAt IS NULL LIMIT 1');
+                $pchk->execute([$projectId]);
+                $projRow = $pchk->fetch();
+                if ($projRow) {
+                    $obraReusada = true;
+                    $projectName = (string) $projRow['name'];
+                    // Herança NÃO destrutiva na obra existente: receita contratada
+                    // só quando ainda vazia; 'Planejamento' promove para
+                    // 'Em andamento' (F4a-3: status que o dashboard de execução
+                    // exibe) — os demais status são preservados.
+                    $sets = [];
+                    $vals = [];
+                    if ((float) ($projRow['revenueContracted'] ?? 0) <= 0 && (float) $proposal['amount'] > 0) {
+                        $sets[] = 'revenueContracted = ?';
+                        $vals[] = $proposal['amount'];
+                    }
+                    if ((string) $projRow['status'] === 'Planejamento') {
+                        $sets[] = 'status = ?';
+                        $vals[] = 'Em andamento';
+                    }
+                    if ($sets) {
+                        $vals[] = $projectId;
+                        $pdo->prepare('UPDATE projects SET ' . implode(', ', $sets) . ' WHERE id = ?')->execute($vals);
+                    }
+                } else {
+                    $projectId = 0;
+                }
+            }
+            if ($projectId <= 0) {
+                // F4a-3: a obra nasce 'Em andamento' (antes 'Planejamento', que o
+                // dashboard de execução não exibe — o previsto sumia até troca manual).
+                $stmt = $pdo->prepare(
+                    'INSERT INTO projects (name, clientId, status, revenueContracted, commercialUserId, notes)
+                     VALUES (?, ?, ?, ?, ?, ?)'
+                );
+                $stmt->execute([
+                    $projectName,
+                    $proposal['clientId'] ?: null,
+                    'Em andamento',
+                    $proposal['amount'],
+                    $proposal['commercialUserId'] ?: null,
+                    'Criado automaticamente a partir da proposta ' . $proposal['number'],
+                ]);
+                $projectId = (int) $pdo->lastInsertId();
+                ensure_project_kanban_boards($pdo, $projectId, $projectName);
+                // Re-vincula sempre: cobre proposta sem projeto E proposta cujo
+                // projeto vinculado foi arquivado (aponta para a obra nova).
                 $pdo->prepare('UPDATE commercial_proposals SET projectId = ? WHERE id = ?')
                     ->execute([$projectId, (int) $id]);
             }
 
+            // Versão única no projeto (uk projectId,name,version): reaprovar outra
+            // proposta na MESMA obra reusada não pode colidir com o orçamento anterior.
+            $budgetName = 'Orçamento - ' . mb_substr($projectName, 0, 160);
+            $version = '1';
+            $vchk = $pdo->prepare('SELECT 1 FROM orcamentos_obras WHERE projectId = ? AND name = ? AND version = ? LIMIT 1');
+            for ($vn = 1; $vn <= 200; $vn++) {
+                $version = (string) $vn;
+                $vchk->execute([$projectId, $budgetName, $version]);
+                if (!$vchk->fetchColumn()) {
+                    break;
+                }
+            }
             $stmt = $pdo->prepare(
                 'INSERT INTO orcamentos_obras (projectId, clientId, name, version, budgetDate, status, totalPrice, notes)
                  VALUES (?, ?, ?, ?, CURDATE(), ?, ?, ?)'
@@ -709,8 +760,8 @@ try {
             $stmt->execute([
                 $projectId,
                 $proposal['clientId'] ?: null,
-                'Orçamento - ' . mb_substr($projectName, 0, 160),
-                '1',
+                $budgetName,
+                $version,
                 'Aprovado',
                 $proposal['amount'],
                 'Gerado automaticamente da proposta ' . $proposal['number'],
@@ -725,10 +776,20 @@ try {
                 $insertItem = $pdo->prepare(
                     'INSERT INTO orcamento_obra_itens
                         (workBudgetId, projectId, origin, code, description, unit, quantity,
-                         unitCost, totalCost, unitPrice, totalPrice, stageName)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                         unitCost, totalCost, bdiPercent, unitPrice, totalPrice, stageName)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
                 );
+                $somaCusto = 0.0;
                 foreach ($items as $item) {
+                    // F4a-2: unitCost recebe o CUSTO REAL (custo_unitario salvo na
+                    // proposta); o preço de venda fica em unitPrice/totalPrice.
+                    // Antes o custo recebia o preço → previsto de custo com margem
+                    // zero. Propostas antigas sem custo salvo caem no preço (como era).
+                    $qtd = (float) ($item['quantity'] ?? 0);
+                    $custoUnit = (($item['custo_unitario'] ?? null) !== null && (float) $item['custo_unitario'] > 0)
+                        ? (float) $item['custo_unitario']
+                        : (float) ($item['unitPrice'] ?? 0);
+                    $totalCusto = round($qtd * $custoUnit, 2);
                     $insertItem->execute([
                         $workBudgetId,
                         $projectId,
@@ -737,13 +798,19 @@ try {
                         $item['description'],
                         $item['unit'] ?? null,
                         $item['quantity'],
-                        $item['unitPrice'],
-                        $item['totalPrice'],
+                        $custoUnit,
+                        $totalCusto,
+                        ($item['bdi_item'] ?? null) !== null ? (float) $item['bdi_item'] : 0,
                         $item['unitPrice'],
                         $item['totalPrice'],
                         $item['groupName'] ?? null,
                     ]);
+                    $somaCusto += $totalCusto;
                 }
+                // Cabeçalho coerente com os itens (espelha normalizeWorkBudget):
+                // custo = soma dos custos; totalPrice já veio do amount da proposta.
+                $pdo->prepare('UPDATE orcamentos_obras SET directCost = ?, totalCost = ? WHERE id = ?')
+                    ->execute([round($somaCusto, 2), round($somaCusto, 2), $workBudgetId]);
             }
 
             $pdo->prepare(
@@ -755,9 +822,9 @@ try {
 
             $pdo->commit();
 
-            server_audit($pdo, $authUser, 'update', $key, $id, 'Proposta aprovada — obra e orçamento gerados');
+            server_audit($pdo, $authUser, 'update', $key, $id, 'Proposta aprovada — obra ' . ($obraReusada ? 'reutilizada (#' . $projectId . ')' : 'criada') . ' e orçamento gerado');
             $updatedRecord = get_record($pdo, $resources[$key], (int) $id);
-            respond(['ok' => true, 'record' => $updatedRecord, 'projectId' => $projectId, 'workBudgetId' => $workBudgetId]);
+            respond(['ok' => true, 'record' => $updatedRecord, 'projectId' => $projectId, 'workBudgetId' => $workBudgetId, 'obraReusada' => $obraReusada]);
 
         } catch (Throwable $e) {
             if ($pdo->inTransaction()) {
