@@ -2787,11 +2787,21 @@ function ensure_cotacao_import_tables(PDO $pdo): void
             prazo_entrega VARCHAR(100) NULL,
             observacao VARCHAR(300) NULL,
             orcamento_item_id BIGINT UNSIGNED NULL,
-            diferenca_percentual DECIMAL(8,2) NULL,
+            diferenca_percentual DECIMAL(12,2) NULL,
             status_comparacao ENUM('nao_comparado','abaixo','igual','acima','muito_acima') DEFAULT 'nao_comparado',
             INDEX idx_cotacao (cotacao_id),
             INDEX idx_orcamento_item (orcamento_item_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        // F4b: alarga diferenca_percentual (8,2)→(12,2) em instalações antigas —
+        // mesmo overflow SQLSTATE[22003] já corrigido no comparador IA. Só quando
+        // ainda estreita (via INFORMATION_SCHEMA) para não rebuildar a cada request.
+        try {
+            $col = $pdo->query("SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cotacao_itens' AND COLUMN_NAME = 'diferenca_percentual'")->fetchColumn();
+            if ($col && stripos((string) $col, 'decimal(12,2)') === false) {
+                $pdo->exec('ALTER TABLE cotacao_itens MODIFY diferenca_percentual DECIMAL(12,2) NULL');
+            }
+        } catch (Throwable $ignored) {
+        }
         $done = true;
     } catch (Throwable $error) {
         error_log('[ObraSync] ensure_cotacao_import_tables: ' . $error->getMessage());
@@ -3591,7 +3601,7 @@ function handle_cotacoes_module(PDO $pdo, string $method, array $query, array $c
             $obraId = (int) ($payload['obra_id'] ?? $cot['obra_id'] ?? 0);
             $orc = [];
             if ($obraId && resolve_existing_table($pdo, ['orcamento_obra_itens'], false)) {
-                $stmt = $pdo->prepare('SELECT id, description, unitPrice FROM orcamento_obra_itens WHERE projectId = ?');
+                $stmt = $pdo->prepare('SELECT id, description, unitCost FROM orcamento_obra_itens WHERE projectId = ?');
                 $stmt->execute([$obraId]);
                 $orc = $stmt->fetchAll();
             }
@@ -3608,10 +3618,15 @@ function handle_cotacoes_module(PDO $pdo, string $method, array $query, array $c
                         $best = $o;
                     }
                 }
-                if ($best && $bestSim >= 0.4 && (float) $best['unitPrice'] > 0 && $item['valor_unitario'] !== null) {
-                    $diff = ((float) $item['valor_unitario'] - (float) $best['unitPrice']) / (float) $best['unitPrice'] * 100;
+                // F4b: compara o cotado contra o CUSTO orçado (unitCost, sem BDI) —
+                // antes comparava contra unitPrice (venda com BDI), distorcendo a
+                // leitura. Clamp reusa os limites do comparador IA (evita o 22003
+                // quando o custo orçado é ínfimo).
+                if ($best && $bestSim >= 0.4 && (float) $best['unitCost'] > 0 && $item['valor_unitario'] !== null) {
+                    $diff = ((float) $item['valor_unitario'] - (float) $best['unitCost']) / (float) $best['unitCost'] * 100;
+                    $diff = max(-IA_COMPARA_DIFPERCENT_MAX, min(IA_COMPARA_DIFPERCENT_MAX, round($diff, 2)));
                     $classe = cotacao_classificar($diff);
-                    $upd->execute([(int) $best['id'], round($diff, 2), $classe, (int) $item['id']]);
+                    $upd->execute([(int) $best['id'], $diff, $classe, (int) $item['id']]);
                     $comparaveis++;
                     if (in_array($classe, ['abaixo', 'igual'], true)) {
                         $okCount++;
@@ -3636,10 +3651,11 @@ function handle_cotacoes_module(PDO $pdo, string $method, array $query, array $c
             $ids = array_filter(array_map(fn ($i) => (int) ($i['orcamento_item_id'] ?? 0), $cot['itens']));
             if ($ids) {
                 $in = implode(',', array_fill(0, count($ids), '?'));
-                $stmt = $pdo->prepare("SELECT id, unitPrice FROM orcamento_obra_itens WHERE id IN ($in)");
+                // F4b: o "Valor Orçado" do export é o CUSTO (unitCost), coerente com a comparação.
+                $stmt = $pdo->prepare("SELECT id, unitCost FROM orcamento_obra_itens WHERE id IN ($in)");
                 $stmt->execute(array_values($ids));
                 foreach ($stmt->fetchAll() as $o) {
-                    $orcPreco[(int) $o['id']] = (float) $o['unitPrice'];
+                    $orcPreco[(int) $o['id']] = (float) $o['unitCost'];
                 }
             }
             header_remove('Content-Type');
@@ -3660,6 +3676,29 @@ function handle_cotacoes_module(PDO $pdo, string $method, array $query, array $c
                 ], ';');
             }
             fclose($out);
+            exit;
+        }
+
+        if ($action === 'anexo') {
+            require_method($method, ['GET']);
+            $cot = cotacao_get_full($pdo, (int) ($query['id'] ?? 0));
+            if (!$cot || empty($cot['arquivo_original'])) {
+                fail('Cotação sem anexo.', 404);
+            }
+            // Proteção path-traversal: só serve arquivo dentro da pasta de cotações.
+            $base = realpath(rtrim($config['upload_dir'] ?? '/var/lib/financeiro/uploads', '/') . '/cotacoes');
+            $real = realpath((string) $cot['arquivo_original']);
+            if (!$base || !$real || strncmp($real, $base, strlen($base)) !== 0 || !is_file($real)) {
+                fail('Anexo não encontrado no servidor.', 404);
+            }
+            $tipos = ['pdf' => 'application/pdf', 'xlsx' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'xls' => 'application/vnd.ms-excel', 'csv' => 'text/csv'];
+            $ext = strtolower((string) (($cot['arquivo_tipo'] ?? '') ?: pathinfo($real, PATHINFO_EXTENSION)));
+            while (ob_get_level() > 0) { ob_end_clean(); }
+            header_remove('Content-Type');
+            header('Content-Type: ' . ($tipos[$ext] ?? 'application/octet-stream'));
+            header('Content-Disposition: attachment; filename="' . preg_replace('/[^\w. ()-]+/u', '_', (string) (($cot['arquivo_nome'] ?? '') ?: 'cotacao.' . $ext)) . '"');
+            header('Content-Length: ' . (string) filesize($real));
+            readfile($real);
             exit;
         }
 

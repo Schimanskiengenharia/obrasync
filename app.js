@@ -19,9 +19,10 @@ if (APP_ENV === "production" && location.protocol === "http:") {
   location.replace(location.href.replace(/^http:/, "https:"));
 }
 const APP_NAME = "ObraSync";
-const APP_VERSION = "v1.27.0";
+const APP_VERSION = "v1.27.1";
 const APP_VERSION_DATE = "2026-07-06";
 const APP_CHANGELOG = [
+  "Cotações (importação) — 4 correções: o fornecedor agora é escolhido do CADASTRO (gravando o vínculo fornecedor_id, com \"+ Cadastrar novo fornecedor\" na hora); a comparação com o orçamento compara custo × CUSTO orçado (sem BDI) e não estoura mais com custo ínfimo (coluna alargada + trava, o mesmo fix do comparador IA); o campo \"Pedido de compra\" saiu do fluxo de cotação (cotação é só cotação — o pedido vem depois); e o arquivo importado (PDF/Excel/CSV) ganhou botão de download na tela da cotação (v1.27.1).",
   "Proposta multi-disciplina completa (F3): cada orçamento vinculado à proposta ganhou um campo \"Descrição da disciplina\" no gerador (o escopo daquela parte, ex.: cozinha e energia solar separados). O documento da proposta agora traz uma seção por disciplina — título, descrição detalhada e valor — acima do quadro de investimento, que segue com o total. O contrato gerado da proposta acompanha: o objeto (cláusula 1ª) lista cada disciplina com valor e descrição, e a cláusula 5ª mostra a composição do valor por disciplina. Modelos de proposta salvos preservam as descrições (v1.27.0).",
   "Comparador/De-para IA: títulos de seção (ex.: QUADROS DE DISTRIBUIÇÃO) e linhas de Subtotal/Total da planilha deixam de ser tratados como itens — aparecem como separadores visuais nas telas, não gastam classificação da IA e NÃO viram itens no envio para o Orçamento de Obra (fim dos itens fantasma com quantidade 1 e custo 0). Bônus: quando a planilha não tem coluna Setor, o título da seção vira a etapa dos itens abaixo dele. Lotes antigos: o mesmo critério é reaplicado na hora do envio — reenviar um lote antigo também sai limpo (v1.26.5).",
   "Avisos do dashboard com cor por severidade: perda de dinheiro (contas vencidas, custo realizado acima do previsto, itens com estouro de quantidade) em VERMELHO; atenção operacional (cronograma atrasado, margem baixa, propostas com validade vencida, obras com término vencido) em AMARELO. Os cards \"Contas a pagar\" e \"Contas vencidas\" não mostram mais o valor em verde — valor maior que zero aparece em vermelho (dinheiro saindo/em risco não é coisa boa) (v1.26.4).",
@@ -6720,13 +6721,6 @@ function renderCrud(key) {
   qs("content").querySelectorAll("[data-contract-anexos]").forEach((button) => button.addEventListener("click", () => openContractAnexos(button.dataset.contractAnexos)));
   qs("content").querySelectorAll("[data-print-po]").forEach((button) => button.addEventListener("click", () => openPurchaseOrderPrint(button.dataset.printPo)));
   qs("content").querySelectorAll("[data-po-fvm]").forEach((button) => button.addEventListener("click", () => abrirFvmDoPedido(button.dataset.poFvm)));
-  qs("content").querySelectorAll("[data-po-cotacao]").forEach((button) => button.addEventListener("click", () => {
-    const po = byId("purchaseOrders", button.dataset.poCotacao);
-    currentModule = "cotacoes";
-    cotacaoOpenId = null;
-    render();
-    setTimeout(() => openCotacaoImport({ obra_id: po?.projectId || "", purchase_order_id: po?.id || "" }), 60);
-  }));
   qs("content").querySelectorAll("[data-supplier-qual]").forEach((button) => button.addEventListener("click", () => openSupplierQualificationForm(button.dataset.supplierQual)));
   qs("content").querySelectorAll("[data-generate-proposal]").forEach((button) => button.addEventListener("click", () => openProposalGenerator(button.dataset.generateProposal)));
   qs("content").querySelectorAll("[data-add-budget-item]").forEach((button) => button.addEventListener("click", () => {
@@ -6976,7 +6970,7 @@ function extraRowActions(actionKey, row) {
     return `${conta}<button class="secondary" type="button" data-contract-pdf="${row.id}">Contrato (PDF)</button><button class="secondary" type="button" data-contract-anexos="${row.id}">Anexos</button>`;
   }
   if (actionKey === "purchaseOrders") {
-    return `<button class="secondary" type="button" data-print-po="${row.id}">Imprimir / Gerar PDF</button><button class="secondary" type="button" data-po-fvm="${row.id}">Registrar recebimento (FVM)</button><button class="secondary" type="button" data-po-cotacao="${row.id}">Importar cotação</button>`;
+    return `<button class="secondary" type="button" data-print-po="${row.id}">Imprimir / Gerar PDF</button><button class="secondary" type="button" data-po-fvm="${row.id}">Registrar recebimento (FVM)</button>`;
   }
   if (actionKey === "suppliers") {
     return `<button class="secondary" type="button" data-supplier-qual="${row.id}">Qualificação PBQP-H</button>`;
@@ -12960,6 +12954,7 @@ function renderCotacaoDetalhe() {
         ${editable ? '<button class="primary" type="button" id="cotComparar">Comparar com orçamento</button>' : ""}
         <button class="secondary" type="button" id="cotCsv">Exportar CSV</button>
         <button class="secondary" type="button" id="cotPdf">Imprimir comparativo</button>
+        ${c.arquivo_nome ? `<button class="secondary" type="button" id="cotAnexo" title="Baixar o arquivo importado">⤓ Anexo (${escapeHtml(c.arquivo_nome)})</button>` : ""}
       </div>
     </section>
     ${itens.length
@@ -12970,22 +12965,42 @@ function renderCotacaoDetalhe() {
   qs("cotComparar")?.addEventListener("click", () => cotacaoComparar());
   qs("cotCsv").addEventListener("click", () => cotacaoExportarCsv(c.id));
   qs("cotPdf").addEventListener("click", () => cotacaoImprimir());
+  qs("cotAnexo")?.addEventListener("click", () => cotacaoBaixarAnexo(c.id, c.arquivo_nome));
+}
+
+// Download autenticado do arquivo importado da cotação (fica fora do docroot).
+async function cotacaoBaixarAnexo(id, nome) {
+  try {
+    const resp = await fetch(`${API_BASE}/?module=cotacoes&action=anexo&id=${encodeURIComponent(id)}`, { headers: authHeaders() });
+    if (!resp.ok) throw new Error(resp.status === 404 ? "Anexo não encontrado no servidor." : "Falha ao baixar o anexo.");
+    const url = URL.createObjectURL(await resp.blob());
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = nome || `cotacao-${id}`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (error) {
+    alert(error.message);
+  }
 }
 
 function openCotacaoImport(prefill = {}) {
   if (!canEditModule("cotacoes")) return;
   if (!serverMode) return alert("Requer conexão com o servidor.");
   const projOpts = ['<option value="">— Sem obra —</option>'].concat((db.projects || []).map((p) => `<option value="${escapeHtml(p.id)}" ${sameId(p.id, prefill.obra_id) ? "selected" : ""}>${escapeHtml(p.name)}</option>`)).join("");
-  const poOpts = ['<option value="">— Sem pedido —</option>'].concat((db.purchaseOrders || []).map((p) => `<option value="${escapeHtml(p.id)}" ${sameId(p.id, prefill.purchase_order_id) ? "selected" : ""}>${escapeHtml(p.number || p.id)}</option>`)).join("");
-  const supOpts = (db.suppliers || []).map((s) => `<option value="${escapeHtml(s.name)}">`).join("");
+  // F4b: fornecedor vem do CADASTRO (grava fornecedor_id), com cadastro rápido.
+  // Pedido de compra saiu deste fluxo — cotação é só cotação (o pedido vem depois).
+  const supOpts = ['<option value="">— Selecione o fornecedor —</option>']
+    .concat((db.suppliers || []).map((s) => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.name)}</option>`))
+    .concat(['<option value="__novo__">+ Cadastrar novo fornecedor…</option>'])
+    .join("");
   const { close, q } = viabilidadeDialog(`
     <div class="viab-modal">
       <header class="viab-modal-head"><h3>Importar cotação</h3><button type="button" class="viab-x" data-close>✕</button></header>
       <div class="viab-modal-body">
         <div class="form-grid">
           <label>Obra<select id="cotObra">${projOpts}</select></label>
-          <label>Pedido de compra (opcional)<select id="cotPedido">${poOpts}</select></label>
-          <label>Fornecedor<input id="cotForn" list="cotFornSug" placeholder="Nome do fornecedor"><datalist id="cotFornSug">${supOpts}</datalist></label>
+          <label>Fornecedor<select id="cotForn">${supOpts}</select></label>
           <label>Data da cotação<input type="date" id="cotData"></label>
           <label>Validade<input type="date" id="cotValidade"></label>
           <label>Arquivo (PDF, XLSX, XLS, CSV — máx 20MB)<input type="file" id="cotFile" accept=".pdf,.xlsx,.xls,.csv"></label>
@@ -12994,10 +13009,28 @@ function openCotacaoImport(prefill = {}) {
       </div>
       <footer class="viab-modal-foot"><button type="button" class="secondary" data-close>Cancelar</button><button type="button" class="primary" data-save>Importar</button></footer>
     </div>`, "viab-dialog-md");
+  q("#cotForn").addEventListener("change", async (e) => {
+    if (e.target.value !== "__novo__") return;
+    const nome = prompt("Nome do novo fornecedor:");
+    if (!nome || !nome.trim()) { e.target.value = ""; return; }
+    try {
+      const rec = await createIntegratedRecord("suppliers", { name: nome.trim(), status: "Ativo" });
+      const opt = document.createElement("option");
+      opt.value = String(rec.id);
+      opt.textContent = rec.name;
+      e.target.insertBefore(opt, e.target.querySelector('option[value="__novo__"]'));
+      e.target.value = String(rec.id);
+    } catch (err) {
+      e.target.value = "";
+      alert(`Não foi possível cadastrar o fornecedor: ${err.message}`);
+    }
+  });
   q("[data-save]").addEventListener("click", async () => {
     const file = q("#cotFile").files?.[0];
-    const forn = q("#cotForn").value.trim();
-    if (!forn) return alert("Informe o fornecedor.");
+    const fornSel = q("#cotForn");
+    const fornId = fornSel.value;
+    if (!fornId || fornId === "__novo__") return alert("Selecione o fornecedor do cadastro.");
+    const fornNome = (fornSel.options[fornSel.selectedIndex]?.textContent || "").trim();
     if (!file) return alert("Selecione um arquivo.");
     if (file.size > 20 * 1024 * 1024) return alert("Arquivo acima de 20 MB.");
     const btn = q("[data-save]");
@@ -13005,9 +13038,9 @@ function openCotacaoImport(prefill = {}) {
     try {
       const form = new FormData();
       form.append("file", file);
-      form.append("fornecedor_nome", forn);
+      form.append("fornecedor_id", fornId);
+      form.append("fornecedor_nome", fornNome);
       if (q("#cotObra").value) form.append("obra_id", q("#cotObra").value);
-      if (q("#cotPedido").value) form.append("purchase_order_id", q("#cotPedido").value);
       if (q("#cotData").value) form.append("data_cotacao", q("#cotData").value);
       if (q("#cotValidade").value) form.append("validade_cotacao", q("#cotValidade").value);
       const res = await fetchForm("?module=cotacoes&action=importar", form);
