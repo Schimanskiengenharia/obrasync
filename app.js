@@ -19,9 +19,10 @@ if (APP_ENV === "production" && location.protocol === "http:") {
   location.replace(location.href.replace(/^http:/, "https:"));
 }
 const APP_NAME = "ObraSync";
-const APP_VERSION = "v1.26.3";
-const APP_VERSION_DATE = "2026-07-04";
+const APP_VERSION = "v1.26.4";
+const APP_VERSION_DATE = "2026-07-06";
 const APP_CHANGELOG = [
+  "Avisos do dashboard com cor por severidade: perda de dinheiro (contas vencidas, custo realizado acima do previsto, itens com estouro de quantidade) em VERMELHO; atenção operacional (cronograma atrasado, margem baixa, propostas com validade vencida, obras com término vencido) em AMARELO. Os cards \"Contas a pagar\" e \"Contas vencidas\" não mostram mais o valor em verde — valor maior que zero aparece em vermelho (dinheiro saindo/em risco não é coisa boa) (v1.26.4).",
   "Correção RAIZ da leitura de planilha no comparador/de-para IA: células com FÓRMULA (ex.: a coluna Custo Direto Unit. = Material + M.O.) agora são lidas pelo valor CALCULADO — antes a fórmula \"=J93+K93\" chegava como texto e virava 9393 (números de linha), gerando unitários e excessos irreais. Fallback por célula (valor salvo pelo Excel → valor bruto) garante que uma fórmula problemática não derruba a leitura. Rede de segurança adicional: quando Material e M.O. existem, o custo direto usado (e gravado) é a SOMA deles; custo direto isolado só entra se plausível. Reprocesse os lotes afetados com novo upload ou Reanalisar (v1.26.3).",
   "Comparador IA — comparação por TOTAL e aceite em lote: cada item agora mostra Qtde, unitário planilha × SINAPI, diferença unitária (R$ e %), Total planilha (qtd × unitário), Total SINAPI e diferença total; o resumo de economia/excesso soma a diferença por TOTAL dos itens comparados (números realistas — nada de milhões irreais) e exibe o total planilha × total SINAPI dos comparados. O export Excel ganhou as colunas de total. Botões novos no comparador e no de-para: Aceitar todos, Aceitar só ACHOU e Desmarcar todos (resolve o \"nenhum item aceito\" ao enviar para o orçamento). Lotes antigos: o resumo continua correto por fallback; para preencher os totais por item, use Reanalisar (v1.26.2).",
   "Correção de fuso horário nas datas (M10/M11/M12): datas puras (ex.: vencimentos) passam a exibir SEMPRE o mesmo dia gravado no banco, em qualquer hora — antes, à noite, a conversão UTC podia deslocar 1 dia. O \"hoje\" usado em comparações (conta vencida, prazos de NC, cotações vencendo em 7 dias) e nos preenchimentos automáticos de data agora é o dia LOCAL (America/Campo_Grande): uma conta que vence hoje não aparece mais como Vencida às 22h, e o mês do dashboard/fluxo de caixa não vira antes da hora. A janela do fluxo de caixa segue centrada no mês atual local (v1.26.1).",
@@ -4122,8 +4123,8 @@ function renderDashboard() {
     ["Receita recebida", metrics.revenueReceived],
     ["Receita a receber", metrics.revenuePending],
     ["Despesas totais", metrics.expensesTotal],
-    ["Contas a pagar", metrics.openPayable],
-    ["Contas vencidas", metrics.overdue],
+    ["Contas a pagar", metrics.openPayable, true, metrics.openPayable > 0 ? "negative" : ""],
+    ["Contas vencidas", metrics.overdue, true, metrics.overdue > 0 ? "negative" : ""],
     ["Saldo em caixa", metrics.currentBalance],
     ["Lucro bruto", metrics.grossProfit],
     ["Lucro líquido gerencial", metrics.netProfit],
@@ -4221,7 +4222,7 @@ function renderDashboard() {
     </section>
     ${lucroCaixaPanel(lucroCaixaPeriod, activeDashboardProjectId())}
     <section class="kpi-grid dashboard-kpis">
-      ${dashboardCards.map((card) => kpi(card[0], card[1], card[2] ?? true)).join("")}
+      ${dashboardCards.map((card) => kpi(card[0], card[1], card[2] ?? true, card[3] ?? null)).join("")}
     </section>
     ${dashboardAlerts(metrics)}
     ${dashboardExecutionSection()}
@@ -4508,26 +4509,28 @@ function wireExecChartTooltip() {
 }
 
 function dashboardAlerts(metrics) {
+  // Severidade: perda de dinheiro (vencidas, custo/quantidade acima do orçado) = alert-danger;
+  // atenção operacional (cronograma, margem, propostas/obras paradas) = alert-warning.
   const alerts = [];
-  if (metrics.overdue > 0) alerts.push(`Contas vencidas: ${asMoney(metrics.overdue)}.`);
-  if (metrics.project && metrics.delayedStages > 0) alerts.push(`Cronograma com ${metrics.delayedStages} etapa(s) atrasada(s), atraso máximo de ${metrics.scheduleDelayDays} dia(s).`);
-  if (metrics.project && metrics.realizedCost > metrics.costForecast && metrics.costForecast > 0) alerts.push("Custo realizado acima do previsto para esta obra.");
+  if (metrics.overdue > 0) alerts.push({ level: "danger", message: `Contas vencidas: ${asMoney(metrics.overdue)}.` });
+  if (metrics.project && metrics.delayedStages > 0) alerts.push({ level: "warning", message: `Cronograma com ${metrics.delayedStages} etapa(s) atrasada(s), atraso máximo de ${metrics.scheduleDelayDays} dia(s).` });
+  if (metrics.project && metrics.realizedCost > metrics.costForecast && metrics.costForecast > 0) alerts.push({ level: "danger", message: "Custo realizado acima do previsto para esta obra." });
   const margin = metrics.project ? metrics.realizedMargin : metrics.margin;
-  if (margin < 10 && ((metrics.project && metrics.revenueReceived > 0) || (!metrics.project && metrics.revenueTotal > 0))) alerts.push("Margem líquida baixa. Revise custos, preços e despesas.");
+  if (margin < 10 && ((metrics.project && metrics.revenueReceived > 0) || (!metrics.project && metrics.revenueTotal > 0))) alerts.push({ level: "warning", message: "Margem líquida baixa. Revise custos, preços e despesas." });
   // Auditoria do dashboard — alertas da empresa (visão geral): propostas expiradas,
   // obras atrasadas e estouro de orçamento. Campos reais: validityDate (proposta),
   // endForecast (obra), quantidade_realizada/quantity (item do orçamento).
   if (!metrics.project) {
     const hoje = localDateString(new Date());
     const propostasExpiradas = (db.proposals || []).filter((p) => p.status === "Enviada" && p.validityDate && String(p.validityDate).slice(0, 10) < hoje).length;
-    if (propostasExpiradas > 0) alerts.push(`${propostasExpiradas} proposta(s) enviada(s) com validade vencida — renove ou arquive.`);
+    if (propostasExpiradas > 0) alerts.push({ level: "warning", message: `${propostasExpiradas} proposta(s) enviada(s) com validade vencida — renove ou arquive.` });
     const obrasAtrasadas = (db.projects || []).filter((o) => ["Em andamento", "Contratada"].includes(o.status) && o.endForecast && String(o.endForecast).slice(0, 10) < hoje).length;
-    if (obrasAtrasadas > 0) alerts.push(`${obrasAtrasadas} obra(s) com previsão de término vencida.`);
+    if (obrasAtrasadas > 0) alerts.push({ level: "warning", message: `${obrasAtrasadas} obra(s) com previsão de término vencida.` });
     const itensEstouro = (db.workBudgetItems || []).filter((i) => Number(i.quantity || 0) > 0 && Number(i.quantidade_realizada || 0) > Number(i.quantity || 0)).length;
-    if (itensEstouro > 0) alerts.push(`${itensEstouro} item(ns) do orçamento com quantidade realizada acima da prevista (estouro).`);
+    if (itensEstouro > 0) alerts.push({ level: "danger", message: `${itensEstouro} item(ns) do orçamento com quantidade realizada acima da prevista (estouro).` });
   }
   if (!alerts.length) return "";
-  return `<section class="alerts">${alerts.map((message) => `<div class="alert">${message}</div>`).join("")}</section>`;
+  return `<section class="alerts">${alerts.map((alert) => `<div class="alert alert-${alert.level}">${alert.message}</div>`).join("")}</section>`;
 }
 
 function dashboardAgendaKanbanWidgets() {
@@ -4576,10 +4579,10 @@ function urgentKanbanCards() {
     .slice(0, 8);
 }
 
-function kpi(label, value, format = true) {
+function kpi(label, value, format = true, tone = null) {
   const numeric = typeof value === "number" ? value : null;
-  const tone = numeric === null ? "" : numeric < 0 ? "negative" : numeric > 0 ? "positive" : "";
-  return `<article class="kpi ${tone}"><span>${label}</span><strong>${format ? asMoney(value) : svgText(value)}</strong></article>`;
+  const computedTone = tone ?? (numeric === null ? "" : numeric < 0 ? "negative" : numeric > 0 ? "positive" : "");
+  return `<article class="kpi ${computedTone}"><span>${label}</span><strong>${format ? asMoney(value) : svgText(value)}</strong></article>`;
 }
 
 function resultByCostCenter() {
