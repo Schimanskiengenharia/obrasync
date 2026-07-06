@@ -19,9 +19,10 @@ if (APP_ENV === "production" && location.protocol === "http:") {
   location.replace(location.href.replace(/^http:/, "https:"));
 }
 const APP_NAME = "ObraSync";
-const APP_VERSION = "v1.27.1";
+const APP_VERSION = "v1.27.2";
 const APP_VERSION_DATE = "2026-07-06";
 const APP_CHANGELOG = [
+  "\"Orçamento de Obra\" agora se chama \"Custo da Obra\" em toda a interface (menu, títulos, botões — só o nome mudou; dados e telas são os mesmos). O item de menu \"Itens do orçamento\" saiu (era redundante — a edição de itens já vive dentro da tela do Custo da Obra, no \"+ Adicionar item\" com as abas SINAPI/Composição Própria/Item Manual). Dois consertos no adicionar item manual: a origem gravada agora usa os valores válidos do sistema (\"Composição própria\"/\"Item livre\") e o preço de venda (custo × BDI) passa a ser gravado no banco — o item entra somando certo também no dashboard de execução (v1.27.2).",
   "Cotações (importação) — 4 correções: o fornecedor agora é escolhido do CADASTRO (gravando o vínculo fornecedor_id, com \"+ Cadastrar novo fornecedor\" na hora); a comparação com o orçamento compara custo × CUSTO orçado (sem BDI) e não estoura mais com custo ínfimo (coluna alargada + trava, o mesmo fix do comparador IA); o campo \"Pedido de compra\" saiu do fluxo de cotação (cotação é só cotação — o pedido vem depois); e o arquivo importado (PDF/Excel/CSV) ganhou botão de download na tela da cotação (v1.27.1).",
   "Proposta multi-disciplina completa (F3): cada orçamento vinculado à proposta ganhou um campo \"Descrição da disciplina\" no gerador (o escopo daquela parte, ex.: cozinha e energia solar separados). O documento da proposta agora traz uma seção por disciplina — título, descrição detalhada e valor — acima do quadro de investimento, que segue com o total. O contrato gerado da proposta acompanha: o objeto (cláusula 1ª) lista cada disciplina com valor e descrição, e a cláusula 5ª mostra a composição do valor por disciplina. Modelos de proposta salvos preservam as descrições (v1.27.0).",
   "Comparador/De-para IA: títulos de seção (ex.: QUADROS DE DISTRIBUIÇÃO) e linhas de Subtotal/Total da planilha deixam de ser tratados como itens — aparecem como separadores visuais nas telas, não gastam classificação da IA e NÃO viram itens no envio para o Orçamento de Obra (fim dos itens fantasma com quantidade 1 e custo 0). Bônus: quando a planilha não tem coluna Setor, o título da seção vira a etapa dos itens abaixo dele. Lotes antigos: o mesmo critério é reaplicado na hora do envio — reenviar um lote antigo também sai limpo (v1.26.5).",
@@ -104,8 +105,8 @@ const modules = [
   ["projects", "Obras/Projetos"],
   ["projectCosts", "Custos por obra"],
   ["projectRevenues", "Receitas por obra"],
-  ["workBudgets", "Orçamentos de Obras"],
-  ["workBudgetItems", "Itens do orçamento"],
+  ["workBudgets", "Custo da Obra"],
+  ["workBudgetItems", "Itens do Custo da Obra"],
   ["sinapiReferences", "Base SINAPI"],
   ["sinapiInputs", "Insumos SINAPI"],
   ["sinapiCompositions", "Composições SINAPI"],
@@ -201,7 +202,7 @@ const modules = [
 ];
 
 // Navegação lateral organizada pelo fluxo de trabalho da empresa:
-// Dashboard → Cadastros → Comercial → Viabilidade → Obras → Orçamento de Obra
+// Dashboard → Cadastros → Comercial → Viabilidade → Obras → Custo da Obra
 // → Planejamento → Financeiro → Contabilidade → Relatórios → Configurações.
 const sidebarSections = [
   { id: "dashboard", label: "Dashboard", icon: "ti-layout-dashboard", module: "dashboard" },
@@ -210,7 +211,7 @@ const sidebarSections = [
   { id: "viabilidade", label: "Viabilidade", icon: "ti-clipboard-check", modules: ["viabilidadeObra"] },
   { id: "obras", label: "Obras/Projetos", icon: "ti-building-skyscraper", modules: ["projects", "cotacoes", "projectCosts", "projectRevenues", "fiscalDocuments", "rdo", "projectNotifications", "projectTrackingLinks", "projectReport"] },
   { id: "qualidadePbqph", label: "Qualidade PBQP-H", icon: "ti-certificate", modules: ["qualidadeDashboard", "qualidadePolitica", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos", "qualidadeAuditorias"] },
-  { id: "orcamentoObra", label: "Orçamento de Obra", icon: "ti-calculator", modules: ["workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "purchaseOrders"] },
+  { id: "orcamentoObra", label: "Custo da Obra", icon: "ti-calculator", modules: ["workBudgets", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "purchaseOrders"] },
   { id: "planejamento", label: "Planejamento", icon: "ti-calendar-event", modules: ["projectSchedule", "projectMilestones", "agenda", "kanban", "technicalReports"] },
   { id: "financeiro", label: "Financeiro", icon: "ti-currency-dollar", modules: ["receivable", "payable", "cashMoves", "cashFlow", "reconciliation"] },
   { id: "contabilidade", label: "Contabilidade Gerencial", icon: "ti-chart-infographic", modules: ["chartAccounts", "journalEntries", "dre", "taxDocuments", "taxes"] },
@@ -706,7 +707,7 @@ const configs = {
     ],
   },
   workBudgets: {
-    title: "Orçamentos de Obras",
+    title: "Custo da Obra",
     description: "Orçamentos vinculados a obra/projeto, base SINAPI, BDI, encargos, desconto, custo e preço de venda.",
     fields: [
       ["projectId", "Obra/Projeto", "project", true],
@@ -727,7 +728,7 @@ const configs = {
     ],
   },
   workBudgetItems: {
-    title: "Itens do orçamento",
+    title: "Itens do Custo da Obra",
     description: "Itens SINAPI, composições próprias, cotações manuais ou itens livres usados no orçamento de obra.",
     fields: [
       ["workBudgetId", "Orçamento de obra", "workBudget", true],
@@ -5471,7 +5472,7 @@ function iaDeparaRenderResult(itens, counts) {
       <button type="button" class="secondary ia-dp-export" id="iaDeparaAceitarAchouBtn">✓ Aceitar só ACHOU</button>
       <button type="button" class="secondary ia-dp-export" id="iaDeparaDesmarcarBtn">✗ Desmarcar todos</button>
       <button type="button" class="secondary ia-dp-export" id="iaDeparaExportBtn">⤓ Exportar resultado</button>
-      <button type="button" class="primary ia-dp-enviar" id="iaDeparaEnviarBtn">→ Enviar para Orçamento de Obra</button>
+      <button type="button" class="primary ia-dp-enviar" id="iaDeparaEnviarBtn">→ Enviar para Custo da Obra</button>
     </div>
     ${iaDeparaGrupoFilterHtml()}`;
   if (!itens.length) {
@@ -5844,7 +5845,7 @@ function iaComparaRenderResult(itens, counts, resumo) {
       <button type="button" class="secondary ia-dp-export" id="iaComparaAceitarAchouBtn">✓ Aceitar só ACHOU</button>
       <button type="button" class="secondary ia-dp-export" id="iaComparaDesmarcarBtn">✗ Desmarcar todos</button>
       <button type="button" class="secondary ia-dp-export" id="iaComparaExportBtn">⤓ Exportar relatório</button>
-      <button type="button" class="primary ia-dp-enviar" id="iaComparaEnviarBtn">→ Enviar para Orçamento de Obra</button>
+      <button type="button" class="primary ia-dp-enviar" id="iaComparaEnviarBtn">→ Enviar para Custo da Obra</button>
     </div>
     ${iaDeparaSelectFilter("iaComparaSetorSel", "Setor", iaComparaState.setores, iaComparaState.setor)}`;
   const resumoHtml = iaComparaResumoHtml(resumo || iaComparaState.resumo);
@@ -6036,7 +6037,7 @@ function iaEnviarParaOrcamento(origem) {
   const projOptions = projetos.map((p) => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name || ("Obra " + p.id))}</option>`).join("");
   const { close, q } = viabilidadeDialog(`
     <div class="viab-modal ia-enviar-modal">
-      <header class="viab-modal-head"><h3>Enviar para Orçamento de Obra</h3><button type="button" class="viab-x" data-close aria-label="Fechar">✕</button></header>
+      <header class="viab-modal-head"><h3>Enviar para Custo da Obra</h3><button type="button" class="viab-x" data-close aria-label="Fechar">✕</button></header>
       <div class="viab-modal-body ia-enviar-body">
         <p class="muted">Cria um orçamento de obra (rascunho) com os itens desta análise. Os valores vêm da planilha/SINAPI — nada é inventado; itens sem dado ficam com default neutro e nota.</p>
         <label class="full">Obra / projeto de destino
@@ -6082,11 +6083,11 @@ function iaEnviarSucesso(data) {
       <header class="viab-modal-head"><h3>Orçamento criado ✅</h3><button type="button" class="viab-x" data-close aria-label="Fechar">✕</button></header>
       <div class="viab-modal-body ia-enviar-body">
         <p>Orçamento <strong>${escapeHtml(data?.name || "")}</strong> ${data?.version ? `(${escapeHtml(data.version)})` : ""} criado com <strong>${n.toLocaleString("pt-BR")}</strong> item(ns).</p>
-        <p class="muted">Abra em Orçamentos de Obras para ajustar quantidades, BDI e etapas. Itens divergentes/sem categoria ficam anotados.</p>
+        <p class="muted">Abra em Custo da Obra para ajustar quantidades, BDI e etapas. Itens divergentes/sem categoria ficam anotados.</p>
       </div>
       <footer class="viab-modal-foot">
         <button type="button" class="secondary" data-close>Fechar</button>
-        ${canAccessModule("workBudgets") ? '<button type="button" class="primary" id="iaEnvAbrir">Abrir em Orçamentos de Obras</button>' : ""}
+        ${canAccessModule("workBudgets") ? '<button type="button" class="primary" id="iaEnvAbrir">Abrir em Custo da Obra</button>' : ""}
       </footer>
     </div>`);
   q("#iaEnvAbrir")?.addEventListener("click", () => { close(); currentModule = "workBudgets"; render(); });
@@ -10479,7 +10480,9 @@ function openBudgetItemModal(budget, etapaId) {
       bdiPercent: Number(budget.bdiPercent || 0),
       tipo: dialog.querySelector("#biTipo").value,
       costCenterId: dialog.querySelector("#biCc").value || "",
-      origin: tab === "sinapi" ? "SINAPI" : (tab === "propria" ? "Própria" : "Manual"),
+      // Valores do ENUM real de orcamento_obra_itens.origin — "Própria"/"Manual"
+      // não existem no enum e falhavam em modo estrito do MySQL.
+      origin: tab === "sinapi" ? "SINAPI" : (tab === "propria" ? "Composição própria" : "Item livre"),
       sinapi_id: tab === "sinapi" && picked ? picked.id : "",
       sinapiReferenceId: tab === "sinapi" && picked ? (picked.sinapiReferenceId || "") : "",
       sinapiUf: tab === "sinapi" && picked ? (picked.uf || byId("sinapiReferences", picked.sinapiReferenceId)?.uf || "") : "",
@@ -10499,6 +10502,10 @@ function openBudgetItemModal(budget, etapaId) {
       ordem: (db.workBudgetItems || []).filter((it) => sameId(it.etapa_id, etapaId)).length + 1,
     };
     try {
+      // Grava unitPrice/totalPrice calculados (unitCost × BDI): o dashboard de
+      // execução lê esses campos direto do banco — sem isso o item entrava com
+      // preço 0 no previsto (as telas normalizam na leitura e mascaravam).
+      normalizeWorkBudgetItem(data);
       await createIntegratedRecord("workBudgetItems", data);
       close();
       if (serverMode) await refreshAndRender(); else render();
@@ -10551,10 +10558,10 @@ function renderWorkBudgets() {
   const items = selected ? budgetItemsFor(selected.id) : [];
   const abc = abcRows(items);
   qs("content").innerHTML = `
-    ${generateDocumentHeader("Orçamento de Obra", selected ? [selected.name, nameOf("projects", selected.projectId) || "Sem obra", asDate(selected.budgetDate)].filter(Boolean).join(" · ") : "Sem orçamento selecionado")}
+    ${generateDocumentHeader("Custo da Obra", selected ? [selected.name, nameOf("projects", selected.projectId) || "Sem obra", asDate(selected.budgetDate)].filter(Boolean).join(" · ") : "Sem orçamento selecionado")}
     <section class="module-head">
       <div>
-        <h2>Orçamentos de Obras</h2>
+        <h2>Custo da Obra</h2>
         <p>Monte orçamentos por obra com itens SINAPI, composições próprias, cotações, BDI, totais e integração com proposta e cronograma.</p>
       </div>
       <div class="actions">
