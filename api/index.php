@@ -2392,6 +2392,12 @@ function bootstrap_data(PDO $pdo, array $resources, ?array $authUser = null, boo
             ensure_cost_center_tipo_enum($pdo);
             ensure_default_cost_centers($pdo);
         }
+        // Seed do plano de contas gerencial quando a tabela está vazia (mesmo
+        // padrão dos centros de custo) — dá opções ao dropdown "Conta contábil
+        // vinculada" das categorias financeiras.
+        if (resolve_existing_table($pdo, ['chart_accounts'], false)) {
+            ensure_default_chart_accounts($pdo);
+        }
         // Endereço estruturado no cadastro de clientes (cidade/estado p/ snapshot).
         if (resolve_existing_table($pdo, ['clients'], false)
             && !in_array('cidade', table_columns($pdo, 'clients'), true)) {
@@ -3898,6 +3904,55 @@ function ensure_default_cost_centers(PDO $pdo): void
     $stmt = $pdo->prepare('INSERT INTO cost_centers (code, name, tipo, descricao_uso, exemplos, status) VALUES (?, ?, ?, ?, ?, \'Ativo\')');
     foreach ($defaults as $row) {
         $stmt->execute($row);
+    }
+}
+
+function ensure_default_chart_accounts(PDO $pdo): void
+{
+    if ((int) $pdo->query('SELECT COUNT(*) FROM chart_accounts')->fetchColumn() > 0) {
+        return;
+    }
+    // Plano de contas gerencial enxuto (engenharia/construção no Simples Nacional).
+    // Grupos sintéticos (acceptsEntries=Não) + contas analíticas (Sim). A natureza
+    // usa os valores do form do módulo chartAccounts (Receita/Despesa/Ativo/...).
+    // Formato: [code, name, natureza, filhas [code, name]].
+    $grupos = [
+        ['1', 'Receitas', 'Receita', [
+            ['1.1', 'Receita de serviços de engenharia'],
+            ['1.2', 'Receita de obras e instalações'],
+            ['1.3', 'Receita de energia solar'],
+            ['1.9', 'Outras receitas'],
+        ]],
+        ['2', 'Custos diretos', 'Despesa', [
+            ['2.1', 'Materiais aplicados em obra'],
+            ['2.2', 'Mão de obra direta'],
+            ['2.3', 'Serviços de terceiros em obra'],
+            ['2.4', 'Equipamentos e locações de obra'],
+            ['2.9', 'Outros custos diretos'],
+        ]],
+        ['3', 'Despesas operacionais', 'Despesa', [
+            ['3.1', 'Despesas administrativas'],
+            ['3.2', 'Despesas com pessoal (administrativo)'],
+            ['3.3', 'Despesas comerciais e marketing'],
+            ['3.4', 'Despesas com veículos e deslocamento'],
+            ['3.9', 'Outras despesas operacionais'],
+        ]],
+        ['4', 'Despesas financeiras e tributárias', 'Despesa', [
+            ['4.1', 'Impostos e taxas (DAS, CREA)'],
+            ['4.2', 'Tarifas e juros'],
+            ['4.3', 'Empréstimos e financiamentos'],
+        ]],
+        ['5', 'Investimentos', 'Ativo', [
+            ['5.1', 'Imobilizado (equipamentos, veículos, móveis)'],
+        ]],
+    ];
+    $insert = $pdo->prepare('INSERT INTO chart_accounts (code, name, `type`, parentId, acceptsEntries, status) VALUES (?, ?, ?, ?, ?, \'Ativo\')');
+    foreach ($grupos as [$code, $name, $natureza, $filhas]) {
+        $insert->execute([$code, $name, $natureza, null, 'Não']);
+        $parentId = (int) $pdo->lastInsertId();
+        foreach ($filhas as [$codeFilha, $nameFilha]) {
+            $insert->execute([$codeFilha, $nameFilha, $natureza, $parentId, 'Sim']);
+        }
     }
 }
 
