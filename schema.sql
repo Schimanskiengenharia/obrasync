@@ -1831,8 +1831,9 @@ CREATE TABLE IF NOT EXISTS cotacao_itens (
   prazo_entrega VARCHAR(100) NULL,
   observacao VARCHAR(300) NULL,
   orcamento_item_id BIGINT UNSIGNED NULL COMMENT 'Item do orcamento de obra vinculado',
-  diferenca_percentual DECIMAL(8,2) NULL COMMENT 'Diferenca % em relacao ao orcamento',
+  diferenca_percentual DECIMAL(12,2) NULL COMMENT 'Diferenca % em relacao ao CUSTO orcado (sem BDI), com clamp',
   status_comparacao ENUM('nao_comparado','abaixo','igual','acima','muito_acima') DEFAULT 'nao_comparado',
+  vencedor TINYINT(1) NOT NULL DEFAULT 0 COMMENT 'Fornecedor vencedor da cotacao de compra deste item',
   INDEX idx_cotacao (cotacao_id),
   INDEX idx_orcamento_item (orcamento_item_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

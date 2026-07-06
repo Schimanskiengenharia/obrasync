@@ -19,9 +19,10 @@ if (APP_ENV === "production" && location.protocol === "http:") {
   location.replace(location.href.replace(/^http:/, "https:"));
 }
 const APP_NAME = "ObraSync";
-const APP_VERSION = "v1.27.2";
+const APP_VERSION = "v1.27.3";
 const APP_VERSION_DATE = "2026-07-06";
 const APP_CHANGELOG = [
+  "Cotação de COMPRA item a item (pós-ganho): botão \"Cotações de compra\" na tela do Custo da Obra abre a matriz item × fornecedor — cada item mostra o custo orçado (sem BDI) e as cotações registradas por fornecedor, com o menor valor destacado e a diferença vs o orçado em R$ e %. \"+ Cotação\" registra a cotação de um fornecedor do cadastro para aquele item (valor, quantidade, marca, prazo), e \"Escolher\" marca o fornecedor VENCEDOR do item (um por item — a base do pedido de compra que vem a seguir). Tudo manual: nada é casado automaticamente (v1.27.3).",
   "\"Orçamento de Obra\" agora se chama \"Custo da Obra\" em toda a interface (menu, títulos, botões — só o nome mudou; dados e telas são os mesmos). O item de menu \"Itens do orçamento\" saiu (era redundante — a edição de itens já vive dentro da tela do Custo da Obra, no \"+ Adicionar item\" com as abas SINAPI/Composição Própria/Item Manual). Dois consertos no adicionar item manual: a origem gravada agora usa os valores válidos do sistema (\"Composição própria\"/\"Item livre\") e o preço de venda (custo × BDI) passa a ser gravado no banco — o item entra somando certo também no dashboard de execução (v1.27.2).",
   "Cotações (importação) — 4 correções: o fornecedor agora é escolhido do CADASTRO (gravando o vínculo fornecedor_id, com \"+ Cadastrar novo fornecedor\" na hora); a comparação com o orçamento compara custo × CUSTO orçado (sem BDI) e não estoura mais com custo ínfimo (coluna alargada + trava, o mesmo fix do comparador IA); o campo \"Pedido de compra\" saiu do fluxo de cotação (cotação é só cotação — o pedido vem depois); e o arquivo importado (PDF/Excel/CSV) ganhou botão de download na tela da cotação (v1.27.1).",
   "Proposta multi-disciplina completa (F3): cada orçamento vinculado à proposta ganhou um campo \"Descrição da disciplina\" no gerador (o escopo daquela parte, ex.: cozinha e energia solar separados). O documento da proposta agora traz uma seção por disciplina — título, descrição detalhada e valor — acima do quadro de investimento, que segue com o total. O contrato gerado da proposta acompanha: o objeto (cláusula 1ª) lista cada disciplina com valor e descrição, e a cláusula 5ª mostra a composição do valor por disciplina. Modelos de proposta salvos preservam as descrições (v1.27.0).",
@@ -10568,6 +10569,7 @@ function renderWorkBudgets() {
         ${editable ? '<button class="primary" type="button" id="newRecord">Novo orçamento</button><button class="secondary" type="button" id="newBudgetItem">Novo item</button>' : ""}
         <button class="secondary" type="button" id="createProposalFromBudget" ${proposalAllowed ? "" : "disabled"}>Gerar Proposta</button>
         <button class="secondary" type="button" id="createScheduleFromBudget" ${selected ? "" : "disabled"}>Gerar cronograma</button>
+        ${canAccessModule("cotacoes") ? `<button class="secondary" type="button" id="budgetCompraCotacao" ${selected ? "" : "disabled"}>Cotações de compra</button>` : ""}
       </div>
     </section>
     <section class="schedule-toolbar">
@@ -10613,6 +10615,7 @@ function renderWorkBudgets() {
   });
   qs("createProposalFromBudget")?.addEventListener("click", () => openProposalGenerator(selectedWorkBudgetId));
   qs("createScheduleFromBudget")?.addEventListener("click", () => createScheduleFromWorkBudget(selectedWorkBudgetId));
+  qs("budgetCompraCotacao")?.addEventListener("click", () => { if (selected) renderCompraCotacoes(selected); });
   qs("content").querySelectorAll("[data-edit]").forEach((button) => {
     const key = button.dataset.actionKey || "workBudgets";
     button.addEventListener("click", () => openForm(key, button.dataset.edit));
@@ -12973,6 +12976,149 @@ function renderCotacaoDetalhe() {
   qs("cotCsv").addEventListener("click", () => cotacaoExportarCsv(c.id));
   qs("cotPdf").addEventListener("click", () => cotacaoImprimir());
   qs("cotAnexo")?.addEventListener("click", () => cotacaoBaixarAnexo(c.id, c.arquivo_nome));
+}
+
+// ── F5.2: cotação de COMPRA item a item (matriz fornecedores × Custo da Obra) ──
+// Fluxo manual pós-ganho: registrar cotações de fornecedores para itens específicos
+// do orçamento, comparar custo cotado × CUSTO orçado (sem BDI) e marcar o vencedor
+// por item. Sem casamento automático; o pedido de compra vem depois (F5.3).
+let compraCotacaoState = null;
+
+async function renderCompraCotacoes(budget) {
+  if (!serverMode) return alert("Requer conexão com o servidor.");
+  qs("content").innerHTML = '<p class="muted">Carregando cotações de compra…</p>';
+  try {
+    const data = await apiModuleRequest(`?module=cotacoes&action=compraMatriz&workBudgetId=${encodeURIComponent(budget.id)}`);
+    compraCotacaoState = { budget, itens: data.itens || [], cotacoes: data.cotacoes || [] };
+    paintCompraMatriz();
+  } catch (error) {
+    qs("content").innerHTML = `<p style="color:#b42318">Não foi possível carregar as cotações de compra: ${escapeHtml(error.message)}</p>`;
+    compraCotacaoState = null;
+  }
+}
+
+function paintCompraMatriz() {
+  const st = compraCotacaoState;
+  if (!st) return render();
+  const editable = canEditModule("cotacoes");
+  const porItem = {};
+  st.cotacoes.forEach((c) => { (porItem[c.orcamento_item_id] = porItem[c.orcamento_item_id] || []).push(c); });
+  // Colunas = fornecedores distintos com cotação em algum item deste orçamento.
+  const fornecedores = [];
+  const vistos = new Set();
+  st.cotacoes.forEach((c) => {
+    const k = String(c.fornecedor_id || c.fornecedor_nome);
+    if (!vistos.has(k)) { vistos.add(k); fornecedores.push({ key: k, nome: c.fornecedor_nome || "" }); }
+  });
+  const linhas = st.itens.map((it) => {
+    const cots = porItem[it.id] || [];
+    const custo = Number(it.unitCost || 0);
+    const valores = cots.map((c) => Number(c.valor_unitario || 0)).filter((v) => v > 0);
+    const menor = valores.length ? Math.min(...valores) : 0;
+    const celulas = fornecedores.map((f) => {
+      const c = cots.filter((x) => String(x.fornecedor_id || x.fornecedor_nome) === f.key)
+        .sort((a, b) => Number(a.valor_unitario || 0) - Number(b.valor_unitario || 0))[0];
+      if (!c) return '<td class="muted">—</td>';
+      const v = Number(c.valor_unitario || 0);
+      const dif = custo > 0 && v > 0 ? ((v - custo) / custo) * 100 : null;
+      const difBadge = dif != null
+        ? `<span class="ia-cmp-badge ${dif < -0.05 ? "ia-cmp-planilha" : (dif > 0.05 ? "ia-cmp-sinapi" : "ia-cmp-igual")}">${dif > 0 ? "+" : ""}${dif.toFixed(1)}% · ${dif > 0 ? "+" : "−"}${asMoney(Math.abs(v - custo))}</span>`
+        : "";
+      const venceu = Number(c.vencedor) === 1;
+      const acao = editable
+        ? `<button type="button" class="${venceu ? "ia-dp-aceito" : "secondary"} ia-dp-mini" data-compra-venc="${c.id}" data-venc-atual="${venceu ? 1 : 0}">${venceu ? "✓ Vencedor" : "Escolher"}</button>`
+        : (venceu ? "✓ Vencedor" : "");
+      return `<td class="compra-cell ${v > 0 && v === menor ? "compra-menor" : ""} ${venceu ? "compra-venc" : ""}">
+        <strong>${asMoney(v)}</strong>
+        <div>${difBadge}</div>
+        ${c.marca ? `<div class="muted ia-dp-un">${escapeHtml(c.marca)}</div>` : ""}
+        ${c.prazo_entrega ? `<div class="muted ia-dp-un">prazo: ${escapeHtml(c.prazo_entrega)}</div>` : ""}
+        <div>${acao}</div>
+      </td>`;
+    }).join("");
+    return `<tr>
+      <td class="ia-dp-desc">${svgText((it.code ? it.code + " - " : "") + (it.description || ""))}<div class="muted ia-dp-un">${svgText(it.unit || "")} · qtd ${Number(it.quantity || 0).toLocaleString("pt-BR")}</div></td>
+      <td class="ia-dp-valor">${asMoney(custo)}</td>
+      ${celulas}
+      <td>${editable ? `<button type="button" class="secondary ia-dp-mini" data-compra-add="${it.id}">+ Cotação</button>` : ""}</td>
+    </tr>`;
+  }).join("");
+  qs("content").innerHTML = `
+    <section class="module-head">
+      <div>
+        <button class="secondary" type="button" id="compraVoltar">← Voltar ao Custo da Obra</button>
+        <h2>Cotações de compra — ${svgText(st.budget.name || "")}</h2>
+        <p>Compare o custo orçado (sem BDI) de cada item com as cotações dos fornecedores e marque o vencedor. O menor valor de cada linha fica destacado; o pedido de compra vem depois, a partir do vencedor.</p>
+      </div>
+    </section>
+    <section class="table-wrap">
+      <table class="ia-dp-table compra-matrix">
+        <thead><tr><th>Item do Custo da Obra</th><th>Custo orçado</th>${fornecedores.map((f) => `<th>${escapeHtml(f.nome)}</th>`).join("")}<th></th></tr></thead>
+        <tbody>${linhas || `<tr><td colspan="${3 + fornecedores.length}" class="muted">Este orçamento não tem itens.</td></tr>`}</tbody>
+      </table>
+    </section>
+    ${st.cotacoes.length ? "" : '<p class="muted">Nenhuma cotação de compra registrada ainda — use "+ Cotação" num item para registrar a primeira.</p>'}`;
+  qs("compraVoltar").addEventListener("click", () => { compraCotacaoState = null; render(); });
+  qs("content").querySelectorAll("[data-compra-add]").forEach((b) => b.addEventListener("click", () => openCompraCotacaoForm(b.dataset.compraAdd)));
+  qs("content").querySelectorAll("[data-compra-venc]").forEach((b) => b.addEventListener("click", () => marcarCompraVencedor(Number(b.dataset.compraVenc), b.dataset.vencAtual !== "1")));
+}
+
+function openCompraCotacaoForm(orcItemId) {
+  const st = compraCotacaoState;
+  const item = (st?.itens || []).find((i) => sameId(i.id, orcItemId));
+  if (!item) return;
+  const supOpts = ['<option value="">— Selecione o fornecedor —</option>']
+    .concat((db.suppliers || []).map((s) => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.name)}</option>`))
+    .join("");
+  const { close, q } = viabilidadeDialog(`
+    <div class="viab-modal">
+      <header class="viab-modal-head"><h3>Cotação de compra</h3><button type="button" class="viab-x" data-close>✕</button></header>
+      <div class="viab-modal-body">
+        <p><strong>${svgText((item.code ? item.code + " - " : "") + (item.description || ""))}</strong><br><span class="muted">Custo orçado: ${asMoney(item.unitCost || 0)}${item.unit ? " · " + svgText(item.unit) : ""}</span></p>
+        <div class="form-grid">
+          <label>Fornecedor<select id="ccForn">${supOpts}</select></label>
+          <label>Valor unitário cotado (R$)<input id="ccValor" inputmode="decimal" placeholder="0,00"></label>
+          <label>Quantidade<input id="ccQtd" inputmode="decimal" value="${escapeHtml(item.quantity != null ? String(item.quantity) : "")}"></label>
+          <label>Marca (opcional)<input id="ccMarca"></label>
+          <label>Prazo de entrega (opcional)<input id="ccPrazo"></label>
+        </div>
+      </div>
+      <footer class="viab-modal-foot"><button type="button" class="secondary" data-close>Cancelar</button><button type="button" class="primary" data-save>Registrar</button></footer>
+    </div>`, "viab-dialog-md");
+  q("[data-save]").addEventListener("click", async () => {
+    const fornecedorId = q("#ccForn").value;
+    if (!fornecedorId) return alert("Selecione o fornecedor do cadastro.");
+    const valor = parseMoneyInput(q("#ccValor").value || "0");
+    if (!(valor > 0)) return alert("Informe o valor unitário cotado.");
+    const btn = q("[data-save]");
+    btn.disabled = true;
+    try {
+      await apiModuleRequest("?module=cotacoes&action=compraRegistrar", { method: "POST", body: JSON.stringify({
+        orcamento_item_id: orcItemId,
+        fornecedor_id: fornecedorId,
+        valor_unitario: valor,
+        quantidade: parseMoneyInput(q("#ccQtd").value || "0") || null,
+        marca: q("#ccMarca").value.trim(),
+        prazo_entrega: q("#ccPrazo").value.trim(),
+      }) });
+      close();
+      showToast("Cotação registrada.");
+      renderCompraCotacoes(st.budget);
+    } catch (error) {
+      btn.disabled = false;
+      alert(`Não foi possível registrar: ${error.message}`);
+    }
+  });
+}
+
+async function marcarCompraVencedor(cotacaoItemId, marcar) {
+  if (!compraCotacaoState) return;
+  try {
+    await apiModuleRequest("?module=cotacoes&action=compraVencedor", { method: "POST", body: JSON.stringify({ cotacao_item_id: cotacaoItemId, vencedor: marcar }) });
+    renderCompraCotacoes(compraCotacaoState.budget);
+  } catch (error) {
+    alert(`Não foi possível marcar o vencedor: ${error.message}`);
+  }
 }
 
 // Download autenticado do arquivo importado da cotação (fica fora do docroot).

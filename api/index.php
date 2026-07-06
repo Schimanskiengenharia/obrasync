@@ -2789,9 +2789,15 @@ function ensure_cotacao_import_tables(PDO $pdo): void
             orcamento_item_id BIGINT UNSIGNED NULL,
             diferenca_percentual DECIMAL(12,2) NULL,
             status_comparacao ENUM('nao_comparado','abaixo','igual','acima','muito_acima') DEFAULT 'nao_comparado',
+            vencedor TINYINT(1) NOT NULL DEFAULT 0,
             INDEX idx_cotacao (cotacao_id),
             INDEX idx_orcamento_item (orcamento_item_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        // F5.2: fornecedor vencedor por item do orçamento (cotação de compra).
+        try {
+            $pdo->exec('ALTER TABLE cotacao_itens ADD COLUMN IF NOT EXISTS vencedor TINYINT(1) NOT NULL DEFAULT 0');
+        } catch (Throwable $ignored) {
+        }
         // F4b: alarga diferenca_percentual (8,2)→(12,2) em instalações antigas —
         // mesmo overflow SQLSTATE[22003] já corrigido no comparador IA. Só quando
         // ainda estreita (via INFORMATION_SCHEMA) para não rebuildar a cada request.
@@ -3677,6 +3683,126 @@ function handle_cotacoes_module(PDO $pdo, string $method, array $query, array $c
             }
             fclose($out);
             exit;
+        }
+
+        // ── F5.2: cotação de COMPRA item a item (contra o Custo da Obra) ─────
+        // Fluxo manual pós-ganho: o usuário registra cotações de fornecedores para
+        // itens específicos do orçamento e marca o vencedor. Comparação sempre
+        // custo cotado × CUSTO orçado (unitCost, sem BDI). Sem casamento automático.
+        if ($action === 'compramatriz') {
+            require_method($method, ['GET']);
+            $workBudgetId = (int) ($query['workBudgetId'] ?? 0);
+            if ($workBudgetId <= 0) {
+                cotacao_respond(false, [], 'Informe o orçamento (workBudgetId).', 400);
+            }
+            $stmt = $pdo->prepare('SELECT id, code, description, unit, quantity, unitCost FROM orcamento_obra_itens WHERE workBudgetId = ? ORDER BY ordem, id');
+            $stmt->execute([$workBudgetId]);
+            $itens = $stmt->fetchAll();
+            $cotacoes = [];
+            if ($itens) {
+                $ids = array_map(static fn ($i) => (int) $i['id'], $itens);
+                $in = implode(',', array_fill(0, count($ids), '?'));
+                $stmt = $pdo->prepare("SELECT ci.id, ci.orcamento_item_id, ci.quantidade, ci.valor_unitario, ci.marca, ci.prazo_entrega,
+                                              ci.diferenca_percentual, ci.vencedor,
+                                              cf.id AS cotacao_id, cf.fornecedor_id, cf.fornecedor_nome, cf.data_cotacao, cf.validade_cotacao
+                                         FROM cotacao_itens ci
+                                         JOIN cotacao_fornecedor cf ON cf.id = ci.cotacao_id
+                                        WHERE ci.orcamento_item_id IN ($in)
+                                        ORDER BY cf.fornecedor_nome, ci.id");
+                $stmt->execute($ids);
+                $cotacoes = $stmt->fetchAll();
+            }
+            cotacao_respond(true, ['itens' => $itens, 'cotacoes' => $cotacoes]);
+        }
+
+        if ($action === 'compraregistrar') {
+            require_method($method, ['POST']);
+            $payload = read_json();
+            $itemId = (int) ($payload['orcamento_item_id'] ?? 0);
+            $fornecedorId = (int) ($payload['fornecedor_id'] ?? 0);
+            $valor = cotacao_num($payload['valor_unitario'] ?? '');
+            if ($itemId <= 0 || $fornecedorId <= 0) {
+                cotacao_respond(false, [], 'Informe o item do orçamento e o fornecedor do cadastro.', 400);
+            }
+            if ($valor === null || $valor <= 0) {
+                cotacao_respond(false, [], 'Informe o valor unitário cotado.', 400);
+            }
+            $stmt = $pdo->prepare('SELECT id, projectId, description, unit, quantity, unitCost FROM orcamento_obra_itens WHERE id = ? LIMIT 1');
+            $stmt->execute([$itemId]);
+            $orcItem = $stmt->fetch();
+            if (!$orcItem) {
+                cotacao_respond(false, [], 'Item do orçamento não encontrado.', 404);
+            }
+            $stmt = $pdo->prepare('SELECT id, name FROM suppliers WHERE id = ? LIMIT 1');
+            $stmt->execute([$fornecedorId]);
+            $fornecedor = $stmt->fetch();
+            if (!$fornecedor) {
+                cotacao_respond(false, [], 'Fornecedor não encontrado no cadastro.', 404);
+            }
+            // Agrupa as cotações manuais por (obra, fornecedor): reusa o cabeçalho
+            // mais recente do fornecedor nesta obra, senão cria um.
+            $obraId = ($orcItem['projectId'] ?? null) !== null ? (int) $orcItem['projectId'] : null;
+            $stmt = $pdo->prepare('SELECT id FROM cotacao_fornecedor WHERE fornecedor_id = ? AND (obra_id <=> ?) ORDER BY id DESC LIMIT 1');
+            $stmt->execute([$fornecedorId, $obraId]);
+            $cotId = (int) ($stmt->fetchColumn() ?: 0);
+            if ($cotId <= 0) {
+                $cotId = insert_dynamic($pdo, 'cotacao_fornecedor', [
+                    'obra_id' => $obraId,
+                    'fornecedor_id' => $fornecedorId,
+                    'fornecedor_nome' => mb_substr((string) $fornecedor['name'], 0, 200),
+                    'data_cotacao' => date('Y-m-d'),
+                    'status' => 'importada',
+                ]);
+            }
+            $qtd = cotacao_num($payload['quantidade'] ?? '');
+            if ($qtd === null || $qtd <= 0) {
+                $qtd = ($orcItem['quantity'] ?? null) !== null ? (float) $orcItem['quantity'] : null;
+            }
+            // Diferença vs o CUSTO orçado (sem BDI), com clamp — padrão do comparar.
+            $difPercent = null;
+            $classe = 'nao_comparado';
+            if ((float) $orcItem['unitCost'] > 0) {
+                $difPercent = ($valor - (float) $orcItem['unitCost']) / (float) $orcItem['unitCost'] * 100;
+                $difPercent = max(-IA_COMPARA_DIFPERCENT_MAX, min(IA_COMPARA_DIFPERCENT_MAX, round($difPercent, 2)));
+                $classe = cotacao_classificar($difPercent);
+            }
+            $ciId = insert_dynamic($pdo, 'cotacao_itens', [
+                'cotacao_id' => $cotId,
+                'descricao' => mb_substr((string) $orcItem['description'], 0, 500),
+                'unidade' => mb_substr((string) ($orcItem['unit'] ?? ''), 0, 20) ?: null,
+                'quantidade' => $qtd,
+                'valor_unitario' => $valor,
+                'valor_total' => $qtd !== null ? round($qtd * $valor, 2) : null,
+                'marca' => mb_substr((string) ($payload['marca'] ?? ''), 0, 100) ?: null,
+                'prazo_entrega' => mb_substr((string) ($payload['prazo_entrega'] ?? ''), 0, 100) ?: null,
+                'orcamento_item_id' => $itemId,
+                'diferenca_percentual' => $difPercent,
+                'status_comparacao' => $classe,
+            ]);
+            server_audit($pdo, $authUser, 'create', 'cotacoes', $ciId, 'cotação de compra: item ' . $itemId . ' × fornecedor ' . $fornecedorId);
+            cotacao_respond(true, ['id' => $ciId, 'cotacao_id' => $cotId, 'diferenca_percentual' => $difPercent, 'status_comparacao' => $classe], 'Cotação registrada.', 201);
+        }
+
+        if ($action === 'compravencedor') {
+            require_method($method, ['POST']);
+            $payload = read_json();
+            $ciId = (int) ($payload['cotacao_item_id'] ?? 0);
+            $marcar = !isset($payload['vencedor']) || !empty($payload['vencedor']);
+            $stmt = $pdo->prepare('SELECT id, orcamento_item_id FROM cotacao_itens WHERE id = ? LIMIT 1');
+            $stmt->execute([$ciId]);
+            $ci = $stmt->fetch();
+            if (!$ci || empty($ci['orcamento_item_id'])) {
+                cotacao_respond(false, [], 'Cotação não encontrada (ou sem vínculo com item do orçamento).', 404);
+            }
+            if ($marcar) {
+                // Um vencedor por item do orçamento: desmarca os concorrentes.
+                $pdo->prepare('UPDATE cotacao_itens SET vencedor = 0 WHERE orcamento_item_id = ?')->execute([(int) $ci['orcamento_item_id']]);
+                $pdo->prepare('UPDATE cotacao_itens SET vencedor = 1 WHERE id = ?')->execute([$ciId]);
+            } else {
+                $pdo->prepare('UPDATE cotacao_itens SET vencedor = 0 WHERE id = ?')->execute([$ciId]);
+            }
+            server_audit($pdo, $authUser, 'update', 'cotacoes', $ciId, $marcar ? 'vencedor da cotação de compra' : 'vencedor desmarcado');
+            cotacao_respond(true, ['cotacao_item_id' => $ciId, 'vencedor' => $marcar ? 1 : 0], $marcar ? 'Fornecedor vencedor marcado.' : 'Vencedor desmarcado.');
         }
 
         if ($action === 'anexo') {

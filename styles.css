@@ -6241,6 +6241,14 @@ html[data-theme="dark"] .ia-dp-setor-tag { color: #5eead4; }
 .ia-dp-secao-valor { font-style: normal; font-weight: 700; margin-left: 6px; }
 html[data-theme="dark"] .ia-dp-secao td { background: rgba(255, 255, 255, 0.06); color: #b9c8c4; }
 html[data-theme="dark"] .ia-dp-subtotal td { background: rgba(255, 255, 255, 0.03); color: #8fa19d; }
+
+/* F5.2: matriz de cotações de compra (item do Custo da Obra × fornecedores) */
+.compra-matrix td { vertical-align: top; }
+.compra-cell { min-width: 130px; }
+.compra-cell > div { margin-top: 3px; }
+.compra-cell.compra-menor strong { color: #1f5e0f; }
+html[data-theme="dark"] .compra-cell.compra-menor strong { color: #aee08a; }
+.compra-cell.compra-venc { outline: 2px solid var(--teal); outline-offset: -2px; border-radius: 6px; }
 .ia-dp-diverg-hint {
   margin-top: 3px;
   font-size: 0.78rem;
