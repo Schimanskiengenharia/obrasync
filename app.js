@@ -19,9 +19,10 @@ if (APP_ENV === "production" && location.protocol === "http:") {
   location.replace(location.href.replace(/^http:/, "https:"));
 }
 const APP_NAME = "ObraSync";
-const APP_VERSION = "v1.27.3";
+const APP_VERSION = "v1.28.0";
 const APP_VERSION_DATE = "2026-07-06";
 const APP_CHANGELOG = [
+  "Ciclo de compra completo (F5.3): na matriz de cotações de compra, o botão \"Gerar pedido de compra (vencedores)\" cria um pedido por fornecedor vencedor, com os itens vinculados ao Custo da Obra. Novo menu \"Compras da Obra\" (seção Custo da Obra): lista os pedidos com NF e conta a pagar, e o botão \"Registrar compra + NF\" fecha o ciclo num passo — a nota fiscal entra vinculada à obra E ao pedido, a conta a pagar é lançada automaticamente (sem duplicar) e as quantidades compradas somam no realizado do Custo da Obra (previsto vs realizado). (v1.28.0)",
   "Cotação de COMPRA item a item (pós-ganho): botão \"Cotações de compra\" na tela do Custo da Obra abre a matriz item × fornecedor — cada item mostra o custo orçado (sem BDI) e as cotações registradas por fornecedor, com o menor valor destacado e a diferença vs o orçado em R$ e %. \"+ Cotação\" registra a cotação de um fornecedor do cadastro para aquele item (valor, quantidade, marca, prazo), e \"Escolher\" marca o fornecedor VENCEDOR do item (um por item — a base do pedido de compra que vem a seguir). Tudo manual: nada é casado automaticamente (v1.27.3).",
   "\"Orçamento de Obra\" agora se chama \"Custo da Obra\" em toda a interface (menu, títulos, botões — só o nome mudou; dados e telas são os mesmos). O item de menu \"Itens do orçamento\" saiu (era redundante — a edição de itens já vive dentro da tela do Custo da Obra, no \"+ Adicionar item\" com as abas SINAPI/Composição Própria/Item Manual). Dois consertos no adicionar item manual: a origem gravada agora usa os valores válidos do sistema (\"Composição própria\"/\"Item livre\") e o preço de venda (custo × BDI) passa a ser gravado no banco — o item entra somando certo também no dashboard de execução (v1.27.2).",
   "Cotações (importação) — 4 correções: o fornecedor agora é escolhido do CADASTRO (gravando o vínculo fornecedor_id, com \"+ Cadastrar novo fornecedor\" na hora); a comparação com o orçamento compara custo × CUSTO orçado (sem BDI) e não estoura mais com custo ínfimo (coluna alargada + trava, o mesmo fix do comparador IA); o campo \"Pedido de compra\" saiu do fluxo de cotação (cotação é só cotação — o pedido vem depois); e o arquivo importado (PDF/Excel/CSV) ganhou botão de download na tela da cotação (v1.27.1).",
@@ -151,6 +152,7 @@ const modules = [
   ["viabilidadeObra", "Análise de Viabilidade"],
   ["cotacoes", "Cotações"],
   ["purchaseOrders", "Pedidos de compra"],
+  ["compras", "Compras da Obra"],
   ["projectSchedule", "Cronograma Físico-Financeiro"],
   ["projectMilestones", "Marcos da obra"],
   ["agenda", "Agenda"],
@@ -212,7 +214,7 @@ const sidebarSections = [
   { id: "viabilidade", label: "Viabilidade", icon: "ti-clipboard-check", modules: ["viabilidadeObra"] },
   { id: "obras", label: "Obras/Projetos", icon: "ti-building-skyscraper", modules: ["projects", "cotacoes", "projectCosts", "projectRevenues", "fiscalDocuments", "rdo", "projectNotifications", "projectTrackingLinks", "projectReport"] },
   { id: "qualidadePbqph", label: "Qualidade PBQP-H", icon: "ti-certificate", modules: ["qualidadeDashboard", "qualidadePolitica", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos", "qualidadeAuditorias"] },
-  { id: "orcamentoObra", label: "Custo da Obra", icon: "ti-calculator", modules: ["workBudgets", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "purchaseOrders"] },
+  { id: "orcamentoObra", label: "Custo da Obra", icon: "ti-calculator", modules: ["workBudgets", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "purchaseOrders", "compras"] },
   { id: "planejamento", label: "Planejamento", icon: "ti-calendar-event", modules: ["projectSchedule", "projectMilestones", "agenda", "kanban", "technicalReports"] },
   { id: "financeiro", label: "Financeiro", icon: "ti-currency-dollar", modules: ["receivable", "payable", "cashMoves", "cashFlow", "reconciliation"] },
   { id: "contabilidade", label: "Contabilidade Gerencial", icon: "ti-chart-infographic", modules: ["chartAccounts", "journalEntries", "dre", "taxDocuments", "taxes"] },
@@ -233,7 +235,7 @@ const MODULE_ICONS = {
   categories: "ti-category", costCenters: "ti-building", bankAccounts: "ti-building-bank",
   budgets: "ti-calculator", proposals: "ti-file-text", sales: "ti-file-certificate",
   projects: "ti-building-skyscraper", projectSchedule: "ti-calendar-stats", projectMilestones: "ti-flag",
-  rdo: "ti-clipboard-list", purchaseOrders: "ti-shopping-cart", fiscalDocuments: "ti-receipt",
+  rdo: "ti-clipboard-list", purchaseOrders: "ti-shopping-cart", compras: "ti-basket", fiscalDocuments: "ti-receipt",
   cotacoes: "ti-tag", viabilidadeObra: "ti-clipboard-check", viabilityAnalyses: "ti-coin",
   receivable: "ti-arrow-up-circle", payable: "ti-arrow-down-circle", cashFlow: "ti-trending-up",
   reconciliation: "ti-refresh", agenda: "ti-calendar", kanban: "ti-layout-kanban",
@@ -326,14 +328,14 @@ const roleModules = {
     "reports", "reportFinancial", "reportClient", "reportSupplier", "reportCostCenter", "reportProject", "exports", "systemVersion", "qualidadeDashboard",
   ],
   comercial: ["dashboard", "clients", "projects", "projectSchedule", "agenda", "kanban", "workBudgets", "abcCurve", "viabilityAnalyses", "viabilidadeObra", "budgets", "proposals", "proposalModels", "sales", "reportClient", "systemVersion"],
-  engenharia: ["dashboard", "rdo", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "viabilityAnalyses", "viabilidadeObra", "purchaseOrders", "cotacoes", "fiscalDocuments", "technicalReports", "projectReport", "proposals", "reportProject", "systemVersion", "qualidadeDashboard", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
-  gestor_obra: ["dashboard", "rdo", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "viabilityAnalyses", "viabilidadeObra", "purchaseOrders", "cotacoes", "fiscalDocuments", "technicalReports", "projectReport", "proposals", "reportProject", "systemVersion", "qualidadeDashboard", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
+  engenharia: ["dashboard", "rdo", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "viabilityAnalyses", "viabilidadeObra", "purchaseOrders", "cotacoes", "compras", "fiscalDocuments", "technicalReports", "projectReport", "proposals", "reportProject", "systemVersion", "qualidadeDashboard", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
+  gestor_obra: ["dashboard", "rdo", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "viabilityAnalyses", "viabilidadeObra", "purchaseOrders", "cotacoes", "compras", "fiscalDocuments", "technicalReports", "projectReport", "proposals", "reportProject", "systemVersion", "qualidadeDashboard", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
   equipe_campo: ["dashboard", "projectReport", "systemVersion"],
   cliente_obra: ["dashboard", "projectReport", "projectSchedule", "technicalReports", "systemVersion"],
   fornecedor_terceiro: ["dashboard", "systemVersion"],
   consulta: ["dashboard", "projectReport", "cashFlow", "dre", "reports", "reportFinancial", "reportClient", "reportSupplier", "reportCostCenter", "reportProject", "exports", "qualidadeDashboard"],
   gerente: modules.map(([key]) => key).filter((k) => !["users", "permissions"].includes(k)),
-  operador: ["dashboard", "rdo", "clients", "suppliers", "products", "services", "categories", "costCenters", "bankAccounts", "projects", "projectCosts", "projectRevenues", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "ownCompositions", "quotes", "abcCurve", "fiscalDocuments", "receivable", "payable", "cashMoves", "cashFlow", "reconciliation", "budgets", "proposals", "sales", "purchaseOrders", "cotacoes", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectReport", "reports", "reportFinancial", "reportClient", "reportSupplier", "reportCostCenter", "reportProject", "myProfile", "qualidadeDashboard", "qualidadeFvs", "qualidadeFvm", "qualidadeNc"],
+  operador: ["dashboard", "rdo", "clients", "suppliers", "products", "services", "categories", "costCenters", "bankAccounts", "projects", "projectCosts", "projectRevenues", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "ownCompositions", "quotes", "abcCurve", "fiscalDocuments", "receivable", "payable", "cashMoves", "cashFlow", "reconciliation", "budgets", "proposals", "sales", "purchaseOrders", "cotacoes", "compras", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectReport", "reports", "reportFinancial", "reportClient", "reportSupplier", "reportCostCenter", "reportProject", "myProfile", "qualidadeDashboard", "qualidadeFvs", "qualidadeFvm", "qualidadeNc"],
   visualizador: modules.map(([key]) => key),
 };
 
@@ -343,10 +345,10 @@ const roleModules = {
 const EDITABLE_BY_ROLE = {
   financeiro: ["fiscalDocuments", "receivable", "payable", "cashMoves", "cashFlow", "reconciliation", "categories", "costCenters", "bankAccounts", "chartAccounts", "journalEntries", "taxDocuments", "taxes", "exports", "projectSchedule", "agenda", "kanban", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "sinapiSettings", "quotes", "sales", "viabilityAnalyses", "viabilidadeObra"],
   comercial: ["clients", "budgets", "proposals", "agenda", "kanban", "viabilityAnalyses", "viabilidadeObra"],
-  engenharia: ["rdo", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "purchaseOrders", "cotacoes", "fiscalDocuments", "technicalReports", "viabilidadeObra", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
-  gestor_obra: ["rdo", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "purchaseOrders", "cotacoes", "fiscalDocuments", "technicalReports", "viabilidadeObra", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
+  engenharia: ["rdo", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "purchaseOrders", "cotacoes", "compras", "fiscalDocuments", "technicalReports", "viabilidadeObra", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
+  gestor_obra: ["rdo", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "purchaseOrders", "cotacoes", "compras", "fiscalDocuments", "technicalReports", "viabilidadeObra", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
   gerente: modules.map(([k]) => k).filter((k) => !["users", "permissions"].includes(k)),
-  operador: ["rdo", "clients", "suppliers", "products", "services", "categories", "costCenters", "bankAccounts", "projects", "projectCosts", "projectRevenues", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "ownCompositions", "quotes", "fiscalDocuments", "receivable", "payable", "cashMoves", "reconciliation", "budgets", "proposals", "sales", "purchaseOrders", "cotacoes", "projectSchedule", "projectMilestones", "agenda", "kanban", "qualidadeFvs", "qualidadeFvm", "qualidadeNc"],
+  operador: ["rdo", "clients", "suppliers", "products", "services", "categories", "costCenters", "bankAccounts", "projects", "projectCosts", "projectRevenues", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "ownCompositions", "quotes", "fiscalDocuments", "receivable", "payable", "cashMoves", "reconciliation", "budgets", "proposals", "sales", "purchaseOrders", "cotacoes", "compras", "projectSchedule", "projectMilestones", "agenda", "kanban", "qualidadeFvs", "qualidadeFvm", "qualidadeNc"],
 };
 
 const moduleLabels = Object.fromEntries(modules);
@@ -2803,6 +2805,7 @@ function render() {
   if (currentModule === "viabilityAnalyses") return renderViability();
   if (currentModule === "viabilidadeObra") { viabilidadeObraOpenId = null; return renderViabilidadeList(); }
   if (currentModule === "cotacoes") { cotacaoOpenId = null; return renderCotacoes(); }
+  if (currentModule === "compras") return renderCompras();
   if (currentModule === "plugins") return renderPlugins();
   if (currentModule === "iaBusca") return renderIaBusca();
   if (currentModule === "iaDepara") return renderIaDepara();
@@ -13048,7 +13051,10 @@ function paintCompraMatriz() {
       <div>
         <button class="secondary" type="button" id="compraVoltar">← Voltar ao Custo da Obra</button>
         <h2>Cotações de compra — ${svgText(st.budget.name || "")}</h2>
-        <p>Compare o custo orçado (sem BDI) de cada item com as cotações dos fornecedores e marque o vencedor. O menor valor de cada linha fica destacado; o pedido de compra vem depois, a partir do vencedor.</p>
+        <p>Compare o custo orçado (sem BDI) de cada item com as cotações dos fornecedores e marque o vencedor. O menor valor de cada linha fica destacado; o pedido de compra nasce dos vencedores.</p>
+      </div>
+      <div class="actions">
+        ${editable ? `<button class="primary" type="button" id="compraGerarPedido" ${st.cotacoes.some((c) => Number(c.vencedor) === 1) ? "" : "disabled"}>Gerar pedido de compra (vencedores)</button>` : ""}
       </div>
     </section>
     <section class="table-wrap">
@@ -13061,6 +13067,23 @@ function paintCompraMatriz() {
   qs("compraVoltar").addEventListener("click", () => { compraCotacaoState = null; render(); });
   qs("content").querySelectorAll("[data-compra-add]").forEach((b) => b.addEventListener("click", () => openCompraCotacaoForm(b.dataset.compraAdd)));
   qs("content").querySelectorAll("[data-compra-venc]").forEach((b) => b.addEventListener("click", () => marcarCompraVencedor(Number(b.dataset.compraVenc), b.dataset.vencAtual !== "1")));
+  qs("compraGerarPedido")?.addEventListener("click", async () => {
+    if (!confirm("Gerar pedido(s) de compra a partir dos fornecedores vencedores? (um pedido por fornecedor)")) return;
+    try {
+      const data = await apiModuleRequest("?module=cotacoes&action=compraGerarPedido", { method: "POST", body: JSON.stringify({ workBudgetId: st.budget.id }) });
+      const pedidos = data.pedidos || [];
+      showToast(`${pedidos.length} pedido(s) gerado(s): ${pedidos.map((p) => `${p.number} (${p.fornecedor})`).join(", ")}`);
+      if (confirm("Pedido(s) gerado(s). Abrir a aba Compras da Obra para registrar a compra e a nota fiscal?")) {
+        compraCotacaoState = null;
+        currentModule = "compras";
+        await refreshAndRender();
+      } else {
+        renderCompraCotacoes(st.budget);
+      }
+    } catch (error) {
+      alert(`Não foi possível gerar o pedido: ${error.message}`);
+    }
+  });
 }
 
 function openCompraCotacaoForm(orcItemId) {
@@ -13119,6 +13142,94 @@ async function marcarCompraVencedor(cotacaoItemId, marcar) {
   } catch (error) {
     alert(`Não foi possível marcar o vencedor: ${error.message}`);
   }
+}
+
+// ── F5.3: aba Compras da Obra — pedido → NF vinculada → conta a pagar → realizado ──
+// Lista os pedidos de compra com a NF vinculada (fiscal_documents.purchaseOrderId) e
+// a conta a pagar da automação (referencia PEDIDO_COMPRA). "Registrar compra + NF"
+// fecha o ciclo num passo só (backend dispara as automações existentes).
+function renderCompras() {
+  const editable = canEditModule("purchaseOrders");
+  const rows = applyFilters(db.purchaseOrders || []).slice().sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
+  const linhas = rows.map((po) => {
+    const nfs = (db.fiscalDocuments || []).filter((nf) => sameId(nf.purchaseOrderId, po.id));
+    const conta = (db.payable || []).find((p) => (p.referencia_tipo === "PEDIDO_COMPRA" || p.referenceType === "PEDIDO_COMPRA") && sameId(p.referencia_id ?? p.referenceId, po.id));
+    const nfCell = nfs.length
+      ? nfs.map((nf) => `<div>NF ${svgText(nf.documentNumber || "")} · ${asMoney(nf.amount || 0)}</div>`).join("")
+      : '<span class="muted">—</span>';
+    const contaCell = conta
+      ? `<div>${svgText(conta.document || "Conta lançada")}<div class="muted ia-dp-un">${svgText(conta.status || "")} · vence ${asDate(conta.dueDate)}</div></div>`
+      : '<span class="muted">—</span>';
+    const recebido = po.status === "Recebido";
+    return `<tr>
+      <td><strong>${svgText(po.number || po.id)}</strong><div class="muted ia-dp-un">${asDate(po.date)}</div></td>
+      <td>${svgText(nameOf("projects", po.projectId) || "—")}</td>
+      <td>${svgText(nameOf("suppliers", po.supplierId) || "—")}</td>
+      <td class="ia-dp-valor">${asMoney(po.amount || 0)}</td>
+      <td>${cotacaoBadge(COMPRAS_STATUS, po.status)}</td>
+      <td>${nfCell}</td>
+      <td>${contaCell}</td>
+      <td>${editable ? `<button type="button" class="${nfs.length ? "secondary" : "primary"} ia-dp-mini" data-compra-nf="${po.id}">${recebido && nfs.length ? "+ Outra NF" : "Registrar compra + NF"}</button>` : ""}</td>
+    </tr>`;
+  }).join("");
+  qs("content").innerHTML = `
+    <section class="module-head">
+      <div>
+        <h2>Compras da Obra</h2>
+        <p>Ciclo de compra: cotação vencedora → pedido → compra efetuada com NOTA FISCAL vinculada à obra. Registrar a compra lança a conta a pagar (automático) e atualiza o realizado do Custo da Obra.</p>
+      </div>
+    </section>
+    <section class="table-wrap">
+      <table class="ia-dp-table">
+        <thead><tr><th>Pedido</th><th>Obra</th><th>Fornecedor</th><th>Valor</th><th>Status</th><th>Nota fiscal</th><th>Conta a pagar</th><th></th></tr></thead>
+        <tbody>${linhas || '<tr><td colspan="8" class="muted">Nenhum pedido de compra ainda. Gere um a partir das cotações vencedoras (Custo da Obra → Cotações de compra).</td></tr>'}</tbody>
+      </table>
+    </section>`;
+  qs("content").querySelectorAll("[data-compra-nf]").forEach((b) => b.addEventListener("click", () => openComprasRegistrar(b.dataset.compraNf)));
+}
+
+const COMPRAS_STATUS = { Solicitado: ["Solicitado", "cinza"], Aprovado: ["Aprovado", "amarelo"], Aprovada: ["Aprovada", "amarelo"], Recebido: ["Recebido", "verde"], Cancelado: ["Cancelado", "vermelho"], Cancelada: ["Cancelada", "vermelho"] };
+
+function openComprasRegistrar(poId) {
+  const po = byId("purchaseOrders", poId);
+  if (!po) return;
+  const tipos = ["Nota Fiscal de Produto", "Nota Fiscal de Serviço", "Recibo", "Comprovante", "Outro"];
+  const { close, q } = viabilidadeDialog(`
+    <div class="viab-modal">
+      <header class="viab-modal-head"><h3>Registrar compra — pedido ${escapeHtml(po.number || po.id)}</h3><button type="button" class="viab-x" data-close>✕</button></header>
+      <div class="viab-modal-body">
+        <p class="muted">Fornecedor: ${escapeHtml(nameOf("suppliers", po.supplierId) || "—")} · Obra: ${escapeHtml(nameOf("projects", po.projectId) || "—")} · Pedido: ${asMoney(po.amount || 0)}</p>
+        <div class="form-grid">
+          <label>Número da nota fiscal<input id="cnfNumero" placeholder="000.000.000"></label>
+          <label>Data de emissão<input type="date" id="cnfData" value="${hojeLocal()}"></label>
+          <label>Valor da nota (R$)<input id="cnfValor" inputmode="decimal" value="${formatMoneyInput(Number(po.amount || 0))}"></label>
+          <label>Tipo<select id="cnfTipo">${tipos.map((t) => `<option value="${t}">${t}</option>`).join("")}</select></label>
+        </div>
+        <p class="muted">Ao registrar: a NF entra em Notas fiscais vinculada à obra e ao pedido; a conta a pagar é lançada (se ainda não existe); e as quantidades compradas somam no realizado do Custo da Obra.</p>
+      </div>
+      <footer class="viab-modal-foot"><button type="button" class="secondary" data-close>Cancelar</button><button type="button" class="primary" data-save>Registrar compra</button></footer>
+    </div>`, "viab-dialog-md");
+  q("[data-save]").addEventListener("click", async () => {
+    const numero = q("#cnfNumero").value.trim();
+    if (!numero) return alert("Informe o número da nota fiscal.");
+    const btn = q("[data-save]");
+    btn.disabled = true;
+    try {
+      const data = await apiModuleRequest("?module=cotacoes&action=comprasRegistrar", { method: "POST", body: JSON.stringify({
+        purchase_order_id: po.id,
+        documentNumber: numero,
+        issueDate: q("#cnfData").value || hojeLocal(),
+        amount: parseMoneyInput(q("#cnfValor").value || "0"),
+        type: q("#cnfTipo").value,
+      }) });
+      close();
+      showToast(`Compra registrada: NF vinculada, conta a pagar lançada e ${Number(data.itensRealizados || 0)} item(ns) somado(s) ao realizado.`);
+      await refreshAndRender();
+    } catch (error) {
+      btn.disabled = false;
+      alert(`Não foi possível registrar a compra: ${error.message}`);
+    }
+  });
 }
 
 // Download autenticado do arquivo importado da cotação (fica fora do docroot).

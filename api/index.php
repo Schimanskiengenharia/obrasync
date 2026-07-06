@@ -1822,7 +1822,7 @@ function resource_map(): array
         'workBudgetItems' => r('orcamento_obra_itens', ['itens-orcamentos-obras','itens-orçamentos-obras'], ['workBudgetId','projectId','origin','sinapiReferenceId','sinapiUf','sinapiReferenceType','code','description','unit','quantity','unitCost','totalCost','bdiPercent','unitPrice','totalPrice','stageName','costCenterId','categoryId','notes','quantidade_realizada','codigo','tipo','etapa_id','sinapi_id','composicao_propria_id','ordem','sinapiSnapshotJson'], ['workBudgetId','code','description']),
         'orcamentoEtapas' => r('orcamento_etapas', ['orcamento-etapas','etapas-orcamento'], ['orcamento_id','obra_id','nome','codigo','ordem','bdi_especifico'], ['orcamento_id','nome']),
         'quotes' => r('cotacoes', ['cotacoes','cotações'], ['supplierId','description','unit','quantity','unitValue','totalValue','quoteDate','validityDate','attachmentPath','projectId','workBudgetId','notes','status'], ['supplierId','description','quoteDate']),
-        'fiscalDocuments' => r('fiscal_documents', ['notas-fiscais','documentos-fiscais-obra'], ['projectId','supplierId','documentNumber','issueDate','amount','type','status','payableId','receivableId','saleId','costCenterId','categoryId','pdfPath','xmlPath','notes'], ['documentNumber'], ['pdfPath','xmlPath']),
+        'fiscalDocuments' => r('fiscal_documents', ['notas-fiscais','documentos-fiscais-obra'], ['projectId','supplierId','documentNumber','issueDate','amount','type','status','payableId','receivableId','saleId','purchaseOrderId','costCenterId','categoryId','pdfPath','xmlPath','notes'], ['documentNumber'], ['pdfPath','xmlPath']),
         'projectSchedule' => r('obra_cronograma_etapas', ['cronograma-fisico-financeiro','cronograma-obras','cronograma'], ['projectId','stageName','description','sortOrder','plannedStartDate','plannedEndDate','actualStartDate','actualEndDate','plannedPhysicalPercent','actualPhysicalPercent','plannedFinancialAmount','actualFinancialAmount','workBudgetId','workBudgetItemId','predecessorIds','durationDays','status','responsible','isMilestone','milestoneName','milestoneMessage','visibleToClient','notes','servicoSiacId'], ['projectId','stageName']),
         'projectMilestones' => r('obra_cronograma_marcos', ['marcos-obras','marcos-da-obra'], ['projectId','scheduleStepId','name','defaultMessage','visibleToClient','plannedDate','completedDate','status','notes'], ['projectId','name']),
         'projectNotifications' => r('obra_notificacoes', ['notificacoes-obras','notificacoes-da-obra'], ['projectId','scheduleStepId','milestoneId','recipient','phone','type','message','generatedLink','status','responsibleUserId'], ['generatedLink']),
@@ -2226,6 +2226,7 @@ function ensure_fiscal_documents_table(PDO $pdo): void
             payableId BIGINT UNSIGNED NULL,
             receivableId BIGINT UNSIGNED NULL,
             saleId BIGINT UNSIGNED NULL,
+            purchaseOrderId BIGINT UNSIGNED NULL,
             costCenterId BIGINT UNSIGNED NULL,
             categoryId BIGINT UNSIGNED NULL,
             pdfPath VARCHAR(500) NULL,
@@ -2238,6 +2239,11 @@ function ensure_fiscal_documents_table(PDO $pdo): void
             INDEX idx_fiscal_issue (issueDate),
             INDEX idx_fiscal_status (status)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        // F5.3: vínculo NF ↔ pedido de compra (aba Compras da obra).
+        try {
+            $pdo->exec('ALTER TABLE fiscal_documents ADD COLUMN IF NOT EXISTS purchaseOrderId BIGINT UNSIGNED NULL');
+        } catch (Throwable $ignored) {
+        }
         $done = true;
     } catch (Throwable $error) {
         error_log('[ObraSync] ensure_fiscal_documents_table: ' . $error->getMessage());
@@ -3781,6 +3787,167 @@ function handle_cotacoes_module(PDO $pdo, string $method, array $query, array $c
             ]);
             server_audit($pdo, $authUser, 'create', 'cotacoes', $ciId, 'cotação de compra: item ' . $itemId . ' × fornecedor ' . $fornecedorId);
             cotacao_respond(true, ['id' => $ciId, 'cotacao_id' => $cotId, 'diferenca_percentual' => $difPercent, 'status_comparacao' => $classe], 'Cotação registrada.', 201);
+        }
+
+        // ── F5.3: cotação vencedora → pedido de compra ────────────────────────
+        // Agrupa os vencedores por fornecedor e cria um purchase_order por
+        // fornecedor, com purchase_order_items vinculados ao item do orçamento
+        // (work_budget_item_id) — daí em diante o fluxo existente assume:
+        // Aprovado → conta a pagar automática; Recebido → quantidade_realizada.
+        if ($action === 'compragerarpedido') {
+            require_method($method, ['POST']);
+            $payload = read_json();
+            $workBudgetId = (int) ($payload['workBudgetId'] ?? 0);
+            if ($workBudgetId <= 0) {
+                cotacao_respond(false, [], 'Informe o orçamento (workBudgetId).', 400);
+            }
+            $bstmt = $pdo->prepare('SELECT id, projectId, name FROM orcamentos_obras WHERE id = ? LIMIT 1');
+            $bstmt->execute([$workBudgetId]);
+            $budget = $bstmt->fetch();
+            if (!$budget) {
+                cotacao_respond(false, [], 'Orçamento (Custo da Obra) não encontrado.', 404);
+            }
+            $stmt = $pdo->prepare('SELECT ci.id, ci.cotacao_id, ci.orcamento_item_id, ci.descricao, ci.unidade, ci.quantidade, ci.valor_unitario, ci.valor_total,
+                                          cf.fornecedor_id, cf.fornecedor_nome
+                                     FROM cotacao_itens ci
+                                     JOIN cotacao_fornecedor cf ON cf.id = ci.cotacao_id
+                                    WHERE ci.vencedor = 1
+                                      AND ci.orcamento_item_id IN (SELECT id FROM orcamento_obra_itens WHERE workBudgetId = ?)');
+            $stmt->execute([$workBudgetId]);
+            $vencedores = $stmt->fetchAll();
+            if (!$vencedores) {
+                cotacao_respond(false, [], 'Nenhum fornecedor vencedor marcado nos itens deste orçamento. Marque os vencedores na matriz antes de gerar o pedido.', 400);
+            }
+            ensure_purchase_order_items($pdo);
+            $grupos = [];
+            foreach ($vencedores as $v) {
+                $k = ($v['fornecedor_id'] ?? null) !== null ? 'f' . (int) $v['fornecedor_id'] : 'n:' . (string) $v['fornecedor_nome'];
+                $grupos[$k][] = $v;
+            }
+            $pedidos = [];
+            $pdo->beginTransaction();
+            try {
+                $nchk = $pdo->prepare('SELECT 1 FROM purchase_orders WHERE number = ? LIMIT 1');
+                foreach ($grupos as $itensPed) {
+                    $primeiro = $itensPed[0];
+                    $total = 0.0;
+                    foreach ($itensPed as $v) {
+                        $qtd = ($v['quantidade'] ?? null) !== null ? (float) $v['quantidade'] : 1.0;
+                        $total += ($v['valor_total'] ?? null) !== null ? (float) $v['valor_total'] : round($qtd * (float) $v['valor_unitario'], 2);
+                    }
+                    // Número único (uk purchase_orders.number).
+                    $number = '';
+                    for ($seq = 1; $seq <= 200; $seq++) {
+                        $number = 'PED-' . date('Ymd') . '-' . str_pad((string) random_int(0, 9999), 4, '0', STR_PAD_LEFT);
+                        $nchk->execute([$number]);
+                        if (!$nchk->fetchColumn()) {
+                            break;
+                        }
+                    }
+                    $poId = insert_dynamic($pdo, 'purchase_orders', [
+                        'number' => $number,
+                        'date' => date('Y-m-d'),
+                        'projectId' => ($budget['projectId'] ?? null) !== null ? (int) $budget['projectId'] : null,
+                        'supplierId' => ($primeiro['fornecedor_id'] ?? null) !== null ? (int) $primeiro['fornecedor_id'] : null,
+                        'amount' => round($total, 2),
+                        'status' => 'Solicitado',
+                        'notes' => 'Gerado das cotações de compra vencedoras — ' . (string) $budget['name'] . ' (fornecedor: ' . (string) $primeiro['fornecedor_nome'] . ').',
+                    ]);
+                    foreach ($itensPed as $v) {
+                        insert_dynamic($pdo, 'purchase_order_items', [
+                            'purchase_order_id' => $poId,
+                            'descricao' => mb_substr((string) $v['descricao'], 0, 500),
+                            'unidade' => ($v['unidade'] ?? null) !== null ? mb_substr((string) $v['unidade'], 0, 20) : null,
+                            'quantidade' => ($v['quantidade'] ?? null) !== null ? (float) $v['quantidade'] : 1.0,
+                            'valor_unitario' => (float) $v['valor_unitario'],
+                            'work_budget_item_id' => (int) $v['orcamento_item_id'],
+                        ]);
+                    }
+                    // Fecha o elo cotação→pedido nos cabeçalhos envolvidos.
+                    $headers = array_values(array_unique(array_map(static fn ($v) => (int) $v['cotacao_id'], $itensPed)));
+                    $in = implode(',', array_fill(0, count($headers), '?'));
+                    $pdo->prepare("UPDATE cotacao_fornecedor SET purchase_order_id = ?, status = 'aprovada' WHERE id IN ($in)")
+                        ->execute(array_merge([$poId], $headers));
+                    $pedidos[] = ['id' => $poId, 'number' => $number, 'fornecedor' => (string) $primeiro['fornecedor_nome'], 'total' => round($total, 2), 'itens' => count($itensPed)];
+                }
+                $pdo->commit();
+            } catch (Throwable $e) {
+                if ($pdo->inTransaction()) {
+                    $pdo->rollBack();
+                }
+                throw $e;
+            }
+            server_audit($pdo, $authUser, 'create', 'purchaseOrders', (string) $pedidos[0]['id'], count($pedidos) . ' pedido(s) gerado(s) das cotações vencedoras (orçamento ' . $workBudgetId . ')');
+            cotacao_respond(true, ['pedidos' => $pedidos], count($pedidos) . ' pedido(s) de compra gerado(s) a partir dos vencedores.', 201);
+        }
+
+        // ── F5.3: registrar a compra efetuada + NF vinculada à obra ──────────
+        // Cria a fiscal_document ligada ao pedido/obra/fornecedor e dispara as
+        // automações EXISTENTES na ordem certa: Aprovado (conta a pagar,
+        // idempotente por referencia_tipo) e Recebido (quantidade_realizada).
+        if ($action === 'comprasregistrar') {
+            require_method($method, ['POST']);
+            $payload = read_json();
+            $poId = (int) ($payload['purchase_order_id'] ?? 0);
+            $docNumber = trim((string) ($payload['documentNumber'] ?? ''));
+            if ($poId <= 0 || $docNumber === '') {
+                cotacao_respond(false, [], 'Informe o pedido de compra e o número da nota fiscal.', 400);
+            }
+            $stmt = $pdo->prepare('SELECT * FROM purchase_orders WHERE id = ? LIMIT 1');
+            $stmt->execute([$poId]);
+            $po = $stmt->fetch();
+            if (!$po) {
+                cotacao_respond(false, [], 'Pedido de compra não encontrado.', 404);
+            }
+            ensure_fiscal_documents_table($pdo);
+            $issueDate = (string) ($payload['issueDate'] ?? '') ?: date('Y-m-d');
+            $amount = cotacao_num($payload['amount'] ?? '');
+            if ($amount === null || $amount <= 0) {
+                $amount = (float) ($po['amount'] ?? 0);
+            }
+            $tiposNf = ['Nota Fiscal de Serviço', 'Nota Fiscal de Produto', 'Recibo', 'Comprovante', 'Outro'];
+            $tipo = in_array((string) ($payload['type'] ?? ''), $tiposNf, true) ? (string) $payload['type'] : 'Nota Fiscal de Produto';
+            $statusAtual = (string) ($po['status'] ?? '');
+            $pdo->beginTransaction();
+            try {
+                // 1) Conta a pagar (se ainda não existe): mesma automação do fluxo
+                // de aprovação de pedido — idempotente por referencia PEDIDO_COMPRA.
+                $automacaoPagar = automate_approved_purchase_order($pdo, $poId);
+                // 2) NF vinculada à obra + pedido + conta a pagar.
+                $payableId = (int) ($automacaoPagar['payableId'] ?? 0) ?: null;
+                $fiscalId = insert_dynamic($pdo, 'fiscal_documents', [
+                    'projectId' => ($po['projectId'] ?? null) !== null ? (int) $po['projectId'] : null,
+                    'supplierId' => ($po['supplierId'] ?? null) !== null ? (int) $po['supplierId'] : null,
+                    'purchaseOrderId' => $poId,
+                    'payableId' => $payableId,
+                    'documentNumber' => mb_substr($docNumber, 0, 100),
+                    'issueDate' => $issueDate,
+                    'amount' => round((float) $amount, 2),
+                    'type' => $tipo,
+                    'status' => 'Anexada',
+                    'notes' => 'Compra do pedido ' . (string) ($po['number'] ?? $poId) . ' registrada pela aba Compras.',
+                ]);
+                // 3) Realizado da obra (uma vez só): soma quantidade dos itens
+                // vinculados em quantidade_realizada — não repete se já Recebido.
+                $realizado = ['updated' => 0];
+                if ($statusAtual !== 'Recebido') {
+                    $realizado = automate_received_purchase_order($pdo, $poId);
+                    update_dynamic($pdo, 'purchase_orders', $poId, ['status' => 'Recebido']);
+                }
+                $pdo->commit();
+            } catch (Throwable $e) {
+                if ($pdo->inTransaction()) {
+                    $pdo->rollBack();
+                }
+                throw $e;
+            }
+            server_audit($pdo, $authUser, 'create', 'fiscalDocuments', (string) $fiscalId, 'Compra registrada: NF ' . $docNumber . ' vinculada ao pedido ' . ($po['number'] ?? $poId) . ' e à obra');
+            cotacao_respond(true, [
+                'fiscalDocumentId' => $fiscalId,
+                'payableId' => $payableId,
+                'itensRealizados' => (int) ($realizado['updated'] ?? 0),
+                'status' => 'Recebido',
+            ], 'Compra registrada: NF vinculada à obra, conta a pagar lançada e realizado atualizado.', 201);
         }
 
         if ($action === 'compravencedor') {

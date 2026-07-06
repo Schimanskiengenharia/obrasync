@@ -760,6 +760,7 @@ CREATE TABLE IF NOT EXISTS fiscal_documents (
   payableId BIGINT UNSIGNED NULL,
   receivableId BIGINT UNSIGNED NULL,
   saleId BIGINT UNSIGNED NULL,
+  purchaseOrderId BIGINT UNSIGNED NULL COMMENT 'Pedido de compra da NF (aba Compras da Obra)',
   costCenterId BIGINT UNSIGNED NULL,
   categoryId BIGINT UNSIGNED NULL,
   pdfPath VARCHAR(500) NULL,
