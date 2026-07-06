@@ -623,6 +623,7 @@ CREATE TABLE IF NOT EXISTS proposta_orcamento_vinculos (
   ordem INT DEFAULT 0 COMMENT 'Ordem de exibição na proposta',
   grupo_id BIGINT UNSIGNED NULL COMMENT 'proposta_grupos.id (nível 2)',
   disciplina VARCHAR(60) NULL COMMENT 'Disciplina do grupo',
+  descricao TEXT NULL COMMENT 'Descrição/escopo da disciplina exibida como seção na proposta',
   CONSTRAINT fk_prop_link_proposal FOREIGN KEY (proposalId) REFERENCES commercial_proposals(id) ON DELETE CASCADE,
   INDEX idx_prop_link_budget (workBudgetId),
   UNIQUE KEY uk_prop_budget_link (proposalId, workBudgetId)

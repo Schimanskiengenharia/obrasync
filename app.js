@@ -19,9 +19,10 @@ if (APP_ENV === "production" && location.protocol === "http:") {
   location.replace(location.href.replace(/^http:/, "https:"));
 }
 const APP_NAME = "ObraSync";
-const APP_VERSION = "v1.26.5";
+const APP_VERSION = "v1.27.0";
 const APP_VERSION_DATE = "2026-07-06";
 const APP_CHANGELOG = [
+  "Proposta multi-disciplina completa (F3): cada orçamento vinculado à proposta ganhou um campo \"Descrição da disciplina\" no gerador (o escopo daquela parte, ex.: cozinha e energia solar separados). O documento da proposta agora traz uma seção por disciplina — título, descrição detalhada e valor — acima do quadro de investimento, que segue com o total. O contrato gerado da proposta acompanha: o objeto (cláusula 1ª) lista cada disciplina com valor e descrição, e a cláusula 5ª mostra a composição do valor por disciplina. Modelos de proposta salvos preservam as descrições (v1.27.0).",
   "Comparador/De-para IA: títulos de seção (ex.: QUADROS DE DISTRIBUIÇÃO) e linhas de Subtotal/Total da planilha deixam de ser tratados como itens — aparecem como separadores visuais nas telas, não gastam classificação da IA e NÃO viram itens no envio para o Orçamento de Obra (fim dos itens fantasma com quantidade 1 e custo 0). Bônus: quando a planilha não tem coluna Setor, o título da seção vira a etapa dos itens abaixo dele. Lotes antigos: o mesmo critério é reaplicado na hora do envio — reenviar um lote antigo também sai limpo (v1.26.5).",
   "Avisos do dashboard com cor por severidade: perda de dinheiro (contas vencidas, custo realizado acima do previsto, itens com estouro de quantidade) em VERMELHO; atenção operacional (cronograma atrasado, margem baixa, propostas com validade vencida, obras com término vencido) em AMARELO. Os cards \"Contas a pagar\" e \"Contas vencidas\" não mostram mais o valor em verde — valor maior que zero aparece em vermelho (dinheiro saindo/em risco não é coisa boa) (v1.26.4).",
   "Correção RAIZ da leitura de planilha no comparador/de-para IA: células com FÓRMULA (ex.: a coluna Custo Direto Unit. = Material + M.O.) agora são lidas pelo valor CALCULADO — antes a fórmula \"=J93+K93\" chegava como texto e virava 9393 (números de linha), gerando unitários e excessos irreais. Fallback por célula (valor salvo pelo Excel → valor bruto) garante que uma fórmula problemática não derruba a leitura. Rede de segurança adicional: quando Material e M.O. existem, o custo direto usado (e gravado) é a SOMA deles; custo direto isolado só entra se plausível. Reprocesse os lotes afetados com novo upload ou Reanalisar (v1.26.3).",
@@ -6771,10 +6772,16 @@ function table(title, rows, fields, actions = false, actionKey = "") {
 function buildContractObjeto(proposal, links, project) {
   const base = `Prestação de serviços técnicos de engenharia${project && project.name ? ` para ${project.name}` : ""}.`;
   if (!links || !links.length) return proposal.description || base;
-  const byDisc = {};
-  links.forEach((l) => { const d = l.disciplina || "Geral"; (byDisc[d] = byDisc[d] || []).push(l.nome_grupo || ""); });
-  const linhas = Object.entries(byDisc).map(([d, gs]) => `${d}: ${gs.filter(Boolean).join(", ")}`);
-  return `${base}\n\nEscopo por disciplina:\n${linhas.join("\n")}`;
+  // Detalhamento por disciplina: nome, valor e a descrição do escopo de cada vínculo
+  // (campo descricao) — para o contrato "falar de acordo" com a proposta em seções.
+  const ordenados = [...links].sort((a, b) => Number(a.ordem || 0) - Number(b.ordem || 0));
+  const linhas = ordenados.map((l) => {
+    const titulo = [l.nome_grupo || "", l.disciplina && l.disciplina !== l.nome_grupo ? `(${l.disciplina})` : ""].filter(Boolean).join(" ") || "Disciplina";
+    const desc = String(l.descricao || "").trim();
+    return `— ${titulo}: ${asMoney(l.valor_venda || 0)}${desc ? `\n${desc}` : ""}`;
+  });
+  const total = ordenados.reduce((s, l) => s + Number(l.valor_venda || 0), 0);
+  return `${base}\n\nEscopo e valores por disciplina:\n${linhas.join("\n")}\n\nValor total: ${asMoney(total)}`;
 }
 
 async function generateContractFromProposal(proposalId) {
@@ -6832,16 +6839,25 @@ function contractPdfHtml(contract) {
   const v = (val, ph) => (val && String(val).trim()) ? svgText(val) : `<span class="contract-ph">[${ph}]</span>`;
   const clausula = (n, titulo, corpo) => `<section class="contract-clause"><h3>CLÁUSULA ${n} — ${svgText(titulo)}</h3><div>${corpo}</div></section>`;
   const valorExtenso = typeof moneyToWords === "function" ? moneyToWords(valor) : asMoney(valor);
+  // Composição do valor por disciplina (vínculos da proposta): entra na cláusula 5ª
+  // quando a proposta tem 2+ disciplinas ou descrição de escopo preenchida.
+  const links = (db.proposalBudgetLinks || [])
+    .filter((l) => contract.proposalId && sameId(l.proposalId, contract.proposalId))
+    .sort((a, b) => Number(a.ordem || 0) - Number(b.ordem || 0));
+  const discComposicao = (links.length > 1 || links.some((l) => String(l.descricao || "").trim()))
+    ? `<p>O valor total é composto pelas seguintes parcelas, por disciplina:</p>
+       ${links.map((l) => `<p class="contract-disc-line">— ${svgText([l.nome_grupo || "", l.disciplina && l.disciplina !== l.nome_grupo ? `(${l.disciplina})` : ""].filter(Boolean).join(" ") || "Disciplina")}: <strong>${asMoney(l.valor_venda || 0)}</strong></p>`).join("")}`
+    : "";
   return `
     <article class="contract-page">
       ${generateDocumentHeader("Contrato de Prestação de Serviços Técnicos", contract.numero_contrato || "")}
       <p class="contract-parties"><strong>CONTRATANTE:</strong> ${v(contract.cliente_nome, "nome do cliente")}, CPF/CNPJ ${v(contract.cpf_cnpj, "CPF/CNPJ")}, ${v(contract.endereco, "endereço")}${contract.cidade ? " — " + svgText(contract.cidade) : ""}${contract.estado ? "/" + svgText(contract.estado) : ""}.</p>
       <p class="contract-parties"><strong>CONTRATADA:</strong> ${svgText(c.name || "[empresa]")}, CNPJ ${v(c.document, "CNPJ")}, ${svgText([c.address, c.city || c.cidade, c.estado].filter(Boolean).join(", ") || "[endereço da empresa]")}.</p>
-      ${clausula("1ª", "Do Objeto", `<p>${v(contract.objeto, "objeto/escopo do contrato")}</p>`)}
+      ${clausula("1ª", "Do Objeto", `<p>${contract.objeto && String(contract.objeto).trim() ? textToHtml(contract.objeto) : '<span class="contract-ph">[objeto/escopo do contrato]</span>'}</p>`)}
       ${clausula("2ª", "Dos Documentos Integrantes", `<p>Integram este contrato a proposta comercial ${proposal.number ? "nº " + svgText(proposal.number) : `<span class="contract-ph">[nº da proposta]</span>`} e seus anexos técnicos.</p>`)}
       ${clausula("3ª", "Das Obrigações da Contratada", `<p>Executar os serviços conforme as normas técnicas vigentes, com pessoal qualificado, fornecendo a respectiva Anotação/Registro de Responsabilidade Técnica (ART/RRT).</p>`)}
       ${clausula("4ª", "Das Obrigações da Contratante", `<p>Disponibilizar acesso, informações e condições necessárias à execução e efetuar os pagamentos nos prazos pactuados.</p>`)}
-      ${clausula("5ª", "Do Valor e da Forma de Pagamento", `<p>O valor total dos serviços é de <strong>${svgText(valorExtenso)}</strong>, pago por medição conforme <span class="contract-ph">[forma/cronograma de pagamento por medição]</span>.</p>`)}
+      ${clausula("5ª", "Do Valor e da Forma de Pagamento", `<p>O valor total dos serviços é de <strong>${svgText(valorExtenso)}</strong>, pago por medição conforme <span class="contract-ph">[forma/cronograma de pagamento por medição]</span>.</p>${discComposicao}`)}
       ${clausula("6ª", "Do Prazo de Execução", `<p>${v(proposal.executionDeadline || proposal.deadline, "prazo de execução")}.</p>`)}
       ${clausula("7ª", "Da Responsabilidade Técnica", `<p>Responsável técnico: ${v(proposal.technicalResponsible, "responsável técnico")} — ART/RRT nº <span class="contract-ph">[ART/RRT]</span>.</p>`)}
       ${clausula("8ª", "Da Segurança e Saúde no Trabalho", `<p>A execução observará as Normas Regulamentadoras aplicáveis à natureza dos serviços (ex.: NR-18, NR-35, NR-10, quando pertinentes).</p>`)}
@@ -13807,7 +13823,7 @@ async function openProposalGenerator(workBudgetId) {
     // Grupos = orçamentos vinculados à proposta. O primeiro é o orçamento de origem.
     // bdi_grupo "" = automático (usa o preço do próprio orçamento, com BDI por etapa);
     // um número sobrepõe o BDI de todo o grupo (recalcula os preços a partir do custo).
-    grupos: [{ budgetId: budget.id, nome_grupo: budget.name || `Orçamento ${budget.id}`, bdi_grupo: "", ordem: 0 }],
+    grupos: [{ budgetId: budget.id, nome_grupo: budget.name || `Orçamento ${budget.id}`, bdi_grupo: "", descricao: "", ordem: 0 }],
     // Formação do preço (BDI): auto = preço do orçamento; geral = um BDI p/ tudo (A);
     // grupo = BDI por orçamento (B); item = venda manual por item, BDI calculado (C/D).
     bdiMode: "auto",
@@ -14018,7 +14034,7 @@ function proposalGroupsCompute() {
   const overrides = state.itemOverrides || {};
   const grupos = (state.grupos && state.grupos.length)
     ? state.grupos
-    : [{ budgetId: state.budget.id, nome_grupo: state.budget.name, bdi_grupo: "", ordem: 0 }];
+    : [{ budgetId: state.budget.id, nome_grupo: state.budget.name, bdi_grupo: "", descricao: "", ordem: 0 }];
   const multi = grupos.length > 1;
   const computed = grupos.map((g, idx) => {
     const budget = enrichWorkBudget(byId("workBudgets", g.budgetId) || state.budget || {});
@@ -14047,7 +14063,7 @@ function proposalGroupsCompute() {
       ? roundMoney(Number(budget.totalPrice || 0) || effItems.reduce((s, it) => s + Number(it.totalPrice || 0), 0))
       : roundMoney(effItems.reduce((s, it) => s + Number(it.totalPrice || 0), 0));
     const bdiEff = custo > 0 ? ((venda - custo) / custo) * 100 : (groupBdi || 0);
-    return { budgetId: g.budgetId, nome_grupo: g.nome_grupo || budget.name || `Orçamento ${g.budgetId}`, disciplina: g.disciplina || "", bdi_grupo: g.bdi_grupo, ordem: idx, budget, items: effItems, custo: roundMoney(custo), venda, bdiEff };
+    return { budgetId: g.budgetId, nome_grupo: g.nome_grupo || budget.name || `Orçamento ${g.budgetId}`, disciplina: g.disciplina || "", descricao: g.descricao || "", bdi_grupo: g.bdi_grupo, ordem: idx, budget, items: effItems, custo: roundMoney(custo), venda, bdiEff };
   });
   const custoTotal = roundMoney(computed.reduce((s, g) => s + g.custo, 0));
   const vendaTotal = roundMoney(computed.reduce((s, g) => s + g.venda, 0));
@@ -14114,6 +14130,9 @@ function renderProposalGroupsPanel() {
               ${bdiCell(g, idx)}
               <td>${asMoney(g.venda)}</td>
               <td>${calc.grupos.length > 1 ? `<button type="button" class="link-button danger pg-remove" data-idx="${idx}" title="Remover">✕</button>` : ""}</td>
+            </tr>
+            <tr class="pg-desc-row">
+              <td colspan="6"><textarea class="pg-desc" data-idx="${idx}" rows="2" placeholder="Descrição da disciplina (escopo desta parte — vira uma seção no documento da proposta)">${escapeHtml(g.descricao || "")}</textarea></td>
             </tr>`).join("")}
         </tbody>
         ${multi ? `<tfoot>
@@ -14191,13 +14210,18 @@ function renderProposalGroupsPanel() {
     if (!id) return;
     const b = byId("workBudgets", id);
     if (!b) return;
-    proposalGeneratorState.grupos.push({ budgetId: b.id, nome_grupo: b.name || `Orçamento ${b.id}`, bdi_grupo: "", disciplina: "", ordem: proposalGeneratorState.grupos.length });
+    proposalGeneratorState.grupos.push({ budgetId: b.id, nome_grupo: b.name || `Orçamento ${b.id}`, bdi_grupo: "", disciplina: "", descricao: "", ordem: proposalGeneratorState.grupos.length });
     renderProposalGroupsPanel();
     updateProposalPreview();
   });
   panel.querySelectorAll(".pg-disc").forEach((inp) => inp.addEventListener("change", (e) => {
     const idx = Number(e.target.dataset.idx);
     proposalGeneratorState.grupos[idx].disciplina = e.target.value;
+    updateProposalPreview();
+  }));
+  panel.querySelectorAll(".pg-desc").forEach((inp) => inp.addEventListener("change", (e) => {
+    const idx = Number(e.target.dataset.idx);
+    proposalGeneratorState.grupos[idx].descricao = e.target.value;
     updateProposalPreview();
   }));
   qs("proposalExportSinapi")?.addEventListener("click", () => {
@@ -14221,6 +14245,7 @@ async function saveProposalAsTemplate() {
     modelId: proposalGeneratorState.modelId || "",
     grupos: (proposalGeneratorState.grupos || []).map((g, i) => ({
       budgetId: g.budgetId, nome_grupo: g.nome_grupo || "", disciplina: g.disciplina || "",
+      descricao: g.descricao || "",
       bdi_grupo: g.bdi_grupo === "" || g.bdi_grupo == null ? "" : Number(g.bdi_grupo), ordem: i,
     })),
   };
@@ -14254,13 +14279,39 @@ function applyProposalTemplate() {
   try { estrutura = JSON.parse(modelo.estrutura_json || "{}"); } catch { return alert("Modelo inválido (estrutura corrompida)."); }
   const grupos = (estrutura.grupos || []).filter((g) => byId("workBudgets", g.budgetId));
   if (!grupos.length) return alert("Os orçamentos deste modelo não existem mais neste sistema.");
-  proposalGeneratorState.grupos = grupos.map((g, i) => ({ budgetId: g.budgetId, nome_grupo: g.nome_grupo || "", disciplina: g.disciplina || "", bdi_grupo: g.bdi_grupo ?? "", ordem: i }));
+  proposalGeneratorState.grupos = grupos.map((g, i) => ({ budgetId: g.budgetId, nome_grupo: g.nome_grupo || "", disciplina: g.disciplina || "", descricao: g.descricao || "", bdi_grupo: g.bdi_grupo ?? "", ordem: i }));
   proposalGeneratorState.bdiMode = estrutura.bdiMode || "auto";
   proposalGeneratorState.bdiGeral = Number(estrutura.bdiGeral || 0);
   proposalGeneratorState.itemOverrides = {};
   renderProposalGroupsPanel();
   updateProposalPreview();
   alert(`Modelo "${modelo.nome}" aplicado. Ajuste quantidades/preços e o cliente normalmente.`);
+}
+
+// Seções por disciplina (visão do cliente): um bloco por orçamento vinculado com o
+// título da disciplina, a descrição detalhada do escopo (campo do vínculo) e o valor
+// daquela parte. Aparece acima do quadro de investimento quando há 2+ disciplinas ou
+// quando alguma descrição foi preenchida. Nunca expõe custo/BDI.
+function proposalDisciplinasHtml(calc) {
+  const grupos = (calc && calc.grupos) || [];
+  if (!grupos.length) return "";
+  const temDescricao = grupos.some((g) => String(g.descricao || "").trim());
+  if (grupos.length < 2 && !temDescricao) return "";
+  const blocos = grupos.map((g) => {
+    const titulo = g.disciplina && g.disciplina !== g.nome_grupo ? `${g.nome_grupo} — ${g.disciplina}` : (g.nome_grupo || g.disciplina || "Disciplina");
+    const desc = String(g.descricao || "").trim();
+    return `
+      <div class="proposal-disciplina">
+        <div class="proposal-disciplina-head"><h3>${svgText(titulo)}</h3><strong>${asMoney(g.venda)}</strong></div>
+        ${desc ? `<p>${textToHtml(desc)}</p>` : ""}
+      </div>`;
+  }).join("");
+  return `
+    <section class="proposal-section proposal-disciplinas">
+      <h2>Escopo e investimento por disciplina</h2>
+      ${blocos}
+      ${grupos.length > 1 ? `<div class="proposal-disciplina-total"><span>Total das disciplinas</span><strong>${asMoney(calc.vendaTotal)}</strong></div>` : ""}
+    </section>`;
 }
 
 // Bloco "Investimento" do PDF (visão do cliente): com vários grupos vira um resumo por
@@ -14423,6 +14474,7 @@ function proposalDocumentHtml({ budget, project, client, items, model, input, va
         <h2>Itens do orçamento</h2>
         ${proposalItemsHtml(items, input.itemDisplayMode || "Tabela resumida")}
       </section>
+      ${proposalDisciplinasHtml(calc)}
       ${proposalInvestmentHtml(calc || { grupos: [], vendaTotal: Number(budget.totalPrice || 0) }, vars)}
       ${licitacao ? proposalLicitacaoHtml(calc, refBdi) : ""}
       ${proposalSection("Condições de pagamento", value("paymentCondition"))}
@@ -15130,7 +15182,7 @@ async function createProposalLinkedRecords(proposal, { budget, project, client, 
   // Um vínculo por orçamento (grupo). Cada um guarda nome, BDI, custo e venda do grupo.
   const grupos = (calc && calc.grupos && calc.grupos.length)
     ? calc.grupos
-    : [{ budgetId: budget.id, nome_grupo: budget.name || "", bdi_grupo: Number(budget.bdiPercent || 0), custo: 0, venda: Number(budget.totalPrice || 0), bdiEff: Number(budget.bdiPercent || 0), ordem: 0 }];
+    : [{ budgetId: budget.id, nome_grupo: budget.name || "", bdi_grupo: Number(budget.bdiPercent || 0), descricao: "", custo: 0, venda: Number(budget.totalPrice || 0), bdiEff: Number(budget.bdiPercent || 0), ordem: 0 }];
   for (const g of grupos) {
     await createIntegratedRecord("proposalBudgetLinks", {
       proposalId: proposal.id,
@@ -15141,6 +15193,7 @@ async function createProposalLinkedRecords(proposal, { budget, project, client, 
       responsibleUserId: currentUser?.id || "",
       nome_grupo: g.nome_grupo || "",
       disciplina: g.disciplina || "",
+      descricao: g.descricao || "",
       bdi_grupo: (g.bdi_grupo === "" || g.bdi_grupo == null) ? roundMoney(g.bdiEff || 0) : Number(g.bdi_grupo),
       custo_total: roundMoney(g.custo || 0),
       valor_venda: roundMoney(g.venda || 0),

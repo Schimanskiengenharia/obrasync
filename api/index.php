@@ -1789,7 +1789,7 @@ function resource_map(): array
         'proposalTemplates' => r('proposta_modelos', ['proposta-modelos','modelos-proposta'], ['nome','descricao','disciplina','estrutura_json','ativo'], ['nome']),
         'proposalStatusHistory' => r('proposta_status_historico', ['proposta-status-historico','historico-status-proposta'], ['proposalId','date','userId','previousStatus','newStatus','notes'], ['proposalId','date','newStatus']),
         'proposalFiles' => r('proposta_arquivos', ['proposta-arquivos','arquivos-proposta'], ['proposalId','filePath','type','status','createdByUserId'], ['proposalId','filePath']),
-        'proposalBudgetLinks' => r('proposta_orcamento_vinculos', ['proposta-orcamento-vinculos','vinculos-proposta-orcamento'], ['proposalId','workBudgetId','projectId','clientId','proposalModelId','responsibleUserId','nome_grupo','bdi_grupo','custo_total','valor_venda','ordem','grupo_id','disciplina'], ['proposalId','workBudgetId']),
+        'proposalBudgetLinks' => r('proposta_orcamento_vinculos', ['proposta-orcamento-vinculos','vinculos-proposta-orcamento'], ['proposalId','workBudgetId','projectId','clientId','proposalModelId','responsibleUserId','nome_grupo','bdi_grupo','custo_total','valor_venda','ordem','grupo_id','disciplina','descricao'], ['proposalId','workBudgetId']),
         'proposalVariables' => r('proposta_variaveis', ['proposta-variaveis','variaveis-proposta'], ['proposalId','variableName','variableValue'], ['proposalId','variableName']),
         'sales' => r('sales_contracts', ['vendas','contratos','vendas-contratos'], ['number','date','competenceDate','clientId','projectId','proposalId','costCenterId','description','amount','cost','status','numero_contrato','data_contrato','valor_contrato','objeto','status_contrato','proposta_assinada_path','contrato_gerado_path','contrato_assinado_path','cliente_nome','cpf_cnpj','email','telefone','endereco','cidade','estado','cep'], ['number']),
         'viabilityAnalyses' => r('viability_analyses', ['analises-viabilidade','análises-viabilidade'], ['projectId','proposalId','contractValue','estimatedCost','executionMonths','tmaPercent','grossMargin','marginPercent','estimatedProfit','paybackMonths','npv','irrPercent','autoVerdict','verdict','finalVerdict','verdictJustification','verdictHistory','risks','notes','analysisDate','responsibleUserId','status'], []),
@@ -2487,11 +2487,13 @@ function bootstrap_data(PDO $pdo, array $resources, ?array $authUser = null, boo
             && !in_array('deletedAt', table_columns($pdo, 'projects'), true)) {
             ensure_project_soft_delete($pdo);
         }
-        // Hierarquia de proposta por disciplina + modelos de proposta.
+        // Hierarquia de proposta por disciplina + modelos de proposta + descrição
+        // da disciplina no vínculo (F3).
         if (!resolve_existing_table($pdo, ['proposta_grupos'], false)
             || !resolve_existing_table($pdo, ['proposta_modelos'], false)
             || (resolve_existing_table($pdo, ['proposta_orcamento_vinculos'], false)
-                && !in_array('grupo_id', table_columns($pdo, 'proposta_orcamento_vinculos'), true))) {
+                && (!in_array('grupo_id', table_columns($pdo, 'proposta_orcamento_vinculos'), true)
+                    || !in_array('descricao', table_columns($pdo, 'proposta_orcamento_vinculos'), true)))) {
             ensure_proposta_hierarquia($pdo);
         }
         // Colunas de contrato (vínculo à proposta, snapshot do cliente, anexos).
@@ -2968,7 +2970,8 @@ function ensure_proposta_hierarquia(PDO $pdo): void
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
         $pdo->exec("ALTER TABLE proposta_orcamento_vinculos
             ADD COLUMN IF NOT EXISTS grupo_id BIGINT UNSIGNED NULL,
-            ADD COLUMN IF NOT EXISTS disciplina VARCHAR(60) NULL");
+            ADD COLUMN IF NOT EXISTS disciplina VARCHAR(60) NULL,
+            ADD COLUMN IF NOT EXISTS descricao TEXT NULL");
         $pdo->exec("ALTER TABLE proposta_itens
             ADD COLUMN IF NOT EXISTS grupo_id BIGINT UNSIGNED NULL");
         $done = true;
