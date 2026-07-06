@@ -6179,6 +6179,25 @@ html[data-theme="dark"] .ia-dp-grupo-tag { color: #7db4ec; }
   background: rgba(15, 110, 86, 0.14);
 }
 html[data-theme="dark"] .ia-dp-setor-tag { color: #5eead4; }
+/* Linhas de seção/subtotal da planilha (separadores no de-para/comparador IA) */
+.ia-dp-secao td {
+  background: #eef3f2;
+  border-top: 2px solid var(--line);
+  color: #3f524e;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  font-size: 0.78rem;
+}
+.ia-dp-subtotal td {
+  background: #f6f8f7;
+  color: var(--muted);
+  font-style: italic;
+  font-size: 0.8rem;
+}
+.ia-dp-secao-valor { font-style: normal; font-weight: 700; margin-left: 6px; }
+html[data-theme="dark"] .ia-dp-secao td { background: rgba(255, 255, 255, 0.06); color: #b9c8c4; }
+html[data-theme="dark"] .ia-dp-subtotal td { background: rgba(255, 255, 255, 0.03); color: #8fa19d; }
 .ia-dp-diverg-hint {
   margin-top: 3px;
   font-size: 0.78rem;

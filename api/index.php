@@ -9339,7 +9339,8 @@ function ia_ensure_planilha_rich_columns(PDO $pdo, string $table, string $status
             ADD COLUMN IF NOT EXISTS materialUnit DECIMAL(15,4) NULL,
             ADD COLUMN IF NOT EXISTS maoObraUnit DECIMAL(15,4) NULL,
             ADD COLUMN IF NOT EXISTS custoDiretoUnit DECIMAL(15,4) NULL,
-            ADD COLUMN IF NOT EXISTS bdiPercent DECIMAL(7,2) NULL");
+            ADD COLUMN IF NOT EXISTS bdiPercent DECIMAL(7,2) NULL,
+            ADD COLUMN IF NOT EXISTS tipoLinha ENUM('item','secao','subtotal') NOT NULL DEFAULT 'item'");
     } catch (Throwable $ignored) {
     }
     try {
@@ -9393,6 +9394,7 @@ function ensure_ia_depara_tables(PDO $pdo): void
             maoObraUnit DECIMAL(15,4) NULL,
             custoDiretoUnit DECIMAL(15,4) NULL,
             bdiPercent DECIMAL(7,2) NULL,
+            tipoLinha ENUM(\'item\',\'secao\',\'subtotal\') NOT NULL DEFAULT \'item\',
             statusClassificacao ENUM(\'achou\',\'revisar\',\'divergente\',\'cotacao_propria\') NULL,
             matchOrigem ENUM(\'composicao\',\'insumo\') NULL,
             matchId BIGINT UNSIGNED NULL,
@@ -9471,6 +9473,7 @@ function ensure_ia_compara_tables(PDO $pdo): void
             maoObraUnit DECIMAL(15,4) NULL,
             custoDiretoUnit DECIMAL(15,4) NULL,
             bdiPercent DECIMAL(7,2) NULL,
+            tipoLinha ENUM(\'item\',\'secao\',\'subtotal\') NOT NULL DEFAULT \'item\',
             statusClassificacao ENUM(\'achou\',\'faltou_importar\',\'divergente\',\'cotacao_propria\') NULL,
             matchOrigem ENUM(\'composicao\',\'insumo\') NULL,
             matchId BIGINT UNSIGNED NULL,
@@ -9821,15 +9824,20 @@ function handle_ia_depara_upload(PDO $pdo, array $config, array $authUser): neve
                 continue;
             }
             $ricos = ia_planilha_ler_ricos($cols, $r);
+            $codigoOrigem = isset($cols['codigo']) ? (mb_substr(trim((string) ($r[$cols['codigo']] ?? '')), 0, 80) ?: null) : null;
+            $quantidade = isset($cols['quantidade']) ? cotacao_num($r[$cols['quantidade']] ?? '') : null;
             $itens[] = [
                 'grupoAba' => mb_substr((string) $sheetName, 0, 160),
                 'linha' => $i + 1, // 1-based dentro da aba
                 'descricaoOrigem' => mb_substr($desc, 0, 1000),
-                'codigoOrigem' => isset($cols['codigo']) ? (mb_substr(trim((string) ($r[$cols['codigo']] ?? '')), 0, 80) ?: null) : null,
-                'quantidade' => isset($cols['quantidade']) ? cotacao_num($r[$cols['quantidade']] ?? '') : null,
+                'codigoOrigem' => $codigoOrigem,
+                'quantidade' => $quantidade,
                 'unidadeOrigem' => isset($cols['unidade']) ? (mb_substr(trim((string) ($r[$cols['unidade']] ?? '')), 0, 40) ?: null) : null,
                 // Valor unitário pela prioridade Custo Direto > Material+M.O. > genérico.
                 'valorOrigem' => $ricos['valorEfetivo'],
+                // Títulos de seção e subtotais ficam gravados (contexto visual da
+                // planilha) mas marcados: não são classificados nem viram itens.
+                'tipoLinha' => ia_tipo_linha($desc, $codigoOrigem, $quantidade, $ricos['valorEfetivo'], $ricos['materialUnit'], $ricos['maoObraUnit'], $ricos['custoDiretoUnit']),
                 'ricos' => $ricos,
             ];
             $lidasNaAba++;
@@ -9844,6 +9852,15 @@ function handle_ia_depara_upload(PDO $pdo, array $config, array $authUser): neve
         sinapi_module_respond(false, ['abasIgnoradas' => $abasIgnoradas], $msg, 422);
     }
 
+    // total do job = só itens de verdade (o worker pula seções/subtotais; se elas
+    // entrassem no total, o percentual nunca chegaria a 100%).
+    $totalItensReais = count(array_filter($itens, static fn(array $it): bool => $it['tipoLinha'] === 'item'));
+    $totalSecoes = count($itens) - $totalItensReais;
+    if ($totalItensReais === 0) {
+        @unlink($path);
+        sinapi_module_respond(false, [], 'A planilha só tem títulos de seção/subtotais — nenhuma linha com quantidade, valor ou código foi encontrada.', 422);
+    }
+
     // Cria o job e grava as linhas cruas (classificação só no worker).
     $jobId = uniqid('ia_dp_', true);
     $colunasDetectadas = array_keys($colsUniao);
@@ -9851,32 +9868,33 @@ function handle_ia_depara_upload(PDO $pdo, array $config, array $authUser): neve
         ->execute([
             $jobId,
             (string) ($file['name'] ?? basename($path)),
-            count($itens),
+            $totalItensReais,
             'queued',
             json_encode(['colunas' => $colunasDetectadas, 'abasLidas' => $abasLidas, 'abasIgnoradas' => $abasIgnoradas], JSON_UNESCAPED_UNICODE),
             (int) ($authUser['id'] ?? 0) ?: null,
         ]);
-    $ins = $pdo->prepare('INSERT INTO ia_depara_itens (jobId, grupoAba, linhaPlanilha, descricaoOrigem, codigoOrigem, quantidade, unidadeOrigem, valorOrigem, setor, categoria, tipoOrigem, materialUnit, maoObraUnit, custoDiretoUnit, bdiPercent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    $ins = $pdo->prepare('INSERT INTO ia_depara_itens (jobId, grupoAba, linhaPlanilha, descricaoOrigem, codigoOrigem, quantidade, unidadeOrigem, valorOrigem, setor, categoria, tipoOrigem, materialUnit, maoObraUnit, custoDiretoUnit, bdiPercent, tipoLinha) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
     $pdo->beginTransaction();
     foreach ($itens as $it) {
         $ric = $it['ricos'];
         $ins->execute([$jobId, $it['grupoAba'], $it['linha'], $it['descricaoOrigem'], $it['codigoOrigem'], $it['quantidade'], $it['unidadeOrigem'], $it['valorOrigem'],
-            $ric['setor'], $ric['categoria'], $ric['tipoOrigem'], $ric['materialUnit'], $ric['maoObraUnit'], $ric['custoDiretoUnit'], $ric['bdiPercent']]);
+            $ric['setor'], $ric['categoria'], $ric['tipoOrigem'], $ric['materialUnit'], $ric['maoObraUnit'], $ric['custoDiretoUnit'], $ric['bdiPercent'], $it['tipoLinha']]);
     }
     $pdo->commit();
 
     @unlink($path); // os dados já estão no banco; a planilha temporária não é mais necessária
-    server_audit($pdo, $authUser, 'import', 'ia', $jobId, 'De-para IA: upload de planilha (' . count($itens) . ' itens, ' . count($abasLidas) . ' aba(s))');
+    server_audit($pdo, $authUser, 'import', 'ia', $jobId, 'De-para IA: upload de planilha (' . $totalItensReais . ' itens, ' . $totalSecoes . ' seção(ões)/subtotal(is), ' . count($abasLidas) . ' aba(s))');
     sinapi_module_respond(true, [
         'jobId' => $jobId,
-        'total' => count($itens),
+        'total' => $totalItensReais,
+        'secoes' => $totalSecoes,
         'colunasDetectadas' => $colunasDetectadas,
         'abasLidas' => $abasLidas,
         'abasIgnoradas' => $abasIgnoradas,
         // Depuração: mapa coluna→campo (primeira aba lida) para conferir a detecção.
         'mapaColunas' => $abasLidas[0]['mapaColunas'] ?? [],
         'headerLinha' => $abasLidas[0]['headerLinha'] ?? null,
-    ], 'Planilha lida: ' . count($itens) . ' itens em ' . count($abasLidas) . ' aba(s).');
+    ], 'Planilha lida: ' . $totalItensReais . ' itens em ' . count($abasLidas) . ' aba(s)' . ($totalSecoes > 0 ? ' (+' . $totalSecoes . ' título(s)/subtotal(is) de seção)' : '') . '.');
 }
 
 // Normaliza um cabeçalho para comparação: minúsculo, sem acento, SEM a marca
@@ -10108,6 +10126,27 @@ function ia_planilha_ler_ricos(array $cols, array $r): array
     ];
 }
 
+// Classifica uma linha da planilha: 'item' (tem dado de item: quantidade > 0, valor
+// unitário > 0 ou código), 'subtotal' (descrição "Subtotal/Total ..." SEM código nem
+// quantidade — subtotais têm valor, a soma do bloco, então o nome decide antes do
+// valor) ou 'secao' (só descrição — título de bloco tipo "QUADROS DE DISTRIBUIÇÃO").
+// Pura: o upload usa ao gravar (tipoLinha) e o enviarParaOrcamento REAPLICA em lotes
+// antigos, gravados antes do marcador (neles tipoLinha ficou no default 'item').
+function ia_tipo_linha(string $desc, ?string $codigo, ?float $qtd, ?float $valorEfetivo, ?float $materialUnit = null, ?float $maoObraUnit = null, ?float $custoDiretoUnit = null): string
+{
+    $temCodigo = trim((string) $codigo) !== '';
+    $temQtd = $qtd !== null && $qtd > 0;
+    // \b evita casar "Totalizador"/"Totalmente" como subtotal.
+    if (!$temCodigo && !$temQtd && preg_match('/^\s*(sub\s*-?\s*)?total\b/iu', $desc)) {
+        return 'subtotal';
+    }
+    $temValor = ($valorEfetivo !== null && $valorEfetivo > 0)
+        || ($materialUnit !== null && $materialUnit > 0)
+        || ($maoObraUnit !== null && $maoObraUnit > 0)
+        || ($custoDiretoUnit !== null && $custoDiretoUnit > 0);
+    return ($temCodigo || $temQtd || $temValor) ? 'item' : 'secao';
+}
+
 // Dispara a classificação do lote em background (worker CLI nohup + nice -19).
 function handle_ia_depara_start(PDO $pdo, array $config, array $payload, array $authUser): never
 {
@@ -10173,7 +10212,7 @@ function handle_ia_depara_status(PDO $pdo): never
 function ia_depara_counts(PDO $pdo, string $jobId): array
 {
     $counts = ['achou' => 0, 'revisar' => 0, 'divergente' => 0, 'cotacao_propria' => 0, 'total' => 0, 'classificados' => 0];
-    $stmt = $pdo->prepare('SELECT statusClassificacao s, COUNT(*) c FROM ia_depara_itens WHERE jobId = ? GROUP BY statusClassificacao');
+    $stmt = $pdo->prepare("SELECT statusClassificacao s, COUNT(*) c FROM ia_depara_itens WHERE jobId = ? AND tipoLinha = 'item' GROUP BY statusClassificacao");
     $stmt->execute([$jobId]);
     foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
         $c = (int) $r['c'];
@@ -10198,7 +10237,7 @@ function handle_ia_depara_items(PDO $pdo): never
     $grupo = (string) ($_GET['grupo'] ?? '');
     $setor = (string) ($_GET['setor'] ?? '');
     $sql = 'SELECT id, grupoAba, linhaPlanilha, descricaoOrigem, codigoOrigem, quantidade, unidadeOrigem, valorOrigem,
-                   setor, categoria, tipoOrigem, materialUnit, maoObraUnit, custoDiretoUnit, bdiPercent,
+                   setor, categoria, tipoOrigem, materialUnit, maoObraUnit, custoDiretoUnit, bdiPercent, tipoLinha,
                    statusClassificacao, matchOrigem, matchId, matchCode, matchDescription, matchUnit, matchValor,
                    similaridade, aceito
             FROM ia_depara_itens WHERE jobId = ?';
@@ -10236,6 +10275,7 @@ function handle_ia_depara_items(PDO $pdo): never
             'maoObraUnit' => $r['maoObraUnit'] !== null ? (float) $r['maoObraUnit'] : null,
             'custoDiretoUnit' => $r['custoDiretoUnit'] !== null ? (float) $r['custoDiretoUnit'] : null,
             'bdiPercent' => $r['bdiPercent'] !== null ? (float) $r['bdiPercent'] : null,
+            'tipoLinha' => (string) ($r['tipoLinha'] ?? 'item'),
             'statusClassificacao' => $r['statusClassificacao'],
             'matchOrigem' => $r['matchOrigem'],
             'matchId' => $r['matchId'] !== null ? (int) $r['matchId'] : null,
@@ -10260,7 +10300,7 @@ function handle_ia_depara_items(PDO $pdo): never
 function ia_depara_grupos(PDO $pdo, string $jobId, string $coluna = 'grupoAba'): array
 {
     $coluna = in_array($coluna, ['grupoAba', 'setor'], true) ? $coluna : 'grupoAba';
-    $stmt = $pdo->prepare("SELECT COALESCE({$coluna}, '') g, COUNT(*) c FROM ia_depara_itens WHERE jobId = ? GROUP BY {$coluna} ORDER BY g");
+    $stmt = $pdo->prepare("SELECT COALESCE({$coluna}, '') g, COUNT(*) c FROM ia_depara_itens WHERE jobId = ? AND tipoLinha = 'item' GROUP BY {$coluna} ORDER BY g");
     $stmt->execute([$jobId]);
     $out = [];
     foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
@@ -10289,7 +10329,8 @@ function ia_accept_bulk(PDO $pdo, string $table, array $payload): void
         sinapi_module_respond(false, [], 'Lote não encontrado ou sem itens.', 404);
     }
     if ($modo === 'todos') {
-        $pdo->prepare("UPDATE `$table` SET aceito = 1 WHERE jobId = ?")->execute([$jobId]);
+        // Seções/subtotais não são itens — nunca entram no aceite.
+        $pdo->prepare("UPDATE `$table` SET aceito = 1 WHERE jobId = ? AND tipoLinha = 'item'")->execute([$jobId]);
     } elseif ($modo === 'nenhum') {
         $pdo->prepare("UPDATE `$table` SET aceito = 0 WHERE jobId = ?")->execute([$jobId]);
     } else {
@@ -10514,20 +10555,33 @@ function handle_ia_compara_upload(PDO $pdo, array $config, array $authUser): nev
             continue;
         }
         $ricos = ia_planilha_ler_ricos($cols, $r);
+        $codigoOrigem = isset($cols['codigo']) ? (mb_substr(trim((string) ($r[$cols['codigo']] ?? '')), 0, 80) ?: null) : null;
+        $quantidadeOrigem = isset($cols['quantidade']) ? cotacao_num($r[$cols['quantidade']] ?? '') : null;
         $itens[] = [
             'linha' => $i + 1,
             'descricaoOrigem' => mb_substr($desc, 0, 1000),
-            'codigoOrigem' => isset($cols['codigo']) ? (mb_substr(trim((string) ($r[$cols['codigo']] ?? '')), 0, 80) ?: null) : null,
+            'codigoOrigem' => $codigoOrigem,
             'unidadeOrigem' => isset($cols['unidade']) ? (mb_substr(trim((string) ($r[$cols['unidade']] ?? '')), 0, 40) ?: null) : null,
-            'quantidadeOrigem' => isset($cols['quantidade']) ? cotacao_num($r[$cols['quantidade']] ?? '') : null,
+            'quantidadeOrigem' => $quantidadeOrigem,
             // Valor unitário pela prioridade Custo Direto > Material+M.O. > genérico.
             'valorUnitOrigem' => $ricos['valorEfetivo'],
+            // Títulos de seção e subtotais ficam gravados (contexto visual) mas
+            // marcados: não são classificados nem viram itens.
+            'tipoLinha' => ia_tipo_linha($desc, $codigoOrigem, $quantidadeOrigem, $ricos['valorEfetivo'], $ricos['materialUnit'], $ricos['maoObraUnit'], $ricos['custoDiretoUnit']),
             'ricos' => $ricos,
         ];
     }
     if (!$itens) {
         @unlink($path);
         sinapi_module_respond(false, [], 'Nenhuma linha com descrição foi encontrada abaixo do cabeçalho.', 422);
+    }
+    // total do job = só itens de verdade (o worker pula seções/subtotais; se elas
+    // entrassem no total, o percentual nunca chegaria a 100%).
+    $totalItensReais = count(array_filter($itens, static fn(array $it): bool => $it['tipoLinha'] === 'item'));
+    $totalSecoes = count($itens) - $totalItensReais;
+    if ($totalItensReais === 0) {
+        @unlink($path);
+        sinapi_module_respond(false, [], 'A planilha só tem títulos de seção/subtotais — nenhuma linha com quantidade, valor ou código foi encontrada.', 422);
     }
 
     $jobId = uniqid('ia_cmp_', true);
@@ -10536,30 +10590,31 @@ function handle_ia_compara_upload(PDO $pdo, array $config, array $authUser): nev
         ->execute([
             $jobId,
             (string) ($file['name'] ?? basename($path)),
-            count($itens),
+            $totalItensReais,
             'queued',
             json_encode($colunasDetectadas, JSON_UNESCAPED_UNICODE),
             (int) ($authUser['id'] ?? 0) ?: null,
         ]);
-    $ins = $pdo->prepare('INSERT INTO ia_compara_itens (jobId, linhaPlanilha, descricaoOrigem, codigoOrigem, unidadeOrigem, quantidadeOrigem, valorUnitOrigem, setor, categoria, tipoOrigem, materialUnit, maoObraUnit, custoDiretoUnit, bdiPercent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    $ins = $pdo->prepare('INSERT INTO ia_compara_itens (jobId, linhaPlanilha, descricaoOrigem, codigoOrigem, unidadeOrigem, quantidadeOrigem, valorUnitOrigem, setor, categoria, tipoOrigem, materialUnit, maoObraUnit, custoDiretoUnit, bdiPercent, tipoLinha) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
     $pdo->beginTransaction();
     foreach ($itens as $it) {
         $ric = $it['ricos'];
         $ins->execute([$jobId, $it['linha'], $it['descricaoOrigem'], $it['codigoOrigem'], $it['unidadeOrigem'], $it['quantidadeOrigem'], $it['valorUnitOrigem'],
-            $ric['setor'], $ric['categoria'], $ric['tipoOrigem'], $ric['materialUnit'], $ric['maoObraUnit'], $ric['custoDiretoUnit'], $ric['bdiPercent']]);
+            $ric['setor'], $ric['categoria'], $ric['tipoOrigem'], $ric['materialUnit'], $ric['maoObraUnit'], $ric['custoDiretoUnit'], $ric['bdiPercent'], $it['tipoLinha']]);
     }
     $pdo->commit();
 
     @unlink($path);
-    server_audit($pdo, $authUser, 'import', 'ia', $jobId, 'Comparador IA: upload de planilha (' . count($itens) . ' itens)');
+    server_audit($pdo, $authUser, 'import', 'ia', $jobId, 'Comparador IA: upload de planilha (' . $totalItensReais . ' itens, ' . $totalSecoes . ' seção(ões)/subtotal(is))');
     sinapi_module_respond(true, [
         'jobId' => $jobId,
-        'total' => count($itens),
+        'total' => $totalItensReais,
+        'secoes' => $totalSecoes,
         'colunasDetectadas' => $colunasDetectadas,
         // Depuração: mapa coluna→campo + linha do cabeçalho, para conferir a detecção.
         'mapaColunas' => ia_depara_mapa_colunas($cols),
         'headerLinha' => $headerIdx + 1,
-    ], 'Planilha lida: ' . count($itens) . ' itens prontos para analisar.');
+    ], 'Planilha lida: ' . $totalItensReais . ' itens prontos para analisar' . ($totalSecoes > 0 ? ' (+' . $totalSecoes . ' título(s)/subtotal(is) de seção)' : '') . '.');
 }
 
 // Dispara a análise do lote em background (worker CLI nohup + nice -19).
@@ -10625,7 +10680,7 @@ function handle_ia_compara_status(PDO $pdo): never
 function ia_compara_counts(PDO $pdo, string $jobId): array
 {
     $counts = ['achou' => 0, 'faltou_importar' => 0, 'divergente' => 0, 'cotacao_propria' => 0, 'total' => 0, 'classificados' => 0];
-    $stmt = $pdo->prepare('SELECT statusClassificacao s, COUNT(*) c FROM ia_compara_itens WHERE jobId = ? GROUP BY statusClassificacao');
+    $stmt = $pdo->prepare("SELECT statusClassificacao s, COUNT(*) c FROM ia_compara_itens WHERE jobId = ? AND tipoLinha = 'item' GROUP BY statusClassificacao");
     $stmt->execute([$jobId]);
     foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
         $c = (int) $r['c'];
@@ -10717,7 +10772,7 @@ function handle_ia_compara_items(PDO $pdo): never
     $filtro = strtolower((string) ($_GET['situacao'] ?? 'todos'));
     $setor = (string) ($_GET['setor'] ?? '');
     $sql = 'SELECT id, linhaPlanilha, descricaoOrigem, codigoOrigem, unidadeOrigem, quantidadeOrigem, valorUnitOrigem,
-                   setor, categoria, tipoOrigem, materialUnit, maoObraUnit, custoDiretoUnit, bdiPercent,
+                   setor, categoria, tipoOrigem, materialUnit, maoObraUnit, custoDiretoUnit, bdiPercent, tipoLinha,
                    statusClassificacao, matchOrigem, matchId, matchCode, matchDescription, matchUnit, matchValor,
                    similaridade, precoMaisBaixo, diferencaValor, diferencaPercent,
                    totalOrigem, totalSinapi, diferencaTotal, aceito
@@ -10751,6 +10806,7 @@ function handle_ia_compara_items(PDO $pdo): never
             'maoObraUnit' => $r['maoObraUnit'] !== null ? (float) $r['maoObraUnit'] : null,
             'custoDiretoUnit' => $r['custoDiretoUnit'] !== null ? (float) $r['custoDiretoUnit'] : null,
             'bdiPercent' => $r['bdiPercent'] !== null ? (float) $r['bdiPercent'] : null,
+            'tipoLinha' => (string) ($r['tipoLinha'] ?? 'item'),
             'statusClassificacao' => $r['statusClassificacao'],
             'matchOrigem' => $r['matchOrigem'],
             'matchId' => $r['matchId'] !== null ? (int) $r['matchId'] : null,
@@ -10779,7 +10835,7 @@ function handle_ia_compara_items(PDO $pdo): never
 // Lista os setores (ala/parte da obra) do lote + a contagem de itens de cada um.
 function ia_compara_setores(PDO $pdo, string $jobId): array
 {
-    $stmt = $pdo->prepare("SELECT COALESCE(setor, '') s, COUNT(*) c FROM ia_compara_itens WHERE jobId = ? GROUP BY setor ORDER BY s");
+    $stmt = $pdo->prepare("SELECT COALESCE(setor, '') s, COUNT(*) c FROM ia_compara_itens WHERE jobId = ? AND tipoLinha = 'item' GROUP BY setor ORDER BY s");
     $stmt->execute([$jobId]);
     $out = [];
     foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
@@ -10966,6 +11022,54 @@ function handle_ia_enviar_para_orcamento(PDO $pdo, array $payload, ?array $authU
             : 'O lote não tem itens para enviar.', 400);
     }
 
+    // Só ITENS DE VERDADE viram itens do orçamento. Títulos de seção e subtotais da
+    // planilha (marcados no upload como tipoLinha secao/subtotal) são pulados — em
+    // lotes ANTIGOS (gravados antes do marcador, tudo no default 'item') o MESMO
+    // critério do upload é reaplicado aqui, para reenviar lote antigo sair limpo.
+    // Bônus: o título da seção vira a etapa (stageName) dos itens abaixo dele até a
+    // próxima seção — mas SÓ quando o item não tem setor explícito da planilha.
+    $reais = [];
+    $secoesIgnoradas = 0;
+    $secaoAtual = '';
+    $abaAtual = null;
+    foreach ($itens as $it) {
+        $aba = (string) ($it['grupoAba'] ?? ''); // compara não tem grupoAba (aba única)
+        if ($aba !== $abaAtual) {
+            $abaAtual = $aba;
+            $secaoAtual = ''; // seção não vaza de uma aba para a outra
+        }
+        $desc = trim((string) ($it['descricaoOrigem'] ?? ''));
+        $tl = (string) ($it['tipoLinha'] ?? 'item');
+        if ($tl === 'item') {
+            $qtdRaw = $it['quantidadeOrigem'] ?? $it['quantidade'] ?? null;
+            $tl = ia_tipo_linha(
+                $desc,
+                isset($it['codigoOrigem']) ? (string) $it['codigoOrigem'] : null,
+                $qtdRaw !== null ? (float) $qtdRaw : null,
+                ($it[$valorField] ?? null) !== null ? (float) $it[$valorField] : null,
+                ($it['materialUnit'] ?? null) !== null ? (float) $it['materialUnit'] : null,
+                ($it['maoObraUnit'] ?? null) !== null ? (float) $it['maoObraUnit'] : null,
+                ($it['custoDiretoUnit'] ?? null) !== null ? (float) $it['custoDiretoUnit'] : null
+            );
+        }
+        if ($tl === 'secao') {
+            $secaoAtual = $desc;
+            $secoesIgnoradas++;
+            continue;
+        }
+        if ($tl === 'subtotal') {
+            $secoesIgnoradas++;
+            continue;
+        }
+        $setorPlanilha = trim((string) ($it['setor'] ?? ''));
+        $it['stageEfetivo'] = $setorPlanilha !== '' ? $setorPlanilha : $secaoAtual;
+        $reais[] = $it;
+    }
+    if (!$reais) {
+        sinapi_module_respond(false, [], 'O lote só tem títulos de seção/subtotais — nenhum item com quantidade, valor ou código para enviar.', 400);
+    }
+    $itens = $reais;
+
     // Garante as colunas extras do orçamento de obra (tipo/etapa_id/sinapi_id/codigo + snapshot).
     ensure_budget_structure($pdo);
     try {
@@ -11035,12 +11139,13 @@ function handle_ia_enviar_para_orcamento(PDO $pdo, array $payload, ?array $authU
             'createdByUserId' => (int) ($authUser['id'] ?? 0) ?: null,
         ]);
 
-        // Etapas a partir dos setores distintos (cada setor = 1 etapa); vincula etapa_id.
+        // Etapas a partir dos setores/seções distintos (cada um = 1 etapa); vincula
+        // etapa_id. stageEfetivo = setor da planilha (prioridade) ou seção acima.
         $etapaMap = [];
         if ($temEtapas) {
             $ordemEtapa = 0;
             foreach ($itens as $it) {
-                $setor = trim((string) ($it['setor'] ?? ''));
+                $setor = trim((string) ($it['stageEfetivo'] ?? ''));
                 if ($setor === '' || isset($etapaMap[$setor])) {
                     continue;
                 }
@@ -11119,7 +11224,7 @@ function handle_ia_enviar_para_orcamento(PDO $pdo, array $payload, ?array $authU
             }
             $notes = $notas ? implode(' ', $notas) : null;
 
-            $setor = trim((string) ($it['setor'] ?? ''));
+            $setor = trim((string) ($it['stageEfetivo'] ?? ''));
             $etapaId = ($setor !== '' && isset($etapaMap[$setor])) ? $etapaMap[$setor] : null;
             // sinapi_id só para composição ACHOU (a JOIN de export liga em sinapi_composicoes).
             $sinapiId = ($status === 'achou' && $matchOrigem === 'composicao' && !empty($it['matchId'])) ? (int) $it['matchId'] : null;
@@ -11188,14 +11293,15 @@ function handle_ia_enviar_para_orcamento(PDO $pdo, array $payload, ?array $authU
     }
 
     server_audit($pdo, $authUser, 'create', 'workBudgets', (string) $workBudgetId,
-        'Orçamento de obra criado pela IA (' . $origemLote . ', lote ' . $jobId . ', ' . $criados . ' itens)');
+        'Orçamento de obra criado pela IA (' . $origemLote . ', lote ' . $jobId . ', ' . $criados . ' itens, ' . $secoesIgnoradas . ' seção(ões)/subtotal(is) ignorados)');
     sinapi_module_respond(true, [
         'workBudgetId' => $workBudgetId,
         'itensCriados' => $criados,
+        'secoesIgnoradas' => $secoesIgnoradas,
         'projectId' => $projectId,
         'name' => $nome,
         'version' => $version,
-    ], 'Orçamento de obra criado com ' . $criados . ' item(ns).');
+    ], 'Orçamento de obra criado com ' . $criados . ' item(ns)' . ($secoesIgnoradas > 0 ? ' (' . $secoesIgnoradas . ' título(s)/subtotal(is) de seção não viraram itens)' : '') . '.');
 }
 
 // Dispara o worker CLI de análise do comparador em background (nohup + nice -19).

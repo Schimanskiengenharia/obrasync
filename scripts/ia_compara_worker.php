@@ -135,7 +135,9 @@ try {
                 totalOrigem = ?, totalSinapi = ?, diferencaTotal = ?
           WHERE id = ?'
     );
-    $items = $pdo->prepare('SELECT id, descricaoOrigem, codigoOrigem, valorUnitOrigem, quantidadeOrigem FROM ia_compara_itens WHERE jobId = ? AND statusClassificacao IS NULL ORDER BY id');
+    // tipoLinha='item': títulos de seção/subtotais gravados no upload não são
+    // classificados (não gastar embedding com título de bloco).
+    $items = $pdo->prepare("SELECT id, descricaoOrigem, codigoOrigem, valorUnitOrigem, quantidadeOrigem FROM ia_compara_itens WHERE jobId = ? AND statusClassificacao IS NULL AND tipoLinha = 'item' ORDER BY id");
     $items->execute([$jobId]);
     $items = $items->fetchAll(PDO::FETCH_ASSOC);
 

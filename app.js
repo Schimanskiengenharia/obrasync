@@ -19,9 +19,10 @@ if (APP_ENV === "production" && location.protocol === "http:") {
   location.replace(location.href.replace(/^http:/, "https:"));
 }
 const APP_NAME = "ObraSync";
-const APP_VERSION = "v1.26.4";
+const APP_VERSION = "v1.26.5";
 const APP_VERSION_DATE = "2026-07-06";
 const APP_CHANGELOG = [
+  "Comparador/De-para IA: títulos de seção (ex.: QUADROS DE DISTRIBUIÇÃO) e linhas de Subtotal/Total da planilha deixam de ser tratados como itens — aparecem como separadores visuais nas telas, não gastam classificação da IA e NÃO viram itens no envio para o Orçamento de Obra (fim dos itens fantasma com quantidade 1 e custo 0). Bônus: quando a planilha não tem coluna Setor, o título da seção vira a etapa dos itens abaixo dele. Lotes antigos: o mesmo critério é reaplicado na hora do envio — reenviar um lote antigo também sai limpo (v1.26.5).",
   "Avisos do dashboard com cor por severidade: perda de dinheiro (contas vencidas, custo realizado acima do previsto, itens com estouro de quantidade) em VERMELHO; atenção operacional (cronograma atrasado, margem baixa, propostas com validade vencida, obras com término vencido) em AMARELO. Os cards \"Contas a pagar\" e \"Contas vencidas\" não mostram mais o valor em verde — valor maior que zero aparece em vermelho (dinheiro saindo/em risco não é coisa boa) (v1.26.4).",
   "Correção RAIZ da leitura de planilha no comparador/de-para IA: células com FÓRMULA (ex.: a coluna Custo Direto Unit. = Material + M.O.) agora são lidas pelo valor CALCULADO — antes a fórmula \"=J93+K93\" chegava como texto e virava 9393 (números de linha), gerando unitários e excessos irreais. Fallback por célula (valor salvo pelo Excel → valor bruto) garante que uma fórmula problemática não derruba a leitura. Rede de segurança adicional: quando Material e M.O. existem, o custo direto usado (e gravado) é a SOMA deles; custo direto isolado só entra se plausível. Reprocesse os lotes afetados com novo upload ou Reanalisar (v1.26.3).",
   "Comparador IA — comparação por TOTAL e aceite em lote: cada item agora mostra Qtde, unitário planilha × SINAPI, diferença unitária (R$ e %), Total planilha (qtd × unitário), Total SINAPI e diferença total; o resumo de economia/excesso soma a diferença por TOTAL dos itens comparados (números realistas — nada de milhões irreais) e exibe o total planilha × total SINAPI dos comparados. O export Excel ganhou as colunas de total. Botões novos no comparador e no de-para: Aceitar todos, Aceitar só ACHOU e Desmarcar todos (resolve o \"nenhum item aceito\" ao enviar para o orçamento). Lotes antigos: o resumo continua correto por fallback; para preencher os totais por item, use Reanalisar (v1.26.2).",
@@ -5515,7 +5516,21 @@ function iaDeparaSelectFilter(id, label, lista, selecionado) {
   return `<div class="ia-dp-grupo-filter"><label>${escapeHtml(label)} <select id="${id}">${opts}</select></label></div>`;
 }
 
+// Títulos de seção e subtotais da planilha (tipoLinha secao/subtotal) viram
+// separadores visuais: preservam o contexto do bloco, sem badge nem ação de aceite.
+function iaSecaoRowHtml(it, totalColunas) {
+  const isSubtotal = it.tipoLinha === "subtotal";
+  const valorBruto = it.valorUnitOrigem ?? it.valorOrigem;
+  const valor = isSubtotal && valorBruto != null ? ` <span class="ia-dp-secao-valor">${asMoney(valorBruto)}</span>` : "";
+  return `
+    <tr class="${isSubtotal ? "ia-dp-subtotal" : "ia-dp-secao"}">
+      <td class="ia-dp-linha">${it.linhaPlanilha ?? ""}</td>
+      <td colspan="${totalColunas - 1}">${escapeHtml(it.descricaoOrigem || "")}${valor}</td>
+    </tr>`;
+}
+
 function iaDeparaRowHtml(it) {
+  if (it.tipoLinha === "secao" || it.tipoLinha === "subtotal") return iaSecaoRowHtml(it, 9);
   const sit = IA_DEPARA_SIT[it.statusClassificacao] || { label: "—", cls: "" };
   const tag = `<span class="ia-dp-sit ${sit.cls}">${sit.label}</span>`;
   const grupoTags = [
@@ -5872,6 +5887,7 @@ function iaComparaBadge(it) {
 }
 
 function iaComparaRowHtml(it) {
+  if (it.tipoLinha === "secao" || it.tipoLinha === "subtotal") return iaSecaoRowHtml(it, 16);
   const sit = IA_COMPARA_SIT[it.statusClassificacao] || { label: "—", cls: "" };
   const tag = `<span class="ia-dp-sit ${sit.cls}">${sit.label}</span>`;
   const simWarn = (it.statusClassificacao === "achou" && it.similaridade != null && it.similaridade < 80)
