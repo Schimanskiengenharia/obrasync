@@ -19,9 +19,10 @@ if (APP_ENV === "production" && location.protocol === "http:") {
   location.replace(location.href.replace(/^http:/, "https:"));
 }
 const APP_NAME = "ObraSync";
-const APP_VERSION = "v1.28.0";
-const APP_VERSION_DATE = "2026-07-06";
+const APP_VERSION = "v1.29.0";
+const APP_VERSION_DATE = "2026-07-07";
 const APP_CHANGELOG = [
+  "RDO — assinatura automática do criador + fotos em lote com legenda: o assinante principal do diário agora é SEMPRE o usuário logado que criou o RDO (campo somente leitura preenchido na criação; o nome sai no documento impresso como responsável que assina — sem seleção/digitação manual). No anexo de fotos, dá para selecionar VÁRIAS imagens de uma vez: cada uma aparece em miniatura com campo de legenda próprio antes do envio, e o lote é enviado foto a foto — se uma falhar, as demais são salvas e a que falhou permanece na fila com a legenda preservada para reenviar. Cada foto aparece com sua legenda na tela e na impressão (v1.29.0).",
   "Ciclo de compra completo (F5.3): na matriz de cotações de compra, o botão \"Gerar pedido de compra (vencedores)\" cria um pedido por fornecedor vencedor, com os itens vinculados ao Custo da Obra. Novo menu \"Compras da Obra\" (seção Custo da Obra): lista os pedidos com NF e conta a pagar, e o botão \"Registrar compra + NF\" fecha o ciclo num passo — a nota fiscal entra vinculada à obra E ao pedido, a conta a pagar é lançada automaticamente (sem duplicar) e as quantidades compradas somam no realizado do Custo da Obra (previsto vs realizado). (v1.28.0)",
   "Cotação de COMPRA item a item (pós-ganho): botão \"Cotações de compra\" na tela do Custo da Obra abre a matriz item × fornecedor — cada item mostra o custo orçado (sem BDI) e as cotações registradas por fornecedor, com o menor valor destacado e a diferença vs o orçado em R$ e %. \"+ Cotação\" registra a cotação de um fornecedor do cadastro para aquele item (valor, quantidade, marca, prazo), e \"Escolher\" marca o fornecedor VENCEDOR do item (um por item — a base do pedido de compra que vem a seguir). Tudo manual: nada é casado automaticamente (v1.27.3).",
   "\"Orçamento de Obra\" agora se chama \"Custo da Obra\" em toda a interface (menu, títulos, botões — só o nome mudou; dados e telas são os mesmos). O item de menu \"Itens do orçamento\" saiu (era redundante — a edição de itens já vive dentro da tela do Custo da Obra, no \"+ Adicionar item\" com as abas SINAPI/Composição Própria/Item Manual). Dois consertos no adicionar item manual: a origem gravada agora usa os valores válidos do sistema (\"Composição própria\"/\"Item livre\") e o preço de venda (custo × BDI) passa a ser gravado no banco — o item entra somando certo também no dashboard de execução (v1.27.2).",
@@ -2846,6 +2847,10 @@ function render() {
 
 // ── Diário de Obra (RDO) ────────────────────────────────────────────────────
 const rdoUI = { view: "list", filtroObra: "", filtroDe: "", filtroAte: "", lista: [], atual: null, discObra: { projectId: "", lista: [] } };
+// Fotos selecionadas e ainda não enviadas ({file, url (objectURL), legenda}).
+// Vive fora de rdoUI.atual porque sobrevive ao re-render do form (rdoWireForm
+// redesenha os previews) e é limpa ao trocar de RDO/voltar à lista.
+let rdoFotosPendentes = [];
 const RDO_CLIMA = ["", "Bom", "Nublado", "Chuvoso", "Chuva forte"];
 const RDO_SITUACAO = ["Operando", "Parado", "Manutenção"];
 
@@ -2978,20 +2983,16 @@ function rdoNovoDraft(obraId) {
 }
 
 function rdoAbrirNovo() {
-  const draft = rdoNovoDraft(rdoUI.filtroObra);
-  if (draft.projectId) {
-    const obra = byId("projects", draft.projectId);
-    if (obra?.projectManagerId) {
-      draft.responsavelGeralUserId = obra.projectManagerId;
-      draft.responsavelGeralNome = nameOf("users", obra.projectManagerId) || obra.responsible || "";
-    }
-  }
-  rdoUI.atual = draft;
+  rdoFotosPendentesLimpar();
+  rdoUI.atual = rdoNovoDraft(rdoUI.filtroObra);
   rdoUI.view = "form";
   render();
 }
 
 async function rdoAbrir(id) {
+  // Trocar de RDO descarta as fotos ainda não enviadas; recarregar o MESMO RDO
+  // (pós-upload/exclusão de foto) preserva a fila pendente (ex.: as que falharam).
+  if (!sameId(rdoUI.atual?.id, id)) rdoFotosPendentesLimpar();
   try {
     const r = await apiRequest(`rdo-get?id=${id}`, { method: "GET" });
     rdoUI.atual = r.data;
@@ -3003,6 +3004,7 @@ async function rdoAbrir(id) {
 }
 
 function rdoVoltarLista() {
+  rdoFotosPendentesLimpar();
   rdoUI.view = "list";
   rdoUI.atual = null;
   render();
@@ -3065,10 +3067,10 @@ function rdoFotosHtml(d) {
   const podeEditar = rdoCanEdit() && d.status !== "Finalizado";
   return `
     ${podeEditar ? `<div class="rdo-foto-upload">
-      <input type="file" id="rdoFotoFile" accept="image/jpeg,image/png,image/webp">
-      <input type="text" id="rdoFotoLegenda" placeholder="Legenda (opcional)" maxlength="200">
-      <button class="secondary" type="button" id="rdoFotoEnviar">Enviar foto</button>
-    </div>` : ""}
+      <input type="file" id="rdoFotoFile" accept="image/jpeg,image/png,image/webp" multiple>
+      <button class="secondary" type="button" id="rdoFotoEnviar">Enviar fotos</button>
+    </div>
+    <div class="rdo-fotos-preview" id="rdoFotosPreview"></div>` : ""}
     <div class="rdo-fotos-grid" id="rdoFotosGrid">
       ${(d.fotos || []).map((f) => `<figure class="rdo-foto" data-foto-id="${f.id}">
         <img alt="${svgText(f.legenda || "Foto do RDO")}" data-foto-load="${f.id}">
@@ -3099,7 +3101,7 @@ function renderRdoForm() {
         <label>Data<input type="date" id="rdoFormData" value="${svgText(d.data)}" ${d.id ? "disabled" : dis}></label>
         <label>Etapa do cronograma (opcional)<select id="rdoFormEtapa" ${dis}><option value="">Sem vínculo</option>${etapas.map((e) => `<option value="${e.id}" ${sameId(e.id, d.etapaId) ? "selected" : ""}>${svgText(e.stageName)}</option>`).join("")}</select></label>
         <label>Responsável da etapa<input value="${svgText(etapaSel?.responsible || "—")}" disabled></label>
-        <label>Responsável geral (assina/finaliza)<select id="rdoRespGeral" ${dis}>${rdoUserOptions(d.responsavelGeralUserId)}</select></label>
+        <label>Assinante — criador do RDO (assina/finaliza)<input value="${svgText(d.id ? (d.responsavelGeralNome || "—") : (currentUser?.fullName || currentUser?.username || "—"))}" disabled title="Preenchido automaticamente com o usuário logado que criou o RDO"></label>
       </div>
       ${etapaSel?.servicoSiacId ? '<p class="field-hint">⚠️ Etapa é serviço controlado — a FVS será exigida na conclusão.</p>' : ""}
     </section>
@@ -3159,10 +3161,6 @@ function rdoWireForm(d, locked) {
   qs("rdoBtnVoltar")?.addEventListener("click", rdoVoltarLista);
   qs("rdoFormObra")?.addEventListener("change", (e) => {
     d.projectId = e.target.value;
-    const obra = byId("projects", d.projectId);
-    if (obra?.projectManagerId && !d.responsavelGeralUserId) {
-      d.responsavelGeralUserId = obra.projectManagerId;
-    }
     render();
   });
   qs("rdoFormEtapa")?.addEventListener("change", (e) => { d.etapaId = e.target.value; render(); });
@@ -3180,9 +3178,15 @@ function rdoWireForm(d, locked) {
   qs("rdoBtnPdf")?.addEventListener("click", () => rdoGerarPdf(d.id));
   qs("rdoBtnAssinar")?.addEventListener("click", rdoAssinar);
   qs("rdoBtnReabrir")?.addEventListener("click", rdoReabrir);
-  qs("rdoFotoEnviar")?.addEventListener("click", rdoEnviarFoto);
+  qs("rdoFotoFile")?.addEventListener("change", (e) => {
+    [...(e.target.files || [])].forEach((file) => rdoFotosPendentes.push({ file, url: URL.createObjectURL(file), legenda: "" }));
+    e.target.value = ""; // permite selecionar o mesmo arquivo de novo
+    rdoRenderFotosPreview();
+  });
+  qs("rdoFotoEnviar")?.addEventListener("click", rdoEnviarFotos);
   qs("content").querySelectorAll("[data-foto-del]").forEach((b) => b.addEventListener("click", () => rdoExcluirFoto(Number(b.dataset.fotoDel))));
   qs("content").querySelectorAll("[data-foto-load]").forEach((img) => rdoCarregarFoto(img, Number(img.dataset.fotoLoad)));
+  rdoRenderFotosPreview();
 }
 
 function rdoColetarForm() {
@@ -3203,7 +3207,6 @@ function rdoColetarForm() {
     atuouNoDia: row.querySelector(".rdo-disc-atuou")?.checked ? 1 : 0,
     responsavelUserId: Number(row.querySelector(".rdo-disc-resp")?.value || 0) || null,
   }));
-  const respSel = qs("rdoRespGeral");
   return {
     id: d.id || null,
     projectId: Number(qs("rdoFormObra")?.value || d.projectId) || null,
@@ -3217,8 +3220,6 @@ function rdoColetarForm() {
     ocorrencias: qs("rdoOcorrencias")?.value || "",
     observacoes: qs("rdoObservacoes")?.value || "",
     efetivo, equipamentos, disciplinas,
-    responsavelGeralUserId: Number(respSel?.value || 0) || null,
-    responsavelGeralNome: respSel?.selectedOptions?.[0]?.textContent?.trim() || d.responsavelGeralNome || "",
   };
 }
 
@@ -3287,21 +3288,66 @@ async function rdoExcluir(id) {
   }
 }
 
-async function rdoEnviarFoto() {
-  const file = qs("rdoFotoFile")?.files?.[0];
-  if (!file) return alert("Escolha uma imagem.");
-  if (!rdoUI.atual?.id) return;
-  const form = new FormData();
-  form.append("file", file);
-  form.append("rdoId", String(rdoUI.atual.id));
-  form.append("legenda", qs("rdoFotoLegenda")?.value || "");
-  try {
-    await fetchForm("rdo-foto-upload", form);
-    await rdoAbrir(rdoUI.atual.id);
-    showToast("Foto anexada.");
-  } catch (e) {
-    alert(`Erro ao enviar foto: ${e.message}`);
+function rdoFotosPendentesLimpar() {
+  rdoFotosPendentes.forEach((p) => URL.revokeObjectURL(p.url));
+  rdoFotosPendentes = [];
+}
+
+function rdoRenderFotosPreview() {
+  const wrap = qs("rdoFotosPreview");
+  if (!wrap) return;
+  if (!rdoFotosPendentes.length) {
+    wrap.innerHTML = "";
+    return;
   }
+  wrap.innerHTML = `
+    <p class="field-hint">${rdoFotosPendentes.length} foto(s) aguardando envio — escreva a legenda de cada uma e clique em "Enviar fotos".</p>
+    <div class="rdo-fotos-grid">
+      ${rdoFotosPendentes.map((p, i) => `<figure class="rdo-foto rdo-foto-pendente">
+        <img src="${p.url}" alt="${svgText(p.file.name)}">
+        <input type="text" class="rdo-foto-legenda" data-foto-idx="${i}" placeholder="Legenda desta foto" maxlength="200" value="${svgText(p.legenda || "")}">
+        <button class="danger" type="button" data-foto-rem="${i}">Remover</button>
+      </figure>`).join("")}
+    </div>`;
+  wrap.querySelectorAll(".rdo-foto-legenda").forEach((inp) => inp.addEventListener("input", () => {
+    const p = rdoFotosPendentes[Number(inp.dataset.fotoIdx)];
+    if (p) p.legenda = inp.value;
+  }));
+  wrap.querySelectorAll("[data-foto-rem]").forEach((b) => b.addEventListener("click", () => {
+    const [removida] = rdoFotosPendentes.splice(Number(b.dataset.fotoRem), 1);
+    if (removida) URL.revokeObjectURL(removida.url);
+    rdoRenderFotosPreview();
+  }));
+}
+
+// Envia a fila foto a foto: uma falha não derruba o lote — as que deram certo
+// são salvas e as com erro permanecem na fila (legenda preservada) para reenvio.
+async function rdoEnviarFotos() {
+  if (!rdoUI.atual?.id) return;
+  if (!rdoFotosPendentes.length) return alert("Escolha as imagens.");
+  const fila = [...rdoFotosPendentes];
+  const falhas = [];
+  let enviadas = 0;
+  for (const p of fila) {
+    const form = new FormData();
+    form.append("file", p.file);
+    form.append("rdoId", String(rdoUI.atual.id));
+    form.append("legenda", p.legenda || "");
+    try {
+      await fetchForm("rdo-foto-upload", form);
+      enviadas += 1;
+      const idx = rdoFotosPendentes.indexOf(p);
+      if (idx >= 0) {
+        URL.revokeObjectURL(p.url);
+        rdoFotosPendentes.splice(idx, 1);
+      }
+    } catch (e) {
+      falhas.push(`${p.file.name}: ${e.message}`);
+    }
+  }
+  if (enviadas) showToast(`${enviadas} foto(s) anexada(s).`);
+  if (falhas.length) alert(`Algumas fotos não foram enviadas e continuam na fila para reenvio:\n${falhas.join("\n")}`);
+  await rdoAbrir(rdoUI.atual.id);
 }
 
 async function rdoExcluirFoto(id) {
@@ -3458,7 +3504,7 @@ function rdoPdfHtml(d, fotos) {
   const bloco = (titulo, txt) => txt ? `<h3>${titulo}</h3><p class="rdo-pdf-text">${svgText(txt).replace(/\n/g, "<br>")}</p>` : "";
   const fotosHtml = fotos.length ? `<h3>Registro fotográfico</h3><div class="rdo-pdf-fotos">${fotos.map((f) => `<figure><img src="${f.url}"><figcaption>${svgText(f.legenda || "")}</figcaption></figure>`).join("")}</div>` : "";
   const assinaturas = `<div class="rdo-pdf-assinaturas">
-    <div class="rdo-pdf-assina"><span class="linha"></span><span>${svgText(d.responsavelGeralNome || "")}</span><small>Responsável pela Obra</small></div>
+    <div class="rdo-pdf-assina"><span class="linha"></span><span>${svgText(d.responsavelGeralNome || "")}</span><small>Responsável pelo RDO (criador)</small></div>
     ${atuou.map((x) => `<div class="rdo-pdf-assina"><span class="linha"></span><span>${svgText(x.responsavelNome || "")}</span><small>${svgText(x.disciplinaNome)}</small></div>`).join("")}
   </div>`;
   return `

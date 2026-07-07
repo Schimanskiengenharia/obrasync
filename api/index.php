@@ -7371,21 +7371,6 @@ function rdo_user_fullname(PDO $pdo, ?int $userId): ?string
     return $name !== false ? (string) $name : null;
 }
 
-// Responsável da obra: prioriza projectManagerId (FK → system_users); cai no
-// texto responsible/technicalResponsible se não houver gestor por ID.
-function rdo_project_responsible(PDO $pdo, int $projectId): array
-{
-    $stmt = $pdo->prepare('SELECT projectManagerId, responsible, technicalResponsible FROM projects WHERE id = ? LIMIT 1');
-    $stmt->execute([$projectId]);
-    $p = $stmt->fetch() ?: [];
-    $userId = (int) ($p['projectManagerId'] ?? 0) ?: null;
-    $nome = $userId ? rdo_user_fullname($pdo, $userId) : null;
-    if ($nome === null || $nome === '') {
-        $nome = trim((string) ($p['responsible'] ?? '')) ?: (trim((string) ($p['technicalResponsible'] ?? '')) ?: null);
-    }
-    return ['userId' => $userId, 'nome' => $nome];
-}
-
 // Normaliza efetivo/equipamentos para string JSON (array) ou null.
 function rdo_json_or_null($value): ?string
 {
@@ -7586,19 +7571,21 @@ function handle_rdo_save(PDO $pdo, array $authUser, array $payload): never
         }
     }
 
-    if (!empty($payload['responsavelGeralUserId'])) {
-        $respUserId = (int) $payload['responsavelGeralUserId'];
-        $respNome = rdo_user_fullname($pdo, $respUserId);
-    } elseif (!empty($payload['responsavelGeralNome'])) {
-        $respUserId = null;
-        $respNome = trim((string) $payload['responsavelGeralNome']);
-    } elseif (!$id) {
-        $resp = rdo_project_responsible($pdo, $projectId);
-        $respUserId = $resp['userId'];
-        $respNome = $resp['nome'];
+    // Assinante principal automático: quem CRIA o RDO (usuário da sessão) é o
+    // responsável geral que assina — o payload não escolhe mais o assinante.
+    // Na edição o criador original é mantido; RDOs antigos sem vínculo herdam
+    // o createdByUserId para não travar o envio para assinaturas.
+    if (!$id) {
+        $respUserId = (int) ($authUser['id'] ?? 0) ?: null;
+        $respNome = rdo_user_fullname($pdo, $respUserId)
+            ?: (trim((string) ($authUser['username'] ?? '')) ?: null);
     } else {
         $respUserId = (int) ($current['responsavelGeralUserId'] ?? 0) ?: null;
-        $respNome = $current['responsavelGeralNome'] ?? null;
+        $respNome = trim((string) ($current['responsavelGeralNome'] ?? '')) ?: null;
+        if (!$respUserId) {
+            $respUserId = (int) ($current['createdByUserId'] ?? 0) ?: null;
+            $respNome = rdo_user_fullname($pdo, $respUserId) ?: $respNome;
+        }
     }
 
     $condicoes = ['Praticável', 'Parcialmente praticável', 'Impraticável'];

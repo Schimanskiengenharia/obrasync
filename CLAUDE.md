@@ -6,7 +6,9 @@
 >
 > **Mapa de arquitetura (estado atual 04/07/2026)** — módulos e conexões: eixo central já ligado (SINAPI→comparador IA→orçamento→proposta→contrato→financeiro), pontas soltas (cotações/comparador de fornecedores/pedido de compra) e pendências para retomar: [`docs/arquitetura/mapa-modulos-conexoes.md`](docs/arquitetura/mapa-modulos-conexoes.md).
 >
-> **Versão atual:** `v1.26.3` · 2026-07-04
+> **Versão atual:** `v1.29.0` · 2026-07-07
+>
+> **v1.29.0 — RDO (assinatura do criador + fotos em lote):** o assinante principal (`obra_rdo.responsavelGeralUserId/Nome`) é gravado SEMPRE pelo backend a partir do usuário da sessão na criação (`handle_rdo_save` ignora `responsavelGeral*` do payload; na edição mantém o criador, com fallback em `createdByUserId` p/ RDOs antigos) — o select `rdoRespGeral` virou input somente leitura e `rdo_project_responsible()` foi removida. Fotos: input `multiple` + fila `rdoFotosPendentes` (previews com legenda individual, `rdoRenderFotosPreview`/`rdoEnviarFotos`); o envio reusa o endpoint `rdo-foto-upload` UMA requisição por foto — falha individual não derruba o lote (a foto fica na fila com a legenda). `obra_rdo_fotos.legenda` já existia (sem migration).
 >
 > **v1.26.3 — fórmulas do Excel (bug raiz do 9393):** `sinapi_rows_from_sheet($sheet, $calculateFormulas)` — uploads da IA (depara/compara) leem com `getCalculatedValue()` + fallback POR CÉLULA (`getOldCalculatedValue()` → `getValue()`); caminho SINAPI segue `toArray(..., false, ...)` sem custo. `ia_planilha_ler_ricos`: material+M.O. presentes → valorEfetivo E custoDiretoUnit = soma (SEMPRE); custoDireto isolado só se `ia_custo_direto_plausivel()` (≤100× a soma parcial). Lotes antigos com 9393/9292 exigem novo upload ou Reanalisar.
 >
