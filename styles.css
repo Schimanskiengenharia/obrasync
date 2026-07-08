@@ -5785,6 +5785,13 @@ input.cep-loading {
 .rdo-pdf-fotos { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .rdo-pdf-fotos img { width: 100%; height: auto; }
 .rdo-pdf-fotos figcaption { font-size: 11px; }
+/* Blocos de assinatura formatados (Geral + por disciplina): nome, CPF, datas */
+.rdo-assina-blocos { display: flex; flex-wrap: wrap; gap: 10px; margin: 6px 0 12px; }
+.rdo-assina-bloco { border: 1px solid #999; border-radius: 6px; padding: 8px 12px; min-width: 230px; font-size: 12px; }
+.rdo-assina-bloco strong { display: block; border-bottom: 1px solid #ccc; padding-bottom: 3px; margin-bottom: 4px; }
+.rdo-assina-bloco span { display: block; font-size: 11px; }
+.rdo-assina-papel { color: #555; }
+.rdo-assina-pendente { color: #777; }
 .rdo-pdf-assinaturas { display: flex; flex-wrap: wrap; gap: 24px; margin-top: 30px; }
 .rdo-pdf-assina { text-align: center; min-width: 180px; }
 .rdo-pdf-assina .linha { display: block; border-top: 1px solid #000; margin-bottom: 4px; }
@@ -5807,6 +5814,7 @@ input.cep-loading {
   body.rdo-printing #rdoPrint { display: block !important; }
   .rdo-pdf-fotos figure { break-inside: avoid; }
   .rdo-sem-dia-titulo { break-after: avoid-page; }
+  .rdo-assina-bloco { break-inside: avoid; }
 }
 
 /* ── Permissões por usuário (modal) ──────────────────────────────────────── */

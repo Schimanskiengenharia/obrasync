@@ -7530,10 +7530,19 @@ function handle_rdo_get(PDO $pdo, int $id): never
     }
     $rdo['efetivo'] = $rdo['efetivo'] ? (json_decode((string) $rdo['efetivo'], true) ?: []) : [];
     $rdo['equipamentos'] = $rdo['equipamentos'] ? (json_decode((string) $rdo['equipamentos'], true) ?: []) : [];
-    $d = $pdo->prepare('SELECT * FROM obra_rdo_disciplinas WHERE rdoId = ? ORDER BY disciplinaNome');
+    // CPF dos assinantes (blocos de assinatura do documento): LEFT JOIN em
+    // system_users — usuário removido/sem CPF vira NULL ("CPF não informado").
+    $rdo['responsavelGeralCpf'] = null;
+    $criadorId = (int) ($rdo['responsavelGeralUserId'] ?? 0) ?: ((int) ($rdo['createdByUserId'] ?? 0) ?: null);
+    if ($criadorId) {
+        $c = $pdo->prepare('SELECT cpf FROM system_users WHERE id = ? LIMIT 1');
+        $c->execute([$criadorId]);
+        $rdo['responsavelGeralCpf'] = ($c->fetchColumn() ?: null);
+    }
+    $d = $pdo->prepare('SELECT d.*, u.cpf AS responsavelCpf FROM obra_rdo_disciplinas d LEFT JOIN system_users u ON u.id = d.responsavelUserId WHERE d.rdoId = ? ORDER BY d.disciplinaNome');
     $d->execute([$id]);
     $rdo['disciplinas'] = $d->fetchAll();
-    $a = $pdo->prepare('SELECT * FROM obra_rdo_assinaturas WHERE rdoId = ? ORDER BY assinadoEm');
+    $a = $pdo->prepare('SELECT a.*, u.cpf AS assinanteCpf FROM obra_rdo_assinaturas a LEFT JOIN system_users u ON u.id = a.assinanteUserId WHERE a.rdoId = ? ORDER BY a.assinadoEm');
     $a->execute([$id]);
     $rdo['assinaturas'] = $a->fetchAll();
     $f = $pdo->prepare('SELECT id, legenda FROM obra_rdo_fotos WHERE rdoId = ? ORDER BY id');

@@ -19,9 +19,10 @@ if (APP_ENV === "production" && location.protocol === "http:") {
   location.replace(location.href.replace(/^http:/, "https:"));
 }
 const APP_NAME = "ObraSync";
-const APP_VERSION = "v1.30.0";
+const APP_VERSION = "v1.31.0";
 const APP_VERSION_DATE = "2026-07-08";
 const APP_CHANGELOG = [
+  "RDO — blocos de assinatura formatados: o documento do RDO (e cada dia do relatório semanal) agora traz um bloco de assinatura estruturado para o responsável GERAL (o criador do RDO) com nome completo, CPF formatado (000.000.000-00), data/hora de criação do RDO e data/hora da assinatura, e um bloco por DISCIPLINA que atuou no dia (nome + CPF do responsável + disciplina + data/hora em que assinou; \"pendente\" quando ainda não assinou). O CPF vem do cadastro do usuário — sem CPF cadastrado aparece \"CPF não informado\". As linhas de assinatura manuscrita saíram do documento; o fluxo de assinar (por disciplina e geral) é o mesmo que já existia (v1.31.0).",
   "Relatório Semanal de RDO: novo botão \"Relatório semanal\" no Diário de Obra — escolha a obra e uma data de referência e o sistema consolida os RDOs dos 7 dias corridos até ela (da mais antiga à mais recente) num documento único: cabeçalho com obra/cliente/período/responsável, uma seção por dia com o DIA DA SEMANA em português (ex.: \"Segunda-feira, 30/06/2026\") e todo o conteúdo do diário (clima/condição, efetivo, equipamentos, atividades, ocorrências, observações, disciplinas) com as FOTOS do dia embutidas com suas legendas; dias sem diário aparecem como \"Sem registro\". Visualização na tela e download em PDF com a identidade visual dos documentos do sistema; assinatura no fim com o nome do usuário que gerou. Só leitura — nenhum RDO é alterado (v1.30.0).",
   "RDO — assinatura automática do criador + fotos em lote com legenda: o assinante principal do diário agora é SEMPRE o usuário logado que criou o RDO (campo somente leitura preenchido na criação; o nome sai no documento impresso como responsável que assina — sem seleção/digitação manual). No anexo de fotos, dá para selecionar VÁRIAS imagens de uma vez: cada uma aparece em miniatura com campo de legenda próprio antes do envio, e o lote é enviado foto a foto — se uma falhar, as demais são salvas e a que falhou permanece na fila com a legenda preservada para reenviar. Cada foto aparece com sua legenda na tela e na impressão (v1.29.0).",
   "Ciclo de compra completo (F5.3): na matriz de cotações de compra, o botão \"Gerar pedido de compra (vencedores)\" cria um pedido por fornecedor vencedor, com os itens vinculados ao Custo da Obra. Novo menu \"Compras da Obra\" (seção Custo da Obra): lista os pedidos com NF e conta a pagar, e o botão \"Registrar compra + NF\" fecha o ciclo num passo — a nota fiscal entra vinculada à obra E ao pedido, a conta a pagar é lançada automaticamente (sem duplicar) e as quantidades compradas somam no realizado do Custo da Obra (previsto vs realizado). (v1.28.0)",
@@ -3534,17 +3535,65 @@ function rdoDiaCorpoHtml(d, fotos) {
     ${fotosHtml}`;
 }
 
+// CPF para exibição: máscara 000.000.000-00 (o banco guarda só dígitos).
+// Vazio → "CPF não informado"; valor fora do padrão sai como está (não quebra).
+function rdoCpfFmt(cpf) {
+  const dig = String(cpf || "").replace(/\D/g, "");
+  if (!dig) return "não informado";
+  if (dig.length !== 11) return String(cpf);
+  return `${dig.slice(0, 3)}.${dig.slice(3, 6)}.${dig.slice(6, 9)}-${dig.slice(9)}`;
+}
+
+// "YYYY-MM-DD HH:MM[:SS]" (TIMESTAMP do MySQL) → "DD/MM/AAAA HH:MM" pela
+// PRÓPRIA STRING — sem passar por Date/UTC, o horário exibido é o gravado
+// (mesma regra do asDate/M10). Data pura cai no asDate.
+function rdoDataHora(value) {
+  const m = String(value || "").trim().match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
+  if (!m) return asDate(value);
+  return `${m[3]}/${m[2]}/${m[1]} ${m[4]}:${m[5]}`;
+}
+
+function rdoAssinaturaBlocoHtml({ nome, cpf, disciplina, criadoEm, assinadoEm, papel }) {
+  return `<div class="rdo-assina-bloco">
+    <strong>${svgText(nome || "—")}</strong>
+    ${papel ? `<span class="rdo-assina-papel">${svgText(papel)}</span>` : ""}
+    <span>CPF: ${svgText(rdoCpfFmt(cpf))}</span>
+    ${disciplina ? `<span>Disciplina: ${svgText(disciplina)}</span>` : ""}
+    ${criadoEm ? `<span>Criado em: ${svgText(rdoDataHora(criadoEm))}</span>` : ""}
+    <span>Assinado em: ${assinadoEm ? svgText(rdoDataHora(assinadoEm)) : '<em class="rdo-assina-pendente">pendente</em>'}</span>
+  </div>`;
+}
+
+// Blocos de assinatura do documento (Geral + um por disciplina que atuou e tem
+// responsável). Texto estruturado (nome, CPF, datas) — sem linha manuscrita.
+// Requer o RDO vindo do rdo-get (traz responsavelGeralCpf/responsavelCpf/
+// assinanteCpf e as assinaturas registradas).
+function rdoAssinaturasBlocosHtml(d) {
+  const assGeral = (d.assinaturas || []).filter((a) => a.tipo === "Geral" && a.evento === "Assinatura").pop();
+  const blocos = [rdoAssinaturaBlocoHtml({
+    nome: assGeral?.assinanteNome || d.responsavelGeralNome,
+    cpf: assGeral?.assinanteCpf || d.responsavelGeralCpf,
+    papel: "Responsável pelo RDO (criador)",
+    criadoEm: d.createdAt,
+    assinadoEm: assGeral?.assinadoEm || null,
+  })];
+  (d.disciplinas || [])
+    .filter((x) => Number(x.atuouNoDia) === 1 && (x.responsavelUserId || x.responsavelNome))
+    .forEach((x) => blocos.push(rdoAssinaturaBlocoHtml({
+      nome: x.responsavelNome,
+      cpf: x.responsavelCpf,
+      disciplina: x.disciplinaNome,
+      assinadoEm: Number(x.assinado) ? x.assinadoEm : null,
+    })));
+  return `<h3>Assinaturas</h3><div class="rdo-assina-blocos">${blocos.join("")}</div>`;
+}
+
 function rdoPdfHtml(d, fotos) {
   const obra = nameOf("projects", d.projectId) || "";
-  const atuou = (d.disciplinas || []).filter((x) => Number(x.atuouNoDia) === 1);
-  const assinaturas = `<div class="rdo-pdf-assinaturas">
-    <div class="rdo-pdf-assina"><span class="linha"></span><span>${svgText(d.responsavelGeralNome || "")}</span><small>Responsável pelo RDO (criador)</small></div>
-    ${atuou.map((x) => `<div class="rdo-pdf-assina"><span class="linha"></span><span>${svgText(x.responsavelNome || "")}</span><small>${svgText(x.disciplinaNome)}</small></div>`).join("")}
-  </div>`;
   return `
     ${generateDocumentHeader("Relatório Diário de Obra (RDO)", [obra, asDate(d.data)].filter(Boolean).join(" · "))}
     ${rdoDiaCorpoHtml(d, fotos)}
-    ${assinaturas}
+    ${rdoAssinaturasBlocosHtml(d)}
     ${generateDocumentFooter()}
   `;
 }
@@ -3667,7 +3716,7 @@ function rdoSemanalDocHtml() {
   const dias = st.dias.map(({ data, rdo, fotos }) => `
     <section class="rdo-sem-dia">
       <h2 class="rdo-sem-dia-titulo">${svgText(`${rdoDiaSemana(data)}, ${asDate(data)}`)}</h2>
-      ${rdo ? rdoDiaCorpoHtml(rdo, fotos) : '<p class="rdo-pdf-text rdo-sem-sem-registro">Sem registro — não houve diário de obra nesta data.</p>'}
+      ${rdo ? rdoDiaCorpoHtml(rdo, fotos) + rdoAssinaturasBlocosHtml(rdo) : '<p class="rdo-pdf-text rdo-sem-sem-registro">Sem registro — não houve diário de obra nesta data.</p>'}
     </section>`).join("");
   return `
     ${generateDocumentHeader("Relatório Semanal de Obra (RDO)", [obra.name, periodo].filter(Boolean).join(" · "))}
