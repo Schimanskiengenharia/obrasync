@@ -5790,10 +5790,23 @@ input.cep-loading {
 .rdo-pdf-assina .linha { display: block; border-top: 1px solid #000; margin-bottom: 4px; }
 .rdo-pdf-assina small { display: block; color: #555; }
 
+/* Relatório Semanal de RDO: documento consolidado na tela + impressão */
+.rdo-semanal-wrap { overflow-x: auto; }
+.rdo-semanal-doc { background: #fff; color: #111; border: 1px solid var(--border, #e5e7eb); border-radius: 8px; padding: 20px 24px; max-width: 900px; margin: 0 auto; }
+.rdo-semanal-doc h3 { font-size: 13px; margin: 10px 0 4px; color: #111; }
+.rdo-sem-cab { margin-bottom: 6px; }
+.rdo-sem-cab p { margin: 2px 0; font-size: 13px; }
+.rdo-sem-dia { margin-top: 18px; }
+.rdo-sem-dia-titulo { font-size: 15px; margin: 0 0 6px; padding-bottom: 4px; border-bottom: 2px solid #185FA5; color: inherit; }
+.rdo-sem-sem-registro { color: #777; font-style: italic; }
+/* Fotos do relatório semanal: contidas (sem estourar página no PDF) e sem corte */
+.rdo-semanal-doc .rdo-pdf-fotos img, #docPrint .rdo-pdf-fotos img { width: auto; max-width: 100%; max-height: 70mm; display: block; margin: 0 auto; }
+
 @media print {
   body.rdo-printing > *:not(#rdoPrint) { display: none !important; }
   body.rdo-printing #rdoPrint { display: block !important; }
   .rdo-pdf-fotos figure { break-inside: avoid; }
+  .rdo-sem-dia-titulo { break-after: avoid-page; }
 }
 
 /* ── Permissões por usuário (modal) ──────────────────────────────────────── */

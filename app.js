@@ -19,9 +19,10 @@ if (APP_ENV === "production" && location.protocol === "http:") {
   location.replace(location.href.replace(/^http:/, "https:"));
 }
 const APP_NAME = "ObraSync";
-const APP_VERSION = "v1.29.0";
-const APP_VERSION_DATE = "2026-07-07";
+const APP_VERSION = "v1.30.0";
+const APP_VERSION_DATE = "2026-07-08";
 const APP_CHANGELOG = [
+  "Relatório Semanal de RDO: novo botão \"Relatório semanal\" no Diário de Obra — escolha a obra e uma data de referência e o sistema consolida os RDOs dos 7 dias corridos até ela (da mais antiga à mais recente) num documento único: cabeçalho com obra/cliente/período/responsável, uma seção por dia com o DIA DA SEMANA em português (ex.: \"Segunda-feira, 30/06/2026\") e todo o conteúdo do diário (clima/condição, efetivo, equipamentos, atividades, ocorrências, observações, disciplinas) com as FOTOS do dia embutidas com suas legendas; dias sem diário aparecem como \"Sem registro\". Visualização na tela e download em PDF com a identidade visual dos documentos do sistema; assinatura no fim com o nome do usuário que gerou. Só leitura — nenhum RDO é alterado (v1.30.0).",
   "RDO — assinatura automática do criador + fotos em lote com legenda: o assinante principal do diário agora é SEMPRE o usuário logado que criou o RDO (campo somente leitura preenchido na criação; o nome sai no documento impresso como responsável que assina — sem seleção/digitação manual). No anexo de fotos, dá para selecionar VÁRIAS imagens de uma vez: cada uma aparece em miniatura com campo de legenda próprio antes do envio, e o lote é enviado foto a foto — se uma falhar, as demais são salvas e a que falhou permanece na fila com a legenda preservada para reenviar. Cada foto aparece com sua legenda na tela e na impressão (v1.29.0).",
   "Ciclo de compra completo (F5.3): na matriz de cotações de compra, o botão \"Gerar pedido de compra (vencedores)\" cria um pedido por fornecedor vencedor, com os itens vinculados ao Custo da Obra. Novo menu \"Compras da Obra\" (seção Custo da Obra): lista os pedidos com NF e conta a pagar, e o botão \"Registrar compra + NF\" fecha o ciclo num passo — a nota fiscal entra vinculada à obra E ao pedido, a conta a pagar é lançada automaticamente (sem duplicar) e as quantidades compradas somam no realizado do Custo da Obra (previsto vs realizado). (v1.28.0)",
   "Cotação de COMPRA item a item (pós-ganho): botão \"Cotações de compra\" na tela do Custo da Obra abre a matriz item × fornecedor — cada item mostra o custo orçado (sem BDI) e as cotações registradas por fornecedor, com o menor valor destacado e a diferença vs o orçado em R$ e %. \"+ Cotação\" registra a cotação de um fornecedor do cadastro para aquele item (valor, quantidade, marca, prazo), e \"Escolher\" marca o fornecedor VENCEDOR do item (um por item — a base do pedido de compra que vem a seguir). Tudo manual: nada é casado automaticamente (v1.27.3).",
@@ -2846,7 +2847,13 @@ function render() {
 }
 
 // ── Diário de Obra (RDO) ────────────────────────────────────────────────────
-const rdoUI = { view: "list", filtroObra: "", filtroDe: "", filtroAte: "", lista: [], atual: null, discObra: { projectId: "", lista: [] } };
+const rdoUI = {
+  view: "list", filtroObra: "", filtroDe: "", filtroAte: "", lista: [], atual: null,
+  discObra: { projectId: "", lista: [] },
+  // Relatório semanal (só leitura): consolida os RDOs de 7 dias corridos.
+  // dias = [{data, rdo|null, fotos:[{url,legenda}]}]; urls = objectURLs a revogar.
+  semanal: { projectId: "", dataRef: "", dias: null, carregando: false, urls: [] },
+};
 // Fotos selecionadas e ainda não enviadas ({file, url (objectURL), legenda}).
 // Vive fora de rdoUI.atual porque sobrevive ao re-render do form (rdoWireForm
 // redesenha os previews) e é limpa ao trocar de RDO/voltar à lista.
@@ -2879,6 +2886,7 @@ function rdoObraOptions(selectedId) {
 function renderRdo() {
   if (rdoUI.view === "disciplinas") return renderRdoDisciplinas();
   if (rdoUI.view === "form") return renderRdoForm();
+  if (rdoUI.view === "semanal") return renderRdoSemanal();
   return renderRdoLista();
 }
 
@@ -2891,6 +2899,7 @@ function renderRdoLista() {
         <p>Um RDO por obra por dia. O responsável geral e os responsáveis das disciplinas que atuaram assinam; quando todas as assinaturas são coletadas, o RDO é finalizado.</p>
       </div>
       <div class="row-actions">
+        <button class="secondary" type="button" id="rdoBtnSemanal">📄 Relatório semanal</button>
         ${editable ? '<button class="secondary" type="button" id="rdoBtnDisc">🏗️ Disciplinas da obra</button>' : ""}
         ${editable ? '<button class="primary" type="button" id="rdoBtnNovo">+ Novo RDO</button>' : ""}
       </div>
@@ -2904,6 +2913,12 @@ function renderRdoLista() {
     <div id="rdoListaWrap"><div class="empty">Carregando…</div></div>
   `;
   qs("rdoBtnNovo")?.addEventListener("click", rdoAbrirNovo);
+  qs("rdoBtnSemanal")?.addEventListener("click", () => {
+    rdoUI.semanal.projectId = rdoUI.semanal.projectId || rdoUI.filtroObra;
+    rdoUI.semanal.dataRef = rdoUI.semanal.dataRef || hojeLocal();
+    rdoUI.view = "semanal";
+    render();
+  });
   qs("rdoBtnDisc")?.addEventListener("click", () => { rdoUI.view = "disciplinas"; rdoUI.discObra.projectId = rdoUI.filtroObra; render(); });
   qs("rdoFiltrar")?.addEventListener("click", () => {
     rdoUI.filtroObra = qs("rdoFiltroObra").value;
@@ -3492,8 +3507,10 @@ async function rdoGerarPdf(id) {
   window.print();
 }
 
-function rdoPdfHtml(d, fotos) {
-  const obra = nameOf("projects", d.projectId) || "";
+// Miolo de UM dia de RDO (nº/condição/clima, efetivo, equipamentos, textos,
+// disciplinas e fotos com legenda). Usado no PDF do RDO individual e em cada
+// dia do relatório semanal. `fotos` = [{url (blob), legenda}] já carregadas.
+function rdoDiaCorpoHtml(d, fotos) {
   const tabela = (titulo, head, linhas) => linhas.length
     ? `<h3>${titulo}</h3><table class="rdo-pdf-table"><thead><tr>${head.map((h) => `<th>${h}</th>`).join("")}</tr></thead><tbody>${linhas}</tbody></table>`
     : "";
@@ -3503,12 +3520,7 @@ function rdoPdfHtml(d, fotos) {
   const discTab = tabela("Disciplinas que atuaram", ["Disciplina", "Responsável"], atuou.map((x) => `<tr><td>${svgText(x.disciplinaNome)}</td><td>${svgText(x.responsavelNome || "—")}</td></tr>`).join(""));
   const bloco = (titulo, txt) => txt ? `<h3>${titulo}</h3><p class="rdo-pdf-text">${svgText(txt).replace(/\n/g, "<br>")}</p>` : "";
   const fotosHtml = fotos.length ? `<h3>Registro fotográfico</h3><div class="rdo-pdf-fotos">${fotos.map((f) => `<figure><img src="${f.url}"><figcaption>${svgText(f.legenda || "")}</figcaption></figure>`).join("")}</div>` : "";
-  const assinaturas = `<div class="rdo-pdf-assinaturas">
-    <div class="rdo-pdf-assina"><span class="linha"></span><span>${svgText(d.responsavelGeralNome || "")}</span><small>Responsável pelo RDO (criador)</small></div>
-    ${atuou.map((x) => `<div class="rdo-pdf-assina"><span class="linha"></span><span>${svgText(x.responsavelNome || "")}</span><small>${svgText(x.disciplinaNome)}</small></div>`).join("")}
-  </div>`;
   return `
-    ${generateDocumentHeader("Relatório Diário de Obra (RDO)", [obra, asDate(d.data)].filter(Boolean).join(" · "))}
     <div class="rdo-pdf-head">
       <p><strong>RDO Nº ${svgText(String(d.numeroSequencial || ""))}</strong> · Condição: ${svgText(d.condicaoTrabalho || "—")}</p>
       <p>Clima: manhã ${svgText(d.climaManha || "—")} · tarde ${svgText(d.climaTarde || "—")} · noite ${svgText(d.climaNoite || "—")}</p>
@@ -3519,8 +3531,157 @@ function rdoPdfHtml(d, fotos) {
     ${bloco("Ocorrências / paralisações", d.ocorrencias)}
     ${bloco("Observações", d.observacoes)}
     ${discTab}
-    ${fotosHtml}
+    ${fotosHtml}`;
+}
+
+function rdoPdfHtml(d, fotos) {
+  const obra = nameOf("projects", d.projectId) || "";
+  const atuou = (d.disciplinas || []).filter((x) => Number(x.atuouNoDia) === 1);
+  const assinaturas = `<div class="rdo-pdf-assinaturas">
+    <div class="rdo-pdf-assina"><span class="linha"></span><span>${svgText(d.responsavelGeralNome || "")}</span><small>Responsável pelo RDO (criador)</small></div>
+    ${atuou.map((x) => `<div class="rdo-pdf-assina"><span class="linha"></span><span>${svgText(x.responsavelNome || "")}</span><small>${svgText(x.disciplinaNome)}</small></div>`).join("")}
+  </div>`;
+  return `
+    ${generateDocumentHeader("Relatório Diário de Obra (RDO)", [obra, asDate(d.data)].filter(Boolean).join(" · "))}
+    ${rdoDiaCorpoHtml(d, fotos)}
     ${assinaturas}
+    ${generateDocumentFooter()}
+  `;
+}
+
+// ── Relatório Semanal de RDO (consolida 7 dias corridos — SÓ LEITURA) ────────
+const RDO_DIAS_SEMANA = ["Domingo", "Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira", "Sábado"];
+
+// Dia da semana de uma data pura (YYYY-MM-DD) SEM passar por UTC: o construtor
+// Date(y, m-1, d) é local — o dia nunca desloca (mesma regra do asDate/M10).
+function rdoDiaSemana(dataStr) {
+  const [y, m, d] = String(dataStr).split("-").map(Number);
+  const dt = new Date(y, m - 1, d);
+  return isNaN(dt.getTime()) ? "" : RDO_DIAS_SEMANA[dt.getDay()];
+}
+
+// Soma dias a uma data pura em horário local (Date normaliza o overflow).
+function rdoSomarDias(dataStr, dias) {
+  const [y, m, d] = String(dataStr).split("-").map(Number);
+  return localDateString(new Date(y, m - 1, d + dias));
+}
+
+function rdoSemanalPeriodoLabel(de, ate) {
+  const inicio = asDate(de);
+  const fim = asDate(ate);
+  const mesmoAno = String(de).slice(0, 4) === String(ate).slice(0, 4);
+  return `Semana de ${mesmoAno ? inicio.slice(0, 5) : inicio} a ${fim}`;
+}
+
+function rdoSemanalLimparUrls() {
+  rdoUI.semanal.urls.forEach((u) => URL.revokeObjectURL(u));
+  rdoUI.semanal.urls = [];
+  rdoUI.semanal.dias = null;
+}
+
+function renderRdoSemanal() {
+  const st = rdoUI.semanal;
+  qs("content").innerHTML = `
+    <section class="module-head">
+      <div>
+        <h2>Relatório Semanal de Obra</h2>
+        <p>Consolida os diários (RDO) de uma obra nos 7 dias corridos até a data de referência — dia a dia, com fotos e legendas. Não altera nenhum RDO.</p>
+      </div>
+      <div class="row-actions"><button class="secondary" type="button" id="rdoSemVoltar">← Voltar aos RDOs</button></div>
+    </section>
+    <section class="schedule-toolbar">
+      <label>Obra <select id="rdoSemObra" ${st.carregando ? "disabled" : ""}>${rdoObraOptions(st.projectId)}</select></label>
+      <label>Data de referência <input type="date" id="rdoSemData" value="${svgText(st.dataRef)}" ${st.carregando ? "disabled" : ""}></label>
+      <button class="primary" type="button" id="rdoSemGerar" ${st.carregando ? "disabled" : ""}>${st.carregando ? "Gerando…" : "Gerar relatório"}</button>
+      ${st.dias ? '<button class="secondary" type="button" id="rdoSemPdf">Baixar PDF</button>' : ""}
+    </section>
+    ${st.carregando
+      ? '<div class="empty">Carregando os diários e as fotos da semana…</div>'
+      : st.dias
+        ? `<section class="rdo-semanal-wrap"><div class="rdo-semanal-doc">${rdoSemanalDocHtml()}</div></section>`
+        : '<div class="empty">Escolha a obra e a data de referência e clique em "Gerar relatório".</div>'}
+  `;
+  qs("rdoSemVoltar")?.addEventListener("click", () => { rdoSemanalLimparUrls(); rdoUI.view = "list"; render(); });
+  qs("rdoSemObra")?.addEventListener("change", (e) => { st.projectId = e.target.value; });
+  qs("rdoSemData")?.addEventListener("change", (e) => { st.dataRef = e.target.value; });
+  qs("rdoSemGerar")?.addEventListener("click", rdoSemanalGerar);
+  qs("rdoSemPdf")?.addEventListener("click", () => printStandaloneDocument(rdoSemanalDocHtml()));
+}
+
+async function rdoSemanalGerar() {
+  const st = rdoUI.semanal;
+  st.projectId = qs("rdoSemObra")?.value || st.projectId;
+  st.dataRef = qs("rdoSemData")?.value || st.dataRef;
+  if (!st.projectId) return alert("Selecione a obra.");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(st.dataRef || "")) return alert("Informe a data de referência.");
+  const ate = st.dataRef;
+  const de = rdoSomarDias(ate, -6);
+  rdoSemanalLimparUrls();
+  st.carregando = true;
+  render();
+  const porData = new Map();
+  try {
+    const lista = (await apiRequest(`rdo-list?projectId=${st.projectId}&de=${de}&ate=${ate}`, { method: "GET" })).data || [];
+    for (const item of lista) {
+      const r = (await apiRequest(`rdo-get?id=${item.id}`, { method: "GET" })).data;
+      const fotos = [];
+      for (const f of (r.fotos || [])) {
+        try {
+          const resp = await fetch(`${API_BASE}/rdo-foto?id=${f.id}`, { headers: authHeaders() });
+          if (resp.ok) {
+            const url = URL.createObjectURL(await resp.blob());
+            st.urls.push(url);
+            fotos.push({ url, legenda: f.legenda });
+          }
+        } catch {
+          // foto indisponível: o relatório segue sem ela
+        }
+      }
+      porData.set(String(r.data), { rdo: r, fotos });
+    }
+    st.dias = Array.from({ length: 7 }, (_, i) => {
+      const data = rdoSomarDias(de, i);
+      const hit = porData.get(data);
+      return { data, rdo: hit?.rdo || null, fotos: hit?.fotos || [] };
+    });
+  } catch (e) {
+    rdoSemanalLimparUrls();
+    alert(`Erro ao gerar o relatório semanal: ${e.message}`);
+  }
+  st.carregando = false;
+  render();
+}
+
+// HTML do documento consolidado (mesmo conteúdo na tela e no PDF; o cabeçalho/
+// rodapé da empresa são .doc-print-only e só aparecem na impressão).
+function rdoSemanalDocHtml() {
+  const st = rdoUI.semanal;
+  const obra = byId("projects", st.projectId) || {};
+  const de = st.dias[0]?.data || "";
+  const ate = st.dias[st.dias.length - 1]?.data || "";
+  const periodo = rdoSemanalPeriodoLabel(de, ate);
+  const cliente = nameOf("clients", obra.clientId) || "—";
+  const respObra = nameOf("users", obra.projectManagerId) || obra.responsible || obra.technicalResponsible || "—";
+  const assinante = currentUser?.fullName || currentUser?.username || "";
+  const comRegistro = st.dias.filter((x) => x.rdo).length;
+  const dias = st.dias.map(({ data, rdo, fotos }) => `
+    <section class="rdo-sem-dia">
+      <h2 class="rdo-sem-dia-titulo">${svgText(`${rdoDiaSemana(data)}, ${asDate(data)}`)}</h2>
+      ${rdo ? rdoDiaCorpoHtml(rdo, fotos) : '<p class="rdo-pdf-text rdo-sem-sem-registro">Sem registro — não houve diário de obra nesta data.</p>'}
+    </section>`).join("");
+  return `
+    ${generateDocumentHeader("Relatório Semanal de Obra (RDO)", [obra.name, periodo].filter(Boolean).join(" · "))}
+    <div class="rdo-sem-cab">
+      <p><strong>Obra:</strong> ${svgText(obra.name || "—")}</p>
+      <p><strong>Cliente:</strong> ${svgText(cliente)}</p>
+      <p><strong>Período:</strong> ${svgText(periodo)}</p>
+      <p><strong>Responsável:</strong> ${svgText(respObra)}</p>
+      <p><strong>Diários no período:</strong> ${comRegistro} de 7 dias</p>
+    </div>
+    ${dias}
+    <div class="rdo-pdf-assinaturas">
+      <div class="rdo-pdf-assina"><span class="linha"></span><span>${svgText(assinante)}</span><small>Responsável pelo relatório</small></div>
+    </div>
     ${generateDocumentFooter()}
   `;
 }
