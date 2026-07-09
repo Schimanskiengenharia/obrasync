@@ -19,9 +19,10 @@ if (APP_ENV === "production" && location.protocol === "http:") {
   location.replace(location.href.replace(/^http:/, "https:"));
 }
 const APP_NAME = "ObraSync";
-const APP_VERSION = "v1.32.0";
-const APP_VERSION_DATE = "2026-07-08";
+const APP_VERSION = "v1.32.1";
+const APP_VERSION_DATE = "2026-07-09";
 const APP_CHANGELOG = [
+  "Contas vencidas separadas por lado + status Vencido automático: o card \"Contas vencidas\" do dashboard somava contas a PAGAR vencidas (dívida da empresa) com contas a RECEBER vencidas (clientes devendo) num número só — virou dois cards: \"Contas a pagar vencidas\" (vermelho, perda/risco) e \"Inadimplência (a receber vencidas)\" (âmbar, ação de cobrança), também na visão por obra; os alertas do topo agora falam de cada lado separadamente (quantidade + valor) e o relatório \"Inadimplência por cliente\" passou a calcular vencidas em tempo real. No servidor, o cron diário ganhou o job mark_overdue_accounts: contas 'Aberto' com vencimento passado viram status 'Vencido' no banco (não toca Parcial/Pago/Recebido/Cancelado; usa a data no fuso local para a conta que vence hoje não virar vencida antes da hora) — pagar uma conta 'Vencido' segue funcionando normalmente (v1.32.1).",
   "Cotações de Fornecedores — Categorias e Tipos de Item (Parte A1): novo botão \"Categorias de Cotação\" no módulo abre o cadastro manual da estrutura categoria → tipo de item (ex.: Elétrica → Cabo, Disjuntor, Eletroduto; Civil → Tijolo, Cimento). CRUD completo dentro da tela: criar/editar/inativar/reativar categorias e, dentro de cada uma, os tipos de item (com unidade padrão opcional), além de reordenação por ↑/↓ persistida no banco. Usa a mesma permissão do módulo de cotações. Tabelas novas cotacao_categorias e cotacao_tipos_item (migration + auto-cura); os atributos customizados por tipo (no molde dos campos personalizados de obra) chegam na próxima fase — A2 (v1.32.0).",
   "RDO — blocos de assinatura formatados: o documento do RDO (e cada dia do relatório semanal) agora traz um bloco de assinatura estruturado para o responsável GERAL (o criador do RDO) com nome completo, CPF formatado (000.000.000-00), data/hora de criação do RDO e data/hora da assinatura, e um bloco por DISCIPLINA que atuou no dia (nome + CPF do responsável + disciplina + data/hora em que assinou; \"pendente\" quando ainda não assinou). O CPF vem do cadastro do usuário — sem CPF cadastrado aparece \"CPF não informado\". As linhas de assinatura manuscrita saíram do documento; o fluxo de assinar (por disciplina e geral) é o mesmo que já existia (v1.31.0).",
   "Relatório Semanal de RDO: novo botão \"Relatório semanal\" no Diário de Obra — escolha a obra e uma data de referência e o sistema consolida os RDOs dos 7 dias corridos até ela (da mais antiga à mais recente) num documento único: cabeçalho com obra/cliente/período/responsável, uma seção por dia com o DIA DA SEMANA em português (ex.: \"Segunda-feira, 30/06/2026\") e todo o conteúdo do diário (clima/condição, efetivo, equipamentos, atividades, ocorrências, observações, disciplinas) com as FOTOS do dia embutidas com suas legendas; dias sem diário aparecem como \"Sem registro\". Visualização na tela e download em PDF com a identidade visual dos documentos do sistema; assinatura no fim com o nome do usuário que gerou. Só leitura — nenhum RDO é alterado (v1.30.0).",
@@ -3872,8 +3873,14 @@ function dashboardMetrics() {
   const currentBalance = (activeDashboardProjectId() ? 0 : bankOpeningBalance()) + moves.reduce((total, row) => total + signedCashAmount(row), 0);
   const openReceivable = receivable.filter((row) => isReceberAberto(row.status)).reduce((total, row) => total + Number(row.amount || 0), 0);
   const openPayable = payable.filter((row) => isPagarAberto(row.status)).reduce((total, row) => total + Number(row.amount || 0), 0);
-  const overdue = receivable.filter((row) => isOverdue(row, "receivable")).reduce((total, row) => total + Number(row.amount || 0), 0)
-    + payable.filter((row) => isOverdue(row, "payable")).reduce((total, row) => total + Number(row.amount || 0), 0);
+  // Vencidas SEPARADAS por lado (antes somavam num único "overdue"): a pagar
+  // vencida = dívida da EMPRESA em atraso (perda/risco, vermelho); a receber
+  // vencida = INADIMPLÊNCIA de clientes (cobrança, âmbar). Conceitos opostos —
+  // nunca somar num número só.
+  const overduePayableRows = payable.filter((row) => isOverdue(row, "payable"));
+  const overdueReceivableRows = receivable.filter((row) => isOverdue(row, "receivable"));
+  const overduePayable = overduePayableRows.reduce((total, row) => total + Number(row.amount || 0), 0);
+  const overdueReceivable = overdueReceivableRows.reduce((total, row) => total + Number(row.amount || 0), 0);
   const grossProfit = sales.reduce((total, row) => total + Number(row.amount || 0) - Number(row.cost || 0), 0);
   const netProfit = revenueTotal - expensesTotal;
   const paidExpenses = payable.filter((row) => isPago(row.status)).reduce((total, row) => total + Number(row.amount || 0), 0);
@@ -3914,7 +3921,10 @@ function dashboardMetrics() {
       inProgressStages: scheduleInfo.inProgressStages,
       nextMilestone: scheduleInfo.nextMilestone || "Sem marco previsto",
       financialExecution: project.costForecast ? (realizedCost / Number(project.costForecast || 1)) * 100 : 0,
-      overdue,
+      overduePayable,
+      overdueReceivable,
+      overduePayableCount: overduePayableRows.length,
+      overdueReceivableCount: overdueReceivableRows.length,
       linkedSuppliers: new Set(payable.map((row) => row.supplierId).filter(Boolean)).size,
       soldItems: sales.length,
       linkedProposals: proposals.length,
@@ -3930,13 +3940,15 @@ function dashboardMetrics() {
     revenuePending,
     expensesTotal,
     openPayable,
-    overdue,
+    overduePayable,
+    overdueReceivable,
+    overduePayableCount: overduePayableRows.length,
+    overdueReceivableCount: overdueReceivableRows.length,
     currentBalance,
     grossProfit,
     netProfit,
     openReceivable,
     margin: revenueTotal ? (netProfit / revenueTotal) * 100 : 0,
-    delinquency: receivable.filter((row) => isOverdue(row, "receivable")).reduce((total, row) => total + Number(row.amount || 0), 0),
     servicesSold,
     productsSold,
     proposalsIssued,
@@ -4375,7 +4387,8 @@ function renderDashboard() {
     ["Etapas atrasadas", metrics.delayedStages, false],
     ["Próximo marco", metrics.nextMilestone, false],
     ["Percentual financeiro executado", asPercent(metrics.financialExecution), false],
-    ["Contas vencidas vinculadas", metrics.overdue],
+    ["A pagar vencidas da obra", metrics.overduePayable, true, metrics.overduePayable > 0 ? "negative" : ""],
+    ["Inadimplência da obra (a receber vencidas)", metrics.overdueReceivable, true, metrics.overdueReceivable > 0 ? "warning" : ""],
     ["Propostas vinculadas", metrics.linkedProposals, false],
     ["Pedidos de compra da obra", metrics.purchaseOrders, false],
     ["Relatórios técnicos vinculados", metrics.technicalReports, false],
@@ -4389,12 +4402,12 @@ function renderDashboard() {
     ["Receita a receber", metrics.revenuePending],
     ["Despesas totais", metrics.expensesTotal],
     ["Contas a pagar", metrics.openPayable, true, metrics.openPayable > 0 ? "negative" : ""],
-    ["Contas vencidas", metrics.overdue, true, metrics.overdue > 0 ? "negative" : ""],
+    ["Contas a pagar vencidas", metrics.overduePayable, true, metrics.overduePayable > 0 ? "negative" : ""],
     ["Saldo em caixa", metrics.currentBalance],
     ["Lucro bruto", metrics.grossProfit],
     ["Lucro líquido gerencial", metrics.netProfit],
     ["Margem líquida percentual", asPercent(metrics.margin), false],
-    ["Inadimplência", metrics.delinquency],
+    ["Inadimplência (a receber vencidas)", metrics.overdueReceivable, true, metrics.overdueReceivable > 0 ? "warning" : ""],
     ["Total vendido em serviços", metrics.servicesSold],
     ["Total vendido em produtos", metrics.productsSold],
     ["Propostas emitidas", metrics.proposalsIssued, false],
@@ -4777,7 +4790,10 @@ function dashboardAlerts(metrics) {
   // Severidade: perda de dinheiro (vencidas, custo/quantidade acima do orçado) = alert-danger;
   // atenção operacional (cronograma, margem, propostas/obras paradas) = alert-warning.
   const alerts = [];
-  if (metrics.overdue > 0) alerts.push({ level: "danger", message: `Contas vencidas: ${asMoney(metrics.overdue)}.` });
+  // Cada lado das vencidas tem seu alerta: dívida da empresa em atraso é perda/
+  // risco direto (danger); inadimplência de cliente pede cobrança (warning).
+  if (metrics.overduePayable > 0) alerts.push({ level: "danger", message: `${metrics.overduePayableCount} conta(s) a pagar vencida(s): ${asMoney(metrics.overduePayable)} — pagamento da empresa em atraso.` });
+  if (metrics.overdueReceivable > 0) alerts.push({ level: "warning", message: `Inadimplência: ${metrics.overdueReceivableCount} conta(s) a receber vencida(s) (${asMoney(metrics.overdueReceivable)}) — clientes em atraso.` });
   if (metrics.project && metrics.delayedStages > 0) alerts.push({ level: "warning", message: `Cronograma com ${metrics.delayedStages} etapa(s) atrasada(s), atraso máximo de ${metrics.scheduleDelayDays} dia(s).` });
   if (metrics.project && metrics.realizedCost > metrics.costForecast && metrics.costForecast > 0) alerts.push({ level: "danger", message: "Custo realizado acima do previsto para esta obra." });
   const margin = metrics.project ? metrics.realizedMargin : metrics.margin;
@@ -17105,7 +17121,7 @@ function renderReports(mode = "reports") {
       description: "Resumo executivo das principais visões gerenciais.",
       rows: [
         { report: "Fluxo de caixa", base: "Movimentações de caixa e bancos", total: totals().bankBalance },
-        { report: "Inadimplência por cliente", base: "Contas a receber vencidas", total: db.receivable.filter((r) => r.status === "Vencido").reduce((s, r) => s + Number(r.amount || 0), 0) },
+        { report: "Inadimplência por cliente", base: "Contas a receber vencidas", total: db.receivable.filter((r) => isOverdue(r, "receivable")).reduce((s, r) => s + Number(r.amount || 0), 0) },
         { report: "Resultado por centro de custo", base: "Receitas menos despesas", total: resultByCostCenter().reduce((s, r) => s + r.value, 0) },
         { report: "Lucro por produto/serviço", base: "Preço menos custo cadastrado", total: profitByOffering().reduce((s, r) => s + r.value, 0) },
         { report: "Razão contábil", base: "Lançamentos por competência", total: sum(applyFilters(db.journalEntries), "amount") },

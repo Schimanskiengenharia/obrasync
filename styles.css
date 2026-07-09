@@ -2783,6 +2783,16 @@ html[data-theme="dark"] .exec-dash-alert {
   color: var(--red);
 }
 
+/* Atenção (âmbar) — padrão F1: inadimplência e riscos que pedem ação de cobrança,
+   distintos da perda direta (negative/vermelho). Mesmo tom do .alert-warning. */
+.kpi.warning strong {
+  color: #8a6100;
+}
+
+html[data-theme="dark"] .kpi.warning strong {
+  color: #f6d77a;
+}
+
 .dashboard-kpis .kpi {
   min-height: 116px;
 }

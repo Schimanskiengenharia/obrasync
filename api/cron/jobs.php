@@ -23,6 +23,7 @@ require __DIR__ . '/../index.php';
 // esbarra em sql_mode estrito) é logada e o cron segue para os próximos. Antes um
 // único job quebrado abortava a cadeia inteira e purge/DRE nunca rodavam.
 $jobs = [
+    'mark_overdue_accounts' => static fn () => mark_overdue_accounts($pdo),
     'expire_proposals' => static fn () => expire_proposals($pdo),
     'create_due_alerts' => static fn () => create_due_alerts($pdo),
     'consolidate_monthly_dre' => static fn () => consolidate_monthly_dre($pdo),
@@ -40,6 +41,30 @@ foreach ($jobs as $name => $job) {
 }
 echo '[' . date('c') . '] jobs concluídos' . ($failures ? " ({$failures} com falha)" : '') . "\n";
 exit($failures ? 1 : 0);
+
+// Alinha o STATUS gravado ao vencimento real: Aberto → Vencido quando dueDate já
+// passou. Só mexe em 'Aberto' (Parcial/Pago/Recebido/Cancelado ficam como estão) e
+// é idempotente — re-rodar não altera nada além do necessário. O guard de
+// paidDate/receivedDate espelha o isOverdue do frontend: conta com baixa lançada
+// mas status inconsistente não vira 'Vencido'. TIMEZONE: a data vem do PHP no fuso
+// LOCAL (America/Campo_Grande, setado no topo do index.php) em vez de CURDATE() —
+// o MySQL pode estar em UTC e viraria 'Vencido' a conta que vence HOJE a partir
+// das ~20h locais (mesma raiz da correção M10-12). O isOverdue do frontend segue
+// calculando em tempo real (reforço duplo); o job cobre o status persistido.
+function mark_overdue_accounts(PDO $pdo): void
+{
+    $hoje = date('Y-m-d');
+    foreach ([['accounts_payable', 'paidDate'], ['accounts_receivable', 'receivedDate']] as [$tableName, $settledDateCol]) {
+        $table = resolve_existing_table($pdo, [$tableName], false);
+        if (!$table) continue;
+        $cols = table_columns($pdo, $table);
+        if (!in_array('status', $cols, true) || !in_array('dueDate', $cols, true)) continue;
+        $settledGuard = in_array($settledDateCol, $cols, true) ? " AND `$settledDateCol` IS NULL" : '';
+        $stmt = $pdo->prepare("UPDATE `$table` SET status = 'Vencido' WHERE status = 'Aberto' AND dueDate < ?" . $settledGuard);
+        $stmt->execute([$hoje]);
+        echo '[' . date('c') . "] mark_overdue_accounts: {$table} → " . $stmt->rowCount() . " conta(s) marcada(s) como Vencido\n";
+    }
+}
 
 function expire_proposals(PDO $pdo): void
 {
