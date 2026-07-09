@@ -19,9 +19,10 @@ if (APP_ENV === "production" && location.protocol === "http:") {
   location.replace(location.href.replace(/^http:/, "https:"));
 }
 const APP_NAME = "ObraSync";
-const APP_VERSION = "v1.31.0";
+const APP_VERSION = "v1.32.0";
 const APP_VERSION_DATE = "2026-07-08";
 const APP_CHANGELOG = [
+  "Cotações de Fornecedores — Categorias e Tipos de Item (Parte A1): novo botão \"Categorias de Cotação\" no módulo abre o cadastro manual da estrutura categoria → tipo de item (ex.: Elétrica → Cabo, Disjuntor, Eletroduto; Civil → Tijolo, Cimento). CRUD completo dentro da tela: criar/editar/inativar/reativar categorias e, dentro de cada uma, os tipos de item (com unidade padrão opcional), além de reordenação por ↑/↓ persistida no banco. Usa a mesma permissão do módulo de cotações. Tabelas novas cotacao_categorias e cotacao_tipos_item (migration + auto-cura); os atributos customizados por tipo (no molde dos campos personalizados de obra) chegam na próxima fase — A2 (v1.32.0).",
   "RDO — blocos de assinatura formatados: o documento do RDO (e cada dia do relatório semanal) agora traz um bloco de assinatura estruturado para o responsável GERAL (o criador do RDO) com nome completo, CPF formatado (000.000.000-00), data/hora de criação do RDO e data/hora da assinatura, e um bloco por DISCIPLINA que atuou no dia (nome + CPF do responsável + disciplina + data/hora em que assinou; \"pendente\" quando ainda não assinou). O CPF vem do cadastro do usuário — sem CPF cadastrado aparece \"CPF não informado\". As linhas de assinatura manuscrita saíram do documento; o fluxo de assinar (por disciplina e geral) é o mesmo que já existia (v1.31.0).",
   "Relatório Semanal de RDO: novo botão \"Relatório semanal\" no Diário de Obra — escolha a obra e uma data de referência e o sistema consolida os RDOs dos 7 dias corridos até ela (da mais antiga à mais recente) num documento único: cabeçalho com obra/cliente/período/responsável, uma seção por dia com o DIA DA SEMANA em português (ex.: \"Segunda-feira, 30/06/2026\") e todo o conteúdo do diário (clima/condição, efetivo, equipamentos, atividades, ocorrências, observações, disciplinas) com as FOTOS do dia embutidas com suas legendas; dias sem diário aparecem como \"Sem registro\". Visualização na tela e download em PDF com a identidade visual dos documentos do sistema; assinatura no fim com o nome do usuário que gerou. Só leitura — nenhum RDO é alterado (v1.30.0).",
   "RDO — assinatura automática do criador + fotos em lote com legenda: o assinante principal do diário agora é SEMPRE o usuário logado que criou o RDO (campo somente leitura preenchido na criação; o nome sai no documento impresso como responsável que assina — sem seleção/digitação manual). No anexo de fotos, dá para selecionar VÁRIAS imagens de uma vez: cada uma aparece em miniatura com campo de legenda próprio antes do envio, e o lote é enviado foto a foto — se uma falhar, as demais são salvas e a que falhou permanece na fila com a legenda preservada para reenviar. Cada foto aparece com sua legenda na tela e na impressão (v1.29.0).",
@@ -2807,7 +2808,7 @@ function render() {
   if (currentModule === "workBudgets") return renderWorkBudgets();
   if (currentModule === "viabilityAnalyses") return renderViability();
   if (currentModule === "viabilidadeObra") { viabilidadeObraOpenId = null; return renderViabilidadeList(); }
-  if (currentModule === "cotacoes") { cotacaoOpenId = null; return renderCotacoes(); }
+  if (currentModule === "cotacoes") { cotacaoOpenId = null; cotacaoCatOpen = false; return renderCotacoes(); }
   if (currentModule === "compras") return renderCompras();
   if (currentModule === "plugins") return renderPlugins();
   if (currentModule === "iaBusca") return renderIaBusca();
@@ -13119,6 +13120,9 @@ function canGenerateProposalForBudget(budget) {
 let cotacaoOpenId = null;
 let cotacaoDetail = null;
 let cotacaoList = [];
+// A1: tela de Categorias de Cotação (categoria → tipo de item) dentro do módulo.
+let cotacaoCatOpen = false;
+let cotacaoCatList = [];
 const COTACAO_STATUS = { importada: ["Importada", "cinza"], comparada: ["Comparada", "amarelo"], aprovada: ["Aprovada", "verde"], reprovada: ["Reprovada", "vermelho"] };
 const COTACAO_COMPARA = { nao_comparado: ["Sem correspondência", "cinza"], abaixo: ["Abaixo do orçado", "verde"], igual: ["Equivalente", "amarelo"], acima: ["Acima 5-20%", "laranja"], muito_acima: ["Muito acima >20%", "vermelho"] };
 function cotacaoBadge(meta, key) {
@@ -13130,6 +13134,7 @@ async function cotacaoApi(action, options = {}, extra = "") {
 }
 
 function renderCotacoes() {
+  if (cotacaoCatOpen) return renderCotacaoCategorias();
   if (cotacaoOpenId) return renderCotacaoDetalhe();
   return renderCotacaoLista();
 }
@@ -13140,24 +13145,31 @@ async function renderCotacaoLista() {
   const head = `
     <section class="module-head">
       <div><h2>Cotações de Fornecedores</h2><p>Importe orçamentos em PDF, Excel (.xlsx/.xls) ou CSV e compare automaticamente com o orçamento da obra.</p></div>
-      ${editable ? '<button class="primary" type="button" id="cotNova">+ Importar cotação</button>' : ""}
+      <div class="cot-cat-acoes">
+        <button class="secondary" type="button" id="cotCategorias">Categorias de Cotação</button>
+        ${editable ? '<button class="primary" type="button" id="cotNova">+ Importar cotação</button>' : ""}
+      </div>
     </section>`;
+  const wireHead = () => {
+    qs("cotNova")?.addEventListener("click", () => openCotacaoImport());
+    qs("cotCategorias")?.addEventListener("click", () => { cotacaoCatOpen = true; renderCotacaoCategorias(); });
+  };
   if (!serverMode) {
     content.innerHTML = head + '<div class="empty">O módulo de cotações requer conexão com o servidor.</div>';
-    qs("cotNova")?.addEventListener("click", () => openCotacaoImport());
+    wireHead();
     return;
   }
   content.innerHTML = head + '<div class="empty">Carregando cotações…</div>';
-  qs("cotNova")?.addEventListener("click", () => openCotacaoImport());
+  wireHead();
   let list;
   try {
     list = await cotacaoApi("list") || [];
   } catch (error) {
     content.innerHTML = head + `<div class="empty">Não foi possível carregar: ${svgText(error.message)}</div>`;
-    qs("cotNova")?.addEventListener("click", () => openCotacaoImport());
+    wireHead();
     return;
   }
-  if (currentModule !== "cotacoes" || cotacaoOpenId) return;
+  if (currentModule !== "cotacoes" || cotacaoOpenId || cotacaoCatOpen) return;
   cotacaoList = list;
   // M12: as duas pontas em meia-noite LOCAL — antes misturava meia-noite UTC da
   // validade com o agora local, e a cotação que vence hoje sumia do alerta à noite.
@@ -13179,7 +13191,7 @@ async function renderCotacaoLista() {
     ${list.length
       ? `<section class="table-wrap"><table><thead><tr><th>Fornecedor</th><th>Obra</th><th>Tipo</th><th>Itens</th><th>Score</th><th>Status</th><th>Importada</th><th>Ações</th></tr></thead><tbody>${rows}</tbody></table></section>`
       : '<div class="empty">Nenhuma cotação importada. Clique em "+ Importar cotação".</div>'}`;
-  qs("cotNova")?.addEventListener("click", () => openCotacaoImport());
+  wireHead();
   content.querySelectorAll("[data-open]").forEach((el) => el.addEventListener("click", () => abrirCotacao(el.dataset.open)));
 }
 
@@ -13235,6 +13247,214 @@ function renderCotacaoDetalhe() {
   qs("cotCsv").addEventListener("click", () => cotacaoExportarCsv(c.id));
   qs("cotPdf").addEventListener("click", () => cotacaoImprimir());
   qs("cotAnexo")?.addEventListener("click", () => cotacaoBaixarAnexo(c.id, c.arquivo_nome));
+}
+
+// ── A1: Categorias de Cotação (categoria → tipo de item, fluxo 100% manual) ──
+// Estrutura manual que organiza as cotações de fornecedores. Backend:
+// ?module=cotacoes&action=listCategorias|categoriaSalvar|tipoSalvar|
+// categoriaOrdenar|tipoOrdenar (tabelas cotacao_categorias/cotacao_tipos_item).
+// Os atributos customizados por tipo (molde de obra_campos_personalizados) são A2.
+const COTCAT_STATUS = { Ativo: ["Ativo", "verde"], Inativo: ["Inativo", "cinza"] };
+
+function cotacaoCatById(id) {
+  return (cotacaoCatList || []).find((c) => sameId(c.id, id)) || null;
+}
+
+async function renderCotacaoCategorias() {
+  const content = qs("content");
+  const editable = canEditModule("cotacoes");
+  const head = `
+    <section class="module-head">
+      <div>
+        <button class="secondary" type="button" id="catVoltar">← Voltar às cotações</button>
+        <h2>Categorias de Cotação</h2>
+        <p>Organize as cotações por categoria (ex.: Elétrica, Civil) e, dentro de cada uma, pelos tipos de item (ex.: Cabo, Disjuntor). Os atributos por tipo de item chegam na próxima fase.</p>
+      </div>
+      ${editable ? '<button class="primary" type="button" id="catNova">+ Nova categoria</button>' : ""}
+    </section>`;
+  const wireHead = () => {
+    qs("catVoltar")?.addEventListener("click", () => { cotacaoCatOpen = false; renderCotacaoLista(); });
+    qs("catNova")?.addEventListener("click", () => openCotacaoCategoriaForm());
+  };
+  if (!serverMode) {
+    content.innerHTML = head + '<div class="empty">O módulo de cotações requer conexão com o servidor.</div>';
+    wireHead();
+    return;
+  }
+  content.innerHTML = head + '<div class="empty">Carregando categorias…</div>';
+  wireHead();
+  let list;
+  try {
+    list = await cotacaoApi("listCategorias") || [];
+  } catch (error) {
+    content.innerHTML = head + `<div class="empty">Não foi possível carregar: ${svgText(error.message)}</div>`;
+    wireHead();
+    return;
+  }
+  if (currentModule !== "cotacoes" || !cotacaoCatOpen) return;
+  cotacaoCatList = list;
+  const blocos = list.map((cat, idx) => {
+    const tipos = cat.tipos || [];
+    const linhas = tipos.map((t, ti) => `
+      <tr class="${t.status === "Ativo" ? "" : "cot-cat-inativo"}">
+        <td class="cot-cat-ordem">${editable ? `
+          <button type="button" class="secondary ia-dp-mini" data-tipo-mover="${escapeHtml(t.id)}" data-cat="${escapeHtml(cat.id)}" data-dir="-1" ${ti === 0 ? "disabled" : ""} title="Mover para cima">↑</button>
+          <button type="button" class="secondary ia-dp-mini" data-tipo-mover="${escapeHtml(t.id)}" data-cat="${escapeHtml(cat.id)}" data-dir="1" ${ti === tipos.length - 1 ? "disabled" : ""} title="Mover para baixo">↓</button>` : svgText(String(t.ordem ?? ""))}</td>
+        <td>${svgText(t.nome)}</td>
+        <td>${svgText(t.unidadePadrao || "—")}</td>
+        <td>${cotacaoBadge(COTCAT_STATUS, t.status)}</td>
+        <td>${editable ? `
+          <button type="button" class="secondary ia-dp-mini" data-tipo-editar="${escapeHtml(t.id)}" data-cat="${escapeHtml(cat.id)}">Editar</button>
+          <button type="button" class="secondary ia-dp-mini" data-tipo-status="${escapeHtml(t.id)}" data-cat="${escapeHtml(cat.id)}">${t.status === "Ativo" ? "Inativar" : "Reativar"}</button>` : ""}</td>
+      </tr>`).join("");
+    return `
+    <section class="table-wrap cot-cat-bloco ${cat.status === "Ativo" ? "" : "cot-cat-inativo"}">
+      <div class="cot-cat-head">
+        <div class="cot-cat-titulo"><h3>${svgText(cat.nome)}</h3>${cotacaoBadge(COTCAT_STATUS, cat.status)}<span class="muted">${tipos.length} tipo(s) de item</span></div>
+        ${editable ? `<div class="cot-cat-acoes">
+          <button type="button" class="secondary ia-dp-mini" data-cat-mover="${escapeHtml(cat.id)}" data-dir="-1" ${idx === 0 ? "disabled" : ""} title="Mover para cima">↑</button>
+          <button type="button" class="secondary ia-dp-mini" data-cat-mover="${escapeHtml(cat.id)}" data-dir="1" ${idx === list.length - 1 ? "disabled" : ""} title="Mover para baixo">↓</button>
+          <button type="button" class="secondary ia-dp-mini" data-cat-editar="${escapeHtml(cat.id)}">Editar</button>
+          <button type="button" class="secondary ia-dp-mini" data-cat-status="${escapeHtml(cat.id)}">${cat.status === "Ativo" ? "Inativar" : "Reativar"}</button>
+          <button type="button" class="primary ia-dp-mini" data-tipo-novo="${escapeHtml(cat.id)}">+ Novo tipo</button>
+        </div>` : ""}
+      </div>
+      ${tipos.length
+        ? `<table><thead><tr><th>Ordem</th><th>Tipo de item</th><th>Unid. padrão</th><th>Status</th><th>Ações</th></tr></thead><tbody>${linhas}</tbody></table>`
+        : '<p class="muted cot-cat-vazia">Nenhum tipo de item nesta categoria ainda.</p>'}
+    </section>`;
+  }).join("");
+  content.innerHTML = head + (list.length ? blocos : '<div class="empty">Nenhuma categoria cadastrada. Clique em "+ Nova categoria" para criar a primeira (ex.: Elétrica, Civil).</div>');
+  wireHead();
+  content.querySelectorAll("[data-cat-editar]").forEach((b) => b.addEventListener("click", () => openCotacaoCategoriaForm(cotacaoCatById(b.dataset.catEditar))));
+  content.querySelectorAll("[data-cat-status]").forEach((b) => b.addEventListener("click", () => cotacaoCategoriaToggleStatus(b.dataset.catStatus)));
+  content.querySelectorAll("[data-cat-mover]").forEach((b) => b.addEventListener("click", () => cotacaoCategoriaMover(b.dataset.catMover, Number(b.dataset.dir))));
+  content.querySelectorAll("[data-tipo-novo]").forEach((b) => b.addEventListener("click", () => openCotacaoTipoForm(cotacaoCatById(b.dataset.tipoNovo))));
+  content.querySelectorAll("[data-tipo-editar]").forEach((b) => b.addEventListener("click", () => {
+    const cat = cotacaoCatById(b.dataset.cat);
+    openCotacaoTipoForm(cat, (cat?.tipos || []).find((t) => sameId(t.id, b.dataset.tipoEditar)));
+  }));
+  content.querySelectorAll("[data-tipo-status]").forEach((b) => b.addEventListener("click", () => cotacaoTipoToggleStatus(b.dataset.cat, b.dataset.tipoStatus)));
+  content.querySelectorAll("[data-tipo-mover]").forEach((b) => b.addEventListener("click", () => cotacaoTipoMover(b.dataset.cat, b.dataset.tipoMover, Number(b.dataset.dir))));
+}
+
+function openCotacaoCategoriaForm(cat = null) {
+  if (!canEditModule("cotacoes")) return;
+  const { close, q } = viabilidadeDialog(`
+    <div class="viab-modal">
+      <header class="viab-modal-head"><h3>${cat ? "Editar categoria" : "Nova categoria de cotação"}</h3><button type="button" class="viab-x" data-close>✕</button></header>
+      <div class="viab-modal-body">
+        <div class="form-grid">
+          <label>Nome da categoria<input id="catNome" maxlength="160" value="${escapeHtml(cat?.nome || "")}" placeholder="Ex.: Elétrica"></label>
+        </div>
+      </div>
+      <footer class="viab-modal-foot"><button type="button" class="secondary" data-close>Cancelar</button><button type="button" class="primary" data-save>Salvar</button></footer>
+    </div>`, "viab-dialog-md");
+  q("[data-save]").addEventListener("click", async () => {
+    const nome = q("#catNome").value.trim();
+    if (!nome) return alert("Informe o nome da categoria.");
+    const btn = q("[data-save]");
+    btn.disabled = true;
+    try {
+      await cotacaoApi("categoriaSalvar", { method: "POST", body: JSON.stringify({ id: cat?.id || 0, nome }) });
+      close();
+      showToast(cat ? "Categoria atualizada." : "Categoria criada.");
+      renderCotacaoCategorias();
+    } catch (error) {
+      btn.disabled = false;
+      alert(`Não foi possível salvar: ${error.message}`);
+    }
+  });
+}
+
+function openCotacaoTipoForm(cat, tipo = null) {
+  if (!cat || !canEditModule("cotacoes")) return;
+  const { close, q } = viabilidadeDialog(`
+    <div class="viab-modal">
+      <header class="viab-modal-head"><h3>${tipo ? "Editar tipo de item" : "Novo tipo de item"} — ${escapeHtml(cat.nome)}</h3><button type="button" class="viab-x" data-close>✕</button></header>
+      <div class="viab-modal-body">
+        <div class="form-grid">
+          <label>Nome do tipo de item<input id="tipoNome" maxlength="160" value="${escapeHtml(tipo?.nome || "")}" placeholder="Ex.: Cabo"></label>
+          <label>Unidade padrão (opcional)<input id="tipoUnidade" maxlength="20" value="${escapeHtml(tipo?.unidadePadrao || "")}" placeholder="Ex.: m, un, kg"></label>
+        </div>
+      </div>
+      <footer class="viab-modal-foot"><button type="button" class="secondary" data-close>Cancelar</button><button type="button" class="primary" data-save>Salvar</button></footer>
+    </div>`, "viab-dialog-md");
+  q("[data-save]").addEventListener("click", async () => {
+    const nome = q("#tipoNome").value.trim();
+    if (!nome) return alert("Informe o nome do tipo de item.");
+    const btn = q("[data-save]");
+    btn.disabled = true;
+    try {
+      await cotacaoApi("tipoSalvar", { method: "POST", body: JSON.stringify({ id: tipo?.id || 0, categoriaId: cat.id, nome, unidadePadrao: q("#tipoUnidade").value.trim() }) });
+      close();
+      showToast(tipo ? "Tipo de item atualizado." : "Tipo de item criado.");
+      renderCotacaoCategorias();
+    } catch (error) {
+      btn.disabled = false;
+      alert(`Não foi possível salvar: ${error.message}`);
+    }
+  });
+}
+
+async function cotacaoCategoriaToggleStatus(id) {
+  const cat = cotacaoCatById(id);
+  if (!cat || !canEditModule("cotacoes")) return;
+  const novo = cat.status === "Ativo" ? "Inativo" : "Ativo";
+  try {
+    await cotacaoApi("categoriaSalvar", { method: "POST", body: JSON.stringify({ id: cat.id, nome: cat.nome, status: novo }) });
+    showToast(novo === "Inativo" ? "Categoria inativada." : "Categoria reativada.");
+    renderCotacaoCategorias();
+  } catch (error) {
+    alert(`Não foi possível alterar o status: ${error.message}`);
+  }
+}
+
+async function cotacaoTipoToggleStatus(catId, tipoId) {
+  const cat = cotacaoCatById(catId);
+  const tipo = (cat?.tipos || []).find((t) => sameId(t.id, tipoId));
+  if (!tipo || !canEditModule("cotacoes")) return;
+  const novo = tipo.status === "Ativo" ? "Inativo" : "Ativo";
+  try {
+    await cotacaoApi("tipoSalvar", { method: "POST", body: JSON.stringify({ id: tipo.id, categoriaId: tipo.categoriaId, nome: tipo.nome, unidadePadrao: tipo.unidadePadrao || "", status: novo }) });
+    showToast(novo === "Inativo" ? "Tipo de item inativado." : "Tipo de item reativado.");
+    renderCotacaoCategorias();
+  } catch (error) {
+    alert(`Não foi possível alterar o status: ${error.message}`);
+  }
+}
+
+// Reordenação por ↑/↓: troca a posição na lista atual e envia a lista completa
+// de ids na nova ordem (o backend grava ordem = posição, atômico).
+async function cotacaoCategoriaMover(id, dir) {
+  if (!canEditModule("cotacoes")) return;
+  const ids = (cotacaoCatList || []).map((c) => c.id);
+  const i = ids.findIndex((x) => sameId(x, id));
+  const j = i + dir;
+  if (i < 0 || j < 0 || j >= ids.length) return;
+  [ids[i], ids[j]] = [ids[j], ids[i]];
+  try {
+    await cotacaoApi("categoriaOrdenar", { method: "POST", body: JSON.stringify({ ids }) });
+    renderCotacaoCategorias();
+  } catch (error) {
+    alert(`Não foi possível reordenar: ${error.message}`);
+  }
+}
+
+async function cotacaoTipoMover(catId, tipoId, dir) {
+  if (!canEditModule("cotacoes")) return;
+  const cat = cotacaoCatById(catId);
+  const ids = (cat?.tipos || []).map((t) => t.id);
+  const i = ids.findIndex((x) => sameId(x, tipoId));
+  const j = i + dir;
+  if (i < 0 || j < 0 || j >= ids.length) return;
+  [ids[i], ids[j]] = [ids[j], ids[i]];
+  try {
+    await cotacaoApi("tipoOrdenar", { method: "POST", body: JSON.stringify({ categoriaId: cat.id, ids }) });
+    renderCotacaoCategorias();
+  } catch (error) {
+    alert(`Não foi possível reordenar: ${error.message}`);
+  }
 }
 
 // ── F5.2: cotação de COMPRA item a item (matriz fornecedores × Custo da Obra) ──

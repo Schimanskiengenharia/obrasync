@@ -6266,6 +6266,16 @@ html[data-theme="dark"] .ia-dp-setor-tag { color: #5eead4; }
 html[data-theme="dark"] .ia-dp-secao td { background: rgba(255, 255, 255, 0.06); color: #b9c8c4; }
 html[data-theme="dark"] .ia-dp-subtotal td { background: rgba(255, 255, 255, 0.03); color: #8fa19d; }
 
+/* A1: Categorias de Cotação — bloco por categoria com os tipos de item dentro */
+.cot-cat-bloco { margin-bottom: 16px; padding: 14px 16px; }
+.cot-cat-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.cot-cat-titulo { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cot-cat-titulo h3 { margin: 0; }
+.cot-cat-acoes { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.cot-cat-ordem { white-space: nowrap; }
+.cot-cat-inativo { opacity: 0.6; }
+.cot-cat-vazia { margin: 6px 0 2px; }
+
 /* F5.2: matriz de cotações de compra (item do Custo da Obra × fornecedores) */
 .compra-matrix td { vertical-align: top; }
 .compra-cell { min-width: 130px; }

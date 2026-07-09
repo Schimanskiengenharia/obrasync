@@ -2540,6 +2540,10 @@ function bootstrap_data(PDO $pdo, array $resources, ?array $authUser = null, boo
         if (!resolve_existing_table($pdo, ['cotacao_fornecedor'], false)) {
             ensure_cotacao_import_tables($pdo);
         }
+        // A1: categorias e tipos de item das cotações de fornecedores.
+        if (!resolve_existing_table($pdo, ['cotacao_categorias'], false)) {
+            ensure_cotacao_categorias_tables($pdo);
+        }
         // Colunas de custo/BDI no fluxo Orçamento → Proposta (base SINAPI).
         if (resolve_existing_table($pdo, ['proposta_itens'], false)
             && !in_array('custo_unitario', table_columns($pdo, 'proposta_itens'), true)) {
@@ -2817,6 +2821,41 @@ function ensure_cotacao_import_tables(PDO $pdo): void
         $done = true;
     } catch (Throwable $error) {
         error_log('[ObraSync] ensure_cotacao_import_tables: ' . $error->getMessage());
+    }
+}
+
+// A1: categorias e tipos de item das cotações de fornecedores (fluxo manual
+// categoria → tipo). Mesmo molde de obra_campos_personalizados (ordem/status/
+// createdAt + unique por pai+nome); os atributos por tipo virão na A2.
+function ensure_cotacao_categorias_tables(PDO $pdo): void
+{
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    try {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS cotacao_categorias (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            nome VARCHAR(160) NOT NULL,
+            ordem INT NOT NULL DEFAULT 0,
+            status VARCHAR(30) NOT NULL DEFAULT 'Ativo',
+            createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uk_cotcat_nome (nome)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        $pdo->exec("CREATE TABLE IF NOT EXISTS cotacao_tipos_item (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            categoriaId BIGINT UNSIGNED NOT NULL,
+            nome VARCHAR(160) NOT NULL,
+            unidadePadrao VARCHAR(20) NULL,
+            ordem INT NOT NULL DEFAULT 0,
+            status VARCHAR(30) NOT NULL DEFAULT 'Ativo',
+            createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT fk_cottipo_categoria FOREIGN KEY (categoriaId) REFERENCES cotacao_categorias(id) ON DELETE CASCADE,
+            UNIQUE KEY uk_cottipo_cat_nome (categoriaId, nome)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        $done = true;
+    } catch (Throwable $error) {
+        error_log('[ObraSync] ensure_cotacao_categorias_tables: ' . $error->getMessage());
     }
 }
 
@@ -3491,6 +3530,7 @@ function cotacao_get_full(PDO $pdo, int $id): ?array
 function handle_cotacoes_module(PDO $pdo, string $method, array $query, array $config, array $authUser): never
 {
     ensure_cotacao_import_tables($pdo);
+    ensure_cotacao_categorias_tables($pdo);
     $action = strtolower(trim((string) ($query['action'] ?? '')));
     $intOrNull = static fn ($v) => ($v === null || $v === '') ? null : (int) $v;
     try {
@@ -4010,8 +4050,136 @@ function handle_cotacoes_module(PDO $pdo, string $method, array $query, array $c
             cotacao_respond(true, [], 'Cotação removida.');
         }
 
+        // ── A1: categorias → tipos de item (estrutura manual das cotações) ──
+        if ($action === 'listcategorias') {
+            require_method($method, ['GET']);
+            $cats = $pdo->query('SELECT * FROM cotacao_categorias ORDER BY ordem, nome, id')->fetchAll();
+            $tipos = $pdo->query('SELECT * FROM cotacao_tipos_item ORDER BY ordem, nome, id')->fetchAll();
+            $porCategoria = [];
+            foreach ($tipos as $tipo) {
+                $porCategoria[(int) $tipo['categoriaId']][] = $tipo;
+            }
+            foreach ($cats as &$cat) {
+                $cat['tipos'] = $porCategoria[(int) $cat['id']] ?? [];
+            }
+            unset($cat);
+            cotacao_respond(true, $cats);
+        }
+
+        if ($action === 'categoriasalvar') {
+            require_method($method, ['POST']);
+            $payload = read_json();
+            $id = (int) ($payload['id'] ?? 0);
+            $nome = mb_substr(trim((string) ($payload['nome'] ?? '')), 0, 160);
+            if ($nome === '') {
+                cotacao_respond(false, [], 'Informe o nome da categoria.', 400);
+            }
+            $status = in_array($payload['status'] ?? '', ['Ativo', 'Inativo'], true) ? (string) $payload['status'] : null;
+            $dup = $pdo->prepare('SELECT id FROM cotacao_categorias WHERE nome = ? AND id <> ? LIMIT 1');
+            $dup->execute([$nome, $id]);
+            if ($dup->fetch()) {
+                cotacao_respond(false, [], 'Já existe uma categoria com esse nome.', 409);
+            }
+            if ($id > 0) {
+                $stmt = $pdo->prepare('SELECT * FROM cotacao_categorias WHERE id = ?');
+                $stmt->execute([$id]);
+                $atual = $stmt->fetch();
+                if (!$atual) {
+                    cotacao_respond(false, [], 'Categoria não encontrada.', 404);
+                }
+                $ordem = array_key_exists('ordem', $payload) ? (int) $payload['ordem'] : (int) $atual['ordem'];
+                $pdo->prepare('UPDATE cotacao_categorias SET nome = ?, ordem = ?, status = ? WHERE id = ?')
+                    ->execute([$nome, $ordem, $status ?? $atual['status'], $id]);
+                server_audit($pdo, $authUser, 'update', 'cotacoes', $id, 'categoria: ' . $nome);
+            } else {
+                // Sem ordem informada, entra no fim da lista (MAX+1).
+                $ordem = array_key_exists('ordem', $payload)
+                    ? (int) $payload['ordem']
+                    : ((int) $pdo->query('SELECT COALESCE(MAX(ordem), 0) FROM cotacao_categorias')->fetchColumn() + 1);
+                $id = insert_dynamic($pdo, 'cotacao_categorias', ['nome' => $nome, 'ordem' => $ordem, 'status' => $status ?? 'Ativo']);
+                server_audit($pdo, $authUser, 'create', 'cotacoes', $id, 'categoria: ' . $nome);
+            }
+            $stmt = $pdo->prepare('SELECT * FROM cotacao_categorias WHERE id = ?');
+            $stmt->execute([$id]);
+            cotacao_respond(true, $stmt->fetch(), 'Categoria salva.');
+        }
+
+        if ($action === 'tiposalvar') {
+            require_method($method, ['POST']);
+            $payload = read_json();
+            $id = (int) ($payload['id'] ?? 0);
+            $categoriaId = (int) ($payload['categoriaId'] ?? 0);
+            $nome = mb_substr(trim((string) ($payload['nome'] ?? '')), 0, 160);
+            if ($nome === '') {
+                cotacao_respond(false, [], 'Informe o nome do tipo de item.', 400);
+            }
+            $cat = $pdo->prepare('SELECT id FROM cotacao_categorias WHERE id = ?');
+            $cat->execute([$categoriaId]);
+            if (!$cat->fetch()) {
+                cotacao_respond(false, [], 'Categoria não encontrada.', 404);
+            }
+            $unidade = mb_substr(trim((string) ($payload['unidadePadrao'] ?? '')), 0, 20) ?: null;
+            $status = in_array($payload['status'] ?? '', ['Ativo', 'Inativo'], true) ? (string) $payload['status'] : null;
+            $dup = $pdo->prepare('SELECT id FROM cotacao_tipos_item WHERE categoriaId = ? AND nome = ? AND id <> ? LIMIT 1');
+            $dup->execute([$categoriaId, $nome, $id]);
+            if ($dup->fetch()) {
+                cotacao_respond(false, [], 'Já existe um tipo com esse nome nessa categoria.', 409);
+            }
+            if ($id > 0) {
+                $stmt = $pdo->prepare('SELECT * FROM cotacao_tipos_item WHERE id = ?');
+                $stmt->execute([$id]);
+                $atual = $stmt->fetch();
+                if (!$atual) {
+                    cotacao_respond(false, [], 'Tipo de item não encontrado.', 404);
+                }
+                $ordem = array_key_exists('ordem', $payload) ? (int) $payload['ordem'] : (int) $atual['ordem'];
+                $pdo->prepare('UPDATE cotacao_tipos_item SET categoriaId = ?, nome = ?, unidadePadrao = ?, ordem = ?, status = ? WHERE id = ?')
+                    ->execute([$categoriaId, $nome, $unidade, $ordem, $status ?? $atual['status'], $id]);
+                server_audit($pdo, $authUser, 'update', 'cotacoes', $id, 'tipo de item: ' . $nome);
+            } else {
+                $max = $pdo->prepare('SELECT COALESCE(MAX(ordem), 0) FROM cotacao_tipos_item WHERE categoriaId = ?');
+                $max->execute([$categoriaId]);
+                $ordem = array_key_exists('ordem', $payload) ? (int) $payload['ordem'] : ((int) $max->fetchColumn() + 1);
+                $id = insert_dynamic($pdo, 'cotacao_tipos_item', ['categoriaId' => $categoriaId, 'nome' => $nome, 'unidadePadrao' => $unidade, 'ordem' => $ordem, 'status' => $status ?? 'Ativo']);
+                server_audit($pdo, $authUser, 'create', 'cotacoes', $id, 'tipo de item: ' . $nome);
+            }
+            $stmt = $pdo->prepare('SELECT * FROM cotacao_tipos_item WHERE id = ?');
+            $stmt->execute([$id]);
+            cotacao_respond(true, $stmt->fetch(), 'Tipo de item salvo.');
+        }
+
+        // Reordenação atômica: recebe a lista completa de ids na ordem desejada
+        // e grava ordem = posição (1-based). Para tipos, restrita à categoria.
+        if ($action === 'categoriaordenar' || $action === 'tipoordenar') {
+            require_method($method, ['POST']);
+            $payload = read_json();
+            $ids = array_values(array_filter(array_map('intval', (array) ($payload['ids'] ?? []))));
+            if (!$ids) {
+                cotacao_respond(false, [], 'Informe a ordem desejada.', 400);
+            }
+            $pdo->beginTransaction();
+            if ($action === 'tipoordenar') {
+                $stmt = $pdo->prepare('UPDATE cotacao_tipos_item SET ordem = ? WHERE id = ? AND categoriaId = ?');
+                $categoriaId = (int) ($payload['categoriaId'] ?? 0);
+                foreach ($ids as $i => $idOrdenar) {
+                    $stmt->execute([$i + 1, $idOrdenar, $categoriaId]);
+                }
+            } else {
+                $stmt = $pdo->prepare('UPDATE cotacao_categorias SET ordem = ? WHERE id = ?');
+                foreach ($ids as $i => $idOrdenar) {
+                    $stmt->execute([$i + 1, $idOrdenar]);
+                }
+            }
+            $pdo->commit();
+            server_audit($pdo, $authUser, 'update', 'cotacoes', null, ($action === 'tipoordenar' ? 'ordem dos tipos de item' : 'ordem das categorias') . ' (' . count($ids) . ')');
+            cotacao_respond(true, [], 'Ordem atualizada.');
+        }
+
         cotacao_respond(false, [], 'Ação de cotação inválida.', 400);
     } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
         error_log('[ObraSync cotacoes] ' . $e->getMessage() . ' em ' . $e->getFile() . ':' . $e->getLine());
         cotacao_respond(false, [], 'Erro ao processar a cotação.', 500);
     }
