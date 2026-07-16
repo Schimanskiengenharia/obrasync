@@ -19,9 +19,10 @@ if (APP_ENV === "production" && location.protocol === "http:") {
   location.replace(location.href.replace(/^http:/, "https:"));
 }
 const APP_NAME = "ObraSync";
-const APP_VERSION = "v1.32.1";
-const APP_VERSION_DATE = "2026-07-09";
+const APP_VERSION = "v1.33.0";
+const APP_VERSION_DATE = "2026-07-16";
 const APP_CHANGELOG = [
+  "Cotações por MATERIAL (Parte 1): o módulo Cotações de Fornecedores ganhou a aba \"Cotações por material\" (agora a tela inicial) — cada cotação é um material de uma obra e disciplina (com tipo de item opcional, unidade e quantidade desejada) e dentro dela entram as PROPOSTAS dos fornecedores do cadastro (valor unitário, marca, prazo, observação). A tela da cotação compara as propostas lado a lado com o MENOR valor destacado e a diferença em R$ e % de cada uma vs a mais barata. Regra das N cotações: só dá para CONCLUIR (escolher a proposta vencedora) com pelo menos 3 propostas de fornecedores DIFERENTES — com menos, o botão fica desabilitado com o aviso \"faltam X\"; o mínimo é configurável em Configurações → Preferências do sistema (minCotacoesPorMaterial). Concluir marca a vencedora e a cotação vira Concluída; reabrir volta para Em cotação e limpa o vencedor. Criar e excluir são livres (excluir apaga só as propostas da própria cotação). A importação de arquivos (PDF/Excel/CSV) continua na segunda aba, como era. Gerar conta a pagar a partir da vencedora é a Parte 2 (v1.33.0).",
   "Contas vencidas separadas por lado + status Vencido automático: o card \"Contas vencidas\" do dashboard somava contas a PAGAR vencidas (dívida da empresa) com contas a RECEBER vencidas (clientes devendo) num número só — virou dois cards: \"Contas a pagar vencidas\" (vermelho, perda/risco) e \"Inadimplência (a receber vencidas)\" (âmbar, ação de cobrança), também na visão por obra; os alertas do topo agora falam de cada lado separadamente (quantidade + valor) e o relatório \"Inadimplência por cliente\" passou a calcular vencidas em tempo real. No servidor, o cron diário ganhou o job mark_overdue_accounts: contas 'Aberto' com vencimento passado viram status 'Vencido' no banco (não toca Parcial/Pago/Recebido/Cancelado; usa a data no fuso local para a conta que vence hoje não virar vencida antes da hora) — pagar uma conta 'Vencido' segue funcionando normalmente (v1.32.1).",
   "Cotações de Fornecedores — Categorias e Tipos de Item (Parte A1): novo botão \"Categorias de Cotação\" no módulo abre o cadastro manual da estrutura categoria → tipo de item (ex.: Elétrica → Cabo, Disjuntor, Eletroduto; Civil → Tijolo, Cimento). CRUD completo dentro da tela: criar/editar/inativar/reativar categorias e, dentro de cada uma, os tipos de item (com unidade padrão opcional), além de reordenação por ↑/↓ persistida no banco. Usa a mesma permissão do módulo de cotações. Tabelas novas cotacao_categorias e cotacao_tipos_item (migration + auto-cura); os atributos customizados por tipo (no molde dos campos personalizados de obra) chegam na próxima fase — A2 (v1.32.0).",
   "RDO — blocos de assinatura formatados: o documento do RDO (e cada dia do relatório semanal) agora traz um bloco de assinatura estruturado para o responsável GERAL (o criador do RDO) com nome completo, CPF formatado (000.000.000-00), data/hora de criação do RDO e data/hora da assinatura, e um bloco por DISCIPLINA que atuou no dia (nome + CPF do responsável + disciplina + data/hora em que assinou; \"pendente\" quando ainda não assinou). O CPF vem do cadastro do usuário — sem CPF cadastrado aparece \"CPF não informado\". As linhas de assinatura manuscrita saíram do documento; o fluxo de assinar (por disciplina e geral) é o mesmo que já existia (v1.31.0).",
@@ -2809,7 +2810,7 @@ function render() {
   if (currentModule === "workBudgets") return renderWorkBudgets();
   if (currentModule === "viabilityAnalyses") return renderViability();
   if (currentModule === "viabilidadeObra") { viabilidadeObraOpenId = null; return renderViabilidadeList(); }
-  if (currentModule === "cotacoes") { cotacaoOpenId = null; cotacaoCatOpen = false; return renderCotacoes(); }
+  if (currentModule === "cotacoes") { cotacaoOpenId = null; cotacaoCatOpen = false; cotacaoMatOpenId = null; cotacaoMatDetail = null; return renderCotacoes(); }
   if (currentModule === "compras") return renderCompras();
   if (currentModule === "plugins") return renderPlugins();
   if (currentModule === "iaBusca") return renderIaBusca();
@@ -13139,6 +13140,16 @@ let cotacaoList = [];
 // A1: tela de Categorias de Cotação (categoria → tipo de item) dentro do módulo.
 let cotacaoCatOpen = false;
 let cotacaoCatList = [];
+// P1: cotações manuais por MATERIAL (aba padrão do módulo) — cabeçalho na
+// tabela cotacoes (categoriaId = disciplina) e propostas em cotacao_itens
+// (material_cotacao_id + fornecedor_id). Regra das N cotações: só conclui com
+// >= minCotacoesPorMaterial propostas de fornecedores diferentes.
+let cotacaoView = "materiais"; // "materiais" | "arquivos" (importação PDF/Excel/CSV)
+let cotacaoMatOpenId = null;
+let cotacaoMatDetail = null;
+let cotacaoMatMin = 3; // vigente vem do backend a cada carga
+let cotacaoMatFiltro = { projectId: "", categoriaId: "", status: "" };
+const COTMAT_STATUS = { "Em cotação": ["Em cotação", "amarelo"], "Concluída": ["Concluída", "verde"], "Cancelada": ["Cancelada", "cinza"] };
 const COTACAO_STATUS = { importada: ["Importada", "cinza"], comparada: ["Comparada", "amarelo"], aprovada: ["Aprovada", "verde"], reprovada: ["Reprovada", "vermelho"] };
 const COTACAO_COMPARA = { nao_comparado: ["Sem correspondência", "cinza"], abaixo: ["Abaixo do orçado", "verde"], igual: ["Equivalente", "amarelo"], acima: ["Acima 5-20%", "laranja"], muito_acima: ["Muito acima >20%", "vermelho"] };
 function cotacaoBadge(meta, key) {
@@ -13152,7 +13163,395 @@ async function cotacaoApi(action, options = {}, extra = "") {
 function renderCotacoes() {
   if (cotacaoCatOpen) return renderCotacaoCategorias();
   if (cotacaoOpenId) return renderCotacaoDetalhe();
-  return renderCotacaoLista();
+  if (cotacaoMatOpenId) return renderCotacaoMaterialDetalhe();
+  if (cotacaoView === "arquivos") return renderCotacaoLista();
+  return renderCotacaoMaterialLista();
+}
+
+// ── P1: cotações manuais por MATERIAL ───────────────────────────────────────
+
+function cotacaoTabsHtml() {
+  const tab = (id, label) => `<button type="button" class="cot-tab ${cotacaoView === id ? "active" : ""}" data-cot-tab="${id}">${label}</button>`;
+  return `<div class="cot-tabs">${tab("materiais", "Cotações por material")}${tab("arquivos", "Importação de arquivos")}</div>`;
+}
+
+function wireCotacaoTabs() {
+  qs("content").querySelectorAll("[data-cot-tab]").forEach((b) => b.addEventListener("click", () => {
+    if (cotacaoView === b.dataset.cotTab) return;
+    cotacaoView = b.dataset.cotTab;
+    cotacaoOpenId = null; cotacaoDetail = null; cotacaoMatOpenId = null; cotacaoMatDetail = null;
+    renderCotacoes();
+  }));
+}
+
+async function renderCotacaoMaterialLista() {
+  const content = qs("content");
+  const editable = canEditModule("cotacoes");
+  const headHtml = (desc) => `
+    <section class="module-head">
+      <div><h2>Cotações por Material</h2><p>${desc}</p></div>
+      <div class="cot-cat-acoes">
+        <button class="secondary" type="button" id="cotMatCategorias">Categorias de Cotação</button>
+        ${editable ? '<button class="primary" type="button" id="cotMatNova">+ Nova cotação de material</button>' : ""}
+      </div>
+    </section>
+    ${cotacaoTabsHtml()}`;
+  const descBase = "Cada cotação é um material de uma obra e disciplina; dentro dela entram as propostas dos fornecedores do cadastro.";
+  const wireHead = () => {
+    qs("cotMatCategorias")?.addEventListener("click", () => { cotacaoCatOpen = true; renderCotacaoCategorias(); });
+    qs("cotMatNova")?.addEventListener("click", () => openCotacaoMaterialForm());
+    wireCotacaoTabs();
+  };
+  if (!serverMode) {
+    content.innerHTML = headHtml(descBase) + '<div class="empty">O módulo de cotações requer conexão com o servidor.</div>';
+    wireHead();
+    return;
+  }
+  content.innerHTML = headHtml(descBase) + '<div class="empty">Carregando cotações…</div>';
+  wireHead();
+  let data;
+  try {
+    const extra = `&projectId=${encodeURIComponent(cotacaoMatFiltro.projectId)}&categoriaId=${encodeURIComponent(cotacaoMatFiltro.categoriaId)}&status=${encodeURIComponent(cotacaoMatFiltro.status)}`;
+    const [lista, cats] = await Promise.all([
+      cotacaoApi("materialList", {}, extra),
+      cotacaoCatList.length ? Promise.resolve(cotacaoCatList) : cotacaoApi("listCategorias"),
+    ]);
+    data = lista || {};
+    cotacaoCatList = cats || [];
+  } catch (error) {
+    content.innerHTML = headHtml(descBase) + `<div class="empty">Não foi possível carregar: ${svgText(error.message)}</div>`;
+    wireHead();
+    return;
+  }
+  if (currentModule !== "cotacoes" || cotacaoView !== "materiais" || cotacaoMatOpenId || cotacaoCatOpen) return;
+  const itens = data.itens || [];
+  cotacaoMatMin = Math.max(1, Number(data.minPropostas || 3));
+  const obraOpts = ['<option value="">Todas as obras</option>']
+    .concat((db.projects || []).map((p) => `<option value="${escapeHtml(p.id)}" ${sameId(p.id, cotacaoMatFiltro.projectId) ? "selected" : ""}>${escapeHtml(p.name)}</option>`)).join("");
+  const catOpts = ['<option value="">Todas as disciplinas</option>']
+    .concat(cotacaoCatList.map((c) => `<option value="${escapeHtml(c.id)}" ${sameId(c.id, cotacaoMatFiltro.categoriaId) ? "selected" : ""}>${escapeHtml(c.nome)}</option>`)).join("");
+  const statusOpts = ['<option value="">Todos os status</option>']
+    .concat(Object.keys(COTMAT_STATUS).map((s) => `<option value="${escapeHtml(s)}" ${s === cotacaoMatFiltro.status ? "selected" : ""}>${escapeHtml(s)}</option>`)).join("");
+  const rows = itens.map((m) => {
+    const distintos = Number(m.fornecedores_distintos || 0);
+    const faltam = Math.max(0, cotacaoMatMin - distintos);
+    const propostasTxt = `${Number(m.total_propostas || 0)} (${distintos} forn.)` + (m.status === "Em cotação" && faltam ? ` · faltam ${faltam}` : "");
+    return `
+    <tr>
+      <td>${svgText(m.description || "")}</td>
+      <td>${m.projectId ? svgText(nameOf("projects", m.projectId) || "") : "—"}</td>
+      <td>${svgText(m.categoria_nome || "—")}</td>
+      <td>${svgText(m.tipo_nome || "—")}</td>
+      <td>${Number(m.quantity || 0).toLocaleString("pt-BR")}${m.unit ? " " + svgText(m.unit) : ""}</td>
+      <td>${svgText(propostasTxt)}</td>
+      <td>${m.menor_valor != null ? asMoney(m.menor_valor) : "—"}</td>
+      <td>${cotacaoBadge(COTMAT_STATUS, m.status)}</td>
+      <td>
+        <button class="secondary" type="button" data-mat-abrir="${escapeHtml(m.id)}">Abrir</button>
+        ${editable ? `<button class="secondary ia-dp-mini" type="button" data-mat-excluir="${escapeHtml(m.id)}" data-desc="${escapeHtml(m.description || "")}">Excluir</button>` : ""}
+      </td>
+    </tr>`;
+  }).join("");
+  const desc = `${descBase} Para concluir (escolher o vencedor) são necessárias pelo menos <strong>${cotacaoMatMin}</strong> propostas de fornecedores DIFERENTES — configurável em Configurações → Preferências do sistema (minCotacoesPorMaterial).`;
+  content.innerHTML = `
+    ${headHtml(desc)}
+    <div class="filters" aria-label="Filtros das cotações por material">
+      <label>Obra<select id="cotMatFObra">${obraOpts}</select></label>
+      <label>Disciplina<select id="cotMatFCat">${catOpts}</select></label>
+      <label>Status<select id="cotMatFStatus">${statusOpts}</select></label>
+    </div>
+    ${itens.length
+      ? `<section class="table-wrap"><table><thead><tr><th>Material</th><th>Obra</th><th>Disciplina</th><th>Tipo de item</th><th>Qtde</th><th>Propostas</th><th>Menor valor</th><th>Status</th><th>Ações</th></tr></thead><tbody>${rows}</tbody></table></section>`
+      : '<div class="empty">Nenhuma cotação de material encontrada. Clique em "+ Nova cotação de material".</div>'}`;
+  wireHead();
+  const aplicarFiltro = () => {
+    cotacaoMatFiltro = { projectId: qs("cotMatFObra").value, categoriaId: qs("cotMatFCat").value, status: qs("cotMatFStatus").value };
+    renderCotacaoMaterialLista();
+  };
+  ["cotMatFObra", "cotMatFCat", "cotMatFStatus"].forEach((id) => qs(id)?.addEventListener("change", aplicarFiltro));
+  content.querySelectorAll("[data-mat-abrir]").forEach((el) => el.addEventListener("click", () => abrirCotacaoMaterial(el.dataset.matAbrir)));
+  content.querySelectorAll("[data-mat-excluir]").forEach((el) => el.addEventListener("click", () => excluirCotacaoMaterial(el.dataset.matExcluir, el.dataset.desc)));
+}
+
+async function abrirCotacaoMaterial(id) {
+  cotacaoMatOpenId = id;
+  cotacaoMatDetail = null;
+  qs("content").innerHTML = '<div class="empty">Carregando cotação…</div>';
+  try {
+    cotacaoMatDetail = await cotacaoApi("materialGet", {}, `&id=${encodeURIComponent(id)}`);
+  } catch (error) {
+    qs("content").innerHTML = `<div class="empty">Erro: ${svgText(error.message)}</div>`;
+    return;
+  }
+  if (currentModule === "cotacoes") renderCotacaoMaterialDetalhe();
+}
+
+function renderCotacaoMaterialDetalhe() {
+  const m = cotacaoMatDetail;
+  if (!m) { cotacaoMatOpenId = null; return renderCotacaoMaterialLista(); }
+  const editable = canEditModule("cotacoes");
+  const propostas = m.propostas || [];
+  const valores = propostas.map((p) => Number(p.valor_unitario || 0)).filter((v) => v > 0);
+  const menor = valores.length ? Math.min(...valores) : 0;
+  const min = Math.max(1, Number(m.min_propostas || cotacaoMatMin || 3));
+  cotacaoMatMin = min;
+  const distintos = Number(m.fornecedores_distintos || 0);
+  const faltam = Math.max(0, min - distintos);
+  const aberta = m.status === "Em cotação";
+  const qtd = Number(m.quantity || 0);
+  const cards = propostas.map((p) => {
+    const v = Number(p.valor_unitario || 0);
+    const isMenor = v > 0 && v === menor;
+    const difR = !isMenor && menor > 0 && v > 0 ? v - menor : null;
+    const difP = difR != null ? (difR / menor) * 100 : null;
+    const venceu = Number(p.vencedor) === 1;
+    return `
+    <article class="cot-mat-card ${isMenor ? "cot-mat-menor" : ""} ${venceu ? "cot-mat-venc" : ""}">
+      <div class="cot-mat-forn"><span>${svgText(p.fornecedor_nome || "Fornecedor removido")}</span>${venceu ? '<span class="sup-qual sup-qual-verde">✓ Vencedora</span>' : ""}</div>
+      <div class="cot-mat-valor">${asMoney(v)}${m.unit ? ` <span class="muted cot-mat-un">/ ${svgText(m.unit)}</span>` : ""}</div>
+      <div>${isMenor
+        ? '<span class="ia-cmp-badge ia-cmp-planilha">Menor valor</span>'
+        : (difR != null ? `<span class="ia-cmp-badge ia-cmp-sinapi">+${asMoney(difR)} · +${difP.toFixed(1)}%</span>` : "")}</div>
+      ${qtd > 0 && v > 0 ? `<div class="muted">Total (${qtd.toLocaleString("pt-BR")}${m.unit ? " " + svgText(m.unit) : ""}): <strong>${asMoney(qtd * v)}</strong></div>` : ""}
+      ${p.marca ? `<div class="muted">Marca: ${svgText(p.marca)}</div>` : ""}
+      ${p.prazo_entrega ? `<div class="muted">Prazo: ${svgText(p.prazo_entrega)}</div>` : ""}
+      ${p.observacao ? `<div class="muted">${svgText(p.observacao)}</div>` : ""}
+      ${editable && aberta ? `
+      <div class="cot-mat-acoes">
+        <button class="secondary ia-dp-mini" type="button" data-prop-editar="${escapeHtml(p.id)}">Editar</button>
+        <button class="secondary ia-dp-mini" type="button" data-prop-excluir="${escapeHtml(p.id)}">Excluir</button>
+      </div>` : ""}
+    </article>`;
+  }).join("");
+  qs("content").innerHTML = `
+    <section class="module-head">
+      <div>
+        <button class="secondary" type="button" id="cotMatVoltar">← Voltar</button>
+        <h2>Cotação de material — ${svgText(m.description || "")}</h2>
+        <p>${m.projectId ? "Obra: " + svgText(nameOf("projects", m.projectId) || "—") + " · " : ""}${svgText(m.categoria_nome || "")}${m.tipo_nome ? " › " + svgText(m.tipo_nome) : ""} · Qtde ${qtd.toLocaleString("pt-BR")}${m.unit ? " " + svgText(m.unit) : ""} · ${cotacaoBadge(COTMAT_STATUS, m.status)} · ${propostas.length} proposta(s) de ${distintos} fornecedor(es) diferente(s)</p>
+      </div>
+      <div class="viab-detail-actions">
+        ${editable && aberta ? '<button class="secondary" type="button" id="cotMatEditar">Editar dados</button>' : ""}
+        ${editable && aberta ? '<button class="primary" type="button" id="cotMatAddProp">+ Adicionar proposta</button>' : ""}
+        ${editable && aberta ? `<button class="primary" type="button" id="cotMatConcluir" ${faltam ? "disabled" : ""} title="${faltam ? `Faltam ${faltam} cotação(ões) de fornecedores diferentes (mínimo ${min})` : "Escolher a proposta vencedora e concluir"}">Concluir cotação${faltam ? ` (faltam ${faltam})` : ""}</button>` : ""}
+        ${editable && !aberta ? '<button class="primary" type="button" id="cotMatReabrir">Reabrir cotação</button>' : ""}
+        ${editable && aberta ? '<button class="secondary" type="button" id="cotMatCancelar">Cancelar cotação</button>' : ""}
+        ${editable ? '<button class="secondary" type="button" id="cotMatExcluir">Excluir cotação</button>' : ""}
+      </div>
+    </section>
+    ${aberta && faltam ? `<div class="alert alert-warning">⚠️ Faltam <strong>${faltam}</strong> cotação(ões) de fornecedores DIFERENTES para poder concluir (mínimo ${min} — configurável em Configurações → Preferências do sistema, parâmetro minCotacoesPorMaterial).</div>` : ""}
+    ${propostas.length
+      ? `<div class="cot-mat-grid">${cards}</div>`
+      : '<div class="empty">Nenhuma proposta ainda. Clique em "+ Adicionar proposta" para registrar a primeira.</div>'}`;
+  qs("cotMatVoltar").addEventListener("click", () => { cotacaoMatOpenId = null; cotacaoMatDetail = null; renderCotacoes(); });
+  qs("cotMatEditar")?.addEventListener("click", () => openCotacaoMaterialForm(m));
+  qs("cotMatAddProp")?.addEventListener("click", () => openCotacaoPropostaForm(m));
+  qs("cotMatConcluir")?.addEventListener("click", () => openCotacaoMaterialConcluir(m));
+  qs("cotMatReabrir")?.addEventListener("click", () => cotacaoMaterialStatus("materialReabrir", m.id, "Cotação reaberta — o vencedor foi limpo."));
+  qs("cotMatCancelar")?.addEventListener("click", () => {
+    if (confirm("Cancelar esta cotação? As propostas ficam guardadas e dá para reabrir depois.")) cotacaoMaterialStatus("materialCancelar", m.id, "Cotação cancelada.");
+  });
+  qs("cotMatExcluir")?.addEventListener("click", () => excluirCotacaoMaterial(m.id, m.description));
+  qs("content").querySelectorAll("[data-prop-editar]").forEach((b) => b.addEventListener("click", () => {
+    const p = propostas.find((x) => sameId(x.id, b.dataset.propEditar));
+    if (p) openCotacaoPropostaForm(m, p);
+  }));
+  qs("content").querySelectorAll("[data-prop-excluir]").forEach((b) => b.addEventListener("click", async () => {
+    const p = propostas.find((x) => sameId(x.id, b.dataset.propExcluir));
+    if (!p || !confirm(`Excluir a proposta de ${p.fornecedor_nome || "fornecedor"}?`)) return;
+    try {
+      cotacaoMatDetail = await cotacaoApi("propostaExcluir", { method: "POST", body: JSON.stringify({ id: p.id }) });
+      showToast("Proposta excluída.");
+      renderCotacaoMaterialDetalhe();
+    } catch (error) {
+      alert(`Não foi possível excluir: ${error.message}`);
+    }
+  }));
+}
+
+async function cotacaoMaterialStatus(action, id, msg) {
+  try {
+    cotacaoMatDetail = await cotacaoApi(action, { method: "POST", body: JSON.stringify({ id }) });
+    showToast(msg || "Cotação atualizada.");
+    renderCotacaoMaterialDetalhe();
+  } catch (error) {
+    alert(`Não foi possível atualizar: ${error.message}`);
+  }
+}
+
+async function excluirCotacaoMaterial(id, desc) {
+  if (!canEditModule("cotacoes")) return;
+  if (!confirm(`Excluir a cotação de material "${desc || ""}"? As propostas dela serão apagadas junto — nada além disso.`)) return;
+  try {
+    await cotacaoApi("materialExcluir", { method: "POST", body: JSON.stringify({ id }) });
+    showToast("Cotação de material excluída.");
+    if (sameId(cotacaoMatOpenId, id)) { cotacaoMatOpenId = null; cotacaoMatDetail = null; }
+    renderCotacoes();
+  } catch (error) {
+    alert(`Não foi possível excluir: ${error.message}`);
+  }
+}
+
+// Criar/editar o cabeçalho da cotação de material (obra + disciplina + material).
+async function openCotacaoMaterialForm(existing = null) {
+  if (!canEditModule("cotacoes")) return;
+  if (!serverMode) return alert("O módulo de cotações requer conexão com o servidor.");
+  if (!cotacaoCatList.length) {
+    try {
+      cotacaoCatList = await cotacaoApi("listCategorias") || [];
+    } catch (error) {
+      return alert(`Não foi possível carregar as disciplinas: ${error.message}`);
+    }
+  }
+  const catsVisiveis = cotacaoCatList.filter((c) => c.status === "Ativo" || (existing && sameId(c.id, existing.categoriaId)));
+  if (!catsVisiveis.length) {
+    if (confirm("Nenhuma disciplina (categoria de cotação) ativa. Abrir o cadastro de Categorias de Cotação?")) { cotacaoCatOpen = true; renderCotacaoCategorias(); }
+    return;
+  }
+  const obraOpts = ['<option value="">— Selecione a obra —</option>']
+    .concat((db.projects || []).map((p) => `<option value="${escapeHtml(p.id)}" ${existing && sameId(p.id, existing.projectId) ? "selected" : ""}>${escapeHtml(p.name)}</option>`)).join("");
+  const catOpts = ['<option value="">— Selecione a disciplina —</option>']
+    .concat(catsVisiveis.map((c) => `<option value="${escapeHtml(c.id)}" ${existing && sameId(c.id, existing.categoriaId) ? "selected" : ""}>${escapeHtml(c.nome)}</option>`)).join("");
+  const { close, q } = viabilidadeDialog(`
+    <div class="viab-modal">
+      <header class="viab-modal-head"><h3>${existing ? "Editar cotação de material" : "Nova cotação de material"}</h3><button type="button" class="viab-x" data-close>✕</button></header>
+      <div class="viab-modal-body">
+        <div class="form-grid">
+          <label>Obra *<select id="cmObra">${obraOpts}</select></label>
+          <label>Disciplina *<select id="cmCat">${catOpts}</select></label>
+          <label>Tipo de item (opcional)<select id="cmTipo"><option value="">—</option></select></label>
+          <label>Material a cotar *<input id="cmDesc" maxlength="500" value="${escapeHtml(existing?.description || "")}" placeholder="Ex.: Cabo flexível 2,5mm² 750V"></label>
+          <label>Unidade<input id="cmUn" maxlength="20" value="${escapeHtml(existing?.unit || "")}" placeholder="Ex.: m, un, kg"></label>
+          <label>Quantidade desejada<input id="cmQtd" inputmode="decimal" value="${escapeHtml(existing && existing.quantity != null ? String(Number(existing.quantity)) : "")}" placeholder="0"></label>
+          <label>Observações<input id="cmObs" value="${escapeHtml(existing?.notes || "")}"></label>
+        </div>
+      </div>
+      <footer class="viab-modal-foot"><button type="button" class="secondary" data-close>Cancelar</button><button type="button" class="primary" data-save>${existing ? "Salvar" : "Criar cotação"}</button></footer>
+    </div>`, "viab-dialog-md");
+  const fillTipos = () => {
+    const cat = cotacaoCatById(q("#cmCat").value);
+    const tipos = (cat?.tipos || []).filter((t) => t.status === "Ativo" || (existing && sameId(t.id, existing.tipoItemId)));
+    q("#cmTipo").innerHTML = ['<option value="">—</option>']
+      .concat(tipos.map((t) => `<option value="${escapeHtml(t.id)}" data-un="${escapeHtml(t.unidadePadrao || "")}" ${existing && sameId(t.id, existing.tipoItemId) ? "selected" : ""}>${escapeHtml(t.nome)}</option>`)).join("");
+  };
+  fillTipos();
+  q("#cmCat").addEventListener("change", () => fillTipos());
+  q("#cmTipo").addEventListener("change", () => {
+    const un = q("#cmTipo").selectedOptions[0]?.dataset.un || "";
+    if (un && !q("#cmUn").value.trim()) q("#cmUn").value = un;
+  });
+  q("[data-save]").addEventListener("click", async () => {
+    const payload = {
+      id: existing?.id || 0,
+      projectId: q("#cmObra").value,
+      categoriaId: q("#cmCat").value,
+      tipoItemId: q("#cmTipo").value || 0,
+      description: q("#cmDesc").value.trim(),
+      unit: q("#cmUn").value.trim(),
+      quantity: parseMoneyInput(q("#cmQtd").value || "0") || 0,
+      notes: q("#cmObs").value.trim(),
+    };
+    if (!payload.projectId) return alert("Selecione a obra.");
+    if (!payload.categoriaId) return alert("Selecione a disciplina.");
+    if (!payload.description) return alert("Descreva o material a cotar.");
+    const btn = q("[data-save]");
+    btn.disabled = true;
+    try {
+      const data = await cotacaoApi("materialSalvar", { method: "POST", body: JSON.stringify(payload) });
+      close();
+      showToast("Cotação de material salva.");
+      cotacaoMatDetail = data;
+      cotacaoMatOpenId = data?.id || null;
+      renderCotacoes();
+    } catch (error) {
+      btn.disabled = false;
+      alert(`Não foi possível salvar: ${error.message}`);
+    }
+  });
+}
+
+// Adicionar/editar uma PROPOSTA de fornecedor dentro da cotação de material.
+function openCotacaoPropostaForm(m, existing = null) {
+  if (!canEditModule("cotacoes")) return;
+  const supOpts = ['<option value="">— Selecione o fornecedor —</option>']
+    .concat((db.suppliers || []).map((s) => `<option value="${escapeHtml(s.id)}" ${existing && sameId(s.id, existing.fornecedor_id) ? "selected" : ""}>${escapeHtml(s.name)}</option>`)).join("");
+  const { close, q } = viabilidadeDialog(`
+    <div class="viab-modal">
+      <header class="viab-modal-head"><h3>${existing ? "Editar proposta" : "Adicionar proposta"}</h3><button type="button" class="viab-x" data-close>✕</button></header>
+      <div class="viab-modal-body">
+        <p><strong>${svgText(m.description || "")}</strong>${m.unit ? `<span class="muted"> · ${svgText(m.unit)}</span>` : ""}${Number(m.quantity || 0) > 0 ? `<span class="muted"> · qtde ${Number(m.quantity).toLocaleString("pt-BR")}</span>` : ""}</p>
+        <div class="form-grid">
+          <label>Fornecedor (do cadastro) *<select id="cpForn">${supOpts}</select></label>
+          <label>Valor unitário (R$) *<input id="cpValor" inputmode="decimal" placeholder="0,00" value="${existing && existing.valor_unitario != null ? escapeHtml(Number(existing.valor_unitario).toFixed(2).replace(".", ",")) : ""}"></label>
+          <label>Marca (opcional)<input id="cpMarca" maxlength="100" value="${escapeHtml(existing?.marca || "")}"></label>
+          <label>Prazo de entrega (opcional)<input id="cpPrazo" maxlength="100" value="${escapeHtml(existing?.prazo_entrega || "")}"></label>
+          <label>Observação (opcional)<input id="cpObs" maxlength="300" value="${escapeHtml(existing?.observacao || "")}"></label>
+        </div>
+      </div>
+      <footer class="viab-modal-foot"><button type="button" class="secondary" data-close>Cancelar</button><button type="button" class="primary" data-save>${existing ? "Salvar" : "Adicionar"}</button></footer>
+    </div>`, "viab-dialog-md");
+  q("[data-save]").addEventListener("click", async () => {
+    const fornecedorId = q("#cpForn").value;
+    if (!fornecedorId) return alert("Selecione o fornecedor do cadastro.");
+    const valor = parseMoneyInput(q("#cpValor").value || "0");
+    if (!(valor > 0)) return alert("Informe o valor unitário da proposta.");
+    const btn = q("[data-save]");
+    btn.disabled = true;
+    try {
+      cotacaoMatDetail = await cotacaoApi("propostaSalvar", { method: "POST", body: JSON.stringify({
+        material_cotacao_id: m.id,
+        id: existing?.id || 0,
+        fornecedor_id: fornecedorId,
+        valor_unitario: valor,
+        marca: q("#cpMarca").value.trim(),
+        prazo_entrega: q("#cpPrazo").value.trim(),
+        observacao: q("#cpObs").value.trim(),
+      }) });
+      close();
+      showToast("Proposta salva.");
+      renderCotacaoMaterialDetalhe();
+    } catch (error) {
+      btn.disabled = false;
+      alert(`Não foi possível salvar: ${error.message}`);
+    }
+  });
+}
+
+// Concluir = escolher a proposta VENCEDORA (só libera com >= N fornecedores
+// distintos — o backend valida de novo).
+function openCotacaoMaterialConcluir(m) {
+  const propostas = (m.propostas || []).filter((p) => Number(p.valor_unitario || 0) > 0);
+  if (!propostas.length) return alert("Nenhuma proposta com valor para escolher.");
+  const menor = Math.min(...propostas.map((p) => Number(p.valor_unitario || 0)));
+  const linhas = propostas.map((p) => {
+    const v = Number(p.valor_unitario || 0);
+    return `<label class="cot-mat-radio"><input type="radio" name="cotVenc" value="${escapeHtml(p.id)}" ${v === menor ? "checked" : ""}>
+      <span>${escapeHtml(p.fornecedor_nome || "Fornecedor")} — <strong>${asMoney(v)}</strong>${v === menor ? ' <span class="ia-cmp-badge ia-cmp-planilha">Menor valor</span>' : ""}${p.marca ? ` · ${escapeHtml(p.marca)}` : ""}</span></label>`;
+  }).join("");
+  const { close, q, dialog } = viabilidadeDialog(`
+    <div class="viab-modal">
+      <header class="viab-modal-head"><h3>Concluir cotação — escolher vencedora</h3><button type="button" class="viab-x" data-close>✕</button></header>
+      <div class="viab-modal-body">
+        <p class="muted">Marque a proposta VENCEDORA de "${escapeHtml(m.description || "")}". A cotação vira Concluída (dá para reabrir depois).</p>
+        <div class="cot-mat-radios">${linhas}</div>
+      </div>
+      <footer class="viab-modal-foot"><button type="button" class="secondary" data-close>Voltar</button><button type="button" class="primary" data-save>Concluir e marcar vencedora</button></footer>
+    </div>`, "viab-dialog-md");
+  q("[data-save]").addEventListener("click", async () => {
+    const sel = dialog.querySelector('input[name="cotVenc"]:checked');
+    if (!sel) return alert("Escolha a proposta vencedora.");
+    const btn = q("[data-save]");
+    btn.disabled = true;
+    try {
+      cotacaoMatDetail = await cotacaoApi("materialConcluir", { method: "POST", body: JSON.stringify({ id: m.id, proposta_id: sel.value }) });
+      close();
+      showToast("Cotação concluída — vencedora marcada.");
+      renderCotacaoMaterialDetalhe();
+    } catch (error) {
+      btn.disabled = false;
+      alert(`Não foi possível concluir: ${error.message}`);
+    }
+  });
 }
 
 async function renderCotacaoLista() {
@@ -13165,10 +13564,12 @@ async function renderCotacaoLista() {
         <button class="secondary" type="button" id="cotCategorias">Categorias de Cotação</button>
         ${editable ? '<button class="primary" type="button" id="cotNova">+ Importar cotação</button>' : ""}
       </div>
-    </section>`;
+    </section>
+    ${cotacaoTabsHtml()}`;
   const wireHead = () => {
     qs("cotNova")?.addEventListener("click", () => openCotacaoImport());
     qs("cotCategorias")?.addEventListener("click", () => { cotacaoCatOpen = true; renderCotacaoCategorias(); });
+    wireCotacaoTabs();
   };
   if (!serverMode) {
     content.innerHTML = head + '<div class="empty">O módulo de cotações requer conexão com o servidor.</div>';
@@ -13185,7 +13586,7 @@ async function renderCotacaoLista() {
     wireHead();
     return;
   }
-  if (currentModule !== "cotacoes" || cotacaoOpenId || cotacaoCatOpen) return;
+  if (currentModule !== "cotacoes" || cotacaoOpenId || cotacaoCatOpen || cotacaoMatOpenId || cotacaoView !== "arquivos") return;
   cotacaoList = list;
   // M12: as duas pontas em meia-noite LOCAL — antes misturava meia-noite UTC da
   // validade com o agora local, e a cotação que vence hoje sumia do alerta à noite.
@@ -13289,7 +13690,7 @@ async function renderCotacaoCategorias() {
       ${editable ? '<button class="primary" type="button" id="catNova">+ Nova categoria</button>' : ""}
     </section>`;
   const wireHead = () => {
-    qs("catVoltar")?.addEventListener("click", () => { cotacaoCatOpen = false; renderCotacaoLista(); });
+    qs("catVoltar")?.addEventListener("click", () => { cotacaoCatOpen = false; renderCotacoes(); });
     qs("catNova")?.addEventListener("click", () => openCotacaoCategoriaForm());
   };
   if (!serverMode) {

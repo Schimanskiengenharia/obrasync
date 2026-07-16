@@ -2544,6 +2544,12 @@ function bootstrap_data(PDO $pdo, array $resources, ?array $authUser = null, boo
         if (!resolve_existing_table($pdo, ['cotacao_categorias'], false)) {
             ensure_cotacao_categorias_tables($pdo);
         }
+        // P1: cotação por material — disciplina/tipo no cabeçalho (cotacoes) e
+        // vínculo material/fornecedor nas propostas (cotacao_itens).
+        if (resolve_existing_table($pdo, ['cotacoes'], false)
+            && !in_array('categoriaId', table_columns($pdo, 'cotacoes'), true)) {
+            ensure_cotacao_material_columns($pdo);
+        }
         // Colunas de custo/BDI no fluxo Orçamento → Proposta (base SINAPI).
         if (resolve_existing_table($pdo, ['proposta_itens'], false)
             && !in_array('custo_unitario', table_columns($pdo, 'proposta_itens'), true)) {
@@ -2856,6 +2862,50 @@ function ensure_cotacao_categorias_tables(PDO $pdo): void
         $done = true;
     } catch (Throwable $error) {
         error_log('[ObraSync] ensure_cotacao_categorias_tables: ' . $error->getMessage());
+    }
+}
+
+// P1 (cotação por MATERIAL): reusa as tabelas existentes — o cabeçalho é a
+// `cotacoes` (projectId/description/unit/quantity/status/notes) e cada proposta
+// de fornecedor é uma linha de `cotacao_itens` (valor_unitario/marca/
+// prazo_entrega/observacao/vencedor/diferenca_percentual). Aqui entram só as
+// colunas de vínculo: disciplina/tipo no cabeçalho e material/fornecedor na
+// proposta. cotacao_id passa a aceitar NULL (proposta manual não tem cabeçalho
+// de arquivo importado); o fluxo de importação não muda — todas as queries dele
+// fazem JOIN cotacao_fornecedor via cotacao_id.
+// Migration equivalente: 2026-07-16-cotacao-material.sql.
+function ensure_cotacao_material_columns(PDO $pdo): void
+{
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    try {
+        $pdo->exec("ALTER TABLE cotacoes
+            ADD COLUMN IF NOT EXISTS categoriaId BIGINT UNSIGNED NULL COMMENT 'Disciplina (cotacao_categorias.id) — preenchida = cotação por material',
+            ADD COLUMN IF NOT EXISTS tipoItemId BIGINT UNSIGNED NULL COMMENT 'Tipo de item (cotacao_tipos_item.id), opcional',
+            ADD INDEX IF NOT EXISTS idx_cotacoes_categoria (categoriaId)");
+        $pdo->exec("ALTER TABLE cotacao_itens
+            ADD COLUMN IF NOT EXISTS material_cotacao_id BIGINT UNSIGNED NULL COMMENT 'Proposta manual: cotação por material (cotacoes.id)',
+            ADD COLUMN IF NOT EXISTS fornecedor_id BIGINT UNSIGNED NULL COMMENT 'Proposta manual: fornecedor do cadastro (suppliers.id)',
+            ADD INDEX IF NOT EXISTS idx_ci_material (material_cotacao_id)");
+        // Só relaxa o NOT NULL quando ainda preciso (via INFORMATION_SCHEMA)
+        // para não rebuildar a tabela a cada request.
+        try {
+            $nullable = $pdo->query("SELECT IS_NULLABLE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cotacao_itens' AND COLUMN_NAME = 'cotacao_id'")->fetchColumn();
+            if ($nullable === 'NO') {
+                $pdo->exec('ALTER TABLE cotacao_itens MODIFY cotacao_id BIGINT UNSIGNED NULL');
+            }
+        } catch (Throwable $ignored) {
+        }
+        // Regra das N cotações (padrão 3) — editável em Configurações → Preferências.
+        $pdo->exec("INSERT INTO system_preferences (name, `value`, description)
+            SELECT 'minCotacoesPorMaterial', '3', 'Mínimo de propostas de fornecedores DIFERENTES para concluir uma cotação por material (módulo Cotações de Fornecedores).'
+              FROM DUAL
+             WHERE NOT EXISTS (SELECT 1 FROM system_preferences WHERE name = 'minCotacoesPorMaterial')");
+        $done = true;
+    } catch (Throwable $error) {
+        error_log('[ObraSync] ensure_cotacao_material_columns: ' . $error->getMessage());
     }
 }
 
@@ -3527,10 +3577,93 @@ function cotacao_get_full(PDO $pdo, int $id): ?array
     return $cot;
 }
 
+// ── P1: cotação por MATERIAL (cabeçalho em `cotacoes`, propostas em `cotacao_itens`) ──
+
+// Regra das N cotações: mínimo de propostas de fornecedores DIFERENTES para
+// concluir. Lê minCotacoesPorMaterial em system_preferences (padrão 3).
+function cotacao_material_min_propostas(PDO $pdo): int
+{
+    try {
+        $stmt = $pdo->prepare("SELECT `value` FROM system_preferences WHERE name = 'minCotacoesPorMaterial' ORDER BY id DESC LIMIT 1");
+        $stmt->execute();
+        $raw = trim((string) $stmt->fetchColumn());
+        if ($raw !== '' && is_numeric($raw)) {
+            return max(1, min(99, (int) $raw));
+        }
+    } catch (Throwable $ignored) {
+    }
+    return 3;
+}
+
+// Cabeçalho + propostas (com nome do fornecedor) + contagem de fornecedores
+// distintos e o mínimo vigente — o payload único que as telas consomem.
+// categoriaId IS NOT NULL distingue a cotação por material das linhas antigas
+// do CRUD genérico de cotações que dividem a mesma tabela.
+function cotacao_material_get(PDO $pdo, int $id): ?array
+{
+    if ($id <= 0) {
+        return null;
+    }
+    $stmt = $pdo->prepare('SELECT c.*, cat.nome AS categoria_nome, ti.nome AS tipo_nome
+                             FROM cotacoes c
+                             LEFT JOIN cotacao_categorias cat ON cat.id = c.categoriaId
+                             LEFT JOIN cotacao_tipos_item ti ON ti.id = c.tipoItemId
+                            WHERE c.id = ? AND c.categoriaId IS NOT NULL
+                            LIMIT 1');
+    $stmt->execute([$id]);
+    $mat = $stmt->fetch();
+    if (!$mat) {
+        return null;
+    }
+    $stmt = $pdo->prepare('SELECT i.*, s.name AS fornecedor_nome
+                             FROM cotacao_itens i
+                             LEFT JOIN suppliers s ON s.id = i.fornecedor_id
+                            WHERE i.material_cotacao_id = ?
+                            ORDER BY (i.valor_unitario IS NULL), i.valor_unitario, i.id');
+    $stmt->execute([$id]);
+    $mat['propostas'] = $stmt->fetchAll();
+    $fornecedores = [];
+    foreach ($mat['propostas'] as $proposta) {
+        if (!empty($proposta['fornecedor_id'])) {
+            $fornecedores[(int) $proposta['fornecedor_id']] = true;
+        }
+    }
+    $mat['fornecedores_distintos'] = count($fornecedores);
+    $mat['min_propostas'] = cotacao_material_min_propostas($pdo);
+    return $mat;
+}
+
+// Recalcula a diferença % de cada proposta em relação à MAIS BARATA do material
+// (a menor fica 0%), com clamp no DECIMAL(12,2) — padrão do SQLSTATE[22003] já
+// corrigido no comparador. A diferença em R$ o front calcula na hora.
+function cotacao_material_recalcular_diferencas(PDO $pdo, int $materialId): void
+{
+    $stmt = $pdo->prepare('SELECT id, valor_unitario FROM cotacao_itens WHERE material_cotacao_id = ?');
+    $stmt->execute([$materialId]);
+    $propostas = $stmt->fetchAll();
+    $menor = null;
+    foreach ($propostas as $proposta) {
+        $valor = ($proposta['valor_unitario'] ?? null) !== null ? (float) $proposta['valor_unitario'] : null;
+        if ($valor !== null && $valor > 0 && ($menor === null || $valor < $menor)) {
+            $menor = $valor;
+        }
+    }
+    $upd = $pdo->prepare('UPDATE cotacao_itens SET diferenca_percentual = ? WHERE id = ?');
+    foreach ($propostas as $proposta) {
+        $valor = ($proposta['valor_unitario'] ?? null) !== null ? (float) $proposta['valor_unitario'] : null;
+        $dif = null;
+        if ($menor !== null && $valor !== null && $valor > 0) {
+            $dif = max(-IA_COMPARA_DIFPERCENT_MAX, min(IA_COMPARA_DIFPERCENT_MAX, round(($valor - $menor) / $menor * 100, 2)));
+        }
+        $upd->execute([$dif, (int) $proposta['id']]);
+    }
+}
+
 function handle_cotacoes_module(PDO $pdo, string $method, array $query, array $config, array $authUser): never
 {
     ensure_cotacao_import_tables($pdo);
     ensure_cotacao_categorias_tables($pdo);
+    ensure_cotacao_material_columns($pdo);
     $action = strtolower(trim((string) ($query['action'] ?? '')));
     $intOrNull = static fn ($v) => ($v === null || $v === '') ? null : (int) $v;
     try {
@@ -4048,6 +4181,277 @@ function handle_cotacoes_module(PDO $pdo, string $method, array $query, array $c
                 server_audit($pdo, $authUser, 'delete', 'cotacoes', $id, '');
             }
             cotacao_respond(true, [], 'Cotação removida.');
+        }
+
+        // ── P1: cotação manual por MATERIAL + propostas de fornecedores ─────
+        // Cabeçalho em `cotacoes` (categoriaId preenchida = por material);
+        // proposta em `cotacao_itens` (material_cotacao_id + fornecedor_id,
+        // cotacao_id NULL). Status do cabeçalho: Em cotação/Concluída/Cancelada.
+
+        if ($action === 'materiallist') {
+            require_method($method, ['GET']);
+            $where = ['c.categoriaId IS NOT NULL'];
+            $params = [];
+            if (!empty($query['projectId'])) { $where[] = 'c.projectId = ?'; $params[] = (int) $query['projectId']; }
+            if (!empty($query['categoriaId'])) { $where[] = 'c.categoriaId = ?'; $params[] = (int) $query['categoriaId']; }
+            if (!empty($query['status'])) { $where[] = 'c.status = ?'; $params[] = (string) $query['status']; }
+            $sql = 'SELECT c.*, cat.nome AS categoria_nome, ti.nome AS tipo_nome,
+                           (SELECT COUNT(*) FROM cotacao_itens i WHERE i.material_cotacao_id = c.id) AS total_propostas,
+                           (SELECT COUNT(DISTINCT i.fornecedor_id) FROM cotacao_itens i WHERE i.material_cotacao_id = c.id AND i.fornecedor_id IS NOT NULL) AS fornecedores_distintos,
+                           (SELECT MIN(i.valor_unitario) FROM cotacao_itens i WHERE i.material_cotacao_id = c.id AND i.valor_unitario > 0) AS menor_valor
+                      FROM cotacoes c
+                      LEFT JOIN cotacao_categorias cat ON cat.id = c.categoriaId
+                      LEFT JOIN cotacao_tipos_item ti ON ti.id = c.tipoItemId
+                     WHERE ' . implode(' AND ', $where) . '
+                     ORDER BY c.createdAt DESC, c.id DESC';
+            $stmt = $pdo->prepare($sql);
+            $stmt->execute($params);
+            cotacao_respond(true, ['itens' => $stmt->fetchAll(), 'minPropostas' => cotacao_material_min_propostas($pdo)]);
+        }
+
+        if ($action === 'materialget') {
+            require_method($method, ['GET']);
+            $mat = cotacao_material_get($pdo, (int) ($query['id'] ?? 0));
+            if (!$mat) {
+                cotacao_respond(false, [], 'Cotação de material não encontrada.', 404);
+            }
+            cotacao_respond(true, $mat);
+        }
+
+        if ($action === 'materialsalvar') {
+            require_method($method, ['POST']);
+            $payload = read_json();
+            $id = (int) ($payload['id'] ?? 0);
+            $novo = $id <= 0;
+            $projectId = (int) ($payload['projectId'] ?? 0);
+            $categoriaId = (int) ($payload['categoriaId'] ?? 0);
+            $tipoItemId = (int) ($payload['tipoItemId'] ?? 0);
+            $descricao = mb_substr(trim((string) ($payload['description'] ?? '')), 0, 500);
+            $unidade = mb_substr(trim((string) ($payload['unit'] ?? '')), 0, 40) ?: null;
+            $quantidade = cotacao_num($payload['quantity'] ?? '');
+            $notes = trim((string) ($payload['notes'] ?? '')) ?: null;
+            if ($descricao === '') {
+                cotacao_respond(false, [], 'Descreva o material a cotar.', 400);
+            }
+            if ($projectId <= 0) {
+                cotacao_respond(false, [], 'Selecione a obra.', 400);
+            }
+            $chk = $pdo->prepare('SELECT id FROM projects WHERE id = ? LIMIT 1');
+            $chk->execute([$projectId]);
+            if (!$chk->fetch()) {
+                cotacao_respond(false, [], 'Obra não encontrada.', 404);
+            }
+            $chk = $pdo->prepare('SELECT id FROM cotacao_categorias WHERE id = ? LIMIT 1');
+            $chk->execute([$categoriaId]);
+            if ($categoriaId <= 0 || !$chk->fetch()) {
+                cotacao_respond(false, [], 'Selecione a disciplina (categoria de cotação).', 400);
+            }
+            if ($tipoItemId > 0) {
+                $chk = $pdo->prepare('SELECT id FROM cotacao_tipos_item WHERE id = ? AND categoriaId = ? LIMIT 1');
+                $chk->execute([$tipoItemId, $categoriaId]);
+                if (!$chk->fetch()) {
+                    cotacao_respond(false, [], 'O tipo de item não pertence à disciplina escolhida.', 400);
+                }
+            }
+            if ($id > 0) {
+                $atual = cotacao_material_get($pdo, $id);
+                if (!$atual) {
+                    cotacao_respond(false, [], 'Cotação de material não encontrada.', 404);
+                }
+                if ((string) $atual['status'] !== 'Em cotação') {
+                    cotacao_respond(false, [], 'Só é possível editar uma cotação Em cotação — reabra antes.', 422);
+                }
+                $pdo->prepare('UPDATE cotacoes SET projectId = ?, categoriaId = ?, tipoItemId = ?, description = ?, unit = ?, quantity = ?, notes = ? WHERE id = ?')
+                    ->execute([$projectId, $categoriaId, $tipoItemId > 0 ? $tipoItemId : null, $descricao, $unidade, $quantidade ?? 0, $notes, $id]);
+                server_audit($pdo, $authUser, 'update', 'cotacoes', $id, 'cotação de material: ' . $descricao);
+            } else {
+                $id = insert_dynamic($pdo, 'cotacoes', [
+                    'projectId' => $projectId,
+                    'categoriaId' => $categoriaId,
+                    'tipoItemId' => $tipoItemId > 0 ? $tipoItemId : null,
+                    'description' => $descricao,
+                    'unit' => $unidade,
+                    'quantity' => $quantidade ?? 0,
+                    'notes' => $notes,
+                    'status' => 'Em cotação',
+                    'quoteDate' => date('Y-m-d'),
+                ]);
+                server_audit($pdo, $authUser, 'create', 'cotacoes', $id, 'cotação de material: ' . $descricao);
+            }
+            cotacao_respond(true, cotacao_material_get($pdo, $id), 'Cotação de material salva.', $novo ? 201 : 200);
+        }
+
+        if ($action === 'materialexcluir') {
+            require_method($method, ['POST', 'DELETE']);
+            $payload = $method === 'POST' ? read_json() : [];
+            $id = (int) ($payload['id'] ?? ($query['id'] ?? 0));
+            $mat = cotacao_material_get($pdo, $id);
+            if ($mat) {
+                // Excluir apaga SÓ as propostas da cotação e o cabeçalho — nada além.
+                $pdo->beginTransaction();
+                $pdo->prepare('DELETE FROM cotacao_itens WHERE material_cotacao_id = ?')->execute([$id]);
+                $pdo->prepare('DELETE FROM cotacoes WHERE id = ?')->execute([$id]);
+                $pdo->commit();
+                server_audit($pdo, $authUser, 'delete', 'cotacoes', $id, 'cotação de material: ' . (string) $mat['description']);
+            }
+            cotacao_respond(true, [], 'Cotação de material excluída.');
+        }
+
+        if ($action === 'propostasalvar') {
+            require_method($method, ['POST']);
+            $payload = read_json();
+            $materialId = (int) ($payload['material_cotacao_id'] ?? 0);
+            $id = (int) ($payload['id'] ?? 0);
+            $fornecedorId = (int) ($payload['fornecedor_id'] ?? 0);
+            $valor = cotacao_num($payload['valor_unitario'] ?? '');
+            $mat = cotacao_material_get($pdo, $materialId);
+            if (!$mat) {
+                cotacao_respond(false, [], 'Cotação de material não encontrada.', 404);
+            }
+            if ((string) $mat['status'] !== 'Em cotação') {
+                cotacao_respond(false, [], 'A cotação não está aberta — reabra antes de mexer nas propostas.', 422);
+            }
+            if ($fornecedorId <= 0) {
+                cotacao_respond(false, [], 'Selecione o fornecedor do cadastro.', 400);
+            }
+            if ($valor === null || $valor <= 0) {
+                cotacao_respond(false, [], 'Informe o valor unitário da proposta.', 400);
+            }
+            $chk = $pdo->prepare('SELECT id FROM suppliers WHERE id = ? LIMIT 1');
+            $chk->execute([$fornecedorId]);
+            if (!$chk->fetch()) {
+                cotacao_respond(false, [], 'Fornecedor não encontrado no cadastro.', 404);
+            }
+            $qtd = ($mat['quantity'] ?? null) !== null ? (float) $mat['quantity'] : null;
+            if ($qtd !== null && $qtd <= 0) {
+                $qtd = null;
+            }
+            $dados = [
+                'material_cotacao_id' => $materialId,
+                'fornecedor_id' => $fornecedorId,
+                'descricao' => mb_substr((string) $mat['description'], 0, 500),
+                'unidade' => mb_substr((string) ($mat['unit'] ?? ''), 0, 20) ?: null,
+                'quantidade' => $qtd,
+                'valor_unitario' => $valor,
+                'valor_total' => $qtd !== null ? round($qtd * $valor, 2) : null,
+                'marca' => mb_substr(trim((string) ($payload['marca'] ?? '')), 0, 100) ?: null,
+                'prazo_entrega' => mb_substr(trim((string) ($payload['prazo_entrega'] ?? '')), 0, 100) ?: null,
+                'observacao' => mb_substr(trim((string) ($payload['observacao'] ?? '')), 0, 300) ?: null,
+            ];
+            if ($id > 0) {
+                $chk = $pdo->prepare('SELECT id FROM cotacao_itens WHERE id = ? AND material_cotacao_id = ? LIMIT 1');
+                $chk->execute([$id, $materialId]);
+                if (!$chk->fetch()) {
+                    cotacao_respond(false, [], 'Proposta não encontrada nesta cotação.', 404);
+                }
+                $pdo->prepare('UPDATE cotacao_itens SET fornecedor_id = ?, descricao = ?, unidade = ?, quantidade = ?, valor_unitario = ?, valor_total = ?, marca = ?, prazo_entrega = ?, observacao = ? WHERE id = ?')
+                    ->execute([$fornecedorId, $dados['descricao'], $dados['unidade'], $qtd, $valor, $dados['valor_total'], $dados['marca'], $dados['prazo_entrega'], $dados['observacao'], $id]);
+                server_audit($pdo, $authUser, 'update', 'cotacoes', $id, 'proposta da cotação de material ' . $materialId);
+            } else {
+                $id = insert_dynamic($pdo, 'cotacao_itens', $dados);
+                server_audit($pdo, $authUser, 'create', 'cotacoes', $id, 'proposta da cotação de material ' . $materialId . ' × fornecedor ' . $fornecedorId);
+            }
+            cotacao_material_recalcular_diferencas($pdo, $materialId);
+            cotacao_respond(true, cotacao_material_get($pdo, $materialId), 'Proposta salva.');
+        }
+
+        if ($action === 'propostaexcluir') {
+            require_method($method, ['POST']);
+            $payload = read_json();
+            $id = (int) ($payload['id'] ?? 0);
+            $stmt = $pdo->prepare('SELECT id, material_cotacao_id FROM cotacao_itens WHERE id = ? AND material_cotacao_id IS NOT NULL LIMIT 1');
+            $stmt->execute([$id]);
+            $proposta = $stmt->fetch();
+            if (!$proposta) {
+                cotacao_respond(false, [], 'Proposta não encontrada.', 404);
+            }
+            $materialId = (int) $proposta['material_cotacao_id'];
+            $mat = cotacao_material_get($pdo, $materialId);
+            if ($mat && (string) $mat['status'] !== 'Em cotação') {
+                cotacao_respond(false, [], 'A cotação não está aberta — reabra antes de excluir propostas.', 422);
+            }
+            $pdo->prepare('DELETE FROM cotacao_itens WHERE id = ?')->execute([$id]);
+            cotacao_material_recalcular_diferencas($pdo, $materialId);
+            server_audit($pdo, $authUser, 'delete', 'cotacoes', $id, 'proposta da cotação de material ' . $materialId);
+            cotacao_respond(true, cotacao_material_get($pdo, $materialId), 'Proposta excluída.');
+        }
+
+        if ($action === 'materialconcluir') {
+            require_method($method, ['POST']);
+            $payload = read_json();
+            $materialId = (int) ($payload['id'] ?? 0);
+            $propostaId = (int) ($payload['proposta_id'] ?? 0);
+            $mat = cotacao_material_get($pdo, $materialId);
+            if (!$mat) {
+                cotacao_respond(false, [], 'Cotação de material não encontrada.', 404);
+            }
+            if ((string) $mat['status'] !== 'Em cotação') {
+                cotacao_respond(false, [], 'A cotação não está aberta — só uma cotação Em cotação pode ser concluída.', 422);
+            }
+            // Regra das N cotações: >= N propostas de fornecedores DIFERENTES.
+            $min = (int) $mat['min_propostas'];
+            $distintos = (int) $mat['fornecedores_distintos'];
+            if ($distintos < $min) {
+                $faltam = $min - $distintos;
+                cotacao_respond(
+                    false,
+                    ['faltam' => $faltam, 'minPropostas' => $min, 'fornecedoresDistintos' => $distintos],
+                    'Ainda não dá para concluir: faltam ' . $faltam . ' cotação(ões) de fornecedores diferentes (mínimo ' . $min . ').',
+                    422
+                );
+            }
+            $vencedora = null;
+            foreach ($mat['propostas'] as $proposta) {
+                if ((int) $proposta['id'] === $propostaId) {
+                    $vencedora = $proposta;
+                    break;
+                }
+            }
+            if (!$vencedora) {
+                cotacao_respond(false, [], 'Escolha a proposta vencedora desta cotação.', 400);
+            }
+            $pdo->beginTransaction();
+            $pdo->prepare('UPDATE cotacao_itens SET vencedor = 0 WHERE material_cotacao_id = ?')->execute([$materialId]);
+            $pdo->prepare('UPDATE cotacao_itens SET vencedor = 1 WHERE id = ?')->execute([$propostaId]);
+            $pdo->prepare("UPDATE cotacoes SET status = 'Concluída' WHERE id = ?")->execute([$materialId]);
+            $pdo->commit();
+            server_audit($pdo, $authUser, 'update', 'cotacoes', $materialId, 'cotação de material concluída — vencedor: ' . (string) ($vencedora['fornecedor_nome'] ?? $vencedora['fornecedor_id']));
+            cotacao_respond(true, cotacao_material_get($pdo, $materialId), 'Cotação concluída — proposta vencedora marcada.');
+        }
+
+        if ($action === 'materialreabrir') {
+            require_method($method, ['POST']);
+            $payload = read_json();
+            $materialId = (int) ($payload['id'] ?? 0);
+            $mat = cotacao_material_get($pdo, $materialId);
+            if (!$mat) {
+                cotacao_respond(false, [], 'Cotação de material não encontrada.', 404);
+            }
+            if ((string) $mat['status'] === 'Em cotação') {
+                cotacao_respond(false, [], 'A cotação já está aberta.', 422);
+            }
+            $pdo->beginTransaction();
+            $pdo->prepare('UPDATE cotacao_itens SET vencedor = 0 WHERE material_cotacao_id = ?')->execute([$materialId]);
+            $pdo->prepare("UPDATE cotacoes SET status = 'Em cotação' WHERE id = ?")->execute([$materialId]);
+            $pdo->commit();
+            server_audit($pdo, $authUser, 'update', 'cotacoes', $materialId, 'cotação de material reaberta (vencedor limpo)');
+            cotacao_respond(true, cotacao_material_get($pdo, $materialId), 'Cotação reaberta — o vencedor foi limpo.');
+        }
+
+        if ($action === 'materialcancelar') {
+            require_method($method, ['POST']);
+            $payload = read_json();
+            $materialId = (int) ($payload['id'] ?? 0);
+            $mat = cotacao_material_get($pdo, $materialId);
+            if (!$mat) {
+                cotacao_respond(false, [], 'Cotação de material não encontrada.', 404);
+            }
+            if ((string) $mat['status'] !== 'Em cotação') {
+                cotacao_respond(false, [], 'Só uma cotação Em cotação pode ser cancelada.', 422);
+            }
+            $pdo->prepare("UPDATE cotacoes SET status = 'Cancelada' WHERE id = ?")->execute([$materialId]);
+            server_audit($pdo, $authUser, 'update', 'cotacoes', $materialId, 'cotação de material cancelada');
+            cotacao_respond(true, cotacao_material_get($pdo, $materialId), 'Cotação cancelada.');
         }
 
         // ── A1: categorias → tipos de item (estrutura manual das cotações) ──

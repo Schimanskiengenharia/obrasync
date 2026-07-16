@@ -6293,6 +6293,45 @@ html[data-theme="dark"] .ia-dp-subtotal td { background: rgba(255, 255, 255, 0.0
 .compra-cell.compra-menor strong { color: #1f5e0f; }
 html[data-theme="dark"] .compra-cell.compra-menor strong { color: #aee08a; }
 .compra-cell.compra-venc { outline: 2px solid var(--teal); outline-offset: -2px; border-radius: 6px; }
+
+/* P1: cotações manuais por material (abas do módulo + cartões de propostas) */
+.cot-tabs { display: flex; gap: 4px; margin: 0 0 14px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.cot-tab {
+  appearance: none;
+  border: none;
+  background: none;
+  padding: 8px 14px;
+  cursor: pointer;
+  color: var(--muted);
+  font-weight: 700;
+  font-size: 13px;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+.cot-tab.active { color: var(--ink); border-bottom-color: var(--teal); }
+.cot-tab:hover { color: var(--ink); }
+.cot-mat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.cot-mat-card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cot-mat-card.cot-mat-menor { border-color: #3b6d11; }
+.cot-mat-card.cot-mat-menor .cot-mat-valor { color: #1f5e0f; }
+html[data-theme="dark"] .cot-mat-card.cot-mat-menor { border-color: #6f9c4a; }
+html[data-theme="dark"] .cot-mat-card.cot-mat-menor .cot-mat-valor { color: #aee08a; }
+.cot-mat-card.cot-mat-venc { outline: 2px solid var(--teal); outline-offset: -2px; }
+.cot-mat-forn { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-weight: 700; flex-wrap: wrap; }
+.cot-mat-valor { font-size: 20px; font-weight: 800; }
+.cot-mat-un { font-size: 12px; font-weight: 600; }
+.cot-mat-acoes { display: flex; gap: 6px; margin-top: auto; padding-top: 6px; flex-wrap: wrap; }
+.cot-mat-radios { display: grid; gap: 8px; }
+.cot-mat-radio { display: flex; align-items: baseline; gap: 8px; font-size: 13px; color: var(--ink); font-weight: 500; }
 .ia-dp-diverg-hint {
   margin-top: 3px;
   font-size: 0.78rem;

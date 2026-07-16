@@ -1413,6 +1413,12 @@ CREATE TABLE IF NOT EXISTS orcamento_obra_itens (
   INDEX idx_orc_item_project (projectId)
 ) ENGINE=InnoDB;
 
+-- P1 (cotação por MATERIAL): quando categoriaId está preenchida, a linha é o
+-- cabeçalho de uma cotação manual por material { obra, disciplina, tipo de item
+-- opcional, material, unidade, quantidade } com status Em cotação/Concluída/
+-- Cancelada; as propostas dos fornecedores ficam em cotacao_itens
+-- (material_cotacao_id). Linhas antigas (CRUD genérico de cotações) seguem
+-- convivendo na mesma tabela com categoriaId NULL.
 CREATE TABLE IF NOT EXISTS cotacoes (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   supplierId BIGINT UNSIGNED NULL,
@@ -1428,13 +1434,16 @@ CREATE TABLE IF NOT EXISTS cotacoes (
   workBudgetId BIGINT UNSIGNED NULL,
   notes TEXT,
   status VARCHAR(40) NOT NULL DEFAULT 'Em cotação',
+  categoriaId BIGINT UNSIGNED NULL COMMENT 'Disciplina (cotacao_categorias.id) — preenchida = cotação por material',
+  tipoItemId BIGINT UNSIGNED NULL COMMENT 'Tipo de item (cotacao_tipos_item.id), opcional',
   createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updatedAt TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
   CONSTRAINT fk_cotacao_supplier FOREIGN KEY (supplierId) REFERENCES suppliers(id) ON DELETE SET NULL,
   CONSTRAINT fk_cotacao_project FOREIGN KEY (projectId) REFERENCES projects(id) ON DELETE SET NULL,
   CONSTRAINT fk_cotacao_budget FOREIGN KEY (workBudgetId) REFERENCES orcamentos_obras(id) ON DELETE SET NULL,
   INDEX idx_cotacao_project (projectId),
-  INDEX idx_cotacao_budget (workBudgetId)
+  INDEX idx_cotacao_budget (workBudgetId),
+  INDEX idx_cotacoes_categoria (categoriaId)
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS modelos_relatorio (
@@ -1820,9 +1829,14 @@ CREATE TABLE IF NOT EXISTS cotacao_fornecedor (
   INDEX idx_cf_pedido (purchase_order_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- Cada linha é (a) um item de cotação importada/de compra (cotacao_id →
+-- cotacao_fornecedor) OU (b) uma PROPOSTA manual de fornecedor numa cotação por
+-- material (material_cotacao_id → cotacoes + fornecedor_id → suppliers, com
+-- cotacao_id NULL). Na proposta, diferenca_percentual é vs a proposta MAIS
+-- BARATA do material (menor = 0%), com clamp.
 CREATE TABLE IF NOT EXISTS cotacao_itens (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  cotacao_id BIGINT UNSIGNED NOT NULL,
+  cotacao_id BIGINT UNSIGNED NULL,
   descricao VARCHAR(500) NOT NULL,
   unidade VARCHAR(20) NULL,
   quantidade DECIMAL(15,4) NULL,
@@ -1835,8 +1849,11 @@ CREATE TABLE IF NOT EXISTS cotacao_itens (
   diferenca_percentual DECIMAL(12,2) NULL COMMENT 'Diferenca % em relacao ao CUSTO orcado (sem BDI), com clamp',
   status_comparacao ENUM('nao_comparado','abaixo','igual','acima','muito_acima') DEFAULT 'nao_comparado',
   vencedor TINYINT(1) NOT NULL DEFAULT 0 COMMENT 'Fornecedor vencedor da cotacao de compra deste item',
+  material_cotacao_id BIGINT UNSIGNED NULL COMMENT 'Proposta manual: cotacao por material (cotacoes.id)',
+  fornecedor_id BIGINT UNSIGNED NULL COMMENT 'Proposta manual: fornecedor do cadastro (suppliers.id)',
   INDEX idx_cotacao (cotacao_id),
-  INDEX idx_orcamento_item (orcamento_item_id)
+  INDEX idx_orcamento_item (orcamento_item_id),
+  INDEX idx_ci_material (material_cotacao_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS qualidade_politica (
