@@ -2544,11 +2544,14 @@ function bootstrap_data(PDO $pdo, array $resources, ?array $authUser = null, boo
         if (!resolve_existing_table($pdo, ['cotacao_categorias'], false)) {
             ensure_cotacao_categorias_tables($pdo);
         }
-        // P1: cotação por material — disciplina/tipo no cabeçalho (cotacoes) e
-        // vínculo material/fornecedor nas propostas (cotacao_itens).
-        if (resolve_existing_table($pdo, ['cotacoes'], false)
-            && !in_array('categoriaId', table_columns($pdo, 'cotacoes'), true)) {
-            ensure_cotacao_material_columns($pdo);
+        // P1/P2: cotação por material — disciplina/tipo no cabeçalho (cotacoes),
+        // vínculo material/fornecedor nas propostas (cotacao_itens) e conta a
+        // pagar gerada do consolidado (conta_pagar_id, P2).
+        if (resolve_existing_table($pdo, ['cotacoes'], false)) {
+            $cotacoesCols = table_columns($pdo, 'cotacoes');
+            if (!in_array('categoriaId', $cotacoesCols, true) || !in_array('conta_pagar_id', $cotacoesCols, true)) {
+                ensure_cotacao_material_columns($pdo);
+            }
         }
         // Colunas de custo/BDI no fluxo Orçamento → Proposta (base SINAPI).
         if (resolve_existing_table($pdo, ['proposta_itens'], false)
@@ -2884,6 +2887,7 @@ function ensure_cotacao_material_columns(PDO $pdo): void
         $pdo->exec("ALTER TABLE cotacoes
             ADD COLUMN IF NOT EXISTS categoriaId BIGINT UNSIGNED NULL COMMENT 'Disciplina (cotacao_categorias.id) — preenchida = cotação por material',
             ADD COLUMN IF NOT EXISTS tipoItemId BIGINT UNSIGNED NULL COMMENT 'Tipo de item (cotacao_tipos_item.id), opcional',
+            ADD COLUMN IF NOT EXISTS conta_pagar_id BIGINT UNSIGNED NULL COMMENT 'P2: conta a pagar gerada do consolidado de vencedores (accounts_payable.id)',
             ADD INDEX IF NOT EXISTS idx_cotacoes_categoria (categoriaId)");
         $pdo->exec("ALTER TABLE cotacao_itens
             ADD COLUMN IF NOT EXISTS material_cotacao_id BIGINT UNSIGNED NULL COMMENT 'Proposta manual: cotação por material (cotacoes.id)',
@@ -3657,6 +3661,22 @@ function cotacao_material_recalcular_diferencas(PDO $pdo, int $materialId): void
         }
         $upd->execute([$dif, (int) $proposta['id']]);
     }
+}
+
+// P2: se a conta a pagar vinculada foi excluída no financeiro, o vínculo fica
+// pendurado — limpa conta_pagar_id (a cotação volta a "sem conta" e o grupo pode
+// gerar de novo). Recebe as linhas já com `conta_id` (LEFT JOIN accounts_payable).
+function cotacao_material_heal_contas(PDO $pdo, array &$rows): void
+{
+    $clear = null;
+    foreach ($rows as &$row) {
+        if (!empty($row['conta_pagar_id']) && empty($row['conta_id'])) {
+            $clear = $clear ?: $pdo->prepare('UPDATE cotacoes SET conta_pagar_id = NULL WHERE id = ? AND conta_pagar_id = ?');
+            $clear->execute([(int) $row['id'], (int) $row['conta_pagar_id']]);
+            $row['conta_pagar_id'] = null;
+        }
+    }
+    unset($row);
 }
 
 function handle_cotacoes_module(PDO $pdo, string $method, array $query, array $config, array $authUser): never
@@ -4452,6 +4472,151 @@ function handle_cotacoes_module(PDO $pdo, string $method, array $query, array $c
             $pdo->prepare("UPDATE cotacoes SET status = 'Cancelada' WHERE id = ?")->execute([$materialId]);
             server_audit($pdo, $authUser, 'update', 'cotacoes', $materialId, 'cotação de material cancelada');
             cotacao_respond(true, cotacao_material_get($pdo, $materialId), 'Cotação cancelada.');
+        }
+
+        // ── P2: consolidado dos VENCEDORES por empresa + conta a pagar ──────
+        // "Resultado das cotações" de uma obra: cada linha é uma cotação por
+        // material Concluída com a proposta vencedora (vencedor=1); o front
+        // agrupa por empresa. valor_item = valor_total (qtd × unit, gravado ao
+        // salvar a proposta) ou valor_unitario quando a cotação não tem qtd.
+
+        if ($action === 'materialconsolidado') {
+            require_method($method, ['GET']);
+            $projectId = (int) ($query['projectId'] ?? 0);
+            if ($projectId <= 0) {
+                cotacao_respond(false, [], 'Informe a obra do consolidado.', 400);
+            }
+            $stmt = $pdo->prepare("SELECT c.id, c.description, c.unit, c.quantity, c.conta_pagar_id,
+                                          cat.nome AS categoria_nome, ti.nome AS tipo_nome,
+                                          i.fornecedor_id, s.name AS fornecedor_nome,
+                                          i.valor_unitario, i.valor_total, i.marca, i.prazo_entrega,
+                                          ap.id AS conta_id, ap.document AS conta_document, ap.status AS conta_status,
+                                          ap.dueDate AS conta_vencimento, ap.amount AS conta_valor
+                                     FROM cotacoes c
+                                     JOIN cotacao_itens i ON i.material_cotacao_id = c.id AND i.vencedor = 1
+                                     LEFT JOIN suppliers s ON s.id = i.fornecedor_id
+                                     LEFT JOIN cotacao_categorias cat ON cat.id = c.categoriaId
+                                     LEFT JOIN cotacao_tipos_item ti ON ti.id = c.tipoItemId
+                                     LEFT JOIN accounts_payable ap ON ap.id = c.conta_pagar_id
+                                    WHERE c.categoriaId IS NOT NULL AND c.status = 'Concluída' AND c.projectId = ?
+                                    ORDER BY s.name, c.description, c.id");
+            $stmt->execute([$projectId]);
+            $rows = $stmt->fetchAll();
+            cotacao_material_heal_contas($pdo, $rows);
+            foreach ($rows as &$row) {
+                $row['valor_item'] = ($row['valor_total'] ?? null) !== null
+                    ? (float) $row['valor_total']
+                    : (float) ($row['valor_unitario'] ?? 0);
+            }
+            unset($row);
+            cotacao_respond(true, ['itens' => $rows]);
+        }
+
+        // Gera UMA conta a pagar por EMPRESA vencedora (soma dos materiais dela
+        // ainda sem conta). Idempotente: cotação já vinculada nunca entra de
+        // novo; grupo todo vinculado → 409 e nada é criado. Transacional, com
+        // guarda anti-corrida no UPDATE (WHERE conta_pagar_id IS NULL).
+        if ($action === 'materialgerarconta') {
+            require_method($method, ['POST']);
+            $payload = read_json();
+            $projectId = (int) ($payload['projectId'] ?? 0);
+            $fornecedorId = (int) ($payload['fornecedorId'] ?? 0);
+            $categoryId = (int) ($payload['categoryId'] ?? 0);
+            $dueDate = trim((string) ($payload['dueDate'] ?? ''));
+            if ($projectId <= 0 || $fornecedorId <= 0) {
+                cotacao_respond(false, [], 'Informe a obra e a empresa vencedora.', 400);
+            }
+            if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $dueDate)) {
+                cotacao_respond(false, [], 'Informe o vencimento da conta (AAAA-MM-DD).', 400);
+            }
+            $chk = $pdo->prepare('SELECT id, name FROM suppliers WHERE id = ? LIMIT 1');
+            $chk->execute([$fornecedorId]);
+            $fornecedor = $chk->fetch();
+            if (!$fornecedor) {
+                cotacao_respond(false, [], 'Fornecedor não encontrado no cadastro.', 404);
+            }
+            $chk = $pdo->prepare('SELECT id FROM financial_categories WHERE id = ? LIMIT 1');
+            $chk->execute([$categoryId]);
+            if ($categoryId <= 0 || !$chk->fetch()) {
+                cotacao_respond(false, [], 'Escolha a categoria financeira da conta.', 400);
+            }
+            $stmt = $pdo->prepare("SELECT c.id, c.description, c.conta_pagar_id,
+                                          COALESCE(i.valor_total, i.valor_unitario) AS valor_item,
+                                          ap.id AS conta_id, ap.document AS conta_document
+                                     FROM cotacoes c
+                                     JOIN cotacao_itens i ON i.material_cotacao_id = c.id AND i.vencedor = 1 AND i.fornecedor_id = ?
+                                     LEFT JOIN accounts_payable ap ON ap.id = c.conta_pagar_id
+                                    WHERE c.categoriaId IS NOT NULL AND c.status = 'Concluída' AND c.projectId = ?
+                                    ORDER BY c.id");
+            $stmt->execute([$fornecedorId, $projectId]);
+            $grupo = $stmt->fetchAll();
+            cotacao_material_heal_contas($pdo, $grupo);
+            if (!$grupo) {
+                cotacao_respond(false, [], 'Nenhuma cotação concluída desta empresa nesta obra.', 404);
+            }
+            $pendentes = array_values(array_filter($grupo, static fn ($c) => empty($c['conta_pagar_id'])));
+            if (!$pendentes) {
+                $docs = array_values(array_unique(array_filter(array_map(static fn ($c) => (string) ($c['conta_document'] ?? ''), $grupo))));
+                cotacao_respond(
+                    false,
+                    ['contas' => $docs],
+                    'Já existe conta a pagar vinculada a este grupo (' . implode(', ', $docs ?: ['conta gerada']) . ') — nada foi criado de novo.',
+                    409
+                );
+            }
+            $total = 0.0;
+            foreach ($pendentes as $c) {
+                $total += (float) ($c['valor_item'] ?? 0);
+            }
+            $total = round($total, 2);
+            if ($total <= 0) {
+                cotacao_respond(false, [], 'As cotações pendentes deste grupo não têm valor.', 422);
+            }
+            $ids = array_map(static fn ($c) => (int) $c['id'], $pendentes);
+            $document = 'COT-' . implode('/', $ids);
+            if (mb_strlen($document) > 80) {
+                $document = 'COT-' . count($ids) . ' materiais';
+            }
+            $pdo->beginTransaction();
+            try {
+                $payableId = insert_dynamic($pdo, 'accounts_payable', [
+                    'document' => $document,
+                    'issueDate' => date('Y-m-d'),
+                    'dueDate' => $dueDate,
+                    'supplierId' => $fornecedorId,
+                    'projectId' => $projectId,
+                    'categoryId' => $categoryId,
+                    'amount' => $total,
+                    'status' => 'Aberto',
+                    'referencia_tipo' => 'COTACAO_MATERIAL',
+                    'referencia_id' => $ids[0],
+                ]);
+                $upd = $pdo->prepare('UPDATE cotacoes SET conta_pagar_id = ? WHERE id = ? AND conta_pagar_id IS NULL');
+                $vinculadas = 0;
+                foreach ($ids as $cid) {
+                    $upd->execute([$payableId, $cid]);
+                    $vinculadas += $upd->rowCount();
+                }
+                if ($vinculadas !== count($ids)) {
+                    // Outra requisição vinculou parte do grupo no meio do caminho.
+                    $pdo->rollBack();
+                    cotacao_respond(false, [], 'Outra conta acabou de ser gerada para este grupo — recarregue o consolidado.', 409);
+                }
+                $pdo->commit();
+            } catch (Throwable $e) {
+                if ($pdo->inTransaction()) {
+                    $pdo->rollBack();
+                }
+                throw $e;
+            }
+            server_audit($pdo, $authUser, 'create', 'payable', (string) $payableId, 'conta gerada do consolidado de cotações por material — ' . (string) $fornecedor['name'] . ' · ' . count($ids) . ' material(is) · R$ ' . number_format($total, 2, ',', '.'));
+            cotacao_respond(true, [
+                'payableId' => $payableId,
+                'document' => $document,
+                'amount' => $total,
+                'cotacoes' => $ids,
+                'jaVinculadas' => count($grupo) - count($pendentes),
+            ], 'Conta a pagar gerada para ' . (string) $fornecedor['name'] . ': ' . $document . ' · R$ ' . number_format($total, 2, ',', '.') . ' (' . count($ids) . ' material(is)).', 201);
         }
 
         // ── A1: categorias → tipos de item (estrutura manual das cotações) ──

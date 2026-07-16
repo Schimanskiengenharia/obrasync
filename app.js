@@ -19,9 +19,10 @@ if (APP_ENV === "production" && location.protocol === "http:") {
   location.replace(location.href.replace(/^http:/, "https:"));
 }
 const APP_NAME = "ObraSync";
-const APP_VERSION = "v1.33.0";
+const APP_VERSION = "v1.34.0";
 const APP_VERSION_DATE = "2026-07-16";
 const APP_CHANGELOG = [
+  "Cotações por MATERIAL (Parte 2) — Resultado das cotações + integração financeira: aba nova \"Resultado das cotações\" no módulo Cotações de Fornecedores mostra, por obra, o mapa de compras — os materiais CONCLUÍDOS agrupados pela EMPRESA vencedora, com subtotal por empresa e total geral. Em cada grupo, o botão \"Gerar conta a pagar\" cria UMA conta no Financeiro somando os materiais daquela empresa (o dono escolhe a categoria financeira e o vencimento no modal; a conta nasce Aberta, vinculada à obra e ao fornecedor, referenciando as cotações) — clicar de novo não duplica: cotação já vinculada nunca entra em outra conta e, se o grupo inteiro já tem conta, o sistema avisa e não recria (materiais novos concluídos depois geram uma conta só com eles). Quando a NF chegar, \"Anexar/Vincular NF\" registra uma nota nova (com upload de PDF/XML) ou vincula uma NF já cadastrada à conta — a NF aparece em Notas Fiscais e na coluna \"Nota fiscal\" de Contas a Pagar (v1.34.0).",
   "Cotações por MATERIAL (Parte 1): o módulo Cotações de Fornecedores ganhou a aba \"Cotações por material\" (agora a tela inicial) — cada cotação é um material de uma obra e disciplina (com tipo de item opcional, unidade e quantidade desejada) e dentro dela entram as PROPOSTAS dos fornecedores do cadastro (valor unitário, marca, prazo, observação). A tela da cotação compara as propostas lado a lado com o MENOR valor destacado e a diferença em R$ e % de cada uma vs a mais barata. Regra das N cotações: só dá para CONCLUIR (escolher a proposta vencedora) com pelo menos 3 propostas de fornecedores DIFERENTES — com menos, o botão fica desabilitado com o aviso \"faltam X\"; o mínimo é configurável em Configurações → Preferências do sistema (minCotacoesPorMaterial). Concluir marca a vencedora e a cotação vira Concluída; reabrir volta para Em cotação e limpa o vencedor. Criar e excluir são livres (excluir apaga só as propostas da própria cotação). A importação de arquivos (PDF/Excel/CSV) continua na segunda aba, como era. Gerar conta a pagar a partir da vencedora é a Parte 2 (v1.33.0).",
   "Contas vencidas separadas por lado + status Vencido automático: o card \"Contas vencidas\" do dashboard somava contas a PAGAR vencidas (dívida da empresa) com contas a RECEBER vencidas (clientes devendo) num número só — virou dois cards: \"Contas a pagar vencidas\" (vermelho, perda/risco) e \"Inadimplência (a receber vencidas)\" (âmbar, ação de cobrança), também na visão por obra; os alertas do topo agora falam de cada lado separadamente (quantidade + valor) e o relatório \"Inadimplência por cliente\" passou a calcular vencidas em tempo real. No servidor, o cron diário ganhou o job mark_overdue_accounts: contas 'Aberto' com vencimento passado viram status 'Vencido' no banco (não toca Parcial/Pago/Recebido/Cancelado; usa a data no fuso local para a conta que vence hoje não virar vencida antes da hora) — pagar uma conta 'Vencido' segue funcionando normalmente (v1.32.1).",
   "Cotações de Fornecedores — Categorias e Tipos de Item (Parte A1): novo botão \"Categorias de Cotação\" no módulo abre o cadastro manual da estrutura categoria → tipo de item (ex.: Elétrica → Cabo, Disjuntor, Eletroduto; Civil → Tijolo, Cimento). CRUD completo dentro da tela: criar/editar/inativar/reativar categorias e, dentro de cada uma, os tipos de item (com unidade padrão opcional), além de reordenação por ↑/↓ persistida no banco. Usa a mesma permissão do módulo de cotações. Tabelas novas cotacao_categorias e cotacao_tipos_item (migration + auto-cura); os atributos customizados por tipo (no molde dos campos personalizados de obra) chegam na próxima fase — A2 (v1.32.0).",
@@ -13149,6 +13150,9 @@ let cotacaoMatOpenId = null;
 let cotacaoMatDetail = null;
 let cotacaoMatMin = 3; // vigente vem do backend a cada carga
 let cotacaoMatFiltro = { projectId: "", categoriaId: "", status: "" };
+// P2: obra selecionada no "Resultado das cotações" (consolidado dos vencedores
+// por empresa, com geração de conta a pagar e vínculo de NF).
+let cotacaoResObra = "";
 const COTMAT_STATUS = { "Em cotação": ["Em cotação", "amarelo"], "Concluída": ["Concluída", "verde"], "Cancelada": ["Cancelada", "cinza"] };
 const COTACAO_STATUS = { importada: ["Importada", "cinza"], comparada: ["Comparada", "amarelo"], aprovada: ["Aprovada", "verde"], reprovada: ["Reprovada", "vermelho"] };
 const COTACAO_COMPARA = { nao_comparado: ["Sem correspondência", "cinza"], abaixo: ["Abaixo do orçado", "verde"], igual: ["Equivalente", "amarelo"], acima: ["Acima 5-20%", "laranja"], muito_acima: ["Muito acima >20%", "vermelho"] };
@@ -13165,6 +13169,7 @@ function renderCotacoes() {
   if (cotacaoOpenId) return renderCotacaoDetalhe();
   if (cotacaoMatOpenId) return renderCotacaoMaterialDetalhe();
   if (cotacaoView === "arquivos") return renderCotacaoLista();
+  if (cotacaoView === "resultado") return renderCotacaoResultado();
   return renderCotacaoMaterialLista();
 }
 
@@ -13172,7 +13177,7 @@ function renderCotacoes() {
 
 function cotacaoTabsHtml() {
   const tab = (id, label) => `<button type="button" class="cot-tab ${cotacaoView === id ? "active" : ""}" data-cot-tab="${id}">${label}</button>`;
-  return `<div class="cot-tabs">${tab("materiais", "Cotações por material")}${tab("arquivos", "Importação de arquivos")}</div>`;
+  return `<div class="cot-tabs">${tab("materiais", "Cotações por material")}${tab("resultado", "Resultado das cotações")}${tab("arquivos", "Importação de arquivos")}</div>`;
 }
 
 function wireCotacaoTabs() {
@@ -13550,6 +13555,268 @@ function openCotacaoMaterialConcluir(m) {
     } catch (error) {
       btn.disabled = false;
       alert(`Não foi possível concluir: ${error.message}`);
+    }
+  });
+}
+
+// ── P2: Resultado das cotações — vencedores por EMPRESA + conta a pagar + NF ──
+
+// Mapa de compras da obra: cotações CONCLUÍDAS agrupadas pela empresa vencedora
+// (subtotal por empresa + total geral). De cada grupo sai UMA conta a pagar
+// (soma dos materiais ainda sem conta) e, depois, o vínculo da NF.
+async function renderCotacaoResultado() {
+  const content = qs("content");
+  const editable = canEditModule("cotacoes");
+  const podeNf = canEditModule("fiscalDocuments");
+  if (!cotacaoResObra && (db.projects || []).length === 1) cotacaoResObra = String(db.projects[0].id);
+  const obraOpts = ['<option value="">— Escolha a obra —</option>']
+    .concat((db.projects || []).map((p) => `<option value="${escapeHtml(p.id)}" ${sameId(p.id, cotacaoResObra) ? "selected" : ""}>${escapeHtml(p.name)}</option>`)).join("");
+  const headHtml = `
+    <section class="module-head">
+      <div><h2>Resultado das Cotações</h2><p>Mapa de compras da obra: os materiais CONCLUÍDOS agrupados pela EMPRESA vencedora, com subtotal por empresa e total geral. Daqui você gera a conta a pagar de cada empresa (uma conta agrupando os materiais dela) e anexa/vincula a nota fiscal quando ela chegar.</p></div>
+    </section>
+    ${cotacaoTabsHtml()}
+    <div class="filters" aria-label="Obra do consolidado">
+      <label>Obra<select id="cotResObra">${obraOpts}</select></label>
+    </div>`;
+  const wireHead = () => {
+    wireCotacaoTabs();
+    qs("cotResObra")?.addEventListener("change", () => { cotacaoResObra = qs("cotResObra").value; renderCotacaoResultado(); });
+  };
+  if (!serverMode) {
+    content.innerHTML = headHtml + '<div class="empty">O módulo de cotações requer conexão com o servidor.</div>';
+    wireHead();
+    return;
+  }
+  if (!cotacaoResObra) {
+    content.innerHTML = headHtml + '<div class="empty">Escolha a obra para ver o consolidado dos vencedores.</div>';
+    wireHead();
+    return;
+  }
+  content.innerHTML = headHtml + '<div class="empty">Carregando consolidado…</div>';
+  wireHead();
+  let itens;
+  try {
+    const data = await cotacaoApi("materialConsolidado", {}, `&projectId=${encodeURIComponent(cotacaoResObra)}`);
+    itens = (data && data.itens) || [];
+  } catch (error) {
+    content.innerHTML = headHtml + `<div class="empty">Não foi possível carregar: ${svgText(error.message)}</div>`;
+    wireHead();
+    return;
+  }
+  if (currentModule !== "cotacoes" || cotacaoView !== "resultado" || cotacaoMatOpenId || cotacaoCatOpen) return;
+  // Agrupa pela empresa da proposta vencedora.
+  const grupos = new Map();
+  itens.forEach((r) => {
+    const key = String(r.fornecedor_id || "0");
+    if (!grupos.has(key)) grupos.set(key, { fornecedorId: r.fornecedor_id, nome: r.fornecedor_nome || "Fornecedor removido", rows: [] });
+    grupos.get(key).rows.push(r);
+  });
+  let totalGeral = 0;
+  const blocos = Array.from(grupos.values()).map((g) => {
+    const subtotal = g.rows.reduce((s, r) => s + Number(r.valor_item || 0), 0);
+    totalGeral += subtotal;
+    const pendentes = g.rows.filter((r) => !r.conta_pagar_id);
+    const valorPendente = pendentes.reduce((s, r) => s + Number(r.valor_item || 0), 0);
+    // Contas já geradas (normalmente uma; mais de uma quando materiais novos foram concluídos depois).
+    const contas = new Map();
+    g.rows.forEach((r) => {
+      if (r.conta_pagar_id && r.conta_id) contas.set(String(r.conta_pagar_id), { id: r.conta_pagar_id, document: r.conta_document, status: r.conta_status, vencimento: r.conta_vencimento, valor: r.conta_valor });
+    });
+    const linhas = g.rows.map((r) => `
+      <tr>
+        <td>${svgText(r.description || "")}<div class="muted ia-dp-un">${svgText(r.categoria_nome || "")}${r.tipo_nome ? " › " + svgText(r.tipo_nome) : ""}</div></td>
+        <td>${Number(r.quantity || 0).toLocaleString("pt-BR")}${r.unit ? " " + svgText(r.unit) : ""}</td>
+        <td>${asMoney(r.valor_unitario || 0)}${r.marca ? `<div class="muted ia-dp-un">${svgText(r.marca)}</div>` : ""}</td>
+        <td class="ia-dp-valor">${asMoney(r.valor_item || 0)}</td>
+        <td>${r.conta_pagar_id
+          ? `<span class="status success">✓ ${svgText(r.conta_document || "Conta gerada")}</span>`
+          : '<span class="muted">sem conta</span>'}</td>
+      </tr>`).join("");
+    const contasHtml = Array.from(contas.values()).map((ct) => {
+      const nfs = (db.fiscalDocuments || []).filter((nf) => sameId(nf.payableId, ct.id) && nf.status !== "Cancelada");
+      const nfsTxt = nfs.map((nf) => `NF ${svgText(nf.documentNumber || "")}`).join(", ");
+      return `<div class="cot-res-conta">
+        <span><strong>${svgText(ct.document || "Conta a pagar")}</strong> · ${svgText(ct.status || "")} · vence ${asDate(ct.vencimento)} · ${asMoney(ct.valor || 0)}</span>
+        <span>${nfs.length ? `<span class="status success">${nfsTxt}</span>` : '<span class="muted">NF pendente</span>'}
+        ${podeNf ? `<button type="button" class="secondary ia-dp-mini" data-res-nf="${escapeHtml(ct.id)}">${nfs.length ? "+ Outra NF" : "Anexar/Vincular NF"}</button>` : ""}</span>
+      </div>`;
+    }).join("");
+    return `
+    <section class="table-wrap cot-res-grupo">
+      <header class="cot-res-head">
+        <div><strong>${svgText(g.nome)}</strong> <span class="muted">— ganhou ${g.rows.length} material(is)</span></div>
+        <div class="cot-res-sub">Subtotal: <strong>${asMoney(subtotal)}</strong></div>
+      </header>
+      <table>
+        <thead><tr><th>Material</th><th>Qtde</th><th>Valor unit.</th><th>Total</th><th>Conta a pagar</th></tr></thead>
+        <tbody>${linhas}</tbody>
+      </table>
+      <footer class="cot-res-foot">
+        ${contasHtml}
+        ${editable && pendentes.length && g.fornecedorId
+          ? `<button type="button" class="primary" data-res-gerar="${escapeHtml(String(g.fornecedorId))}">Gerar conta a pagar (${asMoney(valorPendente)}${pendentes.length < g.rows.length ? ` · ${pendentes.length} sem conta` : ""})</button>`
+          : ""}
+      </footer>
+    </section>`;
+  }).join("");
+  content.innerHTML = headHtml + (itens.length
+    ? blocos + `<section class="cot-res-total">Total geral das cotações concluídas: <strong>${asMoney(totalGeral)}</strong></section>`
+    : '<div class="empty">Nenhuma cotação CONCLUÍDA nesta obra ainda. Conclua as cotações por material (escolhendo a proposta vencedora) para montar o mapa de compras.</div>');
+  wireHead();
+  content.querySelectorAll("[data-res-gerar]").forEach((b) => b.addEventListener("click", () => {
+    const g = Array.from(grupos.values()).find((x) => sameId(x.fornecedorId, b.dataset.resGerar));
+    if (g) openCotacaoGerarConta(g);
+  }));
+  content.querySelectorAll("[data-res-nf]").forEach((b) => b.addEventListener("click", () => {
+    for (const g of grupos.values()) {
+      const r = g.rows.find((x) => sameId(x.conta_pagar_id, b.dataset.resNf));
+      if (r) return openCotacaoAnexarNf({ id: r.conta_pagar_id, document: r.conta_document, valor: r.conta_valor, fornecedorId: r.fornecedor_id, fornecedorNome: g.nome });
+    }
+  }));
+}
+
+// UMA conta a pagar por empresa vencedora: soma dos materiais dela ainda sem
+// conta, com categoria financeira e vencimento escolhidos pelo dono. O backend
+// não duplica (cotação já vinculada nunca entra; grupo todo vinculado → aviso).
+function openCotacaoGerarConta(g) {
+  if (!canEditModule("cotacoes")) return;
+  const pendentes = g.rows.filter((r) => !r.conta_pagar_id);
+  if (!pendentes.length) return;
+  const total = pendentes.reduce((s, r) => s + Number(r.valor_item || 0), 0);
+  const cats = (db.categories || []).filter((c) => (c.status || "Ativo") !== "Inativo");
+  if (!cats.length) return alert("Cadastre uma categoria financeira antes (Financeiro → Categorias).");
+  const catOpts = ['<option value="">— Escolha a categoria —</option>']
+    .concat(cats.map((c) => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}${c.type ? ` (${escapeHtml(c.type)})` : ""}</option>`)).join("");
+  const linhas = pendentes.map((r) => `<li>${escapeHtml(r.description || "")} — <strong>${asMoney(r.valor_item || 0)}</strong></li>`).join("");
+  const { close, q } = viabilidadeDialog(`
+    <div class="viab-modal">
+      <header class="viab-modal-head"><h3>Gerar conta a pagar — ${escapeHtml(g.nome)}</h3><button type="button" class="viab-x" data-close>✕</button></header>
+      <div class="viab-modal-body">
+        <p class="muted">Uma conta única para a empresa, somando os materiais vencidos ainda sem conta:</p>
+        <ul class="cot-res-lista">${linhas}</ul>
+        <p>Valor da conta: <strong>${asMoney(total)}</strong> · Obra: ${escapeHtml(nameOf("projects", cotacaoResObra) || "—")}</p>
+        <div class="form-grid">
+          <label>Categoria financeira *<select id="gcCat">${catOpts}</select></label>
+          <label>Vencimento *<input type="date" id="gcVenc"></label>
+        </div>
+        <p class="muted">A conta entra no Financeiro (Contas a Pagar) com status Aberto, vinculada à obra e ao fornecedor, referenciando as cotações. A NF pode ser anexada depois, quando chegar.</p>
+      </div>
+      <footer class="viab-modal-foot"><button type="button" class="secondary" data-close>Cancelar</button><button type="button" class="primary" data-save>Gerar conta a pagar</button></footer>
+    </div>`, "viab-dialog-md");
+  q("[data-save]").addEventListener("click", async () => {
+    const categoryId = q("#gcCat").value;
+    const dueDate = q("#gcVenc").value;
+    if (!categoryId) return alert("Escolha a categoria financeira.");
+    if (!dueDate) return alert("Informe o vencimento da conta.");
+    const btn = q("[data-save]");
+    btn.disabled = true;
+    try {
+      const data = await cotacaoApi("materialGerarConta", { method: "POST", body: JSON.stringify({
+        projectId: cotacaoResObra,
+        fornecedorId: g.fornecedorId,
+        categoryId,
+        dueDate,
+      }) });
+      close();
+      showToast(`Conta a pagar gerada: ${data.document || ""} · ${asMoney(data.amount || 0)}.`);
+      await refreshAndRender(); // atualiza db.payable (aparece no Financeiro) e re-renderiza o consolidado
+    } catch (error) {
+      btn.disabled = false;
+      alert(`Não foi possível gerar: ${error.message}`);
+    }
+  });
+}
+
+// Anexar uma NF nova (com upload de PDF/XML) ou vincular uma NF já cadastrada
+// à conta a pagar gerada. Reusa o recurso REST notas-fiscais existente
+// (save_fiscal_document) — upload e vínculo payableId já existem lá; a conta
+// passa a mostrar a NF na coluna "Nota fiscal" de Contas a Pagar.
+function openCotacaoAnexarNf(conta) {
+  if (!canEditModule("fiscalDocuments")) return;
+  const soltas = (db.fiscalDocuments || []).filter((nf) => !nf.payableId && !nf.receivableId && nf.status !== "Cancelada");
+  const soltaOpts = ['<option value="">— Registrar uma NF nova —</option>']
+    .concat(soltas.map((nf) => `<option value="${escapeHtml(nf.id)}">NF ${escapeHtml(nf.documentNumber || "")} · ${asMoney(nf.amount || 0)}${nf.projectId ? ` · ${escapeHtml(nameOf("projects", nf.projectId) || "")}` : ""}</option>`)).join("");
+  const tipos = ["Nota Fiscal de Produto", "Nota Fiscal de Serviço", "Recibo", "Comprovante", "Outro"];
+  const { close, q } = viabilidadeDialog(`
+    <div class="viab-modal">
+      <header class="viab-modal-head"><h3>Anexar/Vincular NF — ${escapeHtml(conta.document || "conta a pagar")}</h3><button type="button" class="viab-x" data-close>✕</button></header>
+      <div class="viab-modal-body">
+        <p class="muted">Fornecedor: ${escapeHtml(conta.fornecedorNome || "—")} · Conta: ${asMoney(conta.valor || 0)}. A NF entra em Notas Fiscais vinculada à obra e a esta conta a pagar.</p>
+        <div class="form-grid">
+          <label>NF já cadastrada (sem vínculo)<select id="anfExistente">${soltaOpts}</select></label>
+        </div>
+        <div id="anfNova">
+          <div class="form-grid">
+            <label>Número da nota fiscal *<input id="anfNumero" maxlength="100" placeholder="000.000.000"></label>
+            <label>Data de emissão<input type="date" id="anfData" value="${hojeLocal()}"></label>
+            <label>Valor da nota (R$)<input id="anfValor" inputmode="decimal" value="${formatMoneyInput(Number(conta.valor || 0))}"></label>
+            <label>Tipo<select id="anfTipo">${tipos.map((t) => `<option value="${t}">${t}</option>`).join("")}</select></label>
+            <label>PDF da nota (opcional)<input type="file" id="anfPdf" accept=".pdf"></label>
+            <label>XML da nota (opcional)<input type="file" id="anfXml" accept=".xml"></label>
+          </div>
+        </div>
+      </div>
+      <footer class="viab-modal-foot"><button type="button" class="secondary" data-close>Cancelar</button><button type="button" class="primary" data-save>Vincular NF</button></footer>
+    </div>`, "viab-dialog-md");
+  q("#anfExistente").addEventListener("change", () => {
+    q("#anfNova").style.display = q("#anfExistente").value ? "none" : "";
+  });
+  q("[data-save]").addEventListener("click", async () => {
+    const btn = q("[data-save]");
+    const existenteId = q("#anfExistente").value;
+    btn.disabled = true;
+    try {
+      if (existenteId) {
+        // Vincula a NF existente: PUT com os campos atuais + payableId (o form
+        // REST de notas-fiscais espera multipart com todos os campos).
+        const nf = byId("fiscalDocuments", existenteId) || {};
+        const form = new FormData();
+        form.set("_method", "PUT");
+        form.set("projectId", nf.projectId || cotacaoResObra || "");
+        form.set("supplierId", nf.supplierId || conta.fornecedorId || "");
+        form.set("documentNumber", nf.documentNumber || "");
+        form.set("issueDate", nf.issueDate || hojeLocal());
+        form.set("amount", nf.amount == null ? "0" : nf.amount); // amount é NOT NULL — "" viraria NULL no update
+        form.set("type", nf.type || "Nota Fiscal de Produto");
+        form.set("status", nf.status === "Pendente" ? "Anexada" : (nf.status || "Anexada"));
+        form.set("payableId", conta.id);
+        form.set("receivableId", nf.receivableId || "");
+        form.set("saleId", nf.saleId || "");
+        form.set("costCenterId", nf.costCenterId || "");
+        form.set("categoryId", nf.categoryId || "");
+        form.set("notes", nf.notes || "");
+        const result = await fetchForm(`${apiResources.fiscalDocuments}/${existenteId}`, form);
+        db.fiscalDocuments = (db.fiscalDocuments || []).map((row) => (sameId(row.id, existenteId) ? result.record : row));
+      } else {
+        const numero = q("#anfNumero").value.trim();
+        if (!numero) {
+          btn.disabled = false;
+          return alert("Informe o número da nota fiscal (ou escolha uma NF já cadastrada).");
+        }
+        const form = new FormData();
+        form.set("projectId", cotacaoResObra || "");
+        form.set("supplierId", conta.fornecedorId || "");
+        form.set("documentNumber", numero);
+        form.set("issueDate", q("#anfData").value || hojeLocal());
+        form.set("amount", parseMoneyInput(q("#anfValor").value || "0"));
+        form.set("type", q("#anfTipo").value);
+        form.set("status", "Anexada");
+        form.set("payableId", conta.id);
+        form.set("notes", `NF da conta ${conta.document || conta.id} gerada pelas cotações por material.`);
+        const pdf = q("#anfPdf").files?.[0];
+        const xml = q("#anfXml").files?.[0];
+        if (pdf) form.set("pdfFile", pdf);
+        if (xml) form.set("xmlFile", xml);
+        const result = await fetchForm(apiResources.fiscalDocuments, form);
+        (db.fiscalDocuments = db.fiscalDocuments || []).push(result.record);
+      }
+      close();
+      showToast("NF vinculada à conta a pagar.");
+      renderCotacaoResultado();
+    } catch (error) {
+      btn.disabled = false;
+      alert(`Não foi possível vincular a NF: ${error.message}`);
     }
   });
 }

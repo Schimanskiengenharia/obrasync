@@ -6332,6 +6332,16 @@ html[data-theme="dark"] .cot-mat-card.cot-mat-menor .cot-mat-valor { color: #aee
 .cot-mat-acoes { display: flex; gap: 6px; margin-top: auto; padding-top: 6px; flex-wrap: wrap; }
 .cot-mat-radios { display: grid; gap: 8px; }
 .cot-mat-radio { display: flex; align-items: baseline; gap: 8px; font-size: 13px; color: var(--ink); font-weight: 500; }
+
+/* P2: resultado das cotações — consolidado dos vencedores por empresa */
+.cot-res-grupo { margin-bottom: 18px; }
+.cot-res-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.cot-res-sub { font-size: 14px; }
+.cot-res-foot { display: flex; justify-content: flex-end; align-items: center; gap: 12px; padding: 10px 14px; border-top: 1px solid var(--line); flex-wrap: wrap; }
+.cot-res-conta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-right: auto; font-size: 13px; }
+.cot-res-total { text-align: right; font-size: 15px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); box-shadow: var(--shadow); }
+.cot-res-lista { margin: 6px 0 10px 18px; padding: 0; font-size: 13px; }
+.cot-res-lista li { margin-bottom: 3px; }
 .ia-dp-diverg-hint {
   margin-top: 3px;
   font-size: 0.78rem;

@@ -1436,6 +1436,7 @@ CREATE TABLE IF NOT EXISTS cotacoes (
   status VARCHAR(40) NOT NULL DEFAULT 'Em cotação',
   categoriaId BIGINT UNSIGNED NULL COMMENT 'Disciplina (cotacao_categorias.id) — preenchida = cotação por material',
   tipoItemId BIGINT UNSIGNED NULL COMMENT 'Tipo de item (cotacao_tipos_item.id), opcional',
+  conta_pagar_id BIGINT UNSIGNED NULL COMMENT 'P2: conta a pagar gerada do consolidado de vencedores (accounts_payable.id)',
   createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updatedAt TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
   CONSTRAINT fk_cotacao_supplier FOREIGN KEY (supplierId) REFERENCES suppliers(id) ON DELETE SET NULL,
