@@ -82,8 +82,8 @@ Checklist que o agente percorre quando o usuário pedir "verificar erros":
 |---|---|---|---|---|---|---|
 | E1 | Instalar captura global de erros JS (`window.onerror` + `unhandledrejection`) no bootstrap do SPA, com deduplicação/rate-limit do toast e proteção contra loop (handler nunca reporta a própria falha) | [3][4][5] — 0 handlers hoje | Alto | Baixo | — | **sim** |
 | E2 | Tratar TODOS os `.catch` vazios (além dos 5 originais, também `app.js:7664, 7748, 10613, 16403, 17609, 18833`), classificando cada um: log-only (best-effort) vs feedback ao usuário | [5] | Médio | Médio | — | **sim** |
-| E3 | Fase 1: substituir `alert()` de `saveForm` (`app.js:8709-8711`) por `showToast` com severidade (que hoje nem existe, `app.js:18640`). Fase 2 opcional: migrar os demais `alert()` de negócio (`app.js:3022-3488, 13459-14556`) | [1] | Médio | Baixo (F1) | — | ⬜ |
-| E4 | Código de correlação (UUID gerado no SERVIDOR) gravado no `error_log` junto do 500 e exibido na mensagem — sem depender de E5; nunca reutilizar UUID vindo do cliente | [10][11] | Médio | Baixo | — | ⬜ |
+| E3 | Fase 1: substituir `alert()` de `saveForm` (`app.js:8709-8711`) por `showToast` com severidade (que hoje nem existe, `app.js:18640`). Fase 2 opcional: migrar os demais `alert()` de negócio (`app.js:3022-3488, 13459-14556`) | [1] | Médio | Baixo (F1) | — | **sim** |
+| E4 | Código de correlação (UUID gerado no SERVIDOR) gravado no `error_log` junto do 500 e exibido na mensagem — sem depender de E5; nunca reutilizar UUID vindo do cliente | [10][11] | Médio | Baixo | — | **sim** |
 | E5 | (revisada) Log estruturado (JSON) em ARQUIVO/syslog dedicado com rotação e redação de segredos — não tabela no mesmo banco (falha de conexão impediria o próprio INSERT); tabela só para eventos operacionais | [6][7] | Médio | Médio | — | ⬜ |
 | E6 | Validação inline (on blur) priorizando as regras de negócio com mais erro real, preservando o backend — forms genéricos já emitem `required` (`app.js:7473-7537`) | [2][8][9] | Médio | Alto | — | ⬜ |
 | E7 | = API2 (mesma iniciativa: envelope único de resposta). Decisão única na Frente 8 | [7] | — | — | — | → API2 |
@@ -164,11 +164,11 @@ Comparado ao fluxo desejado (proposta de serviços → orçamento base → obra 
 
 | # | Melhoria | Inspiração | Impacto | Esforço | Depende de | Decisão |
 |---|---|---|---|---|---|---|
-| FC1 | Botão "Aprovar proposta" com prévia dos efeitos ATUAIS (obra + orçamento); a prévia completa (contas+contrato) vem junto com FC3 | Sienge [1]; Mega [6] | Alto | Baixo | — | ⬜ |
+| FC1 | Botão "Aprovar proposta" com prévia dos efeitos ATUAIS (obra + orçamento); a prévia completa (contas+contrato) vem junto com FC3 | Sienge [1]; Mega [6] | Alto | Baixo | — | **sim** |
 | FC2 | Preservar metadados na cópia proposta→orçamento — variante mais simples: reaproveitar `orcamento_item_id`/`sinapi_id` (já preservados em `proposta_itens`, `app.js:16668`) para buscar o item-fonte | TOTVS [4]; Mega [6] | Alto | Médio | — | ⬜ |
 | FC3 | Gerar contas a receber + contrato na aprovação, em transação única e idempotente (parcelamento de `paymentTerms`, snapshot); centro de custo como OPÇÃO, não criação cega | Sienge [1][2]; Mega [6] | Alto | Alto | FC1, FC2, NOVO-1 | ⬜ |
 | FC4 | (revisada) Painel de "próxima ação" contextual no funil (o que falta nesta proposta/obra, com links) em vez de wizard monolítico — o fluxo já é mais conectado do que parecia (proposta nasce do orçamento `app.js:16592`; cotação gera pedido `app.js:14154`) | Sienge [1] | Médio | Médio | FC1 | ⬜ |
-| FC5 | Unificar/renomear menus ambíguos (dois "orçamentos", dois "Cotações") — só rótulos/navegação, SEM renomear chaves/rotas persistidas | Sienge [1]; Mega [6] | Médio | Baixo | — | ⬜ |
+| FC5 | Unificar/renomear menus ambíguos (dois "orçamentos", dois "Cotações") — só rótulos/navegação, SEM renomear chaves/rotas persistidas | Sienge [1]; Mega [6] | Médio | Baixo | — | **sim** |
 | FC6 | (revisada) Evoluir `proposta_orcamento_vinculos` como fonte ÚNICA de grupos/disciplinas — o documento já tem seções por disciplina (`proposalDisciplinasHtml` `app.js:15748`); avaliar aposentar `proposta_grupos` dormente em vez de ativá-la (evita duas fontes de verdade) | Mega [6] | Médio | Médio | — | ⬜ |
 | FC7 | Mapa comparativo com HISTÓRICO temporal de preço/prazo por fornecedor e registro de negociação (modelo de rodada, validade, auditoria) — a comparação de menor preço já existe (`app.js:13294, 14180`) | Sienge Construcompras [3]; Obra Prima [8][9] | Alto | Alto | — | ⬜ |
 | FC8 | (revisada) Planejamento de NECESSIDADE de compra por data/lead time com notificação ao comprador (estilo Sienge) — o back-link orçamento→cotação→pedido já existe (`compraMatriz` `app.js:14154`) | Sienge [2]; TOTVS [5] | Médio | Alto | FC2 | ⬜ |
@@ -251,7 +251,7 @@ A spec `docs/specs/cronograma-fisico-financeiro.md` descreve expansão em 7 fase
 | G5 | Curva S física e financeira — exige distribuição temporal/calendário/pesos e regras de medição; curva contratual CONFIGURÁVEL (não assumir 30/60/90/120) | P6 [6], MSP [3] | Alto | Alto | G1, G6 · spec cronograma | ⬜ |
 | G6 | EAP hierárquica no Gantt (expandir/recolher pacotes) e % físico ponderado por peso (hoje é média aritmética) | MSP [2], P6 [6] | Médio | Alto | spec cronograma | ⬜ |
 | G7 | Edição direta no Gantt (arrastar barra, desenhar seta) — o Gantt atual é HTML calculado sem handlers; snapping/validação/rollback elevam o esforço | Smartsheet [7], Monday [9], MSP [2] | Médio | Alto | G2 | ⬜ |
-| G8 | (revisada) Integrar os marcos REAIS de `projectMilestones` à linha do tempo (losango + evento de cobrança) — hoje só existe um ponto na barra da etapa `isMilestone`; trocar apenas a forma seria cosmético | MSP [2], Smartsheet [7], Monday [9] | Médio | Baixo | projectMilestones (atual) | ⬜ |
+| G8 | (revisada) Integrar os marcos REAIS de `projectMilestones` à linha do tempo (losango + evento de cobrança) — hoje só existe um ponto na barra da etapa `isMilestone`; trocar apenas a forma seria cosmético | MSP [2], Smartsheet [7], Monday [9] | Médio | Baixo | projectMilestones (atual) | **sim** |
 
 ### Fontes
 
@@ -322,8 +322,8 @@ A spec `docs/specs/cronograma-fisico-financeiro.md` descreve expansão em 7 fase
 | # | Melhoria | Inspiração | Impacto | Esforço | Depende de | Decisão |
 |---|---|---|---|---|---|---|
 | AG1 | Fase 1: notas simples (ampliar o uso do `descricao` na UI). Histórico/comentários/anexos = fase 2 (exigem tabelas, endpoints, upload seguro e permissões — esforço Alto) | Outlook [4]; Todoist [6] | Médio | Baixo (F1) | — | ⬜ |
-| AG2 | Destaque vermelho de atraso também para eventos manuais (hoje só financeiros, `app.js:9319`), excluindo realizado/concluído/cancelado, com data local (M10) | Todoist [6][8]; Google [1] | Médio | Baixo | — | ⬜ |
-| AG3 | Botão rápido "Concluir" no card (1 clique → `status=concluido`) — o enum já aceita `concluido`/`realizado`, sem dependência de padronização | Google Tasks [2]; Todoist [6] | Médio | Baixo | — | ⬜ |
+| AG2 | Destaque vermelho de atraso também para eventos manuais (hoje só financeiros, `app.js:9319`), excluindo realizado/concluído/cancelado, com data local (M10) | Todoist [6][8]; Google [1] | Médio | Baixo | — | **sim** |
+| AG3 | Botão rápido "Concluir" no card (1 clique → `status=concluido`) — o enum já aceita `concluido`/`realizado`, sem dependência de padronização | Google Tasks [2]; Todoist [6] | Médio | Baixo | — | **sim** |
 | AG4 | Recorrência de eventos — modelar SÉRIE + exceções (não gerar cópias infinitas); nenhum suporte hoje no schema/handler | Google [3]/Outlook [4]/Todoist [7]/TickTick [10] | Alto | Alto | Coluna de recorrência + gerador | ⬜ |
 | AG5 | Lembretes reais usando `lembrete_minutos` (gravado mas dormente) — o disparo exige a plataforma de notificações compartilhada (mesma de KB9/FIN6: scheduler, fila, canais, templates, opt-out) | Outlook [5]/Todoist [6]/TickTick [11] | Alto | Alto | Plataforma de notificações | ⬜ |
 | AG6 | Arrastar evento para reagendar direto na grade (update já aceita `data_inicio/fim`, `api/index.php:1591`) | Google [2]/Todoist [6] | Médio | Médio | — | ⬜ |
@@ -402,12 +402,12 @@ A spec `docs/specs/cronograma-fisico-financeiro.md` descreve expansão em 7 fase
 | # | Melhoria | Inspiração | Impacto | Esforço | Depende de | Decisão |
 |---|---|---|---|---|---|---|
 | KB1 | UI de CRUD de quadros e colunas (criar/renomear/reordenar/excluir/cor/limite), com proteção ao excluir coluna que contém cards | Trello [5], ClickUp [15] | Alto | Médio | — | ⬜ |
-| KB2 | WIP: aviso visual no estouro (padrão do mercado — Jira/ClickUp não bloqueiam) + validação no BACKEND contra corrida; sem dependência de KB1 | Jira [7], ClickUp [14] | Médio | Baixo | — | ⬜ |
+| KB2 | WIP: aviso visual no estouro (padrão do mercado — Jira/ClickUp não bloqueiam) + validação no BACKEND contra corrida; sem dependência de KB1 | Jira [7], ClickUp [14] | Médio | Baixo | — | **sim** |
 | KB3 | Etiquetas/tags reutilizáveis com filtro — exige catálogo + N:N + UI (a prioridade colorida já existe como paliativo) | Trello [1], Monday [9] | Médio | Alto | — | ⬜ |
 | KB4 | Checklist SIMPLES no card (itens marcáveis); prazo/responsável por item vira subtarefa — fase posterior | Trello [2], ClickUp [13] | Médio | Médio | — | ⬜ |
 | KB5 | Começar por COMENTÁRIOS no card; menção/notificação e anexos são superfícies separadas (upload fora do docroot, autorização) — fases seguintes | Trello [4][6] | Médio | Alto | — | ⬜ |
-| KB6 | Flag booleano "concluída" em `kanban_colunas` (migration + `ensure_*`), corrigindo `kanban_card_is_done` que decide por NOME (back `api/index.php:14136` + front `app.js:9731`); sem dependência de KB1 | Jira [8], Monday [10] | Alto | Baixo | — | ⬜ |
-| KB7 | Reordenação fina dentro da coluna (posição relativa) com normalização das posições no backend (evita empates de `Date.now()`) | Trello [5] | Médio | Baixo | — | ⬜ |
+| KB6 | Flag booleano "concluída" em `kanban_colunas` (migration + `ensure_*`), corrigindo `kanban_card_is_done` que decide por NOME (back `api/index.php:14136` + front `app.js:9731`); sem dependência de KB1 | Jira [8], Monday [10] | Alto | Baixo | — | **sim** |
+| KB7 | Reordenação fina dentro da coluna (posição relativa) com normalização das posições no backend (evita empates de `Date.now()`) | Trello [5] | Médio | Baixo | — | **sim** |
 | KB8 | Sincronizar item de origem ao concluir card com `referencia_tipo` — exige handlers idempotentes por tipo, autorização e regra de reversão | Monday [12], Trello [3] | Alto | Alto | KB6 + mapa de tipos | ⬜ |
 | KB9 | Alerta de atraso com notificação real — depende da plataforma de notificações compartilhada (AG5/FIN6); 80/20: o widget de urgentes do dashboard já existe (`app.js:4856`) | Trello [1], ClickUp [15] | Médio | Alto | Plataforma de notificações | ⬜ |
 
@@ -503,13 +503,13 @@ A spec `docs/specs/cronograma-fisico-financeiro.md` descreve expansão em 7 fase
 |---|---|---|---|---|---|---|
 | FIN1 | Baixa parcial com LANÇAMENTOS de liquidação (valor, estorno, saldo derivado) — não uma simples coluna acumulada; integra caixa/OFX/DRE/cron e corrige `mark_overdue_accounts` p/ "Parcial" vencido | Conta Azul [3], Omie [8], QuickBooks [17] | Alto | Alto | — | ⬜ |
 | FIN2 | Baixa em lote transacional por título (falha parcial tratada), herdando conta/data/valor da liquidação — Médio se restrita a baixa integral homogênea | Conta Azul [4], Omie [9] | Médio | Alto | FIN1 | ⬜ |
-| FIN3 | Seletor de período no fluxo de caixa — hoje `collectMonths` é fixo em ±6 meses | Granatum [15], QuickBooks [16] | Médio | Baixo | — | ⬜ |
+| FIN3 | Seletor de período no fluxo de caixa — hoje `collectMonths` é fixo em ±6 meses | Granatum [15], QuickBooks [16] | Médio | Baixo | — | **sim** |
 | FIN4 | (revisada) CENÁRIOS/simulação hipotética sem alterar títulos — previsto × realizado JÁ existe no fluxo de caixa (séries separadas, `renderCashFlow` `app.js:16852`) | Granatum [13][14], QuickBooks [16] | Médio | Alto | FIN3 | ⬜ |
 | FIN5 | (revisada) Endpoints on-demand de DRE/vencidos a partir das FONTES atuais — não acoplar ao snapshot `consolidate_monthly_dre` (soma `journal_entries` num total único; perderia a semântica competência/caixa/pendências do DRE atual) | Granatum [15], Omie [6] | Médio | Médio | — | ⬜ |
 | FIN6 | Régua de cobrança automática (D-x, vencimento, D+x) — depende de consentimento, templates, canal, tentativas e opt-out (multa/juros é opcional); usa a plataforma de notificações compartilhada | Nibo [11], Omie [6] | Alto | Alto | Plataforma de notificações | ⬜ |
-| FIN7 | Aging por faixas (a vencer, 1-30, 31-60, 61-90, 90+) para receber e pagar — preferencialmente calculado no backend | QuickBooks [17], Nibo [12], Conta Azul [5] | Médio | Baixo | — | ⬜ |
+| FIN7 | Aging por faixas (a vencer, 1-30, 31-60, 61-90, 90+) para receber e pagar — preferencialmente calculado no backend | QuickBooks [17], Nibo [12], Conta Azul [5] | Médio | Baixo | — | **sim** |
 | FIN8 | (revisada) Ajustes FINOS na conciliação existente: janela/pesos configuráveis + critério textual no match — dedupe por FitID, ±5 dias e score de confiança JÁ implementados (`ofx_find_matches` `api/index.php:7311`) | Conta Azul [1][2] | Médio | Médio | — | ⬜ |
-| FIN9 | Baixa via caixa vinculado simétrica para contas a receber (criar Entrada + marcar Recebido), com transação e anti-dupla vinculação — hoje só existe para pagar | Omie [8], Conta Azul [3] | Médio | Baixo | — | ⬜ |
+| FIN9 | Baixa via caixa vinculado simétrica para contas a receber (criar Entrada + marcar Recebido), com transação e anti-dupla vinculação — hoje só existe para pagar | Omie [8], Conta Azul [3] | Médio | Baixo | — | **sim** |
 
 ### Fontes
 
@@ -594,14 +594,14 @@ Três caminhos para reduzir os passos manuais e os riscos do fluxo atual, preser
 
 | # | Melhoria | Inspiração | Impacto | Esforço | Depende de | Decisão |
 |---|---|---|---|---|---|---|
-| DEP1 | Hook `pre-push` versionado (via `core.hooksPath`/script instalador) rodando `php -l` + `node --check` e abortando o push — contornável com `--no-verify`, por isso impacto Médio (defesa de 1ª linha, não garantia) | [5][6] | Médio | Baixo | — | ⬜ |
+| DEP1 | Hook `pre-push` versionado (via `core.hooksPath`/script instalador) rodando `php -l` + `node --check` e abortando o push — contornável com `--no-verify`, por isso impacto Médio (defesa de 1ª linha, não garantia) | [5][6] | Médio | Baixo | — | **sim** |
 | DEP2 | (revisada) Cache busting derivado do COMMIT: hash aplicado no deploy (ou comando de release PRÉ-commit) — versão no `pre-push` é tecnicamente incorreta (alteraria arquivos fora do commit); `?v=` e `APP_VERSION` deixam de ser contadores manuais desacoplados | [4][5] | Médio | Médio | — | ⬜ |
 | DEP3 | PRIMEIRO consertar o backup (propagar falha: `pipefail`, validar arquivos não-vazios, escrita atômica — hoje o script pode falhar e sair com código 0) e SÓ ENTÃO `deploy.php` abortar no exit≠0 | [9][10][11] | Alto | Médio | — | **sim** |
 | DEP4 | Migrations automáticas com `schema_migrations` — SÓ após backup válido + lock de deploy (NOVO-4), com checksums/ordem, credencial restrita e teste em cópia; MySQL não tem rollback de DDL; nunca marcar aplicada após falha parcial | [7][8][9] | Alto | Alto | DEP3, NOVO-4 | ⬜ |
-| DEP5 | Healthcheck pós-deploy: rota de saúde sem efeito no banco + verificação do COMMIT publicado (mais robusto que comparar `APP_VERSION` manual) | [4][9] | Médio | Baixo | — | ⬜ |
+| DEP5 | Healthcheck pós-deploy: rota de saúde sem efeito no banco + verificação do COMMIT publicado (mais robusto que comparar `APP_VERSION` manual) | [4][9] | Médio | Baixo | — | **sim** |
 | DEP6 | (revisada) Rollback automático SÓ do código (git); restore de dump/uploads fica como RUNBOOK manual testado — restauração automática poderia apagar dados gravados após o backup e viola a regra de não operar o banco diretamente | [9][10][11] | Médio | Médio | DEP5 | ⬜ |
-| DEP7 | (revisada) Dependências (PhpSpreadsheet/pdftotext) como AVISO de capacidade no healthcheck — não abortar o deploy por dependência opcional que já degrada com 422 | [1][2] | Baixo | Baixo | DEP5 | ⬜ |
-| DEP8 | `deploy_run_id` + status confiável + notificação de falha (o log em si já existe; compartilha o run_id com o healthcheck do DEP5) | [4][13] | Baixo | Baixo | — | ⬜ |
+| DEP7 | (revisada) Dependências (PhpSpreadsheet/pdftotext) como AVISO de capacidade no healthcheck — não abortar o deploy por dependência opcional que já degrada com 422 | [1][2] | Baixo | Baixo | DEP5 | **sim** |
+| DEP8 | `deploy_run_id` + status confiável + notificação de falha (o log em si já existe; compartilha o run_id com o healthcheck do DEP5) | [4][13] | Baixo | Baixo | — | **sim** |
 
 ### Fontes
 
