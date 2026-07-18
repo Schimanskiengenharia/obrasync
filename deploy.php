@@ -28,6 +28,34 @@ if (($data['ref'] ?? '') !== 'refs/heads/main') {
 $appDir = '/var/www/financeiro';
 $logDir = '/var/lib/financeiro';
 
+// 0) Lock de deploy: serializa execuções concorrentes (dois pushes seguidos).
+//    flock é liberado pelo SO quando o processo termina — sem lock órfão em
+//    crash. Se o lock não puder ser criado, o deploy SEGUE sem serialização
+//    (o lock nunca é motivo de deploy parar). Espera até 120s pelo anterior.
+set_time_limit(300);
+$lockNote   = '';
+$lockHandle = @fopen("{$logDir}/deploy.lock", 'c');
+if ($lockHandle === false) {
+    $lockNote = '[AVISO] lock indisponível (deploy.lock não pôde ser aberto) — deploy segue SEM serialização';
+} else {
+    $lockAcquired = false;
+    $lockDeadline = time() + 120;
+    while (time() < $lockDeadline) {
+        if (flock($lockHandle, LOCK_EX | LOCK_NB)) {
+            $lockAcquired = true;
+            break;
+        }
+        sleep(1);
+    }
+    if (!$lockAcquired) {
+        $busyMsg = date('Y-m-d H:i:s') . " — Deploy NÃO executado: ocupado (timeout de 120s aguardando outro deploy)\n---\n";
+        @file_put_contents("{$logDir}/deploy.log", $busyMsg, FILE_APPEND);
+        http_response_code(503);
+        die('Deploy ocupado — outro deploy em andamento; redispare o webhook em alguns minutos.');
+    }
+    $lockNote = '[lock] adquirido';
+}
+
 // 1) Backup automático pré-deploy (dump do banco + uploads). Uma falha no backup
 //    não bloqueia o deploy, mas fica registrada no log para conferência.
 $backupScript = $appDir . '/backup-pre-deploy.sh';
@@ -65,6 +93,7 @@ foreach (deploy_protected_paths($appDir . '/.deployignore') as $path) {
 }
 
 $logMsg = date('Y-m-d H:i:s') . " — Deploy:\n"
+    . ($lockNote !== '' ? $lockNote . "\n" : '')
     . "[backup pré-deploy]\n" . trim((string) $backupOutput) . "\n"
     . "[git pull]\n" . trim((string) $output) . "\n"
     . ($issues
