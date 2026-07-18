@@ -1,7 +1,7 @@
 # Estudo — Módulos ObraSync: inventário interno + benchmark de mercado
 
 **Data:** 2026-07-18 · **Spec:** `docs/superpowers/specs/2026-07-18-estudo-benchmark-modulos-design.md`
-**Status:** completo e reconciliado após revisão adversarial (Codex) — aguardando decisões do usuário
+**Status:** FECHADO — 70/70 decisões tomadas em 2026-07-18 (todas aprovadas); backlog segue a ordem das Ondas A→E
 
 Como usar este documento: cada frente termina numa tabela de recomendações.
 Marque a coluna **Decisão** de cada linha com **sim** ou **não**. Cada item
@@ -244,13 +244,13 @@ A spec `docs/specs/cronograma-fisico-financeiro.md` descreve expansão em 7 fase
 
 | # | Melhoria | Inspiração | Impacto | Esforço | Depende de | Decisão |
 |---|---|---|---|---|---|---|
-| G1 | Gantt unificado com linha do tempo sobrepondo etapas + MARCOS + PAGAMENTOS (contas a pagar/receber) + COMPRAS/entregas de materiais, em faixas/camadas estilo MS Project (cronograma custo-carregado) | MS Project [2][3], Primavera P6 [6] | Alto | Alto | financeiro + pedidos de compra (dados atuais) | ⬜ |
-| G2 | Motor de dependências começando por FS + lag (setas + recálculo em cascata); os 4 tipos ficam para fase posterior — `predecessorIds`/`durationDays` já são persistidos e importados/exportados no XML | MSP [2], P6 [4], Smartsheet [7], Monday [9] | Alto | Alto | spec cronograma | ⬜ |
-| G3 | Caminho crítico calculado (CPM) com destaque em vermelho nas barras e setas | MSP [1], P6 [5], Smartsheet [8], Monday [11] | Alto | Alto | G2 validado · spec cronograma | ⬜ |
-| G4 | Baseline: primeiro UMA baseline somente-leitura (snapshot cinza sobreposto); versionamento múltiplo (0/1/2) em fase posterior — exige schema de snapshots + criação atômica + UI | Monday [10], Smartsheet [8], MSP [1] | Médio | Alto | spec cronograma | ⬜ |
-| G5 | Curva S física e financeira — exige distribuição temporal/calendário/pesos e regras de medição; curva contratual CONFIGURÁVEL (não assumir 30/60/90/120) | P6 [6], MSP [3] | Alto | Alto | G1, G6 · spec cronograma | ⬜ |
-| G6 | EAP hierárquica no Gantt (expandir/recolher pacotes) e % físico ponderado por peso (hoje é média aritmética) | MSP [2], P6 [6] | Médio | Alto | spec cronograma | ⬜ |
-| G7 | Edição direta no Gantt (arrastar barra, desenhar seta) — o Gantt atual é HTML calculado sem handlers; snapping/validação/rollback elevam o esforço | Smartsheet [7], Monday [9], MSP [2] | Médio | Alto | G2 | ⬜ |
+| G1 | Gantt unificado com linha do tempo sobrepondo etapas + MARCOS + PAGAMENTOS (contas a pagar/receber) + COMPRAS/entregas de materiais, em faixas/camadas estilo MS Project (cronograma custo-carregado) | MS Project [2][3], Primavera P6 [6] | Alto | Alto | financeiro + pedidos de compra (dados atuais) | **sim** |
+| G2 | Motor de dependências começando por FS + lag (setas + recálculo em cascata); os 4 tipos ficam para fase posterior — `predecessorIds`/`durationDays` já são persistidos e importados/exportados no XML | MSP [2], P6 [4], Smartsheet [7], Monday [9] | Alto | Alto | spec cronograma | **sim** |
+| G3 | Caminho crítico calculado (CPM) com destaque em vermelho nas barras e setas | MSP [1], P6 [5], Smartsheet [8], Monday [11] | Alto | Alto | G2 validado · spec cronograma | **sim** |
+| G4 | Baseline: primeiro UMA baseline somente-leitura (snapshot cinza sobreposto); versionamento múltiplo (0/1/2) em fase posterior — exige schema de snapshots + criação atômica + UI | Monday [10], Smartsheet [8], MSP [1] | Médio | Alto | spec cronograma | **sim** |
+| G5 | Curva S física e financeira — exige distribuição temporal/calendário/pesos e regras de medição; curva contratual CONFIGURÁVEL (não assumir 30/60/90/120) | P6 [6], MSP [3] | Alto | Alto | G1, G6 · spec cronograma | **sim** |
+| G6 | EAP hierárquica no Gantt (expandir/recolher pacotes) e % físico ponderado por peso (hoje é média aritmética) | MSP [2], P6 [6] | Médio | Alto | spec cronograma | **sim** |
+| G7 | Edição direta no Gantt (arrastar barra, desenhar seta) — o Gantt atual é HTML calculado sem handlers; snapping/validação/rollback elevam o esforço | Smartsheet [7], Monday [9], MSP [2] | Médio | Alto | G2 | **sim** |
 | G8 | (revisada) Integrar os marcos REAIS de `projectMilestones` à linha do tempo (losango + evento de cobrança) — hoje só existe um ponto na barra da etapa `isMilestone`; trocar apenas a forma seria cosmético | MSP [2], Smartsheet [7], Monday [9] | Médio | Baixo | projectMilestones (atual) | **sim** |
 
 ### Fontes
@@ -671,14 +671,14 @@ Três caminhos para reduzir os passos manuais e os riscos do fluxo atual, preser
 
 | # | Melhoria | Inspiração | Impacto | Esforço | Depende de | Decisão |
 |---|---|---|---|---|---|---|
-| API1 | Inventariar e documentar as rotas em OpenAPI + CONTRACT TESTS executáveis (documentar schemas/erros/permissões dos ~90 recursos e handlers é trabalho Alto) | [4][5][6] | Médio | Alto | — | ⬜ |
-| API2 | (= E7) Envelope de resposta único via fachada/adaptador, módulo a módulo, sem quebrar o SPA — impacto pleno quando houver o 2º cliente | [1][2][3] | Alto | Alto | API1 | ⬜ |
-| API3 | CORS com ALLOWLIST configurável + `Vary: Origin` + nunca `*` com credenciais — implementar quando houver origem externa concreta (o produto atual é same-origin) | [5] | Médio | Baixo | — | ⬜ |
-| API4 | `/api/v1` via fachada preservando envelopes legados + estratégia de deprecação — impacto real só com cliente externo | [3][4][5] | Baixo | Médio | API1 | ⬜ |
-| API5 | (revisada) Bootstrap LAZY por módulo + metadados `total/next` + SPA adotar a paginação — `limit/offset` com teto 5000 JÁ existe no CRUD (`api/index.php:1956`) e o bootstrap já recorta SINAPI | [4][5] | Alto | Médio | — | ⬜ |
-| API6 | Auth mobile: ajustar idle/TTL da sessão atual já serve mobile online; refresh token rotativo SÓ com threat model e cliente real | [7][8][9] | Médio | Alto | API1 | ⬜ |
-| API7 | Fase 1: PWA instalável online (manifest + service worker básico) — não depende de CORS nem de API5. Fase 2: offline com fila de mutações e invalidação (Alto, dados financeiros) | [10][11][12] | Médio | Médio | — | ⬜ |
-| API8 | Capacitor: reutiliza a UI mas exige lojas, storage seguro, deep links, push e testes nativos | [10][11] | Médio | Alto | API7 (+API6 p/ sessão persistente) | ⬜ |
+| API1 | Inventariar e documentar as rotas em OpenAPI + CONTRACT TESTS executáveis (documentar schemas/erros/permissões dos ~90 recursos e handlers é trabalho Alto) | [4][5][6] | Médio | Alto | — | **sim** |
+| API2 | (= E7) Envelope de resposta único via fachada/adaptador, módulo a módulo, sem quebrar o SPA — impacto pleno quando houver o 2º cliente | [1][2][3] | Alto | Alto | API1 | **sim** |
+| API3 | CORS com ALLOWLIST configurável + `Vary: Origin` + nunca `*` com credenciais — implementar quando houver origem externa concreta (o produto atual é same-origin) | [5] | Médio | Baixo | — | **sim** |
+| API4 | `/api/v1` via fachada preservando envelopes legados + estratégia de deprecação — impacto real só com cliente externo | [3][4][5] | Baixo | Médio | API1 | **sim** |
+| API5 | (revisada) Bootstrap LAZY por módulo + metadados `total/next` + SPA adotar a paginação — `limit/offset` com teto 5000 JÁ existe no CRUD (`api/index.php:1956`) e o bootstrap já recorta SINAPI | [4][5] | Alto | Médio | — | **sim** |
+| API6 | Auth mobile: ajustar idle/TTL da sessão atual já serve mobile online; refresh token rotativo SÓ com threat model e cliente real | [7][8][9] | Médio | Alto | API1 | **sim** |
+| API7 | Fase 1: PWA instalável online (manifest + service worker básico) — não depende de CORS nem de API5. Fase 2: offline com fila de mutações e invalidação (Alto, dados financeiros) | [10][11][12] | Médio | Médio | — | **sim** |
+| API8 | Capacitor: reutiliza a UI mas exige lojas, storage seguro, deep links, push e testes nativos | [10][11] | Médio | Alto | API7 (+API6 p/ sessão persistente) | **sim** |
 
 ### Fontes
 
