@@ -121,15 +121,57 @@ Checklist que o agente percorre quando o usuário pedir "verificar erros":
 
 ### Como o mercado faz
 
-pendente
+**Sienge (Plataforma + Construcompras)**
+- ERP que integra "jornadas" num backbone único: comercial (contratos, aditivos), engenharia/orçamento (motor eCustos), suprimentos e financeiro [1].
+- Orçamento vinculado de forma contínua do planejamento à execução, sem retrabalho nem redigitação [1].
+- O planejamento da obra desdobra automaticamente uma "Necessidade de Compra" e notifica o comprador nas datas previstas [2].
+- Compra aprovada lança sozinha em Contas a Pagar; contratos de fornecimento registram caução, retenções por medição e descontos [2].
+- Construcompras: cotação com até 15 fornecedores, Mapa Comparativo de Preços com histórico de preço/prazo por fornecedor e pedido espelhado no orçamento [3].
+
+**TOTVS Construção Obras e Projetos**
+- Orçamento com estruturas precificáveis e projetos-modelo; copia insumos entre projetos [4].
+- Planejamento executivo (prazos, dependências) derivado do orçamento [5].
+- Planejamento aquisitivo: mostra a necessidade de compras ao longo do tempo e gera pedidos automaticamente considerando lead time [5].
+- Planejamento financeiro: condições de pagamento por insumo e cronograma de desembolso ligados à aquisição [5].
+
+**Mega Construção (ERP Mega / Senior)**
+- Comercial/CRM leva a proposta da prospecção até a assinatura, com status personalizados e automação de minutas contratuais [6].
+- Orçamento por etapas/subetapas em vários níveis, com várias visões por proposta e banco de composições reutilizável [6].
+- Administração de Obras reúne orçamento, cronograma, solicitações, medições e custos num só lugar [7].
+- Suprimentos com controle de saldo por insumo/grupo/serviço da estrutura orçamentária [6].
+
+**Obra Prima**
+- Orçamento de custo e de venda ligado ao cronograma físico-financeiro [8].
+- Suprimentos: solicitação de materiais e cotação online com "mapa de cotação" recebendo as propostas no sistema [8][9].
+- Integração SEFAZ recebe a NF automaticamente (até 2h), sem lançamento manual [9].
+- Financeiro integrado: pagar/receber, conciliação, fluxo de caixa previsto x realizado [9].
+
+Comparado ao fluxo desejado (proposta de serviços → orçamento base → obra → orçamento de compras buscando descontos), os quatro tratam o encadeamento como um único fluxo automatizado: a aprovação da venda dispara a criação da obra, do contrato e das contas, e o orçamento aprovado alimenta o planejamento e a "necessidade de compra" (explícito no TOTVS e no Sienge) — enquanto o ObraSync ainda depende de status digitado à mão e de três ações manuais separadas. Na etapa de compras com desconto, Sienge (Construcompras) e Obra Prima entregam mapa comparativo com histórico de preço/prazo por fornecedor e registro de negociação — o ObraSync tem apenas a matriz item×fornecedor, sem histórico/negociação estruturada.
 
 ### Recomendações
 
-pendente
+| # | Melhoria | Inspiração | Impacto | Esforço | Depende de | Decisão |
+|---|---|---|---|---|---|---|
+| FC1 | Botão explícito "Aprovar proposta" com prévia do que será gerado (obra + orçamento + contas + contrato), substituindo o status digitado à mão | Sienge [1]; Mega [6] | Alto | Baixo | — | ⬜ |
+| FC2 | Preservar metadados na cópia proposta→orçamento de obra (`etapa_id`, `tipo`, `sinapi_id`, `categoryId`, `orcamento_item_id`) em vez de gravar só `origin='Item livre'` | TOTVS [4]; Mega [6] | Alto | Médio | — | ⬜ |
+| FC3 | Gerar automaticamente contas a receber + contrato + centro de custo na aprovação, herdando endereço/prazos (hoje são 3 ações manuais) | Sienge [1][2]; Mega [6] | Alto | Médio | FC1 | ⬜ |
+| FC4 | Wizard/funil único cadastro→proposta→aprovação→obra→cotação→pedido→NF (hoje espalhado em ~5 módulos) | Sienge [1]; Obra Prima [8] | Alto | Alto | FC1, FC5 | ⬜ |
+| FC5 | Unificar/renomear os menus ambíguos: dois "orçamentos" (`budgets` vs `workBudgets`) e dois "Cotações" (`quotes` vs `cotacoes`) | Sienge [1]; Mega [6] | Médio | Baixo | — | ⬜ |
+| FC6 | Ativar `proposta_grupos` (hoje dormente): agrupar itens por disciplina/etapa com várias visões por proposta | Mega [6]; TOTVS [4] | Médio | Médio | FC2 | ⬜ |
+| FC7 | Evoluir a matriz de cotação para mapa comparativo com histórico de preço/prazo por fornecedor e registro de negociação/desconto | Sienge Construcompras [3]; Obra Prima [8][9] | Alto | Médio | — | ⬜ |
+| FC8 | Derivar "necessidade de compra" do orçamento da obra para alimentar as cotações automaticamente (fechar o back-link proposta↔obra↔compras) | TOTVS [5]; Sienge [2] | Médio | Alto | FC2 | ⬜ |
 
 ### Fontes
 
-pendente
+1. Sienge — o que é, como funciona e por que é o ERP líder da construção civil — https://sienge.com.br/blog/sienge-o-que-e/
+2. Sienge — a ferramenta de gerenciamento de suprimentos que você precisa — https://sienge.com.br/blog/gerenciamento-de-suprimentos/
+3. Sienge — Construcompras (cotação e mapa comparativo de preços) — https://sienge.com.br/construcompras/
+4. TOTVS — Tudo sobre o TOTVS Construção Obras e Projetos — https://produtos.totvs.com/ficha-tecnica/tudo-sobre-o-totvs-construcao-obras-e-projetos/
+5. TNU Sistemas — Planejamento no TOTVS Construção Obras e Projetos — https://www.tnusistemas.com.br/planejamento-no-totvs-construcao-obras-e-projetos-totvs-rm/
+6. Senior — Funcionalidades do ERP Mega (Construção) — https://site.senior.com.br/construcao/funcionalidades-erp-mega/
+7. Senior — Administração de Obras (documentação ERP Mega) — https://documentacao.senior.com.br/erp-mega/manual-do-usuario/engenharia/administracao-de-obras/administracao-de-obras/
+8. Obra Prima — Software de gestão de obras com aplicativo — https://obraprima.eng.br/
+9. Obra Prima — Sistema de gestão financeira para obras — https://obraprima.eng.br/financeiro/
 
 ## Frente 3 — Gantt / linha do tempo
 
