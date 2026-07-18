@@ -636,15 +636,54 @@ Três caminhos para reduzir os passos manuais e os riscos do fluxo atual, preser
 
 ### Opções de como funcionaria
 
-pendente
+**Backend — o que falta para a API servir outros clientes**
+- **Envelope de resposta único:** hoje coexistem `{ok,data}`/`{ok,error}` (REST) e `{success,data,message}` (módulos); qualquer SDK mobile teria de replicar o `handleApiResponse` do SPA. Padronizar um só contrato (ex.: `{ok, data, error, code}` — mesmo alvo do E7 da Frente 1). Os dois formatos convivem durante a transição — migração por fatias, nunca big-bang.
+- **Rotas consistentes:** unificar os dois estilos (REST por path × `?module=&action=`) sob um padrão REST previsível (~15 handlers + ~90 recursos a normalizar aos poucos).
+- **Versionamento `/api/v1/`** sem quebrar o SPA (que usa `API_BASE` relativo) [3][4][5]; **documentação OpenAPI** como contrato máquina-legível e teste de cada fatia migrada [4][5][6].
+- **CORS + preflight:** hoje 0 `Access-Control-Allow-Origin` e nenhum `OPTIONS` — sem isso nenhum front em outra origem chama a API.
+- **Auth para mobile:** sessão em banco com idle 30 min é agressiva; adotar access token curto + refresh token de longa duração, com rotação e storage seguro, coexistindo com a sessão atual do SPA [7][8][9].
+- **Paginação + bootstrap fatiado:** o `bootstrap` devolve o banco inteiro — inviável em rede móvel.
+- **Estratégia strangler:** padronizar UM módulo por vez atrás de fachada, cada fatia testável, sem quebrar o SPA [1][2][3].
+
+**Mobile**
+- **PWA:** menor esforço, reusa o SPA responsivo, instalável, sem loja [10][11][12]. **Capacitor:** mesmo código web num shell nativo, entra nas lojas e ganha push/câmera/offline — melhor custo-benefício para gestão usada em obra/escritório [10][11]. **Nativo:** só se exigir UX/performance específica — não é o caso.
+- **Recomendação:** PWA primeiro; Capacitor quando quiser loja/recursos nativos, reusando o mesmo front.
+
+**Desktop**
+- **PWA instalável:** custo quase zero, atualiza sozinho — cobre o "app de escritório". **Electron/Tauri:** só com integração profunda ao SO (Tauri = binário leve; Electron = maior) [13][14].
+- **Recomendação:** PWA instalável; Tauri como evolução se surgir necessidade de SO.
+
+**Ordem sugerida (fatias pequenas, cada uma testável):** 1. OpenAPI do que existe → 2. envelope único módulo a módulo → 3. CORS+preflight → 4. `/api/v1` + paginação + bootstrap fatiado → 5. auth mobile com refresh token → 6. PWA instalável → 7. Capacitor.
 
 ### Recomendações
 
-pendente
+| # | Melhoria | Inspiração | Impacto | Esforço | Depende de | Decisão |
+|---|---|---|---|---|---|---|
+| API1 | Inventariar e documentar as rotas existentes em OpenAPI (os dois estilos de rota e ~90 recursos), base de teste para cada fatia migrada | [4][5][6] | Médio | Médio | — | ⬜ |
+| API2 | Envelope de resposta único (ex.: `{ok, data, error, code}`), padronizado módulo a módulo atrás de fachada, sem quebrar o SPA (mesmo alvo do E7) | [1][2][3] | Alto | Alto | API1 | ⬜ |
+| API3 | Habilitar CORS + tratamento de preflight (`OPTIONS`) — hoje 0 `Access-Control-Allow-Origin` | [5] | Alto | Baixo | API1 | ⬜ |
+| API4 | Versionamento no path (`/api/v1/`) mantendo o SPA nas rotas atuais até a virada | [3][4][5] | Médio | Médio | API2 | ⬜ |
+| API5 | Paginação no CRUD genérico + bootstrap fatiado por módulo/sob demanda (hoje devolve o banco inteiro) | [4][5] | Alto | Alto | API4 | ⬜ |
+| API6 | Auth mobile: access token curto + refresh token de longa duração, com rotação e storage seguro, coexistindo com a sessão atual | [7][8][9] | Alto | Alto | API3 | ⬜ |
+| API7 | PWA instalável (mobile + desktop) reusando o SPA responsivo, com service worker e manifest | [10][11][12] | Alto | Médio | API3, API5 | ⬜ |
+| API8 | Wrapper Capacitor para publicar nas lojas (push/câmera/offline) reusando o mesmo código web | [10][11] | Médio | Médio | API7 | ⬜ |
 
 ### Fontes
 
-pendente
+1. Strangler Fig Pattern — Azure Architecture Center (Microsoft Learn) — https://learn.microsoft.com/en-us/azure/architecture/patterns/strangler-fig
+2. Embracing the Strangler Fig pattern for legacy modernization (Thoughtworks) — https://www.thoughtworks.com/en-us/insights/articles/embracing-strangler-fig-pattern-legacy-modernization-part-one
+3. Strangler Fig pattern for API versioning (Zuplo) — https://zuplo.com/learning-center/strangler-fig-pattern-for-api-versioning
+4. Versioning Best Practices in REST API Design (Speakeasy) — https://www.speakeasy.com/api-design/versioning/
+5. API Versioning: Guidelines and Best Practices (Kong Inc.) — https://konghq.com/blog/engineering/service-design-guidelines-api-versioning
+6. How to Document REST APIs with OpenAPI (OneUptime) — https://oneuptime.com/blog/post/2026-01-26-openapi-rest-documentation/view
+7. Refresh Tokens in Mobile APIs: A Complete Guide (Medium) — https://medium.com/@edu.hoyos/refresh-tokens-in-mobile-apis-a-complete-guide-for-ios-and-android-71caa707f2f6
+8. Refresh Tokens: What Are They and When to Use Them (Auth0) — https://auth0.com/blog/refresh-tokens-what-are-they-and-when-to-use-them/
+9. JWT Best Practices for Web & Mobile Apps (Duende) — https://duendesoftware.com/learn/best-practices-using-jwts-with-web-and-mobile-apps
+10. PWA vs Capacitor vs Native: Choosing an App Architecture in 2026 (Our Code World) — https://ourcodeworld.com/articles/read/3646/pwa-vs-capacitor-vs-native-2026
+11. Building Progressive Web Apps (Capacitor Documentation) — https://capacitorjs.com/docs/web/progressive-web-apps
+12. PWA vs Native App in 2025: Pros & Cons for Business Apps (Wezom) — https://wezom.com/blog/pwa-vs-native-app-in-2025
+13. Tauri v2 vs Electron 2026: The Honest Comparison (BuildMVPFast) — https://www.buildmvpfast.com/blog/tauri-v2-vs-electron-desktop-apps-2026
+14. Electron vs. Tauri (DoltHub Blog) — https://www.dolthub.com/blog/2025-11-13-electron-vs-tauri/
 
 ## Fechamento — visão consolidada e ordem sugerida
 
