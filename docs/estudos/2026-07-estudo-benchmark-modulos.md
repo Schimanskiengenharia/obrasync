@@ -200,15 +200,56 @@ pendente
 
 ### Como o mercado faz
 
-pendente
+**Google Calendar + Google Tasks**
+- Tarefas vencidas aparecem como entrada de dia inteiro com a contagem de pendências dos últimos 30 dias; ao clicar, dá para revisar e concluir direto dali [1].
+- Conclusão em 1 clique: círculo ao lado da tarefa; as concluídas recolhem sob um cabeçalho "Concluídas" com contador [2].
+- Recorrência nativa (diária, semanal, mensal, anual ou personalizada); concluir avança a data em vez de duplicar [3].
+- Lembrete = data+hora com notificação; arrastar a tarefa na grade reagenda [2].
+
+**Outlook (Calendário + To Do)**
+- No detalhe da tarefa: etapas, recorrência, vencimento/lembrete e anexar nota ou arquivo [4].
+- Lembretes com atalhos rápidos ("mais tarde hoje", "amanhã", "próxima semana") [5].
+- Categorias com cor e listas inteligentes (Meu Dia, Importante, Planejado, Concluído, Vence hoje) [4].
+
+**Todoist**
+- Prioridades com cor (P1 = vermelho) e etiquetas coloridas por contexto [6][8].
+- Gestão de atrasadas: botão "Reagendar" move todas as vencidas para hoje, com sugestões do Smart Schedule [6].
+- Recorrência inteligente; concluir reinicia para a próxima ocorrência [7].
+- Lembretes automáticos, personalizados, recorrentes e por localização; comentários com anexos [6].
+
+**TickTick**
+- Múltiplas visões de calendário: mês, semana, agenda, multi-dia e multi-semana [9].
+- Recorrência flexível, incluindo padrões avançados como "último dia do mês" [10].
+- Lembretes fortes: vários horários de alerta e lembretes persistentes que insistem até concluir [11].
+- Etiquetas para categorizar e visões alternativas lista/kanban/linha do tempo [9].
 
 ### Recomendações
 
-pendente
+| # | Melhoria | Inspiração | Impacto | Esforço | Depende de | Decisão |
+|---|---|---|---|---|---|---|
+| AG1 | Anotações ricas em eventos (bloco de notas/comentários além do `descricao` único, com histórico e anexos leves) | Outlook [4]; Todoist [6] | Médio | Baixo | Reuso do campo `descricao` existente | ⬜ |
+| AG2 | Destaque vermelho de atraso também para eventos manuais (hoje só financeiros em `app.js:9319`), reusando `isOverdue`/`hojeLocal` | Todoist [6][8]; Google [1] | Alto | Baixo | Regra de status vs data (fuso local, M10) | ⬜ |
+| AG3 | Botão rápido de "Concluir" no card (1 clique → `status=concluido`) sem abrir o select | Google Tasks [2]; Todoist [6] | Alto | Baixo | Padronizar enum de status (concluido/realizado) | ⬜ |
+| AG4 | Recorrência de eventos (diária/semanal/mensal/anual/personalizada) — hoje inexistente | Google [3]/Outlook [4]/Todoist [7]/TickTick [10] | Alto | Alto | Nova coluna de recorrência + geração de ocorrências | ⬜ |
+| AG5 | Ativar lembretes efetivos: usar a coluna dormente `lembrete_minutos` (default 60) com UI e disparo real | Outlook [5]/Todoist [6]/TickTick [11] | Alto | Médio | Coluna já existe; falta UI + job de notificação | ⬜ |
+| AG6 | Arrastar evento para reagendar direto na grade | Google [2]/Todoist [6] | Médio | Médio | Grade da agenda + action `update` existente | ⬜ |
+| AG7 | Ativar visões Dia e Mês (helpers `agendaViewLabel`/`agendaPeriodLabel` já existem como código morto, `app.js:9789-9800`) | TickTick [9]; Google/Outlook | Médio | Médio | Reativar código morto já presente | ⬜ |
+| AG8 | Cor por evento e/ou por categoria/tipo (hoje sem coluna de cor; só CSS por tipo+status) | Outlook [4]; Todoist [8]; TickTick [9] | Médio | Médio | Nova coluna de cor + legenda unificada | ⬜ |
+| AG9 | Painel/lista "Em aberto e atrasadas" com contador e conclusão em lote | Google [1]; Todoist [6] | Médio | Médio | AG2 · AG3 | ⬜ |
 
 ### Fontes
 
-pendente
+1. Google Workspace Updates — Manage overdue tasks in Google Calendar — https://workspaceupdates.googleblog.com/2022/02/manage-overdue-tasks-in-google-calendar.html
+2. Google Tasks: the complete guide [2026] (2sync) — https://2sync.com/blog/google-tasks-complete-guide
+3. Manage repeating tasks in Google Tasks & Google Calendar — Google Calendar Help — https://support.google.com/calendar/answer/12132599
+4. Manage tasks with To Do in Outlook — Microsoft Support — https://support.microsoft.com/en-us/office/manage-tasks-with-to-do-in-outlook-6e8a991b-ea62-4009-a7f7-62b70a57ec18
+5. Add or delete notifications or reminders in Outlook — Microsoft Support — https://support.microsoft.com/en-us/office/add-or-delete-notifications-or-reminders-in-outlook-7a992377-ca93-4ddd-a711-851ef3597925
+6. How to Use Todoist Effectively – The Complete Guide — Todoist — https://www.todoist.com/inspiration/how-to-use-todoist-effectively
+7. Introduction to recurring dates — Todoist — https://www.todoist.com/help/articles/introduction-to-recurring-dates-YUYVJJAV
+8. Change color themes (prioridades e cores) — Todoist — https://www.todoist.com/help/articles/change-color-themes-zD0N5K
+9. Features — TickTick — https://ticktick.com/features
+10. Set Up Recurring Tasks — TickTick — https://help.ticktick.com/articles/7055782206349770752
+11. Effective Reminder Feature — TickTick — https://help.ticktick.com/articles/7055782395743567872
 
 ## Frente 5 — Kanban
 
