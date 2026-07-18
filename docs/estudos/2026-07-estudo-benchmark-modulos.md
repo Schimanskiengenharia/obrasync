@@ -411,15 +411,74 @@ A spec `docs/specs/cronograma-fisico-financeiro.md` descreve expansão em 7 fase
 
 ### Como o mercado faz
 
-pendente
+**Conta Azul**
+- Conciliação bancária automática: importa o extrato diariamente, cruza os lançamentos e dá baixa automática no que já foi pago/recebido [1][2].
+- Regras de match configuráveis: só correspondências exatas (mesmo valor e vencimento) e/ou aproximadas (mesmo valor, vencimento ±5 dias) [2].
+- Baixa parcial via "Informar pagamento/recebimento" com campo "valor pago" — o saldo restante fica em aberto [3].
+- Ações em lote sobre lançamentos selecionados [4]; conceito de "aging list" para priorizar cobrança [5].
+
+**Omie**
+- Contas a pagar/receber com monitoramento de prazos e emissão automática de cobranças, NF-e/NFS-e no mesmo ERP [6].
+- Conciliação com importação automática de extrato dos principais bancos [7].
+- Baixa parcial informando valor menor que o título; residual calculado automaticamente [8].
+- Baixa em lote (11+ títulos vira processamento assíncrono) [9].
+
+**Nibo**
+- Conciliação inteligente: importação automática do extrato com categorização a ~85% de acerto [10].
+- Régua de cobrança automatizada: lembretes por e-mail e WhatsApp em momentos estratégicos [11]; perfis de cobrança com multa, juros, desconto [11].
+- Relatórios com vencidas mês a mês e filtros por período, categoria e centro de custo [12].
+
+**Granatum**
+- Fluxo de caixa previsto × realizado consolidando futuros planejados/recorrentes e realizados [13][14].
+- Cenários orçamentários (otimista/pessimista/realista) com metas [13].
+- DRE e fluxo de caixa por regime de caixa ou competência, com filtros e exportação [15].
+
+**QuickBooks** (referência global)
+- Cash Flow Planner interativo: projeta entradas/saídas usando histórico + títulos em aberto; ajustes hipotéticos sem alterar os livros [16].
+- Baixa parcial reduz o saldo e marca a fatura como paga/parcial [17].
+- Relatório de aging de A/R por faixas (atual, 1-30, 31-60, 60+ dias) [17].
+
+**Sienge** (financeiro/suprimentos — construção)
+- Medição vincula avanço físico/financeiro do contrato ao título financeiro; uma NF pode ligar-se a várias medições/contratos [18][19].
+- Título em Contas a Pagar com apropriações de obra e impostos, integrado à liberação de medição em Suprimentos [18].
+- Integração e conciliação bancária centralizadas (extrato digital, cheques, saldos, adiantamentos) [20].
 
 ### Recomendações
 
-pendente
+| # | Melhoria | Inspiração | Impacto | Esforço | Depende de | Decisão |
+|---|---|---|---|---|---|---|
+| FIN1 | Fluxo real de baixa parcial (pagar e receber): campo "valor pago/recebido", saldo residual e status "Parcial" alimentado por lançamentos — hoje "Parcial" existe no select mas não há registro do valor pago | Conta Azul [3], Omie [8], QuickBooks [17] | Alto | Médio | Coluna de valor pago acumulado; ajustar `mark_overdue_accounts` p/ "Parcial" vencido | ⬜ |
+| FIN2 | Baixa em lote por multisseleção (informar pagamento/conta em vários títulos de uma vez) — hoje a baixa é título a título | Conta Azul [4], Omie [9] | Médio | Médio | FIN1 | ⬜ |
+| FIN3 | Seletor de período no fluxo de caixa — hoje `collectMonths` é fixo em ±6 meses | Granatum [15], QuickBooks [16] | Médio | Baixo | — | ⬜ |
+| FIN4 | Fluxo de caixa projetado × realizado com cenários (previsto de recorrentes + em aberto vs movimentado) | Granatum [13][14], QuickBooks [16] | Alto | Alto | FIN3; recorrências existentes | ⬜ |
+| FIN5 | Mover DRE e métricas de vencido para o backend consumindo `consolidate_monthly_dre` — hoje tudo no front e o cron não abastece `renderDre` | Granatum [15], Omie [6] | Médio | Médio | Endpoint da consolidação | ⬜ |
+| FIN6 | Régua de cobrança / lembretes automáticos de inadimplência (D-x, no vencimento, D+x) por e-mail/WhatsApp — hoje só cron `create_due_alerts` D-3 | Nibo [11], Omie [6] | Alto | Alto | Canal de envio; perfis de multa/juros/desconto | ⬜ |
+| FIN7 | Relatório de aging por faixas (a vencer, 1-30, 31-60, 61-90, 90+) para receber e pagar | QuickBooks [17], Nibo [12], Conta Azul [5] | Médio | Baixo | `isOverdue`/`dueDate` existentes | ⬜ |
+| FIN8 | Conciliação OFX com regras e antiduplicidade (match exato + aproximado por janela de dias, dedupe por FitID, sugestão em vez de auto-match cego) — hoje match por valor+data ambíguo | Conta Azul [1][2], Nibo [10], Omie [7] | Alto | Alto | `ofxFitid` existente; `ofx_find_matches` | ⬜ |
+| FIN9 | Baixa via caixa vinculado simétrica para contas a receber (criar Entrada + marcar Recebido) — hoje só existe para pagar | Omie [8], Conta Azul [3] | Médio | Baixo | `cash_bank_movements` `referencia_tipo/id` existentes | ⬜ |
 
 ### Fontes
 
-pendente
+1. Conciliação bancária automática para PMEs — Conta Azul — https://contaazul.com/funcionalidades/conciliacao-bancaria/
+2. Conciliação bancária automática: como fazer — Conta Azul — https://ajuda.contaazul.com/hc/pt-br/articles/7454707570701
+3. Lançamentos financeiros: como fazer baixa parcial — Conta Azul — https://ajuda.contaazul.com/hc/pt-br/articles/7184294182797
+4. Lançamentos financeiros: como editar em lote — Conta Azul — https://ajuda.contaazul.com/hc/pt-br/articles/7711548868365
+5. Aging List: como usar para receber mais rápido — Conta Azul (blog) — https://blog.contaazul.com/o-que-e-aging-list-e-como-ele-ajuda-a-receber-mais-rapido
+6. Controle Financeiro Empresarial — Omie — https://www.omie.com.br/funcionalidades/controle-financeiro-empresarial/
+7. Conciliação bancária — Omie — https://www.omie.com.br/funcionalidades/conciliacao-bancaria/
+8. Realizando uma Baixa Parcial de Receita — Ajuda Omie — https://ajuda.omie.com.br/pt-BR/articles/499024-realizando-uma-baixa-parcial-receita
+9. Baixando as Contas a Pagar em Lote — Ajuda Omie — https://ajuda.omie.com.br/pt-BR/articles/7828387-baixando-as-contas-a-pagar-em-lote
+10. Conciliação Bancária Inteligente — Nibo — https://www.nibo.com.br/empresa/funcionalidades/conciliacao-inteligente
+11. Central de Cobranças (régua de cobrança) — Nibo — https://www.nibo.com.br/sistema-de-cobrancas
+12. Quais são os relatórios do Nibo Gestão Financeira? — Nibo — https://ajuda.nibo.com.br/pt-BR/articles/7026282-quais-sao-os-relatorios-do-nibo-gestao-financeira
+13. Funcionalidades do software de gestão financeira — Granatum — https://www.granatum.com.br/financeiro/funcionalidades
+14. Como analisar fluxo de caixa projetado x realizado — Granatum — https://ajuda.granatum.com.br/support/solutions/articles/67000747248
+15. Relatório de fluxo de caixa — Granatum — https://www.granatum.com.br/financeiro/funcionalidades/relatorio-fluxo-de-caixa
+16. Use the cash flow planner in QuickBooks Online — Intuit — https://quickbooks.intuit.com/learn-support/en-us/help-article/budget-forecast-reports/use-cash-flow-planner-quickbooks-online/L2l59mIqe_US_en_US
+17. Manage Accounts Receivable and Payable with QuickBooks — Fusion CPA — https://www.fusiontaxes.com/thought-leadership/blog/manage-accounts-receivable-and-accounts-payable-efficiently-with-quickbooks-plus/
+18. Como funciona o Cadastro de Medição — Sienge — https://ajuda.sienge.com.br/support/solutions/articles/153000254155
+19. Como vincular uma mesma nota a mais de uma medição — Sienge — https://ajuda.sienge.com.br/support/solutions/articles/153000199252
+20. Integração bancária na construção civil — Sienge — https://sienge.com.br/blog/integracao-financeiro-bancos/
 
 ## Frente 7 — Agente de build/deploy on-premise (análise técnica)
 
