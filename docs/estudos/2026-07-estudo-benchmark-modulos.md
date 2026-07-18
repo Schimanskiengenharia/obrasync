@@ -202,15 +202,60 @@ pendente
 
 ### Como o mercado faz
 
-pendente
+**Trello**
+- Etiquetas coloridas e nomeadas nos cartões, usadas inclusive como gatilho/filtro de automação [1].
+- Checklists avançados com prazo e responsável por item de subtarefa [2].
+- Automação Butler por regras (gatilho "mover cartão para lista" → ação: mover, atribuir, aplicar etiqueta, definir prazo) e por data de vencimento (ex.: 1 dia antes, mover e marcar "Urgente") [1][3].
+- Comentários com menção (@) que notificam, e anexos renomeáveis/reordenáveis por arrastar [4][6].
+- Criação/edição/movimentação de listas e cartões pela própria UI, incl. mover cartão entre quadros [5].
+
+**Jira**
+- Limite WIP por coluna: ao estourar, o fundo da coluna fica vermelho como alerta visual (não bloqueia o drop) [7].
+- Swimlanes (raias horizontais) configuráveis por consulta JQL, com raia padrão "Everything Else" [7][8].
+- Colunas configuráveis em Board Settings, cada uma mapeada a um ou mais status do fluxo (o "Concluído" vem do status, não do nome digitado) [8].
+
+**Monday.com**
+- Coluna de Status com até 40 rótulos coloridos e descrição por rótulo [9].
+- Automações (nativas e entre quadros) que atualizam itens, notificam, mudam status e movem itens conforme regras [11][12].
+- Ao mover item com automação "move item", a seção de comentários acompanha o item; coluna Mirror reflete dados de outro quadro [10][12].
+
+**ClickUp**
+- Limite WIP por coluna com destaque visual ao atingir a capacidade [14].
+- Swimlanes alternáveis por responsável, tag ou campo personalizado [13].
+- Checklists/subtarefas no cartão e ícones de propriedades (descrição, anexos, checklist, dependências) no card [13].
+- Campos personalizados e automações (reatribuir ao mudar status, lembrete quando o prazo se aproxima) [13][15].
 
 ### Recomendações
 
-pendente
+| # | Melhoria | Inspiração | Impacto | Esforço | Depende de | Decisão |
+|---|---|---|---|---|---|---|
+| KB1 | UI de CRUD de quadros e colunas (criar/renomear/reordenar/excluir/definir cor e limite), sem depender de seed ou API direta | Trello [5], ClickUp [15] | Alto | Médio | — | ⬜ |
+| KB2 | Fazer `limite_cards` (WIP) bloquear ou avisar no drop em `moveKanbanCard` (coluna cheia = drop recusado + toast, ou destaque vermelho) | Jira [7], ClickUp [14] | Médio | Baixo | KB1 | ⬜ |
+| KB3 | Etiquetas/tags coloridas por card, reutilizáveis no quadro e usáveis como filtro | Trello [1], Monday [9] | Alto | Médio | — | ⬜ |
+| KB4 | Checklists no card com itens marcáveis (e, opcional, prazo/responsável por item) | Trello [2], ClickUp [13] | Médio | Médio | — | ⬜ |
+| KB5 | Comentários (com menção/notificação) e anexos no card | Trello [4][6] | Médio | Médio | — | ⬜ |
+| KB6 | Marcar coluna como "concluída" por flag booleano em `kanban_colunas` (não por NOME), corrigindo `kanban_card_is_done` que quebra ao renomear | Jira [8], Monday [10] | Alto | Baixo | KB1 | ⬜ |
+| KB7 | Reordenação fina dentro da coluna (posição relativa) em vez de `ordem = Date.now()` no drop | Trello [5] | Médio | Baixo | — | ⬜ |
+| KB8 | Ao mover card com `referencia_tipo` para coluna concluída, sincronizar o item de origem (baixar/atualizar status), substituindo o `confirm`+`alert` | Monday [12], Trello [3] | Alto | Médio | KB6 | ⬜ |
+| KB9 | Alerta de atraso via cron/automação (não só a classe visual `overdue`): notificar responsável em D-x do `data_vencimento` | Trello [1], ClickUp [15] | Médio | Médio | — | ⬜ |
 
 ### Fontes
 
-pendente
+1. Advanced Trello Features — Automations, Checklists and More — https://trello.com/guide/enterprise/advanced-features
+2. Set due dates for checklist items (advanced checklists) | Trello Support — https://support.atlassian.com/trello/docs/how-to-use-advanced-checklists-to-set-due-dates/
+3. Create and manage automations (Butler) | Trello Support — https://help.trello.com/article/1318-creating-and-managing-butler-commands
+4. Comment on a card | Trello Support — https://support.atlassian.com/trello/docs/commenting-on-cards/
+5. Add and customize cards and lists | Trello Support — https://support.atlassian.com/trello/docs/add-and-customize-cards-and-lists/
+6. Order up! Rename and rearrange attachments in Trello | Atlassian Work Life — https://blog.trello.com/rename-and-rearrange-attachments
+7. Swimlanes and WIP limit in a Kanban Board | Atlassian Community — https://community.atlassian.com/forums/Jira-questions/Swimlanes-and-WIP-limit-in-a-Kanban-Board/qaq-p/2419984
+8. Configure board settings (Columns and Swimlanes) | Atlassian Confluence — https://releasemanagement.atlassian.net/wiki/spaces/ASPT/pages/844759116/Configure+board+settings
+9. The Status Column | monday.com Support — https://support.monday.com/hc/en-us/articles/360001269685-The-Status-Column
+10. The Mirror Column | monday.com Support — https://support.monday.com/hc/en-us/articles/360001733859-The-Mirror-Column
+11. Get started with monday automations | monday.com Support — https://support.monday.com/hc/en-us/articles/360001222900-Get-started-with-monday-automations
+12. Cross-board automations | monday.com Support — https://support.monday.com/hc/en-us/articles/360011393900-Cross-board-automations
+13. Free Kanban Board Software for Teams | ClickUp — https://clickup.com/features/kanban-board
+14. How to Use Kanban Board Work in Progress (WIP) Limits | ClickUp — https://clickup.com/p/features/kanban-board/wip-limits
+15. Customize Board view | ClickUp Help — https://help.clickup.com/hc/en-us/articles/35342044832279-Customize-Board-view
 
 ## Frente 6 — Financeiro
 
