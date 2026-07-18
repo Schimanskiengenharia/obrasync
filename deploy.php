@@ -46,7 +46,14 @@ if (is_file($backupScript)) {
 }
 
 // 2) Atualização do código. Rodar git pull como alefschimanski (tem permissão no repositório).
-$output = shell_exec('sudo -u alefschimanski git -C ' . escapeshellarg($appDir) . ' pull origin main 2>&1');
+//    exec com exit code: pull falho NÃO pode terminar em "Deploy OK".
+$pullLines = [];
+$pullExit  = 0;
+exec('sudo -u alefschimanski git -C ' . escapeshellarg($appDir) . ' pull origin main 2>&1', $pullLines, $pullExit);
+$output = implode("\n", $pullLines);
+if ($pullExit !== 0) {
+    $output = "[ERRO] git pull FALHOU (exit {$pullExit})\n" . $output;
+}
 
 // 3) Verificação pós-deploy: os caminhos protegidos listados no .deployignore
 //    (linhas iniciadas por "/") precisam continuar existindo após o pull.
@@ -66,6 +73,10 @@ $logMsg = date('Y-m-d H:i:s') . " — Deploy:\n"
     . "---\n";
 @file_put_contents("{$logDir}/deploy.log", $logMsg, FILE_APPEND);
 
+if ($pullExit !== 0) {
+    http_response_code(500);
+    die("Deploy FALHOU — git pull retornou exit {$pullExit}; confira {$logDir}/deploy.log");
+}
 if ($issues) {
     http_response_code(500);
     die('Deploy concluído com ALERTA — arquivos protegidos ausentes: ' . implode(', ', $issues));
