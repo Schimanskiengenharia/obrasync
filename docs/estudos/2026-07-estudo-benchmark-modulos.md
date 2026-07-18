@@ -1,7 +1,7 @@
 # Estudo — Módulos ObraSync: inventário interno + benchmark de mercado
 
 **Data:** 2026-07-18 · **Spec:** `docs/superpowers/specs/2026-07-18-estudo-benchmark-modulos-design.md`
-**Status:** em produção (seções são preenchidas por etapas; "pendente" = etapa ainda não executada)
+**Status:** completo — aguardando decisões do usuário
 
 Como usar este documento: cada frente termina numa tabela de recomendações.
 Marque a coluna **Decisão** de cada linha com **sim** ou **não**. Cada item
@@ -9,7 +9,19 @@ aprovado vira um ciclo próprio de spec → plano → implementação (por etapa
 
 ## Resumo executivo
 
-pendente
+Este estudo mapeou **8 frentes** do ObraSync (inventário de código com nomes reais de funções/tabelas/endpoints) e comparou cada uma com o mercado (23 produtos/práticas pesquisados, ~90 fontes citadas). Resultado: **67 recomendações** numeradas, cada uma com impacto, esforço e dependências, aguardando decisão sim/não.
+
+**Principais achados:**
+
+1. **O sistema não tem rede de proteção contra erros inesperados** — sem captura global JS, erros morrem no console; `alert()` bloqueante; 500 genérico sem código de rastreio (Frente 1).
+2. **A aprovação de proposta é o elo mais frágil do fluxo comercial** — status digitado à mão, cópia de itens que perde metadados, contas/contrato em 3 cliques manuais; concorrentes (Sienge/Mega/TOTVS) tratam a venda como um fluxo único automatizado (Frente 2).
+3. **O Gantt atual só mostra etapas** — o pedido central (linha do tempo com pagamentos + compras + marcos, estilo MS Project) é a recomendação G1 e conversa com a spec de cronograma já existente (Frente 3).
+4. **Agenda e Kanban têm fundações prontas mas recursos dormentes** — `lembrete_minutos` sem disparo, visões mês/dia como código morto, WIP que não bloqueia, "Concluído" detectado por nome de coluna (Frentes 4-5).
+5. **O financeiro calcula demais no navegador e de menos no servidor** — DRE/vencidos no front, sem baixa parcial real, sem régua de cobrança, conciliação OFX ambígua (Frente 6).
+6. **O deploy tem 2 contadores manuais que já divergiram** (`?v=1798` vs `v1.34.0`) e backup que não bloqueia — a Opção A (automatizar as pontas do fluxo atual) resolve com esforço baixo (Frente 7).
+7. **A API não está pronta para mobile/desktop** — sem CORS, sem paginação, bootstrap devolve o banco inteiro, dois formatos de resposta; o caminho é strangler (módulo a módulo), com PWA primeiro e Capacitor depois (Frente 8).
+
+**Maior retorno com menor esforço** (impacto Alto + esforço Baixo): E1/E2 (captura global de erros), FC1 (botão Aprovar proposta), AG2/AG3 (atraso vermelho + concluir em 1 clique), KB6 (flag de coluna concluída), DEP1/DEP3 (validação pré-push + backup obrigatório), API3 (CORS), FIN9 (baixa via caixa para receber).
 
 ## Frente 1 — Padrão de verificação de erros
 
@@ -687,4 +699,19 @@ Três caminhos para reduzir os passos manuais e os riscos do fluxo atual, preser
 
 ## Fechamento — visão consolidada e ordem sugerida
 
-pendente
+**Dependências transversais entre as frentes:**
+
+- O **padrão de erros (F1) vem primeiro**: as melhorias de UX das outras frentes vão usar o toast padronizado (E3), a captura global (E1) e o log estruturado (E5). E7 (envelope de resposta único) é a MESMA iniciativa que API2 — decidir junto.
+- O **deploy automatizado (F7) cedo barateia tudo**: com implementação por etapas (regra do projeto), cada etapa entra em produção — DEP1-DEP4 reduzem o custo e o risco de TODOS os ciclos seguintes.
+- O **Gantt completo (F3) depende da spec de cronograma** (EAP, dependências, baseline): G2-G6 só depois de decidir implementá-la; G1 (linha do tempo com pagamentos/compras/marcos) e G8 podem começar antes, com os dados que já existem.
+- A **frente de API (F8) é pré-requisito do mobile/desktop**, não urgência: pode andar em fatias (strangler) em paralelo às outras, começando pelo que também serve ao SPA atual (API1-API3).
+
+**Ordem sugerida em ondas** (cada onda = conjunto de ciclos spec → plano → implementação por etapas; dentro da onda, itens são independentes salvo "Depende de"):
+
+- **Onda 0 — Fundação (esforço baixo, retorno imediato):** DEP1, DEP2, DEP3 (deploy seguro) + E1, E2, E3 (rede de proteção de erros).
+- **Onda 1 — Vitórias rápidas nos módulos:** FC1 (aprovar proposta com prévia), FC5 (menus ambíguos), AG1-AG3 (anotações, atraso, concluir), KB6, KB7 (coluna concluída por flag, reordenação), FIN3, FIN7, FIN9 (período do fluxo de caixa, aging, baixa via caixa a receber), G8 (marcos em losango), DEP4 (migrations automáticas).
+- **Onda 2 — Fluxos completos:** FC2, FC3 (aprovação rica: metadados + contas + contrato), FIN1, FIN2 (baixa parcial e em lote), KB1-KB5 (kanban completo), AG5, AG7, AG8 (lembretes, visões, cores), E4, E5 (correlação + log estruturado), DEP5-DEP8 (healthcheck, rollback), API1, API3 (OpenAPI, CORS).
+- **Onda 3 — Estruturais:** FC4 (funil único), FC6-FC8 (grupos, mapa de cotação, necessidade de compra), FIN4-FIN6, FIN8 (projetado×realizado, DRE no back, régua de cobrança, OFX com regras), AG4, AG6, AG9 (recorrência, arrastar, painel), KB2, KB3, KB8, KB9, E6, E7/API2 (validação inline ampla, envelope único).
+- **Onda 4 — Plataforma:** G1-G7 (Gantt custo-carregado com a spec de cronograma), API4-API8 (versionamento, paginação, auth mobile, PWA, Capacitor).
+
+A ordem é sugestão: as decisões sim/não nas tabelas definem o backlog real. Itens rejeitados saem; itens aprovados viram ciclos individuais respeitando apenas as colunas "Depende de".
