@@ -163,15 +163,55 @@ A spec `docs/specs/cronograma-fisico-financeiro.md` descreve expansão em 7 fase
 
 ### Como o mercado faz
 
-pendente
+**MS Project**
+- Gantt com barras por tarefa, datas/duração/prazos e níveis de zoom; marcos são tarefas de duração zero exibidas como losango [2].
+- Dependências nos 4 tipos (FS/SS/FF/SF) com setas ligando as barras [2].
+- Baseline salvo (planejado × realizado) e **caminho crítico calculado** — tarefas críticas com barra vermelha [1].
+- **Cronograma custo-carregado** (custos por tarefa) gera o custo faseado no tempo e a **curva S / fluxo de caixa** planejado × realizado [3].
+
+**Primavera P6**
+- Relações FS/FF/SS/SF com **lag/lead**; relações "driving" em linha sólida (vermelha no caminho crítico), "non-driving" pontilhada [4].
+- Caminho crítico automático (CPM) [5]; baselines para medir desvios [5].
+- **Cost/resource loading**: custos distribuídos no tempo geram cash flow e **curva S** acumulada; dá para montar um cronograma só de compras [6].
+
+**Smartsheet**
+- Barras + losangos de marco; dependências recalculam datas em cascata automaticamente [7].
+- Baseline compara planejado × real com variância (dias adiantado/atrasado); caminho crítico em vermelho [8].
+- Edição direta: arrastar barras para mudar datas e desenhar setas predecessor→sucessor no próprio Gantt [7].
+
+**Monday.com**
+- Gantt com barras + marcos em losango e setas de dependência; tipos FS (padrão), FF e SS [9].
+- **Baseline como "snapshot" cinza travado** sobreposto às barras atuais [10].
+- Caminho crítico destacando tarefas que definem a data final [11].
+
+**Relação com a spec interna** — A spec `cronograma-fisico-financeiro.md` já prevê o núcleo de cálculo do que os 4 players oferecem: EAP por pacotes, dependências nos 4 tipos com lag, baseline versionado, caminho crítico e curvas S física e financeira (inclusive curva contratual 30/60/90/120). O que o benchmark **acrescenta sem duplicar a spec** é a camada de **exibição unificada na linha do tempo**: sobrepor num único Gantt as etapas + marcos + **pagamentos** + **compras/entregas de materiais**, no estilo "cronograma custo-carregado" do MSP/P6, além de convenções de UX que a spec não trata — barras vermelhas no caminho crítico, losangos de marco, baseline como snapshot cinza, linhas sólidas/pontilhadas e edição por arrastar direto no gráfico.
 
 ### Recomendações
 
-pendente
+| # | Melhoria | Inspiração | Impacto | Esforço | Depende de | Decisão |
+|---|---|---|---|---|---|---|
+| G1 | Gantt unificado com linha do tempo sobrepondo etapas + MARCOS + PAGAMENTOS (contas a pagar/receber) + COMPRAS/entregas de materiais, em faixas/camadas estilo MS Project (cronograma custo-carregado) | MS Project [2][3], Primavera P6 [6] | Alto | Alto | financeiro + pedidos de compra (dados atuais) | ⬜ |
+| G2 | Desenhar dependências no Gantt (setas predecessor→sucessor), tipos FS/SS/FF/SF com lag e recálculo de datas em cascata | MSP [2], P6 [4], Smartsheet [7], Monday [9] | Alto | Alto | spec cronograma | ⬜ |
+| G3 | Caminho crítico calculado (CPM) com destaque em vermelho nas barras e setas | MSP [1], P6 [5], Smartsheet [8], Monday [11] | Alto | Alto | G2 · spec cronograma | ⬜ |
+| G4 | Baseline versionado sobreposto como snapshot cinza + variância (dias adiantado/atrasado) | Monday [10], Smartsheet [8], MSP [1] | Médio | Médio | spec cronograma | ⬜ |
+| G5 | Curva S física e financeira derivada das etapas custo-carregadas + curva contratual de pagamento (30/60/90/120) | P6 [6], MSP [3] | Alto | Médio | spec cronograma | ⬜ |
+| G6 | EAP hierárquica no Gantt (expandir/recolher pacotes) e % físico ponderado por peso (hoje é média aritmética) | MSP [2], P6 [6] | Médio | Alto | spec cronograma | ⬜ |
+| G7 | Edição direta no Gantt: arrastar barra para alterar datas e desenhar seta de dependência no próprio gráfico | Smartsheet [7], Monday [9], MSP [2] | Médio | Médio | G1 · G2 | ⬜ |
+| G8 | Marcos como losango na linha do tempo, reaproveitando o evento de cobrança já existente (aprovação de marco) | MSP [2], Smartsheet [7], Monday [9] | Baixo | Baixo | projectMilestones (atual) | ⬜ |
 
 ### Fontes
 
-pendente
+1. Microsoft Support — Show the critical path of your project in Project — https://support.microsoft.com/en-us/office/show-the-critical-path-of-your-project-in-project-ad6e3b08-7748-4231-afc4-a2046207fd86
+2. ProjectManager — Microsoft Project Gantt Chart: A How-to Guide — https://www.projectmanager.com/blog/microsoft-project-gantt-chart
+3. Leroux Consulting — How to Generate a Cashflow (S-Curve) from your Microsoft Project Construction Schedules — https://lerouxconsulting.com/ms-project-for-construction-articles-and-resources/generate-cashflow-s-curve-ms-project-construction
+4. ProjectManagerTemplate — Primavera P6 Relationship Types — https://www.projectmanagertemplate.com/post/primavera-p6-relationship-types-project-scheduling
+5. ProjectManager — Primavera P6 Scheduling: How to Create a P6 Schedule — https://www.projectmanager.com/blog/primavera-p6-scheduling-p6-schedule
+6. ScheduleReader — How to cost load and resource load a schedule in Primavera P6 — https://www.schedulereader.com/how-to-cost-load-and-resource-load-a-schedule-in-primavera-p6/
+7. Smartsheet — Gantt Chart Software: Manage Timelines & Dependencies — https://www.smartsheet.com/content/gantt-chart-software
+8. Smartsheet Learning Center — Baselines and critical path — https://help.smartsheet.com/learning-track/project-fundamentals-part-2-project-settings/baselines-and-critical-path
+9. monday.com Support — The Gantt Chart View and Widget — https://support.monday.com/hc/en-us/articles/360015643840-The-Gantt-Chart-View-and-Widget
+10. monday.com Support — The Gantt Baseline — https://support.monday.com/hc/en-us/articles/360020978159-The-Gantt-Baseline
+11. monday.com Support — Critical Path for the Gantt Chart — https://support.monday.com/hc/en-us/articles/4420037448850-Critical-Path-for-the-Gantt-Chart
 
 ## Frente 4 — Agenda
 
