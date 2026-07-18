@@ -83,6 +83,38 @@ if ($pullExit !== 0) {
     $output = "[ERRO] git pull FALHOU (exit {$pullExit})\n" . $output;
 }
 
+// 2b) Confirma que o commit anunciado pelo webhook está publicado: o SHA
+//     "after" deve ser ancestral de (ou igual a) HEAD. Ancestral, não
+//     igualdade: com dois pushes seguidos o primeiro pull já traz os dois
+//     commits e HEAD legitimamente passa do "after" do primeiro webhook.
+$commitNote = '';
+$commitFail = false;
+$afterSha   = (string) ($data['after'] ?? '');
+if ($pullExit === 0) {
+    if (!preg_match('/^[0-9a-f]{40}$/i', $afterSha)) {
+        $commitNote = '[AVISO] payload sem SHA "after" válido — verificação de commit pulada';
+    } else {
+        $headLines = [];
+        $headExit  = 0;
+        exec('sudo -u alefschimanski git -C ' . escapeshellarg($appDir) . ' rev-parse HEAD 2>&1', $headLines, $headExit);
+        $headSha = trim((string) ($headLines[0] ?? ''));
+        if ($headExit !== 0) {
+            $commitFail = true;
+            $commitNote = "[ERRO] git rev-parse HEAD falhou (exit {$headExit})";
+        } else {
+            $ancestorOut  = [];
+            $ancestorExit = 1;
+            exec('sudo -u alefschimanski git -C ' . escapeshellarg($appDir) . ' merge-base --is-ancestor ' . escapeshellarg($afterSha) . ' HEAD 2>&1', $ancestorOut, $ancestorExit);
+            if ($ancestorExit !== 0) {
+                $commitFail = true;
+                $commitNote = "[ERRO] HEAD ({$headSha}) não contém o commit do webhook ({$afterSha})";
+            } else {
+                $commitNote = "[commit] HEAD {$headSha} contém {$afterSha}";
+            }
+        }
+    }
+}
+
 // 3) Verificação pós-deploy: os caminhos protegidos listados no .deployignore
 //    (linhas iniciadas por "/") precisam continuar existindo após o pull.
 $issues = [];
@@ -96,6 +128,7 @@ $logMsg = date('Y-m-d H:i:s') . " — Deploy:\n"
     . ($lockNote !== '' ? $lockNote . "\n" : '')
     . "[backup pré-deploy]\n" . trim((string) $backupOutput) . "\n"
     . "[git pull]\n" . trim((string) $output) . "\n"
+    . ($commitNote !== '' ? $commitNote . "\n" : '')
     . ($issues
         ? "[ALERTA] Arquivos/pastas protegidos ausentes após o deploy:\n- " . implode("\n- ", $issues) . "\n"
         : "[verificação] Arquivos protegidos intactos.\n")
@@ -105,6 +138,10 @@ $logMsg = date('Y-m-d H:i:s') . " — Deploy:\n"
 if ($pullExit !== 0) {
     http_response_code(500);
     die("Deploy FALHOU — git pull retornou exit {$pullExit}; confira {$logDir}/deploy.log");
+}
+if ($commitFail) {
+    http_response_code(500);
+    die("Deploy FALHOU — commit do webhook não confirmado no working tree; confira {$logDir}/deploy.log");
 }
 if ($issues) {
     http_response_code(500);
