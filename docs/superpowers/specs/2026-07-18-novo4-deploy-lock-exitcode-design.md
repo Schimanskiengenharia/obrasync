@@ -91,9 +91,13 @@ outra — ver "Ordem de implementação" abaixo.)
   lock com dois processos concorrentes disputando o `flock` (script de
   teste dedicado, roda com o PHP local).
 - Servidor (quando o usuário autorizar o push): deploy real observando
-  `deploy.log` — as novas linhas `[git pull exit]`, `[lock]` e
-  `[commit]` devem aparecer; delivery do webhook no GitHub deve mostrar
-  200 no sucesso.
+  `deploy.log` — no SUCESSO devem aparecer `[lock] adquirido`, a seção
+  `[git pull]` e `[commit] HEAD ... contém ...` (a linha de exit só
+  aparece em falha, como `[ERRO] git pull FALHOU`); delivery do webhook
+  no GitHub deve mostrar 200 no sucesso. Teste adicional: dois pushes
+  rápidos → dois blocos serializados no log; a 2ª delivery pode aparecer
+  como "timed out" no GitHub mesmo com deploy bem-sucedido (o GitHub
+  desconecta em ~10s; `ignore_user_abort` mantém o deploy vivo).
 
 ## Risco declarado
 
