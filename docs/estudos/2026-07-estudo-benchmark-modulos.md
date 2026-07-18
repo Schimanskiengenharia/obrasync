@@ -558,15 +558,54 @@ A spec `docs/specs/cronograma-fisico-financeiro.md` descreve expansão em 7 fase
 
 ### Opções de como funcionaria
 
-pendente
+Três caminhos para reduzir os passos manuais e os riscos do fluxo atual, preservando a regra de nunca tocar em `/etc/financeiro/config.php`, uploads, backups ou banco.
+
+**Opção A — Automatizar as pontas do fluxo git/webhook atual (evolução incremental).**
+- *Automatiza:* hook local `pre-push` que roda `php -l` + `node --check` e aborta o push se falhar [5][6]; incremento sincronizado de `?v=` e `APP_VERSION` no mesmo hook; `deploy.php` passa a exigir backup bem-sucedido (aborta em vez de só logar `[ALERTA]`) e a rodar migrations pendentes com registro em tabela de controle (`schema_migrations`) [7][8].
+- *Pré-requisitos:* git hooks no PC, tabela de migrations, ajuste em `deploy.php`. Zero infra nova.
+- *Riscos:* hook local é burlável (`--no-verify`); migração automática exige idempotência (já garantida) e guarda/log.
+- *Esforço:* Baixo/Médio. Mantém GitHub como fonte da verdade e o backup+HMAC existentes.
+
+**Opção B — Deploy direto pela LAN (SSH/rsync).**
+- *Automatiza:* agente local que valida, builda e sincroniza via `rsync` sobre SSH, sem GitHub; `--exclude` protege config/uploads/backups [1][2][3][4].
+- *Riscos:* perde o gatilho por push e a rastreabilidade do git; pode subir lixo não commitado; um `--delete` mal configurado apaga arquivos protegidos. Migrations continuam à parte.
+- *Esforço:* Médio.
+
+**Opção C — Runner de CI self-hosted na LAN (GitHub Actions runner on-premise).**
+- *Automatiza:* pipeline formal no push — validação, deploy, migrations e rollback como steps versionados; runner na própria rede [12][13].
+- *Riscos:* manutenção do runner e superfície de ataque; overkill para dev solo.
+- *Esforço:* Alto.
+
+**Recomendação:** adotar a **Opção A** como caminho principal. Para um dev solo, com deploys frequentes, servidor na mesma LAN e a disciplina de não tocar config/uploads/backups/banco, A entrega a maior redução de risco (validação forçada, cache busting sincronizado, backup que bloqueia, migrations rastreadas) com o menor esforço e sem infra nova. Descartar B (perde rastreabilidade e arrisca caminhos protegidos); deixar C como evolução futura se o projeto ganhar mais colaboradores — a partir de A, migrar para C é natural, pois os mesmos passos (lint → backup → migrate → healthcheck → rollback) já estarão scriptados.
 
 ### Recomendações
 
-pendente
+| # | Melhoria | Inspiração | Impacto | Esforço | Depende de | Decisão |
+|---|---|---|---|---|---|---|
+| DEP1 | Hook `pre-push` local que roda `php -l api/index.php` + `node --check app.js` e **aborta o push** se algum falhar | [5][6] | Alto | Baixo | — | ⬜ |
+| DEP2 | Cache busting automático no mesmo `pre-push`: incrementa `?v=` (index.html) e `APP_VERSION` (app.js) **em sincronia**, eliminando os dois contadores manuais | [4][5] | Médio | Baixo | DEP1 | ⬜ |
+| DEP3 | Backup obrigatório que **aborta o deploy**: `deploy.php` interrompe (não só loga) se `backup-pre-deploy.sh` falhar — nunca publicar sem backup válido | [9][10][11] | Alto | Baixo | — | ⬜ |
+| DEP4 | Registro de migrations aplicadas (tabela `schema_migrations`) + execução automática das pendentes no `deploy.php`, aplicando só o que falta e logando cada arquivo | [7][8][9] | Alto | Médio | DEP3 | ⬜ |
+| DEP5 | Healthcheck pós-deploy: HTTP 200 numa rota de saúde + versão publicada = `APP_VERSION` esperada (além da checagem de caminhos do `.deployignore`) | [4][9] | Médio | Médio | DEP4 | ⬜ |
+| DEP6 | Rollback documentado/automatizado: reverte para o commit anterior e restaura o último dump/uploads se o healthcheck falhar; migrations forward-only | [9][10][11] | Alto | Médio | DEP3, DEP5 | ⬜ |
+| DEP7 | Verificação de dependências no deploy: checagem de PhpSpreadsheet e poppler-utils, abortando com mensagem clara se faltarem | [1][2] | Médio | Baixo | DEP4 | ⬜ |
+| DEP8 | Notificação/log estruturado do resultado do deploy (sucesso/erro, versão, migrations aplicadas, rollback) com retorno visível ao dev | [4][13] | Baixo | Baixo | DEP5 | ⬜ |
 
 ### Fontes
 
-pendente
+1. simple-php-git-deploy (markomarkovic) — https://github.com/markomarkovic/simple-php-git-deploy
+2. Lyquix/php-git-deploy — deploy automático via webhooks — https://github.com/Lyquix/php-git-deploy
+3. A tiny "Deployer" made with Shell Script and Rsync (DEV Community) — https://dev.to/felipperegazio/a-tiny-deployer-made-with-shell-script-and-rsync-3djd
+4. Automating Website Deployments with Git: A Practical Guide (DeployBase) — https://deploybase.io/blog/automating-website-deployments-with-git-a-practical-guide
+5. Git Pre-Push Hook: A Practical Guide (Sling Academy) — https://www.slingacademy.com/article/git-pre-push-hook-a-practical-guide-with-examples/
+6. Git: Automatically Lint Your Code or Run Tests on git push (Natter Stefan) — https://blog.natterstefan.me/git-automatically-lint-your-code-or-run-tests-on-git-push-with-git-hooks
+7. How to Handle Database Migrations in MySQL (OneUptime) — https://oneuptime.com/blog/post/2026-02-02-mysql-database-migrations/view
+8. How to Manage Database Migrations in PHP (DEV Community) — https://dev.to/abhay_yt_52a8e72b213be229/how-to-manage-database-migrations-in-php-12bi
+9. Database Migration Strategies for Zero-Downtime Deployments (DeployHQ) — https://www.deployhq.com/blog/database-migration-strategies-for-zero-downtime-deployments-a-step-by-step-guide
+10. Database Rollbacks in CI/CD: Strategies and Pitfalls (Medium) — https://medium.com/@jasminfluri/database-rollbacks-in-ci-cd-strategies-and-pitfalls-f0ffd4d4741a
+11. Database Rollback Strategies in DevOps (Harness) — https://www.harness.io/harness-devops-academy/database-rollback-strategies-in-devops
+12. Self-hosted runners (GitHub Docs) — https://docs.github.com/actions/hosting-your-own-runners
+13. How to Configure Self-Hosted Runners in GitHub Actions (OneUptime) — https://oneuptime.com/blog/post/2026-01-25-github-actions-self-hosted-runners/view
 
 ## Frente 8 — Backend como API + múltiplos frontends (análise técnica)
 
