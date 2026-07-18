@@ -80,8 +80,8 @@ Checklist que o agente percorre quando o usuário pedir "verificar erros":
 
 | # | Melhoria | Inspiração | Impacto | Esforço | Depende de | Decisão |
 |---|---|---|---|---|---|---|
-| E1 | Instalar captura global de erros JS (`window.onerror` + `unhandledrejection`) no bootstrap do SPA, com deduplicação/rate-limit do toast e proteção contra loop (handler nunca reporta a própria falha) | [3][4][5] — 0 handlers hoje | Alto | Baixo | — | ⬜ |
-| E2 | Tratar TODOS os `.catch` vazios (além dos 5 originais, também `app.js:7664, 7748, 10613, 16403, 17609, 18833`), classificando cada um: log-only (best-effort) vs feedback ao usuário | [5] | Médio | Médio | — | ⬜ |
+| E1 | Instalar captura global de erros JS (`window.onerror` + `unhandledrejection`) no bootstrap do SPA, com deduplicação/rate-limit do toast e proteção contra loop (handler nunca reporta a própria falha) | [3][4][5] — 0 handlers hoje | Alto | Baixo | — | **sim** |
+| E2 | Tratar TODOS os `.catch` vazios (além dos 5 originais, também `app.js:7664, 7748, 10613, 16403, 17609, 18833`), classificando cada um: log-only (best-effort) vs feedback ao usuário | [5] | Médio | Médio | — | **sim** |
 | E3 | Fase 1: substituir `alert()` de `saveForm` (`app.js:8709-8711`) por `showToast` com severidade (que hoje nem existe, `app.js:18640`). Fase 2 opcional: migrar os demais `alert()` de negócio (`app.js:3022-3488, 13459-14556`) | [1] | Médio | Baixo (F1) | — | ⬜ |
 | E4 | Código de correlação (UUID gerado no SERVIDOR) gravado no `error_log` junto do 500 e exibido na mensagem — sem depender de E5; nunca reutilizar UUID vindo do cliente | [10][11] | Médio | Baixo | — | ⬜ |
 | E5 | (revisada) Log estruturado (JSON) em ARQUIVO/syslog dedicado com rotação e redação de segredos — não tabela no mesmo banco (falha de conexão impediria o próprio INSERT); tabela só para eventos operacionais | [6][7] | Médio | Médio | — | ⬜ |
@@ -596,7 +596,7 @@ Três caminhos para reduzir os passos manuais e os riscos do fluxo atual, preser
 |---|---|---|---|---|---|---|
 | DEP1 | Hook `pre-push` versionado (via `core.hooksPath`/script instalador) rodando `php -l` + `node --check` e abortando o push — contornável com `--no-verify`, por isso impacto Médio (defesa de 1ª linha, não garantia) | [5][6] | Médio | Baixo | — | ⬜ |
 | DEP2 | (revisada) Cache busting derivado do COMMIT: hash aplicado no deploy (ou comando de release PRÉ-commit) — versão no `pre-push` é tecnicamente incorreta (alteraria arquivos fora do commit); `?v=` e `APP_VERSION` deixam de ser contadores manuais desacoplados | [4][5] | Médio | Médio | — | ⬜ |
-| DEP3 | PRIMEIRO consertar o backup (propagar falha: `pipefail`, validar arquivos não-vazios, escrita atômica — hoje o script pode falhar e sair com código 0) e SÓ ENTÃO `deploy.php` abortar no exit≠0 | [9][10][11] | Alto | Médio | — | ⬜ |
+| DEP3 | PRIMEIRO consertar o backup (propagar falha: `pipefail`, validar arquivos não-vazios, escrita atômica — hoje o script pode falhar e sair com código 0) e SÓ ENTÃO `deploy.php` abortar no exit≠0 | [9][10][11] | Alto | Médio | — | **sim** |
 | DEP4 | Migrations automáticas com `schema_migrations` — SÓ após backup válido + lock de deploy (NOVO-4), com checksums/ordem, credencial restrita e teste em cópia; MySQL não tem rollback de DDL; nunca marcar aplicada após falha parcial | [7][8][9] | Alto | Alto | DEP3, NOVO-4 | ⬜ |
 | DEP5 | Healthcheck pós-deploy: rota de saúde sem efeito no banco + verificação do COMMIT publicado (mais robusto que comparar `APP_VERSION` manual) | [4][9] | Médio | Baixo | — | ⬜ |
 | DEP6 | (revisada) Rollback automático SÓ do código (git); restore de dump/uploads fica como RUNBOOK manual testado — restauração automática poderia apagar dados gravados após o backup e viola a regra de não operar o banco diretamente | [9][10][11] | Médio | Médio | DEP5 | ⬜ |
@@ -725,9 +725,9 @@ compartilham o `deploy_run_id`; G5 consome o motor/dataset de G1/G6.
 | # | Melhoria | Evidência | Impacto | Esforço | Depende de | Decisão |
 |---|---|---|---|---|---|---|
 | NOVO-1 | Criação da proposta ATÔMICA em um endpoint (cabeçalho + vínculos + itens + variáveis, com idempotency key) — hoje cada registro é uma requisição e falha intermediária deixa proposta parcial | `app.js:16620-16695` | Alto | Alto | — | ⬜ |
-| NOVO-2 | Parar de descartar silenciosamente campos em `insert_dynamic`/`update_dynamic` em operações de negócio: registrar/recusar colunas inesperadas, expondo schema drift | `api/index.php:14197-14218` | Alto | Baixo | — | ⬜ |
-| NOVO-3 | Testes automatizados mínimos (fluxos financeiros/comerciais + smoke do deploy) — hoje o handoff exige só validação de sintaxe e não há suíte no repo | `CLAUDE.md`; `api/index.php:657-843` | Alto | Alto | — | ⬜ |
-| NOVO-4 | Serializar deploys com LOCK e verificar exit code/commit do `git pull` — hoje `shell_exec` pode falhar e o webhook ainda responder "Deploy OK" | `deploy.php:48-73` | Alto | Baixo | — | ⬜ |
+| NOVO-2 | Parar de descartar silenciosamente campos em `insert_dynamic`/`update_dynamic` em operações de negócio: registrar/recusar colunas inesperadas, expondo schema drift | `api/index.php:14197-14218` | Alto | Baixo | — | **sim** |
+| NOVO-3 | Testes automatizados mínimos (fluxos financeiros/comerciais + smoke do deploy) — hoje o handoff exige só validação de sintaxe e não há suíte no repo | `CLAUDE.md`; `api/index.php:657-843` | Alto | Alto | — | **sim** |
+| NOVO-4 | Serializar deploys com LOCK e verificar exit code/commit do `git pull` — hoje `shell_exec` pode falhar e o webhook ainda responder "Deploy OK" | `deploy.php:48-73` | Alto | Baixo | — | **sim** |
 
 ## Divergências entre os players — onde o mercado NÃO concorda
 
