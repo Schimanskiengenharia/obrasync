@@ -8,8 +8,10 @@
 
 O usuário quer evoluir o ObraSync em várias frentes — padrão de verificação de
 erros, fluxo comercial baseado em serviços, Gantt estilo MS Project, agenda,
-kanban e financeiro (a pagar/receber, NF, compras) — mas decidiu que, antes de
-qualquer implementação, é preciso:
+kanban, financeiro (a pagar/receber, NF, compras), automação de build/deploy
+para o servidor on-premise e a separação do backend em API para suportar
+múltiplos frontends (mobile e desktop) — mas decidiu que, antes de qualquer
+implementação, é preciso:
 
 1. Ler todos os módulos do sistema e registrar como funcionam hoje;
 2. Pesquisar como os grandes players do mercado resolvem cada frente;
@@ -26,7 +28,9 @@ Um único documento markdown: **`docs/estudos/2026-07-estudo-benchmark-modulos.m
 
 - **Resumo executivo** (1 página): o que foi estudado, principais achados,
   recomendações de maior impacto.
-- **Uma seção por frente** (6 frentes), cada uma com o mesmo esqueleto:
+- **Uma seção por frente** (8 frentes). As Frentes 1-6 seguem o esqueleto de
+  benchmark; as Frentes 7-8 são de **análise técnica** e trocam o passo 2 por
+  "opções de como funcionaria, com trade-offs". Esqueleto:
   1. **Como é hoje** — inventário do módulo no ObraSync: telas, ações,
      tabelas, endpoints, limitações conhecidas;
   2. **Como o mercado faz** — funcionalidades dos players pesquisados, com
@@ -42,7 +46,7 @@ Um único documento markdown: **`docs/estudos/2026-07-estudo-benchmark-modulos.m
 
 O usuário revisa a tabela de cada frente e marca sim/não por item.
 
-## As 6 frentes
+## As 8 frentes
 
 ### Frente 1 — Padrão de verificação de erros
 
@@ -106,15 +110,55 @@ compras.
   visão de pagar/receber (alertas, régua de cobrança, aging/inadimplência),
   conciliação e usabilidade de baixa de contas.
 
+### Frente 7 — Agente de build/deploy on-premise (análise técnica)
+
+O servidor de produção é on-premise, na mesma rede local deste computador.
+
+- *Inventário (como é hoje):* editar no PC → commit → push manual → webhook
+  GitHub → `deploy.php` (git pull + backup pré-deploy); migrations rodadas
+  manualmente no servidor; cache busting manual (`?v=` + `APP_VERSION`);
+  hard refresh no navegador. Ambiente local sem MySQL/pdo_mysql (testes com
+  banco só no servidor).
+- *Análise (opções de como funcionaria):* um agente/rotina de build que
+  valida (`php -l`, `node --check`), versiona o cache busting, faz o deploy
+  e roda migrations automaticamente — comparando caminhos: manter o fluxo
+  git/webhook e automatizar as pontas vs deploy direto pela rede local
+  (SSH/rsync); rollback e backup; como testar com banco antes de subir.
+- *Foco:* reduzir passos manuais e erros de deploy (migration esquecida,
+  `?v=` não incrementado), mantendo as regras existentes (nunca tocar em
+  `/etc/financeiro/config.php`, uploads, backups, banco).
+
+### Frente 8 — Backend como API + múltiplos frontends (análise técnica)
+
+O usuário quer, no futuro, frontends mobile e desktop além do web — o que
+exige o backend separado em uma API consumível por qualquer cliente.
+
+- *Inventário (como é hoje):* `api/index.php` único (~8,7 mil linhas) com
+  roteamento misto (REST por path + `?module=&action=`), respostas em dois
+  formatos (`respond()`/`fail()` vs `{success, data, message}`), auth por
+  token em header, acoplamentos com o SPA (`app.js` monolítico).
+- *Análise (opções de como funcionaria):* o que falta para ser uma API de
+  verdade — padronização de respostas e rotas, versionamento, documentação
+  (ex.: OpenAPI), CORS, auth adequada a mobile; opções de frontend mobile
+  (PWA vs app nativo vs wrapper tipo Capacitor) e desktop (PWA instalável
+  vs Electron/Tauri vs o próprio web); estratégia de migração incremental
+  sem quebrar o SPA atual; esforço e riscos de cada caminho.
+- *Foco:* mapa de decisão arquitetural — não é para reescrever nada agora,
+  e sim saber qual caminho seguir e em que ordem.
+
 ## Método de execução (abordagem híbrida, aprovada)
 
-1. **Inventário interno** — 6 agentes de leitura em paralelo (somente
+1. **Inventário interno** — 8 agentes de leitura em paralelo (somente
    leitura, um por frente), varrendo `app.js`, `api/index.php`, `schema.sql`,
    migrations e docs. Cada um devolve o mapa estruturado da sua frente:
    telas, ações, tabelas, endpoints, limitações. O agente da Frente 3 também
-   lê a spec do cronograma físico-financeiro.
-2. **Benchmark de mercado** — pesquisa web dirigida por frente (3-5 players
-   cada), extraindo listas de funcionalidades com fonte citada.
+   lê a spec do cronograma físico-financeiro; o da Frente 7 mapeia o fluxo
+   de deploy (`deploy.php`, `backup-pre-deploy.sh`, scripts/); o da Frente 8
+   mapeia o roteamento e os formatos de resposta da API.
+2. **Benchmark de mercado / análise técnica** — Frentes 1-6: pesquisa web
+   dirigida (3-5 players cada), extraindo funcionalidades com fonte citada.
+   Frentes 7-8: pesquisa técnica das opções (ferramentas, arquiteturas) e
+   comparação de trade-offs no contexto do ObraSync.
 3. **Síntese** — consolidação no documento único: tabelas de recomendação
    com impacto/esforço/dependências e ordem sugerida de implementação.
 4. **Apresentação** — o usuário recebe o doc, revisa e marca sim/não em cada
@@ -133,7 +177,10 @@ pesquisar por fora — o documento é autossuficiente.
 - Implementar o cronograma físico-financeiro (a spec própria continua
   valendo; o estudo só conecta);
 - Executar o roteiro de verificação de erros (definido no estudo; rodar é
-  ciclo futuro).
+  ciclo futuro);
+- Construir o agente de build/deploy (Frente 7 só analisa e recomenda);
+- Separar a API ou criar frontends mobile/desktop (Frente 8 só analisa e
+  recomenda o caminho).
 
 ## Próximos passos
 
