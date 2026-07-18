@@ -40,19 +40,56 @@ pendente
 
 ### Boas práticas do mercado
 
-pendente
+- Mensagens de erro devem ser visíveis, em linguagem humana e específicas — nunca genéricas como "entrada inválida" — explicando o que houve e como corrigir, sem culpar o usuário nem expor jargão técnico [1].
+- Cada erro deve dar conselho construtivo e preservar o que o usuário já digitou; o tom é educado, não acusatório (evitar "inválido"/"ilegal") [1].
+- Erros de formulário devem aparecer inline, junto do campo com problema — o usuário vê a mensagem enquanto conserta [2].
+- Validação inline idealmente dispara no blur (ao sair do campo), não a cada tecla; combina cor (vermelho erro, âmbar aviso) com ícone/texto para acessibilidade [8][9]. Reduz erros de preenchimento (~22%) e acelera a conclusão [8][9].
+- SPAs precisam de captura global de JS: `window.onerror` pega exceções de runtime não tratadas e `unhandledrejection` pega promises rejeitadas sem `.catch` — complementares, registrados na inicialização do app [3][4][5]. O handler global loga com contexto, envia a um backend e exibe mensagem amigável [3][5].
+- Erro inesperado nunca silencioso: `.catch` vazios engolem falhas; o padrão é sempre registrar e, quando afeta o usuário, dar feedback visível [5].
+- Em produção PHP: `display_errors=0` + `log_errors=1`, destino de log fixo/dedicado, níveis de severidade e formato estruturado (JSON); nunca logar dados sensíveis [6][7]. Logs centralizados com contexto suficiente para diagnóstico [7].
+- Correlação erro↔requisição/usuário: um ID único (correlation ID) por requisição, gravado no log e **exibido ao usuário na tela de erro** — no suporte, localiza imediatamente os logs da requisição exata [10][11].
 
 ### Roteiro de verificação sob demanda
 
-pendente
+Checklist que o agente percorre quando o usuário pedir "verificar erros":
+
+1. **Sintaxe e estáticos:** `php -l api/index.php`; `node --check app.js`.
+2. **Fluxo feliz ponta a ponta (leitura de código):** cadastro cliente →
+   proposta → obra → orçamento → conta a receber/pagar → baixa — conferir
+   que cada passo trata resposta de erro da API (toast + estado consistente).
+3. **Casos de borda:** campos vazios/valores inválidos nos formulários
+   principais; IDs inexistentes nos endpoints; permissão negada.
+4. **Erros inesperados:** simular resposta 500/JSON inválido — o front
+   mostra algo? O PHP loga? (conferir handlers e logs)
+5. **Relatório:** listar cada problema com arquivo:linha, gravidade e
+   sugestão de correção — SEM corrigir nada sem aprovação.
 
 ### Recomendações
 
-pendente
+| # | Melhoria | Inspiração | Impacto | Esforço | Depende de | Decisão |
+|---|---|---|---|---|---|---|
+| E1 | Instalar captura global de erros JS (`window.onerror` + `unhandledrejection`) registrada no bootstrap do SPA, que loga com contexto e exibe toast amigável em vez de morrer no console | [3][4][5] — hoje há 0 ocorrências de handler global | Alto | Baixo | — | ⬜ |
+| E2 | Eliminar os `.catch(() => {})` silenciosos (`app.js:7157, 8724, 8732, 17127, 17155`): todo catch deve logar e, se afeta o usuário, dar feedback — erro nunca silencioso | [5] | Alto | Baixo | E1 | ⬜ |
+| E3 | Substituir `alert()` bloqueante de gravação/validação (`app.js:8709-8711`) por `showToast` consistente, com distinção visual de severidade (erro/aviso) | [1] | Médio | Baixo | — | ⬜ |
+| E4 | Gerar código de correlação (UUID) por requisição/erro, gravá-lo no `error_log` junto do 500 e exibi-lo ao usuário na mensagem de "erro interno" para rastreio no suporte | [10][11] — 500 genérico hoje sem código | Alto | Médio | E5 | ⬜ |
+| E5 | Fixar o destino do `error_log` PHP e criar tabela/endpoint de erros de aplicação com log estruturado (JSON) e níveis de severidade — hoje diagnóstico depende só de `audit_log` (mutações) + log do SO | [6][7] | Médio | Médio | — | ⬜ |
+| E6 | Estender validação inline (on blur, mensagem junto do campo) aos formulários de negócio de financeiro/orçamento/obras, hoje dependentes do backend | [2][8][9] — validação client-side só em 3 cadastros | Alto | Alto | E3 | ⬜ |
+| E7 | Unificar o contrato de resposta da API em um envelope único (ex.: `{ok, data, error, code}`), eliminando a coexistência de `{ok,error}` (REST) e `{success,message}` (módulos) | [7] — hoje dois formatos | Médio | Alto | — | ⬜ |
+| E8 | Padronizar catálogo de mensagens de erro acionáveis (linguagem clara, sem culpar, com próximo passo) substituindo genéricos como "Erro interno no servidor" e "formato inesperado" | [1] | Médio | Médio | E7 | ⬜ |
 
 ### Fontes
 
-pendente
+1. Error-Message Guidelines (Nielsen Norman Group) — https://www.nngroup.com/articles/error-message-guidelines/
+2. 10 Design Guidelines for Reporting Errors in Forms (Nielsen Norman Group) — https://www.nngroup.com/articles/errors-forms-design-guidelines/
+3. Capture & Report JavaScript Errors with window.onerror (Sentry Blog) — https://blog.sentry.io/client-javascript-reporting-window-onerror/
+4. Window: error event (MDN Web Docs) — https://developer.mozilla.org/en-US/docs/Web/API/Window/error_event
+5. Client-side global error handling and unhandled promise rejections (DEV Community) — https://dev.to/nyxtom/client-side-global-error-handling-and-unhandled-promise-rejections-2917
+6. PHP Logging: Best Practices for PHP Log Analysis (Zend) — https://www.zend.com/blog/error-logging-in-php
+7. Four Logging Best Practices for Production Applications (Tideways) — https://tideways.com/profiler/blog/four-logging-best-practices-for-production-applications
+8. Usability Testing of Inline Form Validation (Baymard Institute) — https://baymard.com/blog/inline-form-validation
+9. A Complete Guide To Live Validation UX (Smashing Magazine) — https://www.smashingmagazine.com/2022/09/inline-validation-web-forms-ux/
+10. Correlation IDs (Microsoft Engineering Fundamentals Playbook) — https://microsoft.github.io/code-with-engineering-playbook/observability/correlation-id/
+11. SharePoint Correlation ID in error messages (Microsoft Support) — https://support.microsoft.com/en-gb/office/sharepoint-correlation-id-in-error-messages-what-it-is-and-how-to-use-it-5bf2dba7-43d2-484c-8ef4-e059f76e3efa
 
 ## Frente 2 — Fluxo comercial de serviços
 
