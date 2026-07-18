@@ -7,8 +7,9 @@
 ## Contexto
 
 O usuário quer evoluir o ObraSync em várias frentes — padrão de verificação de
-erros, fluxo comercial baseado em serviços, Gantt estilo MS Project, agenda e
-kanban — mas decidiu que, antes de qualquer implementação, é preciso:
+erros, fluxo comercial baseado em serviços, Gantt estilo MS Project, agenda,
+kanban e financeiro (a pagar/receber, NF, compras) — mas decidiu que, antes de
+qualquer implementação, é preciso:
 
 1. Ler todos os módulos do sistema e registrar como funcionam hoje;
 2. Pesquisar como os grandes players do mercado resolvem cada frente;
@@ -25,7 +26,7 @@ Um único documento markdown: **`docs/estudos/2026-07-estudo-benchmark-modulos.m
 
 - **Resumo executivo** (1 página): o que foi estudado, principais achados,
   recomendações de maior impacto.
-- **Uma seção por frente** (5 frentes), cada uma com o mesmo esqueleto:
+- **Uma seção por frente** (6 frentes), cada uma com o mesmo esqueleto:
   1. **Como é hoje** — inventário do módulo no ObraSync: telas, ações,
      tabelas, endpoints, limitações conhecidas;
   2. **Como o mercado faz** — funcionalidades dos players pesquisados, com
@@ -41,7 +42,7 @@ Um único documento markdown: **`docs/estudos/2026-07-estudo-benchmark-modulos.m
 
 O usuário revisa a tabela de cada frente e marca sim/não por item.
 
-## As 5 frentes
+## As 6 frentes
 
 ### Frente 1 — Padrão de verificação de erros
 
@@ -89,9 +90,25 @@ Anotações, mudança de cor quando atrasado, botão de concluído.
 - *Players:* Trello, Jira, Monday, ClickUp — limites de coluna (WIP),
   etiquetas, checklists no cartão, automações, filtros, swimlanes.
 
+### Frente 6 — Financeiro
+
+Contas a pagar/receber, fluxo de caixa, acompanhamento de notas fiscais e
+compras.
+
+- *Inventário:* módulos financeiros do ObraSync — pagar/receber (recorrência,
+  quitação antecipada, vencidas/inadimplência), caixa e fluxo de caixa, OFX,
+  notas fiscais/NFS-e e vínculos com contas, pedidos de compra e o ciclo
+  cotação → conta a pagar → NF.
+- *Players:* Conta Azul, Omie, Nibo, Granatum (gestão financeira BR, forte em
+  pagar/receber, conciliação e NF-e) e QuickBooks (referência global) — e o
+  lado financeiro/suprimentos do Sienge, aproveitando a pesquisa da Frente 2.
+- *Foco:* acompanhamento de NF (status, vínculo com compra e com conta),
+  visão de pagar/receber (alertas, régua de cobrança, aging/inadimplência),
+  conciliação e usabilidade de baixa de contas.
+
 ## Método de execução (abordagem híbrida, aprovada)
 
-1. **Inventário interno** — 5 agentes de leitura em paralelo (somente
+1. **Inventário interno** — 6 agentes de leitura em paralelo (somente
    leitura, um por frente), varrendo `app.js`, `api/index.php`, `schema.sql`,
    migrations e docs. Cada um devolve o mapa estruturado da sua frente:
    telas, ações, tabelas, endpoints, limitações. O agente da Frente 3 também
