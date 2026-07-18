@@ -697,6 +697,73 @@ Três caminhos para reduzir os passos manuais e os riscos do fluxo atual, preser
 13. Tauri v2 vs Electron 2026: The Honest Comparison (BuildMVPFast) — https://www.buildmvpfast.com/blog/tauri-v2-vs-electron-desktop-apps-2026
 14. Electron vs. Tauri (DoltHub Blog) — https://www.dolthub.com/blog/2025-11-13-electron-vs-tauri/
 
+## Divergências entre os players — onde o mercado NÃO concorda
+
+Nas tabelas de recomendação, a maioria das funcionalidades é consenso (todos têm). Abaixo, os pontos onde os players resolvem **o mesmo problema de jeitos diferentes** — nesses, além do sim/não, cabe escolher QUAL estilo seguir. Cada divergência aponta a recomendação afetada.
+
+**Kanban — limite WIP: avisar ou bloquear? (afeta KB2)**
+- Jira: ao estourar o limite, a coluna fica **vermelha** — alerta visual, o drop NÃO é bloqueado [F5: 7].
+- ClickUp: destaque visual ao atingir a capacidade — também não bloqueia [F5: 14].
+- Trello: não tem WIP nativo (só via power-up).
+- *Escolha para o ObraSync:* o mercado dominante **avisa e deixa passar** (confia no time); bloquear de fato é mais rígido e raro. KB2 pode ser implementado nos dois modos — definir qual.
+
+**Kanban — o que significa coluna "Concluída"? (afeta KB6/KB8)**
+- Jira: coluna é **mapeada a um status** do fluxo de trabalho — "Done" vem do status, não do nome [F5: 8].
+- Monday: semântica de rótulo ("What's Done") na coluna de status [F5: 10].
+- Trello: por posição/arquivamento, sem semântica formal.
+- *Escolha:* flag explícito na coluna (estilo Jira, proposto em KB6) é o mais robusto; o modelo Trello (implícito) é o que o ObraSync tem hoje e já quebrou (detecção por nome).
+
+**Agenda — como tratar atrasados? (afeta AG2/AG9)**
+- Google: **agrega** as vencidas numa entrada única de dia inteiro com contador (não polui a grade) [F4: 1].
+- Todoist: botão **"Reagendar tudo"** — move todas as vencidas para hoje com sugestões inteligentes [F4: 6].
+- TickTick: **lembretes persistentes** que insistem até concluir (estilo alarme) [F4: 11].
+- *Escolha:* são três filosofias — visão agregada, reagendamento em massa, ou insistência. AG9 (painel de atrasadas) segue o estilo Google; dá para combinar com o botão de reagendar do Todoist.
+
+**Agenda — cor: de quê? (afeta AG8)**
+- Outlook: cor por **categoria** definida pelo usuário [F4: 4].
+- Todoist: cor por **prioridade** (P1 vermelho) + etiquetas [F4: 8].
+- Google: cor por evento/calendário individual.
+- *Escolha:* cor por categoria/tipo (Outlook) casa melhor com os tipos já existentes na agenda do ObraSync; cor livre por evento (Google) é mais flexível e mais trabalhosa.
+
+**Financeiro — conciliação: regras, IA ou integração bancária? (afeta FIN8)**
+- Conta Azul: usuário **configura as regras** de match (exato; aproximado ±5 dias) [F6: 2].
+- Nibo: **categorização automática** com ~85% de acerto (aprendizado) [F6: 10].
+- Omie: aposta na **integração direta com os bancos** (extrato entra sozinho) [F6: 7].
+- *Escolha:* para o ObraSync (OFX manual hoje), o caminho realista é o da Conta Azul — regras configuráveis + sugestão em vez de auto-match cego; integração bancária direta exige convênios/APIs de banco.
+
+**Financeiro — projeção de caixa: cenários ou simulação? (afeta FIN4)**
+- Granatum: **cenários salvos** (otimista/pessimista/realista) com metas acompanhadas [F6: 13].
+- QuickBooks: **planner interativo** de curto prazo (~90 dias), ajustes hipotéticos que não alteram os livros [F6: 16].
+- *Escolha:* cenários salvos servem planejamento de obra (horizonte longo); o planner serve decisão do dia a dia. Definir qual dos dois (ou ambos, em fases).
+
+**Fluxo comercial — necessidade de compra: notificar ou gerar? (afeta FC8)**
+- Sienge: o planejamento **desdobra a necessidade e NOTIFICA o comprador** nas datas previstas — humano decide [F2: 2].
+- TOTVS: **gera os pedidos automaticamente** considerando lead time — sistema decide [F2: 5].
+- *Escolha:* notificação (Sienge) mantém controle humano e é mais segura para começar; geração automática (TOTVS) é mais agressiva e exige lead times cadastrados.
+
+**Fluxo comercial — entrada de NF: buscar ou receber? (afeta FC7/FIN8)**
+- Obra Prima: **recebe a NF da SEFAZ automaticamente** (até 2h, sem digitação) [F2: 9].
+- Sienge: NF é **vinculada manualmente** a medições/contratos (uma NF pode ligar várias medições) [F6: 18][19].
+- *Escolha:* a busca automática na SEFAZ é um diferencial grande, mas exige certificado digital e integração fiscal — não está em nenhuma recomendação atual; se interessar, vira item novo.
+
+**Gantt — baseline: snapshot visual ou variância numérica? (afeta G4)**
+- Monday: baseline como **snapshot cinza travado** sobreposto às barras — comparação visual [F3: 10].
+- Smartsheet: **variância em números** (dias adiantado/atrasado) por tarefa [F3: 8].
+- MSP/P6: **múltiplas baselines versionadas** (0/1/2...) — mais completo e mais complexo [F3: 1][5].
+- *Escolha:* a spec interna de cronograma já prevê o modelo MSP/P6 (versionado); o snapshot visual do Monday é o mais simples de exibir primeiro.
+
+**Gantt — dependências: quão completo? (afeta G2)**
+- Monday: só FS/FF/SS (sem SF) [F3: 9].
+- MSP/P6: os 4 tipos + lag/lead; P6 distingue relação "driving" (linha sólida) de "non-driving" (pontilhada) [F3: 2][4].
+- *Escolha:* começar com FS simples (o que 90% das obras usa) e evoluir; implementar os 4 tipos de cara é fidelidade MSP com custo alto.
+
+**Erros — validação: quando disparar? (afeta E6)**
+- Baymard/Smashing: validar **no blur** (ao sair do campo) — nem a cada tecla, nem só no submit [F1: 8][9].
+- Prática comum em ERPs: validar só no submit (mais simples, pior UX).
+- *Escolha:* blur é a recomendação técnica; para formulários longos do ObraSync o ganho é grande.
+
+> Notação: [Fn: x] = fonte x da Frente n neste documento.
+
 ## Fechamento — visão consolidada e ordem sugerida
 
 **Dependências transversais entre as frentes:**
