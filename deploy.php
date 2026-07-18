@@ -33,6 +33,7 @@ $logDir = '/var/lib/financeiro';
 //    crash. Se o lock não puder ser criado, o deploy SEGUE sem serialização
 //    (o lock nunca é motivo de deploy parar). Espera até 120s pelo anterior.
 set_time_limit(300);
+ignore_user_abort(true);
 $lockNote   = '';
 $lockHandle = @fopen("{$logDir}/deploy.lock", 'c');
 if ($lockHandle === false) {
