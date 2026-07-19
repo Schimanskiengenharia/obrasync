@@ -57,21 +57,33 @@ if ($lockHandle === false) {
     $lockNote = '[lock] adquirido';
 }
 
-// 1) Backup automático pré-deploy (dump do banco + uploads). Uma falha no backup
-//    não bloqueia o deploy, mas fica registrada no log para conferência.
+// 1) Backup automático pré-deploy (dump do banco + uploads) — OBRIGATÓRIO:
+//    se o backup falhar (ou o script não existir), o deploy é ABORTADO antes
+//    do git pull. Nada é publicado sem backup válido (DEP3).
 $backupScript = $appDir . '/backup-pre-deploy.sh';
-$backupOutput = 'backup-pre-deploy.sh não encontrado; backup pulado';
-if (is_file($backupScript)) {
+$backupLines  = [];
+$backupExit   = 1;
+$backupOutput = '';
+if (!is_file($backupScript)) {
+    $backupOutput = '[ERRO] backup-pre-deploy.sh não encontrado — backup é obrigatório';
+} else {
     // /usr/bin/bash explícito: o sudoers exige match exato do comando; "bash" sem
     // caminho pode resolver para outro binário e não casar com a regra. O -n faz o
     // sudo falhar na hora em vez de aguardar senha sem TTY (travamento silencioso).
-    $backupLines = [];
-    $backupExit  = 0;
     exec('sudo -n -u alefschimanski /usr/bin/bash ' . escapeshellarg($backupScript) . ' 2>&1', $backupLines, $backupExit);
     $backupOutput = implode("\n", $backupLines);
     if ($backupExit !== 0) {
-        $backupOutput = "[ALERTA] Backup pré-deploy FALHOU (exit {$backupExit}) — confira a regra do sudoers.\n" . $backupOutput;
+        $backupOutput = "[ERRO] Backup pré-deploy FALHOU (exit {$backupExit}) — deploy abortado.\n" . $backupOutput;
     }
+}
+
+if ($backupExit !== 0) {
+    $abortMsg = date('Y-m-d H:i:s') . " — Deploy ABORTADO (backup pré-deploy inválido):\n"
+        . ($lockNote !== '' ? $lockNote . "\n" : '')
+        . trim((string) $backupOutput) . "\n---\n";
+    @file_put_contents("{$logDir}/deploy.log", $abortMsg, FILE_APPEND);
+    http_response_code(500);
+    die("Deploy ABORTADO — backup pré-deploy falhou; confira {$logDir}/deploy.log");
 }
 
 // 2) Atualização do código. Rodar git pull como alefschimanski (tem permissão no repositório).
