@@ -40,10 +40,11 @@ SQL com crases (`:14205`, `:14216`). O filtro NÃO pode ser afrouxado.
 2. **`insert_dynamic`:** guarda `array_keys($data)` antes do filtro;
    depois calcula `$dropped = array_values(array_diff($antes,
    array_keys($data)))` e chama `log_schema_drift('INSERT', $table,
-   $dropped)`. O filtro, o `RuntimeException` de payload vazio e o SQL não
-   mudam.
-3. **`update_dynamic`:** idem com `'UPDATE'`; o early-return de `$data`
-   vazio continua (o log acontece antes dele).
+   $dropped)` — **ANTES** do `if (!$data) throw`: drift total (todas as
+   chaves descartadas) é o caso mais grave e precisa ser logado antes da
+   exceção. O filtro, a exceção e o SQL não mudam.
+3. **`update_dynamic`:** idem com `'UPDATE'`; o log acontece **antes** do
+   early-return de `$data` vazio, pelo mesmo motivo.
 
 ## O que NÃO muda
 
