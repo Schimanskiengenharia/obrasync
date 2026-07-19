@@ -89,7 +89,7 @@ if ($backupExit !== 0) {
 // 2) Atualização do código. Rodar git pull como alefschimanski (tem permissão no repositório).
 //    exec com exit code: pull falho NÃO pode terminar em "Deploy OK".
 $pullLines = [];
-$pullExit  = 0;
+$pullExit  = -1;
 exec('sudo -u alefschimanski git -C ' . escapeshellarg($appDir) . ' pull origin main 2>&1', $pullLines, $pullExit);
 $output = implode("\n", $pullLines);
 if ($pullExit !== 0) {
@@ -108,19 +108,21 @@ if ($pullExit === 0) {
         $commitNote = '[AVISO] payload sem SHA "after" válido — verificação de commit pulada';
     } else {
         $headLines = [];
-        $headExit  = 0;
+        $headExit  = -1;
         exec('sudo -u alefschimanski git -C ' . escapeshellarg($appDir) . ' rev-parse HEAD 2>&1', $headLines, $headExit);
         $headSha = trim((string) ($headLines[0] ?? ''));
         if ($headExit !== 0) {
             $commitFail = true;
-            $commitNote = "[ERRO] git rev-parse HEAD falhou (exit {$headExit})";
+            $commitNote = "[ERRO] git rev-parse HEAD falhou (exit {$headExit})"
+                . ($headLines ? "\n" . implode("\n", $headLines) : '');
         } else {
             $ancestorOut  = [];
             $ancestorExit = 1;
             exec('sudo -u alefschimanski git -C ' . escapeshellarg($appDir) . ' merge-base --is-ancestor ' . escapeshellarg($afterSha) . ' HEAD 2>&1', $ancestorOut, $ancestorExit);
             if ($ancestorExit !== 0) {
                 $commitFail = true;
-                $commitNote = "[ERRO] HEAD ({$headSha}) não contém o commit do webhook ({$afterSha})";
+                $commitNote = "[ERRO] HEAD ({$headSha}) não contém o commit do webhook ({$afterSha})"
+                    . ($ancestorOut ? "\n" . implode("\n", $ancestorOut) : '');
             } else {
                 $commitNote = "[commit] HEAD {$headSha} contém {$afterSha}";
             }
