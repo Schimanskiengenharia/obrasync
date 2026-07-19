@@ -14194,10 +14194,27 @@ function find_by_reference(PDO $pdo, string $table, string $refTypeColumn, strin
     return $record ?: null;
 }
 
+// Registra colunas descartadas pelo filtro de schema das gravações dinâmicas
+// (drift real: migration não rodada, typo de campo, cópia que perde colunas).
+// Best-effort com dedupe por requisição — nunca altera a gravação nem lança.
+// O filtro em si é também a barreira contra injeção via nome de coluna
+// (os nomes são interpolados no SQL) e NÃO deve ser afrouxado.
+function log_schema_drift(string $op, string $table, array $dropped): void
+{
+    if (!$dropped) return;
+    static $logged = [];
+    $key = $table . '|' . implode(',', $dropped);
+    if (isset($logged[$key])) return;
+    $logged[$key] = true;
+    error_log('[ObraSync schema-drift] ' . $op . ' em ' . $table . ': colunas descartadas: ' . implode(', ', $dropped));
+}
+
 function insert_dynamic(PDO $pdo, string $table, array $data): int
 {
     $columns = table_columns($pdo, $table);
+    $originalKeys = array_keys($data);
     $data = array_filter($data, fn ($field) => in_array($field, $columns, true), ARRAY_FILTER_USE_KEY);
+    log_schema_drift('INSERT', $table, array_values(array_diff($originalKeys, array_keys($data))));
     if (!$data) {
         throw new RuntimeException('Nenhuma coluna valida para inserir em ' . $table . '.');
     }
@@ -14211,7 +14228,9 @@ function insert_dynamic(PDO $pdo, string $table, array $data): int
 function update_dynamic(PDO $pdo, string $table, int $id, array $data): void
 {
     $columns = table_columns($pdo, $table);
+    $originalKeys = array_keys($data);
     $data = array_filter($data, fn ($field) => in_array($field, $columns, true), ARRAY_FILTER_USE_KEY);
+    log_schema_drift('UPDATE', $table, array_values(array_diff($originalKeys, array_keys($data))));
     if (!$data) return;
     $sets = array_map(fn ($field) => "`$field` = ?", array_keys($data));
     $stmt = $pdo->prepare('UPDATE `' . $table . '` SET ' . implode(',', $sets) . ' WHERE id = ?');
