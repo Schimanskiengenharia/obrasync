@@ -69,7 +69,10 @@ const IA_COMPARA_DIFPERCENT_MAX = 9999999999.99;   // DECIMAL(12,2)
 const IA_COMPARA_DIFVALOR_MAX = 99999999999.9999;  // DECIMAL(15,4)
 
 $config = load_config();
-$pdo = db($config);
+// Gate de teste (NOVO-3): com OBRASYNC_TESTE_SEM_DB definido, a suíte local
+// carrega as funções REAIS sem conectar em banco NENHUM. Web/workers nunca
+// definem a variável — comportamento idêntico ao de sempre.
+$pdo = getenv('OBRASYNC_TESTE_SEM_DB') ? null : db($config);
 $resources = resource_map();
 
 // O roteamento HTTP abaixo só roda via web. No CLI (worker de importação SINAPI em
