@@ -15737,6 +15737,21 @@ function rhFornecedorNome(id) {
   return f ? f.name : "";
 }
 
+// Task 4/5: documentos "vigentes" de uma pessoa — o mais recente por TIPO (renovação
+// substitui o anterior). Usada no alerta de vencimentos (Task 5) e na contagem da
+// coluna Documentos da lista (a ficha, abaixo, mostra TODOS os documentos, sem dedup).
+function rhDocsDaPessoa(colabId) {
+  const docs = (db.rhDocumentos || []).filter(d => String(d.colaborador_id) === String(colabId));
+  const porTipo = new Map();
+  docs.forEach(d => {
+    const k = String(d.tipo_documento_id);
+    const atual = porTipo.get(k);
+    // renovação: vale o de MAIOR validade (comparação de string YYYY-MM-DD, regra M10)
+    if (!atual || String(d.data_validade || "") > String(atual.data_validade || "")) porTipo.set(k, d);
+  });
+  return [...porTipo.values()];
+}
+
 // Mesmo shape de saveProjectNotification/updateProjectNotification: serverMode
 // grava via REST genérico (rh-colaboradores); offline/local mantém db.rhColaboradores.
 async function saveRhColaborador(data) {
@@ -15762,7 +15777,40 @@ async function updateRhColaborador(id, data) {
   return byId("rhColaboradores", id);
 }
 
+// Task 4: mesmo shape de saveRhColaborador/updateRhColaborador — grava os dados do
+// documento (rh-documentos, REST genérico). O anexo em si (arquivo_path) é sempre
+// tratado à parte pelo upload dedicado (rh-doc-upload), nunca por aqui.
+async function saveRhDocumento(data) {
+  if (serverMode && apiResources.rhDocumentos) {
+    const payload = await apiRequest(apiResources.rhDocumentos, { method: "POST", body: JSON.stringify(data) });
+    db.rhDocumentos.push(payload.record);
+    return payload.record;
+  }
+  const record = { id: crypto.randomUUID(), ...data };
+  db.rhDocumentos.push(record);
+  saveDb();
+  return record;
+}
+
+async function updateRhDocumento(id, data) {
+  if (serverMode && apiResources.rhDocumentos) {
+    const payload = await apiRequest(`${apiResources.rhDocumentos}/${id}`, { method: "PUT", body: JSON.stringify(data) });
+    db.rhDocumentos = db.rhDocumentos.map((row) => sameId(row.id, id) ? payload.record : row);
+    return payload.record;
+  }
+  db.rhDocumentos = db.rhDocumentos.map((row) => sameId(row.id, id) ? { ...row, ...data } : row);
+  saveDb();
+  return byId("rhDocumentos", id);
+}
+
+// Ficha (Task 4): sub-view na mesma tela, aberta pelo link do Nome na lista
+// (padrão de renderViabilidadeObra/rhFichaOpenId).
 function renderRhColaboradores() {
+  if (rhFichaOpenId) return renderRhFicha();
+  return renderRhColaboradoresLista();
+}
+
+function renderRhColaboradoresLista() {
   const editable = canEditModule("rhColaboradores");
   const busca = normalizedText(rhColabFiltros.busca || "");
   const rows = (db.rhColaboradores || [])
@@ -15778,9 +15826,9 @@ function renderRhColaboradores() {
   const statusOptions = ['<option value="">Todos os status</option>']
     .concat(["Ativo", "Inativo"].map((s) => `<option value="${s}" ${s === rhColabFiltros.status ? "selected" : ""}>${s}</option>`)).join("");
   const linhas = rows.map((c) => {
-    const docCount = (db.rhDocumentos || []).filter((d) => String(d.colaborador_id) === String(c.id)).length;
+    const docsPessoa = rhDocsDaPessoa(c.id);
     const inativo = String(c.status || "Ativo") === "Inativo";
-    const podeExcluir = editable && canDeleteRecord("rhColaboradores") && docCount === 0;
+    const podeExcluir = editable && canDeleteRecord("rhColaboradores") && docsPessoa.length === 0;
     return `
       <tr>
         <td><button class="linklike" type="button" data-ficha="${escapeHtml(c.id)}">${escapeHtml(c.nome || "")}</button></td>
@@ -15790,7 +15838,7 @@ function renderRhColaboradores() {
         <td>${escapeHtml(c.funcao || "")}</td>
         <td>${escapeHtml(c.telefone || "")}</td>
         <td>${qBadge(c.status || "Ativo", inativo ? "ruim" : "ok")}</td>
-        <td>${docCount}</td>
+        <td>${docsPessoa.length}</td>
         <td><div class="row-actions">
           ${editable ? `<button class="secondary" type="button" data-edit="${escapeHtml(c.id)}">Editar</button>` : ""}
           ${editable ? `<button class="secondary" type="button" data-toggle-status="${escapeHtml(c.id)}">${inativo ? "Reativar" : "Inativar"}</button>` : ""}
@@ -15904,6 +15952,200 @@ function openRhColaboradorForm(colab = null) {
       showToast(error.message || "Não foi possível salvar o colaborador.");
     }
   });
+}
+
+// ── Ficha do colaborador (Task 4) — documentos + anexos ──────────────────────
+function renderRhFicha() {
+  const colab = byId("rhColaboradores", rhFichaOpenId);
+  if (!colab) { rhFichaOpenId = null; return renderRhColaboradoresLista(); }
+  const editable = canEditModule("rhColaboradores");
+  const podeExcluirDoc = editable && canDeleteRecord("rhColaboradores");
+  const inativo = String(colab.status || "Ativo") === "Inativo";
+  // Ficha mostra TODOS os documentos (sem dedup) — a lista/alertas (Task 5) usam
+  // rhDocsDaPessoa (só o mais recente por tipo).
+  const docs = (db.rhDocumentos || [])
+    .filter((d) => String(d.colaborador_id) === String(colab.id))
+    .sort((a, b) => {
+      const nomeA = (byId("rhTiposDocumento", a.tipo_documento_id) || {}).nome || "";
+      const nomeB = (byId("rhTiposDocumento", b.tipo_documento_id) || {}).nome || "";
+      return nomeA.localeCompare(nomeB, "pt-BR") || String(b.data_validade || "").localeCompare(String(a.data_validade || ""));
+    });
+  const linhas = docs.map((d) => {
+    const tipo = byId("rhTiposDocumento", d.tipo_documento_id);
+    const anexo = d.arquivo_nome
+      ? `<button class="linklike" type="button" data-baixar="${escapeHtml(d.id)}">${escapeHtml(d.arquivo_nome)}</button>`
+      : "—";
+    return `
+      <tr>
+        <td>${escapeHtml(tipo?.nome || "—")}</td>
+        <td>${escapeHtml(d.numero || "")}</td>
+        <td>${asDate(d.data_emissao) || "—"}</td>
+        <td>${asDate(d.data_validade) || "—"}</td>
+        <td>—</td>
+        <td>${anexo}</td>
+        <td><div class="row-actions">
+          ${editable ? `<button class="secondary" type="button" data-doc-edit="${escapeHtml(d.id)}">Editar</button>` : ""}
+          ${editable ? `<span class="rh-anexar-wrap"><button class="secondary" type="button" data-anexar="${escapeHtml(d.id)}">Anexar</button><input type="file" class="hidden" data-anexar-file accept=".pdf,.png,.jpg,.jpeg,.webp"></span>` : ""}
+          ${podeExcluirDoc ? `<button class="danger" type="button" data-doc-delete="${escapeHtml(d.id)}">Excluir</button>` : ""}
+        </div></td>
+      </tr>`;
+  }).join("");
+  qs("content").innerHTML = `
+    <section class="module-head viab-detail-head">
+      <div>
+        <button class="secondary" type="button" id="rhFichaVoltar">← Voltar</button>
+        <h2>${escapeHtml(colab.nome || "")}</h2>
+        <p>${escapeHtml(RH_VINCULOS[colab.tipo_vinculo] || colab.tipo_vinculo || "")}${colab.tipo_vinculo === "empreiteira" ? " · " + escapeHtml(rhFornecedorNome(colab.fornecedor_id)) : ""}${colab.funcao ? " · " + escapeHtml(colab.funcao) : ""} ${qBadge(colab.status || "Ativo", inativo ? "ruim" : "ok")}</p>
+      </div>
+      <div class="viab-detail-actions">
+        ${editable ? '<button class="secondary" type="button" id="rhFichaEditar">Editar colaborador</button>' : ""}
+        ${editable ? '<button class="primary" type="button" id="rhFichaNovoDoc">Novo documento</button>' : ""}
+      </div>
+    </section>
+    ${docs.length ? `
+      <section class="table-wrap" data-export-title="Documentos">
+        <table>
+          <thead><tr><th>Tipo</th><th>Número</th><th>Emissão</th><th>Validade</th><th>Situação</th><th>Anexo</th><th>Ações</th></tr></thead>
+          <tbody>${linhas}</tbody>
+        </table>
+      </section>` : '<div class="empty">Nenhum documento cadastrado para este colaborador.</div>'}
+  `;
+  qs("rhFichaVoltar").addEventListener("click", () => { rhFichaOpenId = null; renderRhColaboradoresLista(); });
+  qs("rhFichaEditar")?.addEventListener("click", () => openRhColaboradorForm(colab));
+  qs("rhFichaNovoDoc")?.addEventListener("click", () => openRhDocumentoForm(colab));
+  qs("content").querySelectorAll("[data-doc-edit]").forEach((btn) => btn.addEventListener("click", () => openRhDocumentoForm(colab, byId("rhDocumentos", btn.dataset.docEdit))));
+  qs("content").querySelectorAll("[data-doc-delete]").forEach((btn) => btn.addEventListener("click", () => rhExcluirDocumento(byId("rhDocumentos", btn.dataset.docDelete))));
+  qs("content").querySelectorAll("[data-baixar]").forEach((btn) => btn.addEventListener("click", () => downloadRhDocumentoAnexo(btn.dataset.baixar)));
+  qs("content").querySelectorAll("[data-anexar]").forEach((btn) => {
+    const input = btn.parentElement.querySelector("[data-anexar-file]");
+    btn.addEventListener("click", () => input?.click());
+    input?.addEventListener("change", () => {
+      const file = input.files?.[0];
+      if (file) rhAnexarDocumento(btn.dataset.anexar, file);
+      input.value = "";
+    });
+  });
+}
+
+function openRhDocumentoForm(colab, doc = null) {
+  if (!canEditModule("rhColaboradores")) return;
+  const isEdit = !!doc?.id;
+  const tiposAtivos = (db.rhTiposDocumento || []).filter((t) => String(t.status || "Ativo") !== "Inativo");
+  if (!isEdit && !tiposAtivos.length) return showToast("Cadastre um tipo de documento ativo (RH → Tipos de documento) antes de continuar.");
+  const tipoOptions = tiposAtivos.map((t) => `<option value="${escapeHtml(t.id)}" ${sameId(t.id, doc?.tipo_documento_id) ? "selected" : ""}>${escapeHtml(t.nome)}</option>`).join("");
+  const { close, q } = viabilidadeDialog(`
+    <div class="viab-modal">
+      <header class="viab-modal-head"><h3>${isEdit ? "Editar documento" : "Novo documento"}</h3><button type="button" class="viab-x" data-close aria-label="Fechar">✕</button></header>
+      <div class="viab-modal-body">
+        <div class="form-grid">
+          <label>Tipo de documento<select name="tipo_documento_id">${tipoOptions}</select></label>
+          <label>Número<input name="numero" value="${escapeHtml(doc?.numero || "")}"></label>
+          <label>Emissão<input type="date" name="data_emissao" value="${escapeHtml(String(doc?.data_emissao || "").slice(0, 10))}"></label>
+          <label>Validade<input type="date" name="data_validade" value="${escapeHtml(String(doc?.data_validade || "").slice(0, 10))}"></label>
+          <label class="full">Observações<textarea name="observacoes" rows="2">${escapeHtml(doc?.observacoes || "")}</textarea></label>
+          <label class="full viab-file-label">${doc?.arquivo_nome ? `Substituir anexo (atual: ${escapeHtml(doc.arquivo_nome)})` : "Anexar documento (PDF, foto)"}<input type="file" name="arquivo" accept=".pdf,.png,.jpg,.jpeg,.webp"></label>
+        </div>
+      </div>
+      <footer class="viab-modal-foot"><button type="button" class="secondary" data-close>Cancelar</button><button type="button" class="primary" data-save>Salvar</button></footer>
+    </div>`, "viab-dialog-md");
+  q("[data-save]").addEventListener("click", async () => {
+    const tipoId = q('[name="tipo_documento_id"]').value;
+    if (!tipoId) return showToast("Selecione o tipo de documento.");
+    const tipo = byId("rhTiposDocumento", tipoId);
+    const validade = q('[name="data_validade"]').value;
+    if (tipo?.exige_validade === "Sim" && !validade) return showToast("Este tipo de documento exige data de validade.");
+    const saveBtn = q("[data-save]");
+    saveBtn.disabled = true;
+    const payload = {
+      colaborador_id: colab.id,
+      tipo_documento_id: tipoId,
+      numero: q('[name="numero"]').value.trim(),
+      data_emissao: q('[name="data_emissao"]').value || null,
+      data_validade: validade || null,
+      observacoes: q('[name="observacoes"]').value.trim(),
+    };
+    try {
+      const record = isEdit ? await updateRhDocumento(doc.id, payload) : await saveRhDocumento(payload);
+      const file = q('[name="arquivo"]')?.files?.[0];
+      if (file) {
+        if (serverMode) {
+          const form = new FormData();
+          form.append("documentoId", record.id);
+          form.append("file", file);
+          const up = await fetchForm("rh-doc-upload", form);
+          const arquivoNome = up?.data?.arquivo_nome;
+          if (arquivoNome) {
+            db.rhDocumentos = db.rhDocumentos.map((row) => sameId(row.id, record.id) ? { ...row, arquivo_nome: arquivoNome } : row);
+          }
+        } else {
+          showToast("Documento salvo, mas o anexo requer conexão com o servidor.");
+        }
+      }
+      close();
+      showToast(isEdit ? "Documento atualizado." : "Documento cadastrado.");
+      render();
+    } catch (error) {
+      saveBtn.disabled = false;
+      showToast(error.message || "Não foi possível salvar o documento.");
+    }
+  });
+}
+
+// Download autenticado — mesmo shape de exportSinapiExcel (fetch + authHeaders + blob),
+// mas abre o anexo em nova aba (visualização), como downloadViabilidadeAnexo.
+async function downloadRhDocumentoAnexo(id) {
+  if (!serverMode) return alert("Requer conexão com o servidor.");
+  try {
+    const resp = await fetch(`${API_BASE}/rh-doc-arquivo?id=${encodeURIComponent(id)}`, { headers: authHeaders() });
+    if (!resp.ok) {
+      let msg = `Erro ${resp.status}`;
+      try { const j = await resp.json(); msg = j.error || j.message || msg; } catch { /* corpo não-JSON */ }
+      throw new Error(msg);
+    }
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    window.open(url, "_blank");
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (e) {
+    alert(`Não foi possível abrir o anexo: ${e.message}`);
+  }
+}
+
+// Ação rápida "Anexar" da ficha: substitui/anexa o arquivo sem abrir o formulário completo.
+async function rhAnexarDocumento(docId, file) {
+  if (!canEditModule("rhColaboradores")) return;
+  if (!serverMode) return showToast("Anexar requer conexão com o servidor.");
+  try {
+    const form = new FormData();
+    form.append("documentoId", docId);
+    form.append("file", file);
+    const up = await fetchForm("rh-doc-upload", form);
+    const arquivoNome = up?.data?.arquivo_nome;
+    db.rhDocumentos = db.rhDocumentos.map((row) => sameId(row.id, docId) ? { ...row, arquivo_nome: arquivoNome ?? row.arquivo_nome } : row);
+    showToast("Anexo enviado.");
+    render();
+  } catch (error) {
+    showToast(error.message || "Não foi possível enviar o anexo.");
+  }
+}
+
+// Exclusão de documento: SEMPRE via rh-doc-delete (apaga a linha E o arquivo do
+// disco) — nunca o DELETE genérico de rh-documentos, que deixaria o arquivo órfão.
+async function rhExcluirDocumento(doc) {
+  if (!doc) return;
+  if (!canEditModule("rhColaboradores")) return;
+  if (!canDeleteRecord("rhColaboradores")) return alert("Seu perfil não tem permissão para excluir documentos.");
+  if (!serverMode) return alert("Requer conexão com o servidor.");
+  const nomeTipo = (byId("rhTiposDocumento", doc.tipo_documento_id) || {}).nome || "documento";
+  if (!await confirmDestructive(nomeTipo)) return;
+  try {
+    await apiRequest("rh-doc-delete", { method: "POST", body: JSON.stringify({ documentoId: doc.id }) });
+    db.rhDocumentos = db.rhDocumentos.filter((row) => !sameId(row.id, doc.id));
+    showToast("Documento excluído.");
+    render();
+  } catch (error) {
+    showToast(error.message || "Não foi possível excluir o documento.");
+  }
 }
 
 // ── Modelos de proposta (proposta_modelos) ────────────────────────────────
