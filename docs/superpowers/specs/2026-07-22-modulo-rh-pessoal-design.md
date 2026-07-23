@@ -1,6 +1,6 @@
 # Design — Módulo RH/Pessoal (contratados + empreiteiros, foco em vencimento de documentos)
 
-**Data:** 2026-07-22 · **Status:** aguardando revisão do usuário
+**Data:** 2026-07-22 · **Status:** APROVADO em 2026-07-22 com 3 ajustes (soft-delete de colaborador; exclusão de documento apaga o arquivo; permissões iniciais restritas — LGPD). F1 autorizada; F2/F3 aguardam o teste da F1.
 **Escopo:** especificação do módulo COMPLETO; implementação em 3 fases (F1 → F2 → F3), cada uma testável sozinha.
 **Plano:** `docs/superpowers/plans/2026-07-22-modulo-rh-pessoal.md`
 
@@ -52,6 +52,15 @@ Uma única tabela para todos os vínculos, com ENUM
 que já existe — não se duplica cadastro de empresa. `funcao` é texto livre
 (mesmo modelo do efetivo do RDO: "Pedreiro", "Eletricista"), o que permite o
 agrupamento da F2 sem tabela de cargos (YAGNI).
+
+**Ciclo de vida (ajuste da aprovação):** colaborador com histórico **não se
+exclui — se INATIVA** (`status='Inativo'`), no mesmo espírito do soft-delete de
+obras (G3): documentos de RH são histórico de compliance (fiscalização pode
+exigir ASO de ex-funcionário anos depois). Exclusão física só é permitida
+quando a pessoa não tem NENHUM documento/alocação/diária — o front esconde
+"Excluir" quando há vínculos (oferece Inativar/Reativar) e as FKs
+`ON DELETE RESTRICT` (`rh_documentos`, `rh_alocacoes`, `rh_diarias`) são o
+guarda-costas no banco.
 
 ### D2. Tipos de documento: cadastro PRÓPRIO (`rh_tipos_documento`)
 
@@ -119,18 +128,23 @@ qualquer usuário do módulo vê ao abrir o sistema.
   `rh-doc-arquivo` (GET, view) no molde exato de `rdo-foto-upload`/`rdo-foto`
   (via `store_upload` + download por id com `readfile`). Substituir anexo apaga
   o arquivo anterior do disco com guarda de path-traversal (`realpath` contra a
-  raiz de uploads, como na exclusão da Viabilidade).
+  raiz de uploads, como na exclusão da Viabilidade). **Excluir documento usa
+  rota dedicada `rh-doc-delete`** (não o DELETE genérico): apaga a linha E o
+  arquivo do disco, com a mesma guarda de path-traversal (ajuste da aprovação).
 - **Permissões:** duas chaves novas, `rhColaboradores` (pessoas + documentos +
   painel de vencimentos; sub-recurso `rhDocumentos` herda via
   `permission_module_key`) e `rhTiposDocumento` (configuração de tipos).
-  Defaults propostos (ajustáveis depois na tela de permissões, que já opera
-  sobre `role_permissions`/`user_permissions`):
-  - view: `admin`, `gerente`, `visualizador` (automáticos) + `gestor_obra`,
-    `engenharia`, `financeiro`, `consulta`;
-  - edit: `gestor_obra` (+ `admin`/`gerente` automáticos); tipos de documento:
-    edit só `admin`/`gerente`.
+  Defaults **RESTRITOS** (ajuste da aprovação — LGPD: CPF é dado pessoal):
+  - view e edit: só `admin`, `gerente` (automáticos) e `gestor_obra`;
+  - tipos de documento: edit só `admin`/`gerente`;
+  - ressalva: `visualizador` tem view `'*'` por design do sistema — para
+    ocultar RH dele, ajustar na tela de permissões (`role_permissions`);
+  - abrir para outros papéis depois é configuração em runtime na tela de
+    permissões existente, sem mudança de código.
   Espelhado nos DOIS lados (front `roleModules`/`EDITABLE_BY_ROLE`; back
-  `default_role_view/edit_modules`).
+  `default_role_view/edit_modules`). Consequência coerente: quem não vê o
+  módulo não recebe `db.rhDocumentos` no bootstrap e portanto não vê o bloco
+  de RH no dashboard.
 
 ### D6. CRUD pelo caminho padrão da casa
 
@@ -173,7 +187,7 @@ rh_tipos_documento (
 
 rh_documentos (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  colaborador_id BIGINT UNSIGNED NOT NULL,   -- FK rh_colaboradores ON DELETE CASCADE
+  colaborador_id BIGINT UNSIGNED NOT NULL,   -- FK rh_colaboradores ON DELETE RESTRICT (histórico de compliance)
   tipo_documento_id BIGINT UNSIGNED NOT NULL,-- FK rh_tipos_documento ON DELETE RESTRICT
   numero VARCHAR(80) NULL,
   data_emissao DATE NULL,
@@ -192,7 +206,7 @@ rh_documentos (
 ```sql
 rh_alocacoes (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  colaborador_id BIGINT UNSIGNED NOT NULL,  -- FK rh_colaboradores ON DELETE CASCADE
+  colaborador_id BIGINT UNSIGNED NOT NULL,  -- FK rh_colaboradores ON DELETE RESTRICT
   projectId BIGINT UNSIGNED NOT NULL,       -- FK projects ON DELETE RESTRICT (padrão G3)
   data_inicio DATE NOT NULL,
   data_fim DATE NULL,                       -- NULL = alocação aberta
@@ -209,7 +223,7 @@ Regra de aplicação: no máximo 1 alocação **aberta** por colaborador+obra.
 
 ```sql
 rh_diarias (        -- para tipo_vinculo diarista/autonomo
-  id, colaborador_id FK, projectId FK NULL,
+  id, colaborador_id FK ON DELETE RESTRICT, projectId FK NULL,
   data DATE NOT NULL, valor DECIMAL(15,2) NOT NULL, observacoes,
   status VARCHAR(30) DEFAULT 'Aberta',       -- Aberta | Faturada | Cancelada
   conta_pagar_id BIGINT UNSIGNED NULL,       -- FK accounts_payable ON DELETE SET NULL
@@ -232,8 +246,8 @@ rh_medicoes (       -- para empreiteiras (empresa = suppliers)
   `rh_colaboradores` alias `rh-colaboradores`; `rhTiposDocumento`;
   `rhDocumentos`) + `ensure_rh_tables()` (chamada no bootstrap com guarda
   `resolve_existing_table`, padrão da Viabilidade) + rotas `rh-doc-upload` /
-  `rh-doc-arquivo` + chaves de permissão nos defaults + `permission_module_key`
-  (`rhDocumentos` → `rhColaboradores`).
+  `rh-doc-arquivo` / `rh-doc-delete` + chaves de permissão nos defaults +
+  `permission_module_key` (`rhDocumentos` → `rhColaboradores`).
 - **F2:** resource `rhAlocacoes` (permissão herdada de `rhColaboradores`) + job
   `create_rh_doc_alerts` na cadeia do `jobs.php`, com a lógica de janela numa
   **função pura** (`rh_docs_em_janela(array $docs, string $hoje): array`)

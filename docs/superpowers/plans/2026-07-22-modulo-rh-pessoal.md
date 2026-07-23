@@ -81,7 +81,7 @@ CREATE TABLE IF NOT EXISTS rh_documentos (
   updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   KEY idx_rh_doc_colab (colaborador_id),
   KEY idx_rh_doc_validade (data_validade),
-  CONSTRAINT fk_rh_doc_colab FOREIGN KEY (colaborador_id) REFERENCES rh_colaboradores(id) ON DELETE CASCADE,
+  CONSTRAINT fk_rh_doc_colab FOREIGN KEY (colaborador_id) REFERENCES rh_colaboradores(id) ON DELETE RESTRICT,
   CONSTRAINT fk_rh_doc_tipo FOREIGN KEY (tipo_documento_id) REFERENCES rh_tipos_documento(id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -142,7 +142,8 @@ if (!resolve_existing_table($pdo, ['rh_colaboradores'], false)) { ensure_rh_tabl
 - [ ] **Step 4: Permissões (backend)**
 
 Em `permission_module_key()` (~9057): `'rhDocumentos' => 'rhColaboradores',` (documentos herdam a permissão de pessoas).
-Em `default_role_view_modules()` (~9285): adicionar `'rhColaboradores'` e `'rhTiposDocumento'` às listas de `financeiro`, `engenharia`, `gestor_obra` e `consulta` (admin/gerente/visualizador já herdam tudo).
+**Permissões RESTRITAS (LGPD — decisão da aprovação):**
+Em `default_role_view_modules()` (~9285): adicionar `'rhColaboradores'` e `'rhTiposDocumento'` SÓ à lista de `gestor_obra` (admin/gerente automáticos; `visualizador` vê tudo por design `'*'` — restringível depois via tela de permissões). NÃO adicionar a `financeiro`/`engenharia`/`consulta` — abertura futura é configuração em runtime (`role_permissions`).
 Em `default_role_edit_modules()` (~9302): adicionar `'rhColaboradores'` à lista de `gestor_obra` (tipos: edit só admin/gerente, que são automáticos — não adicionar `rhTiposDocumento` a nenhuma lista de edit).
 
 - [ ] **Step 5: Validar e commitar**
@@ -158,14 +159,14 @@ git commit -m "feat(rh): tabelas rh_colaboradores/rh_tipos_documento/rh_document
 
 ---
 
-### Task 2: Anexos — upload/download de documento
+### Task 2: Anexos — upload/download/exclusão de documento
 
 **Files:**
 - Modify: `api/index.php` — rotas novas no bloco de rotas REST simples (espelhar o bloco `rdo-foto-upload`/`rdo-foto`, ~479-493) + 2 handlers novos (perto de `handle_rdo_upload_foto`, ~8541)
 
 **Interfaces:**
 - Consumes: `ensure_rh_tables` (Task 1); `store_upload($file, $dir, $exts, $mimes): string` (~9762); `respond()`/`fail()`; `server_audit()`.
-- Produces: `POST rh-doc-upload` (multipart: `documentoId`, `file`) e `GET rh-doc-arquivo?id=` — usados pela Task 4.
+- Produces: `POST rh-doc-upload` (multipart: `documentoId`, `file`), `GET rh-doc-arquivo?id=` e `POST rh-doc-delete` (JSON `{documentoId}` — apaga linha + arquivo do disco) — usados pela Task 4.
 
 - [ ] **Step 1: Rotas (mesmo shape do bloco RDO ~479)**
 
@@ -176,6 +177,9 @@ handle_rh_doc_upload($pdo, $config, $authUser);
 // rh-doc-arquivo: GET ?id=, permissão view
 authorize_request($pdo, $authUser, 'rhColaboradores', 'view');
 handle_rh_doc_download($pdo, $config);
+// rh-doc-delete: POST JSON {documentoId}, permissão delete
+authorize_request($pdo, $authUser, 'rhColaboradores', 'delete');
+handle_rh_doc_delete($pdo, $config, $authUser);
 ```
 
 - [ ] **Step 2: Handlers**
@@ -227,7 +231,33 @@ function handle_rh_doc_download(PDO $pdo, array $config): void
 }
 ```
 
-Conferir a assinatura real de `server_audit` no arquivo e ajustar a chamada ao shape usado pelos vizinhos (ex.: `handle_rdo_upload_foto`).
+```php
+function handle_rh_doc_delete(PDO $pdo, array $config, array $authUser): void
+{
+    ensure_rh_tables($pdo);
+    $body = json_decode((string) file_get_contents('php://input'), true) ?: [];
+    $docId = (int) ($body['documentoId'] ?? ($_POST['documentoId'] ?? 0));
+    $stmt = $pdo->prepare('SELECT id, arquivo_path FROM rh_documentos WHERE id = ?');
+    $stmt->execute([$docId]);
+    $doc = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!$doc) { fail('Documento não encontrado.', 404); }
+    // Ajuste da aprovação: excluir documento remove TAMBÉM o arquivo do disco,
+    // com a mesma guarda de path-traversal da substituição.
+    $uploadRoot = realpath(rtrim($config['upload_dir'] ?? '/var/lib/financeiro/uploads', '/'));
+    $anterior = (string) ($doc['arquivo_path'] ?? '');
+    if ($anterior !== '' && $uploadRoot !== false) {
+        $real = realpath($anterior);
+        if ($real !== false && strpos($real, $uploadRoot . DIRECTORY_SEPARATOR) === 0 && is_file($real)) {
+            @unlink($real);
+        }
+    }
+    $pdo->prepare('DELETE FROM rh_documentos WHERE id = ?')->execute([$docId]);
+    server_audit($pdo, $authUser, 'rhDocumentos', 'delete', (string) $docId);
+    respond(['ok' => true]);
+}
+```
+
+Conferir a assinatura real de `server_audit` no arquivo e ajustar as chamadas ao shape usado pelos vizinhos (ex.: `handle_rdo_upload_foto`/`handle_rdo_delete_foto`).
 
 - [ ] **Step 3: Validar e commitar**
 
@@ -236,7 +266,7 @@ Run: `bash scripts/tests/run-all.sh` → verde
 
 ```bash
 git add api/index.php
-git commit -m "feat(rh): upload/download de anexo de documento (rh-doc-upload / rh-doc-arquivo) (F1 task 2)"
+git commit -m "feat(rh): upload/download/exclusao de anexo de documento (rh-doc-upload / rh-doc-arquivo / rh-doc-delete) (F1 task 2)"
 ```
 
 ---
@@ -261,7 +291,7 @@ Em `sidebarSections` (nova seção antes de "Configurações"):
 ```
 
 Em `SUBMODULE_ICONS`: propor `rhColaboradores: ["ti-id-badge-2", "#185FA5"]`, `rhVencimentos: ["ti-alarm", "#c0392b"]`, `rhTiposDocumento: ["ti-file-certificate", "#3B6D11"]` — **conferir cada nome** em `assets/fonts/tabler-icons.min.css` (fallbacks: `ti-id`, `ti-clock`, `ti-certificate`).
-Em `roleModules`: adicionar as 3 keys a `financeiro`, `engenharia`, `gestor_obra`, `consulta` (espelho exato do backend Task 1 Step 4).
+Em `roleModules`: adicionar as 3 keys SÓ a `gestor_obra` (espelho exato do backend Task 1 Step 4 — permissões restritas LGPD; admin/gerente/visualizador herdam automático).
 Em `EDITABLE_BY_ROLE`: adicionar `rhColaboradores` a `gestor_obra`.
 No mapa de rotas REST (onde está `projectNotifications: "notificacoes-obras"`): `rhColaboradores: "rh-colaboradores", rhTiposDocumento: "rh-tipos-documento", rhDocumentos: "rh-documentos"`.
 Em `render()`: `if (currentModule === "rhColaboradores") return renderRhColaboradores();` (rhVencimentos entra na Task 5; `rhTiposDocumento` NÃO ganha if — cai no `renderCrud` genérico).
@@ -293,6 +323,7 @@ function rhFornecedorNome(id) {
 `renderRhColaboradores()`: `module-head` (título + botão "Novo colaborador" se `canEditModule("rhColaboradores")`) + filtros (busca por nome/CPF, select de vínculo, select de status) + tabela: Nome (link que abre a ficha — Task 4), CPF (formatado na exibição), Vínculo (`RH_VINCULOS`), Empresa (só empreiteira), Função, Telefone, Status, Documentos (badge — Task 5; até lá, contagem inline `(db.rhDocumentos || []).filter(d => String(d.colaborador_id) === String(c.id)).length`). Todo dado com `escapeHtml`. Modelo estrutural: `renderViabilidadeList` (~14705).
 
 `openRhColaboradorForm(colab)`: dialog via `viabilidadeDialog` com os campos; o select de fornecedor (de `db.suppliers` ativos) só aparece quando vínculo = empreiteira (listener no select de vínculo); validações antes do save: nome obrigatório; CPF → só dígitos (11) ou vazio→`null`; empreiteira sem fornecedor → `showToast` de erro e não salva. Save: `apiRequest("rh-colaboradores", { method: "POST", body: JSON.stringify(payload) })` (update: `PUT rh-colaboradores/{id}`) — copiar o shape de `saveProjectNotification`/`updateProjectNotification` (~10196); depois atualizar `db.rhColaboradores` local e `render()`.
+**Ciclo de vida (ajuste da aprovação):** ação primária da lista é **Inativar/Reativar** (PUT trocando `status`); "Excluir" só aparece quando a pessoa NÃO tem nenhum documento (`db.rhDocumentos` vazio para ela — na F2/F3 a checagem passa a incluir alocações/diárias); a FK `ON DELETE RESTRICT` é o guarda no banco.
 
 - [ ] **Step 4: Validar e commitar**
 
@@ -337,7 +368,7 @@ Cabeçalho com dados da pessoa + botão Editar + Voltar; tabela de TODOS os docu
 
 `openRhDocumentoForm(colab, doc)`: dialog com tipo (select de `db.rhTiposDocumento` ativos), número, emissão, validade, observações + `<input type="file">` opcional. Validação: se o tipo tem `exige_validade === "Sim"`, validade obrigatória. Save: POST/PUT `rh-documentos`; se houver arquivo selecionado, na sequência `fetchForm("rh-doc-upload", formData)` com `documentoId` + `file`, e refletir `arquivo_nome` no `db` local.
 Download: shape de `exportSinapiExcel` com path `rh-doc-arquivo?id=<id>` (abrir blob em nova aba).
-Excluir documento: confirmação + `DELETE rh-documentos/{id}` + atualizar `db` local.
+Excluir documento: confirmação + `apiRequest("rh-doc-delete", { method: "POST", body: JSON.stringify({ documentoId: doc.id }) })` (rota da Task 2 — apaga a linha E o arquivo do disco; NÃO usar o `DELETE rh-documentos/{id}` genérico, que deixaria o arquivo órfão) + atualizar `db` local.
 
 - [ ] **Step 3: Validar e commitar**
 
@@ -428,9 +459,11 @@ Após o push (manual) e `mysql -u root -p financeiro < migrations/2026-07-22-rh-
 3. Criar documentos: validade ONTEM (badge VENCIDO vermelho), validade em 10 dias (âmbar "Vence em 10 dia(s)"), validade em 90 dias (Válido), tipo Contrato sem validade (Sem validade).
 4. Renovar o ASO (novo registro com validade futura) → badge da pessoa deixa de acusar vencido; painel Vencimentos mostra só o mais recente.
 5. Anexar PDF a um documento, baixar, substituir por imagem, baixar de novo; arquivo .txt deve ser recusado.
-6. Dashboard: bloco vermelho + âmbar com as contagens certas.
-7. Papel restrito (ex.: `equipe_campo`): seção RH invisível; `consulta`: vê mas não edita.
-8. Tela Configurações → Permissões: ajustar um papel e conferir efeito.
+6. Excluir um documento COM anexo → conferir no servidor que o arquivo sumiu de `/var/lib/financeiro/uploads/rh/`.
+7. Colaborador com documentos: botão Excluir ausente; Inativar → some dos alertas do dashboard (colaboradores inativos não alarmam); Reativar volta.
+8. Colaborador sem nenhum documento: Excluir funciona.
+9. Dashboard: bloco vermelho + âmbar com as contagens certas.
+10. Permissões restritas: `financeiro`/`engenharia`/`consulta`/`equipe_campo` NÃO veem a seção RH; `gestor_obra` vê e edita; tela Configurações → Permissões libera outro papel e o efeito aparece.
 
 ---
 
