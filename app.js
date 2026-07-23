@@ -16064,29 +16064,43 @@ function openRhDocumentoForm(colab, doc = null) {
       data_validade: validade || null,
       observacoes: q('[name="observacoes"]').value.trim(),
     };
+    let record;
     try {
-      const record = isEdit ? await updateRhDocumento(doc.id, payload) : await saveRhDocumento(payload);
-      const file = q('[name="arquivo"]')?.files?.[0];
-      if (file) {
-        if (serverMode) {
-          const form = new FormData();
-          form.append("documentoId", record.id);
-          form.append("file", file);
-          const up = await fetchForm("rh-doc-upload", form);
-          const arquivoNome = up?.data?.arquivo_nome;
-          if (arquivoNome) {
-            db.rhDocumentos = db.rhDocumentos.map((row) => sameId(row.id, record.id) ? { ...row, arquivo_nome: arquivoNome } : row);
-          }
-        } else {
-          showToast("Documento salvo, mas o anexo requer conexão com o servidor.");
-        }
-      }
-      close();
-      showToast(isEdit ? "Documento atualizado." : "Documento cadastrado.");
-      render();
+      record = isEdit ? await updateRhDocumento(doc.id, payload) : await saveRhDocumento(payload);
     } catch (error) {
       saveBtn.disabled = false;
       showToast(error.message || "Não foi possível salvar o documento.");
+      return;
+    }
+    // Registro já salvo — o upload do anexo vira um estágio à parte: uma falha
+    // aqui não pode reabrir o diálogo (reenviar duplicaria o registro no create).
+    const file = q('[name="arquivo"]')?.files?.[0];
+    if (file && serverMode) {
+      try {
+        const form = new FormData();
+        form.append("documentoId", record.id);
+        form.append("file", file);
+        const up = await fetchForm("rh-doc-upload", form);
+        const arquivoNome = up?.data?.arquivo_nome;
+        if (arquivoNome) {
+          db.rhDocumentos = db.rhDocumentos.map((row) => sameId(row.id, record.id) ? { ...row, arquivo_nome: arquivoNome } : row);
+        }
+        close();
+        render();
+        showToast(isEdit ? "Documento atualizado e anexo enviado." : "Documento cadastrado e anexo enviado.");
+      } catch (error) {
+        close();
+        render();
+        showToast("Documento salvo, mas o anexo falhou. Use \"Anexar\" na ficha para tentar de novo.");
+      }
+      return;
+    }
+    close();
+    render();
+    if (file) {
+      showToast("Documento salvo, mas o anexo requer conexão com o servidor.");
+    } else {
+      showToast(isEdit ? "Documento atualizado." : "Documento cadastrado.");
     }
   });
 }
