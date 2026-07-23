@@ -181,6 +181,10 @@ const modules = [
   ["reportCostCenter", "Relatório por centro de custo"],
   ["reportProject", "Relatório por obra/projeto"],
   ["exports", "Exportações"],
+  // RH/Pessoal (Fase 1): "rhVencimentos" fica de fora por enquanto — sem config/render
+  // até a Task 5, renderCrud(currentModule) quebraria (configs[key] undefined).
+  ["rhColaboradores", "Colaboradores"],
+  ["rhTiposDocumento", "Tipos de documento (RH)"],
   ["companySettings", "Dados da empresa"],
   ["users", "Usuários"],
   ["permissions", "Permissões"],
@@ -232,6 +236,8 @@ const sidebarSections = [
   // visibilidade de plugins — só papéis que herdam todos os módulos (admin/gerente/
   // visualizador) a enxergam, pois os módulos de IA não estão nas listas dos demais.
   { id: "ia", label: "IA", icon: "ti-robot", modules: ["iaBusca", "iaDepara", "iaCompara", "iaIndex", "iaTest"] },
+  // RH/Pessoal (Fase 1): "rhVencimentos" entra na Task 5 (hoje não tem config/render).
+  { id: "rh", label: "RH / Pessoal", icon: "ti-users", modules: ["rhColaboradores", "rhTiposDocumento"] },
   { id: "config", label: "Configurações", icon: "ti-settings", modules: ["companySettings", "users", "permissions", "systemVersion", "workTypes", "workStatuses", "standardStages", "standardMilestones", "customFields", "reportModels", "documentTypes", "checklists", "measurementTypes", "paymentMethods", "whatsappTemplates", "visibilityRules", "sinapiSettings", "plugins", "backupLocal", "preferences", "migration", "auditLog", "myProfile"] },
 ];
 
@@ -304,6 +310,8 @@ const SUBMODULE_ICONS = {
   auditLog: ["ti-history", "#5F5E5A"], myProfile: ["ti-user-circle", "#5F5E5A"],
   // IA (azul)
   iaBusca: ["ti-search", "#185FA5"], iaDepara: ["ti-arrows-exchange", "#185FA5"], iaCompara: ["ti-scale", "#185FA5"], iaIndex: ["ti-database-cog", "#185FA5"], iaTest: ["ti-plug-connected", "#185FA5"],
+  // RH/Pessoal (Fase 1). rhVencimentos ainda não é um módulo navegável (Task 5).
+  rhColaboradores: ["ti-id-badge-2", "#185FA5"], rhVencimentos: ["ti-alarm", "#c0392b"], rhTiposDocumento: ["ti-file-certificate", "#3B6D11"],
 };
 function submenuIconHtml(moduleKey) {
   const [ic, color] = SUBMODULE_ICONS[moduleKey] || ["ti-point", "#8a93a6"];
@@ -336,7 +344,11 @@ const roleModules = {
   ],
   comercial: ["dashboard", "clients", "projects", "projectSchedule", "agenda", "kanban", "workBudgets", "abcCurve", "viabilityAnalyses", "viabilidadeObra", "budgets", "proposals", "proposalModels", "sales", "reportClient", "systemVersion"],
   engenharia: ["dashboard", "rdo", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "viabilityAnalyses", "viabilidadeObra", "purchaseOrders", "cotacoes", "compras", "fiscalDocuments", "technicalReports", "projectReport", "proposals", "reportProject", "systemVersion", "qualidadeDashboard", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
-  gestor_obra: ["dashboard", "rdo", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "viabilityAnalyses", "viabilidadeObra", "purchaseOrders", "cotacoes", "compras", "fiscalDocuments", "technicalReports", "projectReport", "proposals", "reportProject", "systemVersion", "qualidadeDashboard", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
+  // RH/Pessoal (Fase 1) — decisão LGPD: as 3 keys ficam SÓ em gestor_obra (espelho
+  // exato do backend/Task 1; admin/gerente/visualizador herdam tudo automaticamente
+  // abaixo). rhVencimentos ainda não é um módulo navegável (fica inerte até a Task 5
+  // adicioná-lo a `modules`; visibleModules() filtra por `modules`, não por esta lista).
+  gestor_obra: ["dashboard", "rdo", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "viabilityAnalyses", "viabilidadeObra", "purchaseOrders", "cotacoes", "compras", "fiscalDocuments", "technicalReports", "projectReport", "proposals", "reportProject", "systemVersion", "qualidadeDashboard", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos", "rhColaboradores", "rhVencimentos", "rhTiposDocumento"],
   equipe_campo: ["dashboard", "projectReport", "systemVersion"],
   cliente_obra: ["dashboard", "projectReport", "projectSchedule", "technicalReports", "systemVersion"],
   fornecedor_terceiro: ["dashboard", "systemVersion"],
@@ -353,7 +365,7 @@ const EDITABLE_BY_ROLE = {
   financeiro: ["fiscalDocuments", "receivable", "payable", "cashMoves", "cashFlow", "reconciliation", "categories", "costCenters", "bankAccounts", "chartAccounts", "journalEntries", "taxDocuments", "taxes", "exports", "projectSchedule", "agenda", "kanban", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "sinapiSettings", "quotes", "sales", "viabilityAnalyses", "viabilidadeObra"],
   comercial: ["clients", "budgets", "proposals", "agenda", "kanban", "viabilityAnalyses", "viabilidadeObra"],
   engenharia: ["rdo", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "purchaseOrders", "cotacoes", "compras", "fiscalDocuments", "technicalReports", "viabilidadeObra", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
-  gestor_obra: ["rdo", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "purchaseOrders", "cotacoes", "compras", "fiscalDocuments", "technicalReports", "viabilidadeObra", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
+  gestor_obra: ["rdo", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "purchaseOrders", "cotacoes", "compras", "fiscalDocuments", "technicalReports", "viabilidadeObra", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos", "rhColaboradores"],
   gerente: modules.map(([k]) => k).filter((k) => !["users", "permissions"].includes(k)),
   operador: ["rdo", "clients", "suppliers", "products", "services", "categories", "costCenters", "bankAccounts", "projects", "projectCosts", "projectRevenues", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "ownCompositions", "quotes", "fiscalDocuments", "receivable", "payable", "cashMoves", "reconciliation", "budgets", "proposals", "sales", "purchaseOrders", "cotacoes", "compras", "projectSchedule", "projectMilestones", "agenda", "kanban", "qualidadeFvs", "qualidadeFvm", "qualidadeNc"],
 };
@@ -549,6 +561,9 @@ const apiResources = {
   kanbanColumns: "kanban-colunas",
   kanbanCards: "kanban-cards",
   projectNotifications: "notificacoes-obras",
+  rhColaboradores: "rh-colaboradores",
+  rhTiposDocumento: "rh-tipos-documento",
+  rhDocumentos: "rh-documentos",
   projectTrackingLinks: "links-acompanhamento-obras",
   technicalReports: "relatorios-tecnicos",
   receivable: "contas-receber",
@@ -1486,6 +1501,18 @@ const configs = {
       ["status", "Status", "select", ["Ativo", "Inativo"]],
     ],
   },
+  rhTiposDocumento: {
+    title: "Tipos de documento (RH)",
+    description: "Documentos de colaboradores (ASO, treinamentos NR, contratos) e a antecedência do alerta de vencimento.",
+    fields: [
+      ["nome", "Tipo de documento", "text", true],
+      ["exige_validade", "Exige validade", "select", ["Não", "Sim"]],
+      ["dias_alerta", "Dias de antecedência do alerta", "number"],
+      ["descricao", "Descrição", "text"],
+      ["ordem", "Ordem", "number"],
+      ["status", "Status", "select", ["Ativo", "Inativo"]],
+    ],
+  },
   checklists: {
     title: "Checklists",
     description: "Checklists editáveis por tipo de obra e etapa, com foto/anexo previstos para uso futuro em campo.",
@@ -1847,6 +1874,12 @@ const seed = {
     { id: "kc-geral-4", board_id: "kb-geral", nome: "Concluído", ordem: 40, cor: "#147A47" },
   ],
   kanbanCards: [],
+  // RH/Pessoal (Fase 1): sem dados de exemplo — módulo novo, tabelas só existem no
+  // servidor. Precisa estar aqui (mesmo vazio) para db.rhX ser sempre um array em
+  // modo local/offline (loadDb() preenche a partir de `seed` as chaves ausentes).
+  rhColaboradores: [],
+  rhTiposDocumento: [],
+  rhDocumentos: [],
 };
 
 let db = loadDb();
@@ -2848,6 +2881,9 @@ function render() {
   if (currentModule === "systemVersion") return renderSystemVersion();
   if (currentModule === "backupLocal") return renderBackupLocal();
   if (currentModule === "migration") return renderMigration();
+  // RH/Pessoal (Fase 1): rhTiposDocumento NÃO ganha if — cai no renderCrud genérico
+  // abaixo. rhVencimentos ainda não tem render/config (Task 5).
+  if (currentModule === "rhColaboradores") return renderRhColaboradores();
   renderCrud(currentModule);
 }
 
@@ -8924,7 +8960,7 @@ async function removeRecord(key, id) {
   if (key === "users" && byId("users", id)?.role === "admin" && db.users.filter((user) => user.role === "admin").length === 1) {
     return alert("Mantenha ao menos um administrador ativo no sistema.");
   }
-  const recordName = removed?.name || removed?.titulo || removed?.username || removed?.number || removed?.description || id;
+  const recordName = removed?.name || removed?.nome || removed?.titulo || removed?.username || removed?.number || removed?.description || id;
   if (!await confirmDestructive(String(recordName))) return;
   try {
     if (serverMode && apiResources[key]) {
@@ -15687,6 +15723,187 @@ function renderProposalGroupsPanel() {
   });
   qs("proposalSaveTemplate")?.addEventListener("click", saveProposalAsTemplate);
   qs("proposalApplyTemplate")?.addEventListener("click", applyProposalTemplate);
+}
+
+// ── RH / Pessoal — Colaboradores (Fase 1, Task 3) ────────────────────────────
+// Cadastro de mão de obra própria e terceirizada. Documentos/vencimentos (Task 4/5)
+// consomem db.rhDocumentos + rhFichaOpenId (ficha aberta a partir do link do Nome).
+const RH_VINCULOS = { proprio: "Próprio", diarista: "Diarista", autonomo: "Autônomo", empreiteira: "Empreiteira" };
+let rhFichaOpenId = null; // Task 4: id do colaborador com a ficha (documentos) aberta
+let rhColabFiltros = { busca: "", vinculo: "", status: "" };
+
+function rhFornecedorNome(id) {
+  const f = (db.suppliers || []).find((s) => String(s.id) === String(id));
+  return f ? f.name : "";
+}
+
+// Mesmo shape de saveProjectNotification/updateProjectNotification: serverMode
+// grava via REST genérico (rh-colaboradores); offline/local mantém db.rhColaboradores.
+async function saveRhColaborador(data) {
+  if (serverMode && apiResources.rhColaboradores) {
+    const payload = await apiRequest(apiResources.rhColaboradores, { method: "POST", body: JSON.stringify(data) });
+    db.rhColaboradores.push(payload.record);
+    return payload.record;
+  }
+  const record = { id: crypto.randomUUID(), ...data };
+  db.rhColaboradores.push(record);
+  saveDb();
+  return record;
+}
+
+async function updateRhColaborador(id, data) {
+  if (serverMode && apiResources.rhColaboradores) {
+    const payload = await apiRequest(`${apiResources.rhColaboradores}/${id}`, { method: "PUT", body: JSON.stringify(data) });
+    db.rhColaboradores = db.rhColaboradores.map((row) => sameId(row.id, id) ? payload.record : row);
+    return payload.record;
+  }
+  db.rhColaboradores = db.rhColaboradores.map((row) => sameId(row.id, id) ? { ...row, ...data } : row);
+  saveDb();
+  return byId("rhColaboradores", id);
+}
+
+function renderRhColaboradores() {
+  const editable = canEditModule("rhColaboradores");
+  const busca = normalizedText(rhColabFiltros.busca || "");
+  const rows = (db.rhColaboradores || [])
+    .filter((c) => {
+      if (rhColabFiltros.vinculo && c.tipo_vinculo !== rhColabFiltros.vinculo) return false;
+      if (rhColabFiltros.status && String(c.status || "Ativo") !== rhColabFiltros.status) return false;
+      if (busca && !normalizedText(`${c.nome || ""} ${c.cpf || ""}`).includes(busca)) return false;
+      return true;
+    })
+    .sort((a, b) => String(a.nome || "").localeCompare(String(b.nome || ""), "pt-BR"));
+  const vinculoOptions = ['<option value="">Todos os vínculos</option>']
+    .concat(Object.entries(RH_VINCULOS).map(([v, l]) => `<option value="${v}" ${v === rhColabFiltros.vinculo ? "selected" : ""}>${l}</option>`)).join("");
+  const statusOptions = ['<option value="">Todos os status</option>']
+    .concat(["Ativo", "Inativo"].map((s) => `<option value="${s}" ${s === rhColabFiltros.status ? "selected" : ""}>${s}</option>`)).join("");
+  const linhas = rows.map((c) => {
+    const docCount = (db.rhDocumentos || []).filter((d) => String(d.colaborador_id) === String(c.id)).length;
+    const inativo = String(c.status || "Ativo") === "Inativo";
+    const podeExcluir = editable && canDeleteRecord("rhColaboradores") && docCount === 0;
+    return `
+      <tr>
+        <td><button class="linklike" type="button" data-ficha="${escapeHtml(c.id)}">${escapeHtml(c.nome || "")}</button></td>
+        <td>${escapeHtml(maskCpf(c.cpf || ""))}</td>
+        <td>${escapeHtml(RH_VINCULOS[c.tipo_vinculo] || c.tipo_vinculo || "")}</td>
+        <td>${c.tipo_vinculo === "empreiteira" ? escapeHtml(rhFornecedorNome(c.fornecedor_id)) : ""}</td>
+        <td>${escapeHtml(c.funcao || "")}</td>
+        <td>${escapeHtml(c.telefone || "")}</td>
+        <td>${qBadge(c.status || "Ativo", inativo ? "ruim" : "ok")}</td>
+        <td>${docCount}</td>
+        <td><div class="row-actions">
+          ${editable ? `<button class="secondary" type="button" data-edit="${escapeHtml(c.id)}">Editar</button>` : ""}
+          ${editable ? `<button class="secondary" type="button" data-toggle-status="${escapeHtml(c.id)}">${inativo ? "Reativar" : "Inativar"}</button>` : ""}
+          ${podeExcluir ? `<button class="danger" type="button" data-delete="${escapeHtml(c.id)}">Excluir</button>` : ""}
+          ${!editable ? '<span class="muted">Somente leitura</span>' : ""}
+        </div></td>
+      </tr>`;
+  }).join("");
+  qs("content").innerHTML = `
+    <section class="module-head">
+      <div>
+        <h2>Colaboradores</h2>
+        <p>Cadastro de mão de obra própria e terceirizada (diaristas, autônomos e empreiteiras) para alocação em obras e controle de documentos.</p>
+      </div>
+      ${editable ? '<button class="primary" type="button" id="rhColabNovo">Novo colaborador</button>' : ""}
+    </section>
+    <section class="viab-filters">
+      <label>Buscar (nome ou CPF)<input type="search" id="rhColabBusca" value="${escapeHtml(rhColabFiltros.busca || "")}"></label>
+      <label>Vínculo<select id="rhColabFiltroVinculo">${vinculoOptions}</select></label>
+      <label>Status<select id="rhColabFiltroStatus">${statusOptions}</select></label>
+    </section>
+    ${rows.length ? `
+      <section class="table-wrap" data-export-title="Colaboradores">
+        <table>
+          <thead><tr><th>Nome</th><th>CPF</th><th>Vínculo</th><th>Empresa</th><th>Função</th><th>Telefone</th><th>Status</th><th>Documentos</th><th>Ações</th></tr></thead>
+          <tbody>${linhas}</tbody>
+        </table>
+      </section>` : '<div class="empty">Nenhum colaborador para os filtros atuais.</div>'}
+  `;
+  qs("rhColabNovo")?.addEventListener("click", () => openRhColaboradorForm());
+  qs("rhColabBusca")?.addEventListener("input", (e) => { rhColabFiltros.busca = e.target.value; renderRhColaboradores(); });
+  qs("rhColabFiltroVinculo")?.addEventListener("change", (e) => { rhColabFiltros.vinculo = e.target.value; renderRhColaboradores(); });
+  qs("rhColabFiltroStatus")?.addEventListener("change", (e) => { rhColabFiltros.status = e.target.value; renderRhColaboradores(); });
+  qs("content").querySelectorAll("[data-ficha]").forEach((btn) => btn.addEventListener("click", () => { rhFichaOpenId = btn.dataset.ficha; render(); }));
+  qs("content").querySelectorAll("[data-edit]").forEach((btn) => btn.addEventListener("click", () => openRhColaboradorForm(byId("rhColaboradores", btn.dataset.edit))));
+  qs("content").querySelectorAll("[data-toggle-status]").forEach((btn) => btn.addEventListener("click", () => rhToggleColaboradorStatus(btn.dataset.toggleStatus)));
+  qs("content").querySelectorAll("[data-delete]").forEach((btn) => btn.addEventListener("click", () => removeRecord("rhColaboradores", btn.dataset.delete)));
+}
+
+async function rhToggleColaboradorStatus(id) {
+  const colab = byId("rhColaboradores", id);
+  if (!colab) return;
+  const novoStatus = String(colab.status || "Ativo") === "Inativo" ? "Ativo" : "Inativo";
+  const acao = novoStatus === "Inativo" ? "Inativar" : "Reativar";
+  if (!confirm(`${acao} o colaborador "${colab.nome || ""}"?`)) return;
+  try {
+    await updateRhColaborador(id, { ...colab, status: novoStatus });
+    showToast(novoStatus === "Inativo" ? "Colaborador inativado." : "Colaborador reativado.");
+    render();
+  } catch (error) {
+    showToast(error.message || "Não foi possível atualizar o status do colaborador.");
+  }
+}
+
+function openRhColaboradorForm(colab = null) {
+  if (!canEditModule("rhColaboradores")) return;
+  const isEdit = !!colab?.id;
+  const fornecedoresAtivos = (db.suppliers || []).filter((s) => String(s.status || "Ativo") !== "Inativo");
+  const vinculoAtual = colab?.tipo_vinculo || "proprio";
+  const vinculoOptions = Object.entries(RH_VINCULOS)
+    .map(([v, l]) => `<option value="${v}" ${vinculoAtual === v ? "selected" : ""}>${l}</option>`).join("");
+  const fornecedorOptions = ['<option value="">Selecione</option>']
+    .concat(fornecedoresAtivos.map((s) => `<option value="${escapeHtml(s.id)}" ${sameId(s.id, colab?.fornecedor_id) ? "selected" : ""}>${escapeHtml(s.name)}</option>`)).join("");
+  const { close, q } = viabilidadeDialog(`
+    <div class="viab-modal">
+      <header class="viab-modal-head"><h3>${isEdit ? "Editar colaborador" : "Novo colaborador"}</h3><button type="button" class="viab-x" data-close aria-label="Fechar">✕</button></header>
+      <div class="viab-modal-body">
+        <div class="form-grid">
+          <label>Nome<input name="nome" value="${escapeHtml(colab?.nome || "")}"></label>
+          <label>CPF<input name="cpf" value="${escapeHtml(maskCpf(colab?.cpf || ""))}" maxlength="14"></label>
+          <label>Vínculo<select name="tipo_vinculo">${vinculoOptions}</select></label>
+          <label data-rh-fornecedor class="${vinculoAtual === "empreiteira" ? "" : "hidden"}">Empreiteira (fornecedor)<select name="fornecedor_id">${fornecedorOptions}</select></label>
+          <label>Função<input name="funcao" value="${escapeHtml(colab?.funcao || "")}"></label>
+          <label>Telefone<input name="telefone" value="${escapeHtml(colab?.telefone || "")}"></label>
+          <label>Status<select name="status">${["Ativo", "Inativo"].map((s) => `<option value="${s}" ${(colab?.status || "Ativo") === s ? "selected" : ""}>${s}</option>`).join("")}</select></label>
+          <label class="full">Observações<textarea name="observacoes" rows="2">${escapeHtml(colab?.observacoes || "")}</textarea></label>
+        </div>
+      </div>
+      <footer class="viab-modal-foot"><button type="button" class="secondary" data-close>Cancelar</button><button type="button" class="primary" data-save>Salvar</button></footer>
+    </div>`, "viab-dialog-md");
+  q('[name="cpf"]').addEventListener("input", (e) => { e.target.value = maskCpf(e.target.value); });
+  const fornecedorLabel = q("[data-rh-fornecedor]");
+  q('[name="tipo_vinculo"]').addEventListener("change", (e) => {
+    fornecedorLabel.classList.toggle("hidden", e.target.value !== "empreiteira");
+  });
+  q("[data-save]").addEventListener("click", async () => {
+    const nome = q('[name="nome"]').value.trim();
+    if (!nome) return showToast("Informe o nome do colaborador.");
+    const tipoVinculo = q('[name="tipo_vinculo"]').value;
+    const fornecedorId = q('[name="fornecedor_id"]').value || "";
+    if (tipoVinculo === "empreiteira" && !fornecedorId) return showToast("Selecione a empreiteira (fornecedor).");
+    const cpfDigits = onlyDigits(q('[name="cpf"]').value);
+    if (cpfDigits && cpfDigits.length !== 11) return showToast("CPF inválido — informe os 11 dígitos ou deixe em branco.");
+    const payload = {
+      nome,
+      cpf: cpfDigits || null,
+      tipo_vinculo: tipoVinculo,
+      fornecedor_id: tipoVinculo === "empreiteira" ? fornecedorId : null,
+      funcao: q('[name="funcao"]').value.trim(),
+      telefone: q('[name="telefone"]').value.trim(),
+      status: q('[name="status"]').value,
+      observacoes: q('[name="observacoes"]').value.trim(),
+    };
+    try {
+      if (isEdit) await updateRhColaborador(colab.id, payload);
+      else await saveRhColaborador(payload);
+      close();
+      showToast(isEdit ? "Colaborador atualizado." : "Colaborador cadastrado.");
+      render();
+    } catch (error) {
+      showToast(error.message || "Não foi possível salvar o colaborador.");
+    }
+  });
 }
 
 // ── Modelos de proposta (proposta_modelos) ────────────────────────────────
