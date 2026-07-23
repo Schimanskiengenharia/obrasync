@@ -51,6 +51,7 @@ Na **v1.19.0**, a Base SINAPI ganhou importação mensal por pacote com upload m
 | Qualidade (PBQP-H Nível B) | 🟢 Estável | Auto-curado; Fase 1: qualificação de fornecedores, rastreabilidade por lote, FVM↔pedido, PDF no PES (v1.14.0) |
 | Plugins / Seletividade / Viabilidade | 🟢 Estável | Viabilidade por tipo de obra com checklist e bloqueio de proposta (v1.14.0); **exclusão de análise inteira** em cascata + arquivos (v1.18.0) |
 | RDO | 🟢 Estável | Cabeçalho/rodapé da empresa |
+| RH / Pessoal | 🟡 Funcional | **F1 implementada**: cadastro de colaboradores (próprio/diarista/autônomo/empreiteira), documentos com anexo e badges de vencimento (`rhDocSituacao`/`rhDocBadge`, reusa `q-badge`), painel Vencimentos e bloco no dashboard; acesso restrito a `gestor_obra` (LGPD). **F2** (alocação em obras) e **F3** (pagamentos) pendentes (v1.35.0) |
 | Configurações / RBAC / Usuários / Backup / Auditoria | 🟢 Estável | |
 
 🟢 estável · 🟡 funcional com ressalva · 🔴 quebrado (nenhum)

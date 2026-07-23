@@ -19,9 +19,10 @@ if (APP_ENV === "production" && location.protocol === "http:") {
   location.replace(location.href.replace(/^http:/, "https:"));
 }
 const APP_NAME = "ObraSync";
-const APP_VERSION = "v1.34.0";
-const APP_VERSION_DATE = "2026-07-16";
+const APP_VERSION = "v1.35.0";
+const APP_VERSION_DATE = "2026-07-23";
 const APP_CHANGELOG = [
+  "Módulo RH/Pessoal — Fase 1 (cadastro, documentos e vencimentos): novo módulo \"RH / Pessoal\" no menu, visível só para `gestor_obra` (e admin/gerente/visualizador — os demais papéis, como financeiro/engenharia/consulta/equipe de campo, não veem a seção; decisão de privacidade dos dados de colaboradores). Cadastro de colaboradores (próprio, diarista, autônomo ou empreiteira — empreiteira exige vincular o fornecedor do cadastro; CPF único quando informado) com ficha própria mostrando os documentos (ASO, treinamentos NR, contrato...) e seus anexos (upload/download autenticado; excluir o documento remove também o arquivo do disco). Cada documento com data de validade ganha uma situação calculada (`rhDocSituacao`/badge `rhDocBadge`, reaproveitando as cores já usadas na Qualidade — vermelho VENCIDO, âmbar \"Vence em N dia(s)\" dentro da antecedência configurada no tipo de documento, verde Válido): aparece na ficha por documento e na lista de colaboradores como a pior situação da pessoa. Painel novo **Vencimentos** lista todos os documentos vigentes (o mais recente por pessoa e tipo) ordenados por validade, com filtros de situação/tipo/vínculo — a tela de acompanhamento diário. O dashboard ganhou um bloco de alerta (vermelho para vencidos, âmbar para vencendo) com a contagem geral. Tabelas novas `rh_colaboradores`/`rh_tipos_documento`/`rh_documentos` (migration `2026-07-22-rh-pessoal-f1.sql`). Fase 2 (alocação em obras + cron de alerta) e Fase 3 (diárias/medições de empreiteira) ficam para os próximos ciclos (v1.35.0).",
   "Cotações por MATERIAL (Parte 2) — Resultado das cotações + integração financeira: aba nova \"Resultado das cotações\" no módulo Cotações de Fornecedores mostra, por obra, o mapa de compras — os materiais CONCLUÍDOS agrupados pela EMPRESA vencedora, com subtotal por empresa e total geral. Em cada grupo, o botão \"Gerar conta a pagar\" cria UMA conta no Financeiro somando os materiais daquela empresa (o dono escolhe a categoria financeira e o vencimento no modal; a conta nasce Aberta, vinculada à obra e ao fornecedor, referenciando as cotações) — clicar de novo não duplica: cotação já vinculada nunca entra em outra conta e, se o grupo inteiro já tem conta, o sistema avisa e não recria (materiais novos concluídos depois geram uma conta só com eles). Quando a NF chegar, \"Anexar/Vincular NF\" registra uma nota nova (com upload de PDF/XML) ou vincula uma NF já cadastrada à conta — a NF aparece em Notas Fiscais e na coluna \"Nota fiscal\" de Contas a Pagar (v1.34.0).",
   "Cotações por MATERIAL (Parte 1): o módulo Cotações de Fornecedores ganhou a aba \"Cotações por material\" (agora a tela inicial) — cada cotação é um material de uma obra e disciplina (com tipo de item opcional, unidade e quantidade desejada) e dentro dela entram as PROPOSTAS dos fornecedores do cadastro (valor unitário, marca, prazo, observação). A tela da cotação compara as propostas lado a lado com o MENOR valor destacado e a diferença em R$ e % de cada uma vs a mais barata. Regra das N cotações: só dá para CONCLUIR (escolher a proposta vencedora) com pelo menos 3 propostas de fornecedores DIFERENTES — com menos, o botão fica desabilitado com o aviso \"faltam X\"; o mínimo é configurável em Configurações → Preferências do sistema (minCotacoesPorMaterial). Concluir marca a vencedora e a cotação vira Concluída; reabrir volta para Em cotação e limpa o vencedor. Criar e excluir são livres (excluir apaga só as propostas da própria cotação). A importação de arquivos (PDF/Excel/CSV) continua na segunda aba, como era. Gerar conta a pagar a partir da vencedora é a Parte 2 (v1.33.0).",
   "Contas vencidas separadas por lado + status Vencido automático: o card \"Contas vencidas\" do dashboard somava contas a PAGAR vencidas (dívida da empresa) com contas a RECEBER vencidas (clientes devendo) num número só — virou dois cards: \"Contas a pagar vencidas\" (vermelho, perda/risco) e \"Inadimplência (a receber vencidas)\" (âmbar, ação de cobrança), também na visão por obra; os alertas do topo agora falam de cada lado separadamente (quantidade + valor) e o relatório \"Inadimplência por cliente\" passou a calcular vencidas em tempo real. No servidor, o cron diário ganhou o job mark_overdue_accounts: contas 'Aberto' com vencimento passado viram status 'Vencido' no banco (não toca Parcial/Pago/Recebido/Cancelado; usa a data no fuso local para a conta que vence hoje não virar vencida antes da hora) — pagar uma conta 'Vencido' segue funcionando normalmente (v1.32.1).",
@@ -181,9 +182,10 @@ const modules = [
   ["reportCostCenter", "Relatório por centro de custo"],
   ["reportProject", "Relatório por obra/projeto"],
   ["exports", "Exportações"],
-  // RH/Pessoal (Fase 1): "rhVencimentos" fica de fora por enquanto — sem config/render
-  // até a Task 5, renderCrud(currentModule) quebraria (configs[key] undefined).
+  // RH/Pessoal (Fase 1): "rhVencimentos" é tela própria (renderRhVencimentos),
+  // não passa pelo renderCrud genérico — por isso não tem entrada em moduleConfigs.
   ["rhColaboradores", "Colaboradores"],
+  ["rhVencimentos", "Vencimentos de documentos"],
   ["rhTiposDocumento", "Tipos de documento (RH)"],
   ["companySettings", "Dados da empresa"],
   ["users", "Usuários"],
@@ -236,8 +238,7 @@ const sidebarSections = [
   // visibilidade de plugins — só papéis que herdam todos os módulos (admin/gerente/
   // visualizador) a enxergam, pois os módulos de IA não estão nas listas dos demais.
   { id: "ia", label: "IA", icon: "ti-robot", modules: ["iaBusca", "iaDepara", "iaCompara", "iaIndex", "iaTest"] },
-  // RH/Pessoal (Fase 1): "rhVencimentos" entra na Task 5 (hoje não tem config/render).
-  { id: "rh", label: "RH / Pessoal", icon: "ti-users", modules: ["rhColaboradores", "rhTiposDocumento"] },
+  { id: "rh", label: "RH / Pessoal", icon: "ti-users", modules: ["rhColaboradores", "rhVencimentos", "rhTiposDocumento"] },
   { id: "config", label: "Configurações", icon: "ti-settings", modules: ["companySettings", "users", "permissions", "systemVersion", "workTypes", "workStatuses", "standardStages", "standardMilestones", "customFields", "reportModels", "documentTypes", "checklists", "measurementTypes", "paymentMethods", "whatsappTemplates", "visibilityRules", "sinapiSettings", "plugins", "backupLocal", "preferences", "migration", "auditLog", "myProfile"] },
 ];
 
@@ -310,7 +311,7 @@ const SUBMODULE_ICONS = {
   auditLog: ["ti-history", "#5F5E5A"], myProfile: ["ti-user-circle", "#5F5E5A"],
   // IA (azul)
   iaBusca: ["ti-search", "#185FA5"], iaDepara: ["ti-arrows-exchange", "#185FA5"], iaCompara: ["ti-scale", "#185FA5"], iaIndex: ["ti-database-cog", "#185FA5"], iaTest: ["ti-plug-connected", "#185FA5"],
-  // RH/Pessoal (Fase 1). rhVencimentos ainda não é um módulo navegável (Task 5).
+  // RH/Pessoal (Fase 1).
   rhColaboradores: ["ti-id-badge-2", "#185FA5"], rhVencimentos: ["ti-alarm", "#c0392b"], rhTiposDocumento: ["ti-file-certificate", "#3B6D11"],
 };
 function submenuIconHtml(moduleKey) {
@@ -346,8 +347,7 @@ const roleModules = {
   engenharia: ["dashboard", "rdo", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "viabilityAnalyses", "viabilidadeObra", "purchaseOrders", "cotacoes", "compras", "fiscalDocuments", "technicalReports", "projectReport", "proposals", "reportProject", "systemVersion", "qualidadeDashboard", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
   // RH/Pessoal (Fase 1) — decisão LGPD: as 3 keys ficam SÓ em gestor_obra (espelho
   // exato do backend/Task 1; admin/gerente/visualizador herdam tudo automaticamente
-  // abaixo). rhVencimentos ainda não é um módulo navegável (fica inerte até a Task 5
-  // adicioná-lo a `modules`; visibleModules() filtra por `modules`, não por esta lista).
+  // abaixo).
   gestor_obra: ["dashboard", "rdo", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "viabilityAnalyses", "viabilidadeObra", "purchaseOrders", "cotacoes", "compras", "fiscalDocuments", "technicalReports", "projectReport", "proposals", "reportProject", "systemVersion", "qualidadeDashboard", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos", "rhColaboradores", "rhVencimentos", "rhTiposDocumento"],
   equipe_campo: ["dashboard", "projectReport", "systemVersion"],
   cliente_obra: ["dashboard", "projectReport", "projectSchedule", "technicalReports", "systemVersion"],
@@ -2882,8 +2882,9 @@ function render() {
   if (currentModule === "backupLocal") return renderBackupLocal();
   if (currentModule === "migration") return renderMigration();
   // RH/Pessoal (Fase 1): rhTiposDocumento NÃO ganha if — cai no renderCrud genérico
-  // abaixo. rhVencimentos ainda não tem render/config (Task 5).
+  // abaixo.
   if (currentModule === "rhColaboradores") return renderRhColaboradores();
+  if (currentModule === "rhVencimentos") return renderRhVencimentos();
   renderCrud(currentModule);
 }
 
@@ -4848,6 +4849,20 @@ function dashboardAlerts(metrics) {
     const itensEstouro = (db.workBudgetItems || []).filter((i) => Number(i.quantity || 0) > 0 && Number(i.quantidade_realizada || 0) > Number(i.quantity || 0)).length;
     if (itensEstouro > 0) alerts.push({ level: "danger", message: `${itensEstouro} item(ns) do orçamento com quantidade realizada acima da prevista (estouro).` });
   }
+  // RH: documentos de colaboradores ativos (mais recente por pessoa+tipo). Sem
+  // vínculo com obra na F1 (chega na F2, via alocação) — por isso aparece tanto
+  // na visão geral quanto na visão por obra. db.rhColaboradores só existe no
+  // bootstrap de quem tem permissão do módulo — daí o `|| []` guardando o loop.
+  let rhVencidos = 0, rhVencendo = 0;
+  (db.rhColaboradores || []).filter(c => (c.status || "Ativo") === "Ativo").forEach(c => {
+    rhDocsDaPessoa(c.id).forEach(d => {
+      const sit = rhDocSituacao(d);
+      if (sit.key === "vencido") rhVencidos += 1;
+      else if (sit.key === "atencao") rhVencendo += 1;
+    });
+  });
+  if (rhVencidos > 0) alerts.push({ level: "danger", message: `${rhVencidos} documento(s) de colaborador VENCIDO(S) — ver RH / Vencimentos.` });
+  if (rhVencendo > 0) alerts.push({ level: "warning", message: `${rhVencendo} documento(s) de colaborador vencendo — ver RH / Vencimentos.` });
   if (!alerts.length) return "";
   return `<section class="alerts">${alerts.map((alert) => `<div class="alert alert-${alert.level}">${alert.message}</div>`).join("")}</section>`;
 }
@@ -15752,6 +15767,39 @@ function rhDocsDaPessoa(colabId) {
   return [...porTipo.values()];
 }
 
+// Task 5: situação de vencimento de UM documento — regra M10, espelho exato do
+// qFvmValidadeAlerta (a F2 espelha a MESMA regra em PHP no cron). Datas por
+// string-compare + parseLocalDate/startOfLocalDay (nunca toISOString).
+function rhDocSituacao(doc) {
+  if (!doc.data_validade) return { key: "sem_validade", dias: null };
+  const hoje = hojeLocal();
+  if (doc.data_validade < hoje) return { key: "vencido", dias: null }; // string vs string
+  const dias = Math.round((startOfLocalDay(parseLocalDate(doc.data_validade)) - startOfLocalDay(new Date())) / 86400000);
+  const tipo = (db.rhTiposDocumento || []).find(t => String(t.id) === String(doc.tipo_documento_id));
+  const janela = Number(tipo && tipo.dias_alerta) > 0 ? Number(tipo.dias_alerta) : 30;
+  return { key: dias <= janela ? "atencao" : "ok", dias };
+}
+
+function rhDocBadge(sit) {
+  if (sit.key === "vencido") return qBadge("VENCIDO", "ruim");
+  if (sit.key === "atencao") return qBadge(`Vence em ${sit.dias} dia(s)`, "atencao");
+  if (sit.key === "ok") return qBadge("Válido", "ok");
+  return qBadge("Sem validade", "");
+}
+
+// Pior situação dentre os documentos vigentes de uma pessoa (rhDocsDaPessoa) —
+// usada no badge da coluna Documentos da lista: vencido > atencao > ok > (sem
+// validade, quando a pessoa só tem docs sem data). Lista vazia = null ("—").
+function rhDocPiorSituacao(docs) {
+  if (!docs.length) return null;
+  const situacoes = docs.map((d) => rhDocSituacao(d));
+  if (situacoes.some((s) => s.key === "vencido")) return { key: "vencido", dias: null };
+  const atencao = situacoes.filter((s) => s.key === "atencao").sort((a, b) => a.dias - b.dias);
+  if (atencao.length) return atencao[0];
+  if (situacoes.some((s) => s.key === "ok")) return { key: "ok", dias: null };
+  return situacoes[0];
+}
+
 // Mesmo shape de saveProjectNotification/updateProjectNotification: serverMode
 // grava via REST genérico (rh-colaboradores); offline/local mantém db.rhColaboradores.
 async function saveRhColaborador(data) {
@@ -15827,6 +15875,7 @@ function renderRhColaboradoresLista() {
     .concat(["Ativo", "Inativo"].map((s) => `<option value="${s}" ${s === rhColabFiltros.status ? "selected" : ""}>${s}</option>`)).join("");
   const linhas = rows.map((c) => {
     const docsPessoa = rhDocsDaPessoa(c.id);
+    const piorSituacao = rhDocPiorSituacao(docsPessoa);
     const inativo = String(c.status || "Ativo") === "Inativo";
     const podeExcluir = editable && canDeleteRecord("rhColaboradores") && docsPessoa.length === 0;
     return `
@@ -15838,7 +15887,7 @@ function renderRhColaboradoresLista() {
         <td>${escapeHtml(c.funcao || "")}</td>
         <td>${escapeHtml(c.telefone || "")}</td>
         <td>${qBadge(c.status || "Ativo", inativo ? "ruim" : "ok")}</td>
-        <td>${docsPessoa.length}</td>
+        <td>${piorSituacao ? rhDocBadge(piorSituacao) : "—"}</td>
         <td><div class="row-actions">
           ${editable ? `<button class="secondary" type="button" data-edit="${escapeHtml(c.id)}">Editar</button>` : ""}
           ${editable ? `<button class="secondary" type="button" data-toggle-status="${escapeHtml(c.id)}">${inativo ? "Reativar" : "Inativar"}</button>` : ""}
@@ -15981,7 +16030,7 @@ function renderRhFicha() {
         <td>${escapeHtml(d.numero || "")}</td>
         <td>${asDate(d.data_emissao) || "—"}</td>
         <td>${asDate(d.data_validade) || "—"}</td>
-        <td>—</td>
+        <td>${rhDocBadge(rhDocSituacao(d))}</td>
         <td>${anexo}</td>
         <td><div class="row-actions">
           ${editable ? `<button class="secondary" type="button" data-doc-edit="${escapeHtml(d.id)}">Editar</button>` : ""}
@@ -16160,6 +16209,87 @@ async function rhExcluirDocumento(doc) {
   } catch (error) {
     showToast(error.message || "Não foi possível excluir o documento.");
   }
+}
+
+// ── Painel Vencimentos (Task 5) — tela de trabalho diário do compliance ─────
+// Todos os documentos vigentes (rhDocsDaPessoa: mais recente por pessoa+tipo)
+// de colaboradores Ativo, ordenados por validade crescente (sem validade por
+// último). Só leitura — nenhuma mutação nesta tela. Estrutura espelha a lista
+// de colaboradores (Task 3): module-head + filtros + tabela + listeners.
+let rhVencFiltros = { situacao: "", tipo: "", vinculo: "" };
+
+function renderRhVencimentos() {
+  const tiposAtivos = (db.rhTiposDocumento || [])
+    .slice()
+    .sort((a, b) => String(a.nome || "").localeCompare(String(b.nome || ""), "pt-BR"));
+  let linhasDados = [];
+  (db.rhColaboradores || [])
+    .filter((c) => String(c.status || "Ativo") === "Ativo")
+    .forEach((c) => {
+      rhDocsDaPessoa(c.id).forEach((d) => linhasDados.push({ colab: c, doc: d, sit: rhDocSituacao(d) }));
+    });
+  linhasDados = linhasDados
+    .filter((row) => {
+      if (rhVencFiltros.situacao === "vencidos" && row.sit.key !== "vencido") return false;
+      if (rhVencFiltros.situacao === "vencendo" && row.sit.key !== "atencao") return false;
+      if (rhVencFiltros.tipo && String(row.doc.tipo_documento_id) !== String(rhVencFiltros.tipo)) return false;
+      if (rhVencFiltros.vinculo && row.colab.tipo_vinculo !== rhVencFiltros.vinculo) return false;
+      return true;
+    })
+    .sort((a, b) => String(a.doc.data_validade || "9999-99-99").localeCompare(String(b.doc.data_validade || "9999-99-99")));
+
+  const situacaoOptions = [["", "Todas as situações"], ["vencidos", "Só vencidos"], ["vencendo", "Só vencendo"]]
+    .map(([v, l]) => `<option value="${v}" ${v === rhVencFiltros.situacao ? "selected" : ""}>${l}</option>`).join("");
+  const tipoOptions = ['<option value="">Todos os tipos</option>']
+    .concat(tiposAtivos.map((t) => `<option value="${escapeHtml(t.id)}" ${String(t.id) === String(rhVencFiltros.tipo) ? "selected" : ""}>${escapeHtml(t.nome)}</option>`)).join("");
+  const vinculoOptions = ['<option value="">Todos os vínculos</option>']
+    .concat(Object.entries(RH_VINCULOS).map(([v, l]) => `<option value="${v}" ${v === rhVencFiltros.vinculo ? "selected" : ""}>${l}</option>`)).join("");
+
+  const linhas = linhasDados.map(({ colab, doc, sit }) => {
+    const tipo = byId("rhTiposDocumento", doc.tipo_documento_id);
+    const anexo = doc.arquivo_nome
+      ? `<button class="linklike" type="button" data-baixar="${escapeHtml(doc.id)}">${escapeHtml(doc.arquivo_nome)}</button>`
+      : "—";
+    return `
+      <tr>
+        <td><button class="linklike" type="button" data-ficha="${escapeHtml(colab.id)}">${escapeHtml(colab.nome || "")}</button></td>
+        <td>${escapeHtml(RH_VINCULOS[colab.tipo_vinculo] || colab.tipo_vinculo || "")}</td>
+        <td>${escapeHtml(tipo?.nome || "—")}</td>
+        <td>${asDate(doc.data_validade) || "—"}</td>
+        <td>${rhDocBadge(sit)}</td>
+        <td>${anexo}</td>
+      </tr>`;
+  }).join("");
+
+  qs("content").innerHTML = `
+    <section class="module-head">
+      <div>
+        <h2>Vencimentos</h2>
+        <p>Documentos vigentes de colaboradores ativos (mais recente por pessoa e tipo), ordenados por validade — acompanhamento diário de compliance.</p>
+      </div>
+    </section>
+    <section class="viab-filters">
+      <label>Situação<select id="rhVencFiltroSituacao">${situacaoOptions}</select></label>
+      <label>Tipo de documento<select id="rhVencFiltroTipo">${tipoOptions}</select></label>
+      <label>Vínculo<select id="rhVencFiltroVinculo">${vinculoOptions}</select></label>
+    </section>
+    ${linhasDados.length ? `
+      <section class="table-wrap" data-export-title="Vencimentos">
+        <table>
+          <thead><tr><th>Colaborador</th><th>Vínculo</th><th>Tipo</th><th>Validade</th><th>Situação</th><th>Anexo</th></tr></thead>
+          <tbody>${linhas}</tbody>
+        </table>
+      </section>` : '<div class="empty">Nenhum documento para os filtros atuais.</div>'}
+  `;
+  qs("rhVencFiltroSituacao").addEventListener("change", (e) => { rhVencFiltros.situacao = e.target.value; renderRhVencimentos(); });
+  qs("rhVencFiltroTipo").addEventListener("change", (e) => { rhVencFiltros.tipo = e.target.value; renderRhVencimentos(); });
+  qs("rhVencFiltroVinculo").addEventListener("change", (e) => { rhVencFiltros.vinculo = e.target.value; renderRhVencimentos(); });
+  qs("content").querySelectorAll("[data-ficha]").forEach((btn) => btn.addEventListener("click", () => {
+    rhFichaOpenId = btn.dataset.ficha;
+    currentModule = "rhColaboradores";
+    render();
+  }));
+  qs("content").querySelectorAll("[data-baixar]").forEach((btn) => btn.addEventListener("click", () => downloadRhDocumentoAnexo(btn.dataset.baixar)));
 }
 
 // ── Modelos de proposta (proposta_modelos) ────────────────────────────────
