@@ -8717,9 +8717,10 @@ function handle_rh_doc_upload(PDO $pdo, array $config, array $authUser): void
     $nomeOriginal = mb_substr((string) ($_FILES['file']['name'] ?? ''), 0, 255);
     // Substituição: apaga o anterior COM guarda de path-traversal (padrão Viabilidade)
     $anterior = (string) ($doc['arquivo_path'] ?? '');
-    if ($anterior !== '') {
+    $uploadRootReal = realpath($uploadRoot);
+    if ($anterior !== '' && $uploadRootReal !== false) {
         $real = realpath($anterior);
-        if ($real !== false && strpos($real, realpath($uploadRoot) . DIRECTORY_SEPARATOR) === 0 && is_file($real)) {
+        if ($real !== false && strpos($real, $uploadRootReal . DIRECTORY_SEPARATOR) === 0 && is_file($real)) {
             @unlink($real);
         }
     }
