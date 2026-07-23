@@ -508,6 +508,24 @@ try {
         handle_obra_disciplinas_delete($pdo, $authUser, (int) (read_json()['id'] ?? 0));
     }
 
+    // RH/Pessoal — anexos de documento (rh_documentos.arquivo_path/arquivo_nome).
+    // Permissão espelha o módulo rhColaboradores (rhDocumentos mapeia para ele).
+    if ($resource === 'rh-doc-upload') {
+        require_method($method, ['POST']);
+        authorize_request($pdo, $authUser, 'rhColaboradores', 'edit');
+        handle_rh_doc_upload($pdo, $config, $authUser);
+    }
+    if ($resource === 'rh-doc-arquivo') {
+        require_method($method, ['GET']);
+        authorize_request($pdo, $authUser, 'rhColaboradores', 'view');
+        handle_rh_doc_download($pdo, $config);
+    }
+    if ($resource === 'rh-doc-delete') {
+        require_method($method, ['POST']);
+        authorize_request($pdo, $authUser, 'rhColaboradores', 'delete');
+        handle_rh_doc_delete($pdo, $config, $authUser);
+    }
+
     // Permissões por usuário (override do papel) — só admin gerencia.
     if ($resource === 'user-permissions-get') {
         require_method($method, ['GET']);
@@ -8674,6 +8692,88 @@ function handle_rdo_foto_download(PDO $pdo, int $id): never
     header('Content-Length: ' . filesize($path));
     readfile($path);
     exit;
+}
+
+// RH/Pessoal — upload do anexo de um documento (rh_documentos). Substituição:
+// apaga o arquivo anterior do disco com guarda de path-traversal (padrão Viabilidade).
+function handle_rh_doc_upload(PDO $pdo, array $config, array $authUser): void
+{
+    ensure_rh_tables($pdo);
+    $docId = (int) ($_POST['documentoId'] ?? 0);
+    $stmt = $pdo->prepare('SELECT id, arquivo_path FROM rh_documentos WHERE id = ?');
+    $stmt->execute([$docId]);
+    $doc = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!$doc) {
+        fail('Documento não encontrado.', 404);
+    }
+    $uploadRoot = rtrim($config['upload_dir'] ?? '/var/lib/financeiro/uploads', '/');
+    $dir = $uploadRoot . '/rh';
+    if (!is_dir($dir)) {
+        mkdir($dir, 0750, true);
+    }
+    $path = store_upload($_FILES['file'] ?? [], $dir,
+        ['pdf', 'jpg', 'jpeg', 'png', 'webp'],
+        ['application/pdf', 'image/jpeg', 'image/png', 'image/webp']);
+    $nomeOriginal = mb_substr((string) ($_FILES['file']['name'] ?? ''), 0, 255);
+    // Substituição: apaga o anterior COM guarda de path-traversal (padrão Viabilidade)
+    $anterior = (string) ($doc['arquivo_path'] ?? '');
+    if ($anterior !== '') {
+        $real = realpath($anterior);
+        if ($real !== false && strpos($real, realpath($uploadRoot) . DIRECTORY_SEPARATOR) === 0 && is_file($real)) {
+            @unlink($real);
+        }
+    }
+    $pdo->prepare('UPDATE rh_documentos SET arquivo_path = ?, arquivo_nome = ? WHERE id = ?')
+        ->execute([$path, $nomeOriginal, $docId]);
+    server_audit($pdo, $authUser, 'upload', 'rhDocumentos', $docId, $nomeOriginal);
+    respond(['ok' => true, 'data' => ['id' => $docId, 'arquivo_nome' => $nomeOriginal]]);
+}
+
+// RH/Pessoal — download/visualização do anexo de um documento.
+function handle_rh_doc_download(PDO $pdo, array $config): void
+{
+    ensure_rh_tables($pdo);
+    $docId = (int) ($_GET['id'] ?? 0);
+    $stmt = $pdo->prepare('SELECT arquivo_path, arquivo_nome FROM rh_documentos WHERE id = ?');
+    $stmt->execute([$docId]);
+    $doc = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!$doc || !$doc['arquivo_path'] || !is_file($doc['arquivo_path'])) {
+        fail('Arquivo não encontrado.', 404);
+    }
+    $ext = strtolower(pathinfo($doc['arquivo_path'], PATHINFO_EXTENSION));
+    $mimes = ['pdf' => 'application/pdf', 'jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'png' => 'image/png', 'webp' => 'image/webp'];
+    header('Content-Type: ' . ($mimes[$ext] ?? 'application/octet-stream'));
+    header('Content-Disposition: inline; filename="' . rawurlencode((string) ($doc['arquivo_nome'] ?: basename($doc['arquivo_path']))) . '"');
+    readfile($doc['arquivo_path']);
+    exit;
+}
+
+// RH/Pessoal — exclusão do documento: apaga a linha e o arquivo do disco
+// (guarda de path-traversal igual à substituição/Viabilidade).
+function handle_rh_doc_delete(PDO $pdo, array $config, array $authUser): void
+{
+    ensure_rh_tables($pdo);
+    $body = json_decode((string) file_get_contents('php://input'), true) ?: [];
+    $docId = (int) ($body['documentoId'] ?? ($_POST['documentoId'] ?? 0));
+    $stmt = $pdo->prepare('SELECT id, arquivo_path FROM rh_documentos WHERE id = ?');
+    $stmt->execute([$docId]);
+    $doc = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!$doc) {
+        fail('Documento não encontrado.', 404);
+    }
+    // Ajuste da aprovação: excluir documento remove TAMBÉM o arquivo do disco,
+    // com a mesma guarda de path-traversal da substituição.
+    $uploadRoot = realpath(rtrim($config['upload_dir'] ?? '/var/lib/financeiro/uploads', '/'));
+    $anterior = (string) ($doc['arquivo_path'] ?? '');
+    if ($anterior !== '' && $uploadRoot !== false) {
+        $real = realpath($anterior);
+        if ($real !== false && strpos($real, $uploadRoot . DIRECTORY_SEPARATOR) === 0 && is_file($real)) {
+            @unlink($real);
+        }
+    }
+    $pdo->prepare('DELETE FROM rh_documentos WHERE id = ?')->execute([$docId]);
+    server_audit($pdo, $authUser, 'delete', 'rhDocumentos', $docId, '');
+    respond(['ok' => true]);
 }
 
 function handle_nfse_preview(PDO $pdo, array $config): never
