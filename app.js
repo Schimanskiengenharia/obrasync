@@ -15865,7 +15865,7 @@ function renderRhColaboradoresLista() {
     .filter((c) => {
       if (rhColabFiltros.vinculo && c.tipo_vinculo !== rhColabFiltros.vinculo) return false;
       if (rhColabFiltros.status && String(c.status || "Ativo") !== rhColabFiltros.status) return false;
-      if (busca && !normalizedText(`${c.nome || ""} ${c.cpf || ""}`).includes(busca)) return false;
+      if (busca && !normalizedText(`${c.nome || ""} ${c.cpf || ""} ${maskCpf(c.cpf || "")}`).includes(busca)) return false;
       return true;
     })
     .sort((a, b) => String(a.nome || "").localeCompare(String(b.nome || ""), "pt-BR"));
@@ -16081,7 +16081,15 @@ function openRhDocumentoForm(colab, doc = null) {
   const isEdit = !!doc?.id;
   const tiposAtivos = (db.rhTiposDocumento || []).filter((t) => String(t.status || "Ativo") !== "Inativo");
   if (!isEdit && !tiposAtivos.length) return showToast("Cadastre um tipo de documento ativo (RH → Tipos de documento) antes de continuar.");
-  const tipoOptions = tiposAtivos.map((t) => `<option value="${escapeHtml(t.id)}" ${sameId(t.id, doc?.tipo_documento_id) ? "selected" : ""}>${escapeHtml(t.nome)}</option>`).join("");
+  // Editar um documento cujo tipo foi inativado depois: mantém o tipo atual nas opções
+  // (rotulado "(inativo)") e selecionado — sem isso o <select> cairia no primeiro tipo
+  // ativo da lista e o Salvar reatribuiria o documento silenciosamente a outro tipo.
+  let tiposParaOpcoes = tiposAtivos;
+  if (isEdit && doc?.tipo_documento_id && !tiposAtivos.some((t) => sameId(t.id, doc.tipo_documento_id))) {
+    const tipoAtual = byId("rhTiposDocumento", doc.tipo_documento_id);
+    if (tipoAtual) tiposParaOpcoes = [...tiposAtivos, { ...tipoAtual, nome: `${tipoAtual.nome} (inativo)` }];
+  }
+  const tipoOptions = tiposParaOpcoes.map((t) => `<option value="${escapeHtml(t.id)}" ${sameId(t.id, doc?.tipo_documento_id) ? "selected" : ""}>${escapeHtml(t.nome)}</option>`).join("");
   const { close, q } = viabilidadeDialog(`
     <div class="viab-modal">
       <header class="viab-modal-head"><h3>${isEdit ? "Editar documento" : "Novo documento"}</h3><button type="button" class="viab-x" data-close aria-label="Fechar">✕</button></header>

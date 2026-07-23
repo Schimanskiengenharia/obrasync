@@ -560,6 +560,9 @@ try {
     if (str_starts_with($key, 'qualidade')) {
         ensure_qualidade_tables($pdo);
     }
+    if (str_starts_with($key, 'rh')) {
+        ensure_rh_tables($pdo);
+    }
     if ($key === 'users' && in_array($method, ['POST', 'PUT', 'PATCH'], true)) {
         ensure_users_extra_columns($pdo);
     }
@@ -619,7 +622,11 @@ try {
         if ($key === 'users') {
             $payload = sanitize_user_profile_fields($pdo, $payload, null, true);
         }
-        $record = create_record($pdo, $resources[$key], $payload);
+        try {
+            $record = create_record($pdo, $resources[$key], $payload);
+        } catch (PDOException $e) {
+            fail_if_integrity_violation($e, 'create');
+        }
         // Automations auxiliares APÓS o INSERT: uma falha aqui não pode devolver 500
         // com o registro já gravado (registro "fantasma"). Mesmo padrão da agenda:
         // try/catch + error_log + seguir.
@@ -868,7 +875,11 @@ try {
         if ($key === 'users') {
             $payload = sanitize_user_profile_fields($pdo, $payload, (int) $id, false);
         }
-        $record = update_record($pdo, $resources[$key], (int) $id, $payload);
+        try {
+            $record = update_record($pdo, $resources[$key], (int) $id, $payload);
+        } catch (PDOException $e) {
+            fail_if_integrity_violation($e, 'update');
+        }
         if ($key === 'users' && !empty($payload['password']) && !empty($payload['logoutOtherSessions'])) {
             // Troca de senha com "deslogar outras sessões": derruba todas as sessões
             // do usuário editado, EXCETO a do token desta requisição — invalidar a
@@ -893,7 +904,11 @@ try {
     }
 
     if ($method === 'DELETE') {
-        delete_record($pdo, $resources[$key], (int) $id);
+        try {
+            delete_record($pdo, $resources[$key], (int) $id);
+        } catch (PDOException $e) {
+            fail_if_integrity_violation($e, 'delete');
+        }
         server_audit($pdo, $authUser, 'delete', $key, $id);
         respond(['ok' => true]);
     }
@@ -2175,6 +2190,24 @@ function delete_record(PDO $pdo, array $meta, int $id): void
     if ($stmt->rowCount() === 0) {
         fail('Registro não encontrado.', 404);
     }
+}
+
+// SQLSTATE 23000 (violação de integridade — chave única duplicada, ex.:
+// uk_rh_colab_cpf/uk_rh_tipo_nome, ou FK RESTRICT ao excluir um registro em uso,
+// ex.: rh_tipos_documento referenciado por rh_documentos) virava 500 genérico no
+// catch global do roteamento: o usuário lia "CPF duplicado" como um crash do
+// sistema. Chamada nos catches do CRUD genérico (create/update/delete via
+// resource_map, todos os recursos se beneficiam); qualquer outro erro sobe
+// intacto para o catch global de sempre.
+function fail_if_integrity_violation(PDOException $e, string $context): void
+{
+    if ($e->getCode() !== '23000' && ($e->errorInfo[0] ?? null) !== '23000') {
+        throw $e;
+    }
+    if ($context === 'delete') {
+        fail('Não foi possível excluir: registro vinculado a outros dados.', 409);
+    }
+    fail('Não foi possível salvar: valor duplicado (ex.: CPF ou nome já cadastrado) ou registro vinculado a outros dados.', 409);
 }
 
 function get_record(PDO $pdo, array $meta, int $id): array
