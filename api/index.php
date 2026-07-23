@@ -1884,6 +1884,10 @@ function resource_map(): array
         'whatsappTemplates' => r('mensagens_padrao', ['mensagens-padrao','mensagens-padrão'], ['name','context','message','status'], ['name','context']),
         'visibilityRules' => r('regras_visualizacao', ['regras-visualizacao','regras-visualização'], ['role','module','workTypeId','rule','status'], ['role','module','workTypeId']),
         'preferences' => r('system_preferences', ['preferencias','preferências'], ['name','value','description','status'], ['name']),
+        // Módulo RH/Pessoal — Fase 1 (cadastro + documentos).
+        'rhColaboradores' => r('rh_colaboradores', ['rh-colaboradores'], ['nome','cpf','tipo_vinculo','fornecedor_id','funcao','telefone','status','observacoes'], ['cpf']),
+        'rhTiposDocumento' => r('rh_tipos_documento', ['rh-tipos-documento'], ['nome','exige_validade','dias_alerta','descricao','ordem','status'], ['nome']),
+        'rhDocumentos' => r('rh_documentos', ['rh-documentos'], ['colaborador_id','tipo_documento_id','numero','data_emissao','data_validade','arquivo_nome','observacoes'], [], ['arquivo_path']),
     ];
 }
 
@@ -2599,6 +2603,10 @@ function bootstrap_data(PDO $pdo, array $resources, ?array $authUser = null, boo
         if (resolve_existing_table($pdo, ['commercial_proposals'], false)
             && !in_array('cliente_nome', table_columns($pdo, 'commercial_proposals'), true)) {
             ensure_client_snapshot_columns($pdo);
+        }
+        // Tabelas do módulo RH/Pessoal (cadastro de colaboradores + documentos).
+        if (!resolve_existing_table($pdo, ['rh_colaboradores'], false)) {
+            ensure_rh_tables($pdo);
         }
     } catch (PDOException $error) {
         // Sem permissão de DDL/escrita: o bootstrap segue normalmente.
@@ -8099,6 +8107,71 @@ function ensure_rdo_tables(PDO $pdo): void
     $done = true;
 }
 
+// Módulo RH/Pessoal — Fase 1 (cadastro + documentos). Mesmo DDL da migration
+// 2026-07-22-rh-pessoal-f1.sql (auto-cura em servidores sem o .sql rodado).
+function ensure_rh_tables(PDO $pdo): void
+{
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    $pdo->exec("CREATE TABLE IF NOT EXISTS rh_colaboradores (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        nome VARCHAR(160) NOT NULL,
+        cpf VARCHAR(14) NULL,
+        tipo_vinculo ENUM('proprio','diarista','autonomo','empreiteira') NOT NULL DEFAULT 'proprio',
+        fornecedor_id BIGINT UNSIGNED NULL,
+        funcao VARCHAR(120) NULL,
+        telefone VARCHAR(40) NULL,
+        status VARCHAR(30) NOT NULL DEFAULT 'Ativo',
+        observacoes TEXT NULL,
+        createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uk_rh_colab_cpf (cpf),
+        KEY idx_rh_colab_fornecedor (fornecedor_id),
+        CONSTRAINT fk_rh_colab_fornecedor FOREIGN KEY (fornecedor_id) REFERENCES suppliers(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS rh_tipos_documento (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        nome VARCHAR(140) NOT NULL,
+        exige_validade ENUM('Não','Sim') NOT NULL DEFAULT 'Sim',
+        dias_alerta INT NOT NULL DEFAULT 30,
+        descricao VARCHAR(255) NULL,
+        ordem INT NOT NULL DEFAULT 0,
+        status VARCHAR(30) NOT NULL DEFAULT 'Ativo',
+        createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uk_rh_tipo_nome (nome)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS rh_documentos (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        colaborador_id BIGINT UNSIGNED NOT NULL,
+        tipo_documento_id BIGINT UNSIGNED NOT NULL,
+        numero VARCHAR(80) NULL,
+        data_emissao DATE NULL,
+        data_validade DATE NULL,
+        arquivo_path VARCHAR(500) NULL,
+        arquivo_nome VARCHAR(255) NULL,
+        observacoes TEXT NULL,
+        createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        KEY idx_rh_doc_colab (colaborador_id),
+        KEY idx_rh_doc_validade (data_validade),
+        CONSTRAINT fk_rh_doc_colab FOREIGN KEY (colaborador_id) REFERENCES rh_colaboradores(id) ON DELETE RESTRICT,
+        CONSTRAINT fk_rh_doc_tipo FOREIGN KEY (tipo_documento_id) REFERENCES rh_tipos_documento(id) ON DELETE RESTRICT
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+
+    $vazio = (int) $pdo->query('SELECT COUNT(*) FROM rh_tipos_documento')->fetchColumn() === 0;
+    if ($vazio) {
+        $pdo->exec("INSERT INTO rh_tipos_documento (nome, exige_validade, dias_alerta, ordem) VALUES
+            ('ASO','Sim',30,1),('Treinamento NR-10','Sim',30,2),('Treinamento NR-18','Sim',30,3),
+            ('Treinamento NR-35','Sim',30,4),('Contrato','Não',30,5)");
+    }
+    $done = true;
+}
+
 // Nome completo de um usuário (cache do responsável em disciplinas/RDO).
 function rdo_user_fullname(PDO $pdo, ?int $userId): ?string
 {
@@ -9073,6 +9146,7 @@ function permission_module_key(string $key): string
         'sinapiCompositionItems' => 'sinapiCompositions',
         'checklistItems' => 'checklists',
         'customFieldValues' => 'customFields',
+        'rhDocumentos' => 'rhColaboradores',
     ][$key] ?? $key;
 }
 
@@ -9288,7 +9362,7 @@ function default_role_view_modules(): array
         'financeiro' => ['dashboard', 'clients', 'suppliers', 'categories', 'costCenters', 'bankAccounts', 'projects', 'projectSchedule', 'agenda', 'kanban', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'sinapiLabor', 'sinapiFamilies', 'sinapiMaintenances', 'sinapiSettings', 'ownCompositions', 'quotes', 'abcCurve', 'viabilityAnalyses', 'fiscalDocuments', 'receivable', 'payable', 'cashMoves', 'cashFlow', 'reconciliation', 'proposals', 'sales', 'chartAccounts', 'journalEntries', 'dre', 'taxDocuments', 'taxes', 'reports', 'reportFinancial', 'reportClient', 'reportSupplier', 'reportCostCenter', 'reportProject', 'exports', 'systemVersion', 'plugins', 'qualidadeDashboard'],
         'comercial' => ['dashboard', 'clients', 'projects', 'projectSchedule', 'agenda', 'kanban', 'workBudgets', 'abcCurve', 'viabilityAnalyses', 'budgets', 'proposals', 'proposalModels', 'proposalAreas', 'proposalActionTypes', 'proposalServiceSubtypes', 'sales', 'reportClient', 'systemVersion', 'plugins'],
         'engenharia' => ['dashboard', 'rdo', 'projects', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban', 'projectNotifications', 'projectTrackingLinks', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'sinapiLabor', 'sinapiFamilies', 'sinapiMaintenances', 'ownCompositions', 'quotes', 'abcCurve', 'viabilityAnalyses', 'purchaseOrders', 'fiscalDocuments', 'technicalReports', 'projectReport', 'proposals', 'reportProject', 'systemVersion', 'plugins', 'qualidadeDashboard', 'qualidadePes', 'qualidadePqo', 'qualidadeFvs', 'qualidadeFvm', 'qualidadeNc', 'qualidadeTreinamentos'],
-        'gestor_obra' => ['dashboard', 'rdo', 'projects', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban', 'projectNotifications', 'projectTrackingLinks', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'sinapiLabor', 'sinapiFamilies', 'sinapiMaintenances', 'ownCompositions', 'quotes', 'abcCurve', 'viabilityAnalyses', 'purchaseOrders', 'fiscalDocuments', 'technicalReports', 'projectReport', 'proposals', 'reportProject', 'systemVersion', 'plugins', 'qualidadeDashboard', 'qualidadePes', 'qualidadePqo', 'qualidadeFvs', 'qualidadeFvm', 'qualidadeNc', 'qualidadeTreinamentos'],
+        'gestor_obra' => ['dashboard', 'rdo', 'projects', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban', 'projectNotifications', 'projectTrackingLinks', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'sinapiLabor', 'sinapiFamilies', 'sinapiMaintenances', 'ownCompositions', 'quotes', 'abcCurve', 'viabilityAnalyses', 'purchaseOrders', 'fiscalDocuments', 'technicalReports', 'projectReport', 'proposals', 'reportProject', 'systemVersion', 'plugins', 'qualidadeDashboard', 'qualidadePes', 'qualidadePqo', 'qualidadeFvs', 'qualidadeFvm', 'qualidadeNc', 'qualidadeTreinamentos', 'rhColaboradores', 'rhTiposDocumento'],
         'equipe_campo' => ['dashboard', 'projectReport', 'systemVersion', 'plugins'],
         'cliente_obra' => ['dashboard', 'projectReport', 'projectSchedule', 'technicalReports', 'systemVersion', 'plugins'],
         'fornecedor_terceiro' => ['dashboard', 'systemVersion', 'plugins'],
@@ -9305,7 +9379,7 @@ function default_role_edit_modules(): array
         'financeiro' => ['fiscalDocuments', 'receivable', 'payable', 'cashMoves', 'cashFlow', 'reconciliation', 'categories', 'costCenters', 'bankAccounts', 'chartAccounts', 'journalEntries', 'taxDocuments', 'taxes', 'exports', 'projectSchedule', 'agenda', 'kanban', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'sinapiLabor', 'sinapiFamilies', 'sinapiMaintenances', 'sinapiSettings', 'quotes', 'sales', 'viabilityAnalyses'],
         'comercial' => ['clients', 'budgets', 'proposals', 'agenda', 'kanban', 'viabilityAnalyses'],
         'engenharia' => ['rdo', 'projects', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban', 'projectNotifications', 'projectTrackingLinks', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'sinapiLabor', 'sinapiFamilies', 'sinapiMaintenances', 'ownCompositions', 'quotes', 'purchaseOrders', 'fiscalDocuments', 'technicalReports', 'qualidadePes', 'qualidadePqo', 'qualidadeFvs', 'qualidadeFvm', 'qualidadeNc', 'qualidadeTreinamentos'],
-        'gestor_obra' => ['rdo', 'projects', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban', 'projectNotifications', 'projectTrackingLinks', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'sinapiLabor', 'sinapiFamilies', 'sinapiMaintenances', 'ownCompositions', 'quotes', 'purchaseOrders', 'fiscalDocuments', 'technicalReports', 'qualidadePes', 'qualidadePqo', 'qualidadeFvs', 'qualidadeFvm', 'qualidadeNc', 'qualidadeTreinamentos'],
+        'gestor_obra' => ['rdo', 'projects', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban', 'projectNotifications', 'projectTrackingLinks', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'sinapiLabor', 'sinapiFamilies', 'sinapiMaintenances', 'ownCompositions', 'quotes', 'purchaseOrders', 'fiscalDocuments', 'technicalReports', 'qualidadePes', 'qualidadePqo', 'qualidadeFvs', 'qualidadeFvm', 'qualidadeNc', 'qualidadeTreinamentos', 'rhColaboradores'],
         'operador' => ['rdo', 'clients', 'suppliers', 'products', 'services', 'categories', 'costCenters', 'bankAccounts', 'projects', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'ownCompositions', 'quotes', 'fiscalDocuments', 'receivable', 'payable', 'cashMoves', 'reconciliation', 'budgets', 'proposals', 'sales', 'purchaseOrders', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban', 'qualidadeFvs', 'qualidadeFvm', 'qualidadeNc'],
     ];
 }
