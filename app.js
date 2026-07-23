@@ -15832,7 +15832,7 @@ function renderRhColaboradores() {
 
 async function rhToggleColaboradorStatus(id) {
   const colab = byId("rhColaboradores", id);
-  if (!colab) return;
+  if (!colab || !canEditModule("rhColaboradores")) return;
   const novoStatus = String(colab.status || "Ativo") === "Inativo" ? "Ativo" : "Inativo";
   const acao = novoStatus === "Inativo" ? "Inativar" : "Reativar";
   if (!confirm(`${acao} o colaborador "${colab.nome || ""}"?`)) return;
