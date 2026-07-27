@@ -1,6 +1,6 @@
 # Modo Privacidade — ocultar valores financeiros (design)
 
-**Data:** 2026-07-27 · **Status:** aprovado pelo usuário
+**Data:** 2026-07-27 · **Status:** aprovado pelo usuário (com 3 ajustes de 2026-07-27, incorporados abaixo)
 
 ## Objetivo
 
@@ -13,7 +13,9 @@ reuniões e compartilhamento de tela. Como o ícone de olho de apps de banco.
 | Decisão | Escolha |
 |---|---|
 | Efeito | Borrão (blur) — ilegível, mas o valor continua no DOM (não é proteção contra F12; usuário ciente) |
-| Abrangência | Sistema inteiro (todos os módulos), botão na topbar |
+| Abrangência | Sistema inteiro (todos os módulos). **Critério: nenhum montante em R$ visível em lugar nenhum da tela com o modo ativo** — inclui alertas do dashboard, toasts, badges e notificações |
+| Acionamento | **Só por botão, SEM atalho de teclado.** Dois pontos: olho na topbar (todos os módulos) + controle visível no Dashboard |
+| Estado visual | Botão ativo = ícone `ti-eye-off` + cor de destaque (não pode parecer defeito) |
 | Gráficos | Borrar só os números (valores e eixo Y); barras/linhas visíveis — proporções sim, absolutos não |
 | Percentuais, contagens e datas | **Visíveis** (coerente com a regra dos gráficos) |
 | Impressão | Borrão vale na impressão; para imprimir com valores, desligar o modo |
@@ -24,6 +26,9 @@ reuniões e compartilhamento de tela. Como o ícone de olho de apps de banco.
 
 ### 1. Botão e estado
 - Botão-ícone (`ti-eye` / `ti-eye-off`) na `.actions` da topbar (`index.html`), ao lado de Excel/PDF, com `title`/`aria-label` "Ocultar valores" / "Mostrar valores".
+- **Controle adicional no Dashboard** (junto dos controles de visão), ligando/desligando o mesmo estado — os dois pontos ficam sempre sincronizados.
+- **Sem atalho de teclado** (decisão explícita do usuário).
+- **Estado ativo inconfundível:** botão com ícone `ti-eye-off` + cor de destaque (classe `active` com fundo/cor de accent), para não parecer defeito de renderização.
 - Estado global `privacyMode` (boolean), lido/salvo via `safeLocalGet`/`safeLocalSet` na chave `finconta.privacy`.
 - Ativo → classe `privacy-mode` no `<body>`; alternar chama `render()` (necessário para gráficos/tooltips).
 
@@ -40,26 +45,29 @@ reuniões e compartilhamento de tela. Como o ícone de olho de apps de banco.
 ### 4. Varredura da cauda longa
 - Novo helper `moneySpan(value)` → `<span class="money-blur">${asMoney(value)}</span>`.
 - Aplicar nos painéis que usam `asMoney()` direto em template de tela: painel Lucro x Caixa, alertas do dashboard, widgets de execução de obras, DRE, fluxo de caixa, relatórios (financeiro/cliente/fornecedor/centro de custo/obra), orçamento de obra, propostas (telas de listagem/painéis), RH e demais.
-- **Não tocar**: usos de `asMoney`/valores em exportações (Excel/CSV), HTML de impressão de documentos (proposta, contrato, pedido de compra, RDO — documentos gerados intencionalmente), atributos HTML e mensagens de toast/confirm.
+- **Textos com R$ embutido em string** (alertas do dashboard, toasts, badges, notificações): helper `maskMoneyInText(texto)` que, com o modo ativo, envolve padrões `R$ 9.999,99` num `<span class="money-blur">` (contexto HTML) — critério do usuário: **nenhum montante em R$ visível em lugar nenhum da tela**. Toasts criados com o modo ativo já nascem mascarados; `confirm()`/`prompt()` nativos com valores devem ter o valor mascarado na mensagem ou ser evitados com o modo ativo.
+- **Não tocar**: usos de `asMoney`/valores em exportações (Excel/CSV), HTML de impressão de documentos (proposta, contrato, pedido de compra, RDO — documentos gerados intencionalmente) e atributos HTML.
 
 ## Etapas de implementação (validação por etapa)
 
-1. **Etapa 1 — Infra + Dashboard:** botão, estado, CSS, `kpi()`, gráficos, Lucro x Caixa, alertas, execução, tabela de vencimentos (via `formatCell`). Valida no dashboard.
-2. **Etapa 2 — Pontos centrais do resto:** `formatCell` (todas as tabelas), inputs `data-format="money"`, cards `kpi()` de outros módulos. Valida no financeiro.
+1. **Etapa 1 — Infra + Dashboard:** botões (topbar + controle no Dashboard, com estado ativo destacado), estado, CSS, `kpi()`, gráficos, Lucro x Caixa, alertas (com `maskMoneyInText`), execução, tabela de vencimentos (via `formatCell`). Valida no dashboard.
+2. **Etapa 2 — Pontos centrais do resto:** `formatCell` (todas as tabelas), inputs `data-format="money"`, cards `kpi()` de outros módulos, toasts/badges/notificações globais via `maskMoneyInText`. Valida no financeiro.
 3. **Etapa 3 — Varredura custom:** guiada por grep de todos os ~169 usos de `asMoney()` (classificando cada um: tela visível → `moneySpan`; export/impressão/atributo → não tocar), mais os inputs de dinheiro ad-hoc. Cobre DRE, fluxo de caixa, relatórios e demais painéis. Valida módulo a módulo.
 
 Cada etapa: `node --check app.js`, bump `APP_VERSION`/changelog em `app.js`, `?v=` em `index.html`, commit separado. Push manual quando o usuário pedir.
 
 ## Fora de escopo
 
-- Máscara "•••" no lugar do valor (rejeitada — escolhido blur).
+- Atalho de teclado (rejeitado explicitamente pelo usuário — acionamento só por botão).
+- Máscara "•••" no lugar do valor (rejeitada — escolhido blur; exceção: mensagens nativas `confirm`/`prompt`, onde CSS não alcança).
 - Persistência por usuário no servidor (localStorage basta).
 - Ocultar valores de exportações/documentos impressos gerados intencionalmente.
 - Integração com o mascaramento por perfil já existente (`isSensitiveFieldMasked` — recurso distinto, não alterar).
 
 ## Critérios de sucesso
 
-- Com o modo ativo: nenhum valor em R$ legível em cards, tabelas, gráficos, painéis e inputs (sem foco) de qualquer módulo; percentuais/contagens/datas continuam legíveis; barras/linhas dos gráficos visíveis.
+- Com o modo ativo: **nenhum montante em R$ legível em lugar nenhum da tela** — cards, tabelas, gráficos, painéis, inputs (sem foco), alertas, toasts, badges e notificações; percentuais/contagens/datas continuam legíveis; barras/linhas dos gráficos visíveis.
+- Botão(ões) com estado ativo visualmente inconfundível (`ti-eye-off` + cor de destaque), na topbar e no Dashboard, sempre sincronizados.
 - Com o modo inativo: sistema idêntico ao atual.
 - Excel/CSV/PDF e documentos de impressão saem íntegros (sem HTML vazado, valores normais).
 - Preferência sobrevive a recarregar a página e trocar de módulo.
