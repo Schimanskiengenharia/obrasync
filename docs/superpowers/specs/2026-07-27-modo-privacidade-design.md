@@ -45,7 +45,7 @@ reuniões e compartilhamento de tela. Como o ícone de olho de apps de banco.
 ### 4. Varredura da cauda longa
 - Novo helper `moneySpan(value)` → `<span class="money-blur">${asMoney(value)}</span>`.
 - Aplicar nos painéis que usam `asMoney()` direto em template de tela: painel Lucro x Caixa, alertas do dashboard, widgets de execução de obras, DRE, fluxo de caixa, relatórios (financeiro/cliente/fornecedor/centro de custo/obra), orçamento de obra, propostas (telas de listagem/painéis), RH e demais.
-- **Textos com R$ embutido em string** (alertas do dashboard, toasts, badges, notificações): helper `maskMoneyInText(texto)` que, com o modo ativo, envolve padrões `R$ 9.999,99` num `<span class="money-blur">` (contexto HTML) — critério do usuário: **nenhum montante em R$ visível em lugar nenhum da tela**. Toasts criados com o modo ativo já nascem mascarados; `confirm()`/`prompt()` nativos com valores devem ter o valor mascarado na mensagem ou ser evitados com o modo ativo.
+- **Textos com R$ embutido em string** (alertas do dashboard, toasts, badges, notificações): em contexto HTML usa-se `moneySpan(valor)`; em contexto de TEXTO PURO (toasts via `textContent`, `<title>` de SVG, `confirm`/`alert`), onde CSS não alcança, o helper `maskMoneyText(texto)` substitui padrões `R$ 9.999,99` por `R$ •••` enquanto o modo está ativo — critério do usuário: **nenhum montante em R$ visível em lugar nenhum da tela**. Valores EDITÁVEIS em `prompt` (default do campo) equivalem a input focado e não são mascarados.
 - **Não tocar**: usos de `asMoney`/valores em exportações (Excel/CSV), HTML de impressão de documentos (proposta, contrato, pedido de compra, RDO — documentos gerados intencionalmente) e atributos HTML.
 
 ## Etapas de implementação (validação por etapa)
