@@ -5054,13 +5054,13 @@ function lineChart(series, labels, columnTooltips = null, opts = {}) {
   const grid = [0, 0.25, 0.5, 0.75, 1].map((step) => {
     const gy = pad.top + step * (height - pad.top - pad.bottom);
     const label = max - step * range;
-    return `<line x1="${pad.left}" y1="${gy}" x2="${width - pad.right}" y2="${gy}" class="chart-grid-line"></line><text x="8" y="${gy + 4}" class="chart-axis">${abbreviateMoney(label)}</text>`;
+    return `<line x1="${pad.left}" y1="${gy}" x2="${width - pad.right}" y2="${gy}" class="chart-grid-line"></line><text x="8" y="${gy + 4}" class="chart-axis money-blur">${abbreviateMoney(label)}</text>`;
   }).join("");
   const paths = series.map((item) => {
     const points = item.values.map((value, index) => `${x(index)},${y(value)}`).join(" ");
     return `<polyline points="${points}" fill="none" stroke="${item.color}" stroke-width="${strokeW}" stroke-linecap="round" stroke-linejoin="round"></polyline>`;
   }).join("");
-  const dots = series.map((item) => item.values.map((value, index) => `<circle cx="${x(index)}" cy="${y(value)}" r="${dotR}" fill="${item.color}"><title>${svgText(item.label)}: ${compactMoney(value)}</title></circle>`).join("")).join("");
+  const dots = series.map((item) => item.values.map((value, index) => `<circle cx="${x(index)}" cy="${y(value)}" r="${dotR}" fill="${item.color}"><title>${svgText(item.label)}: ${maskMoneyText(compactMoney(value))}</title></circle>`).join("")).join("");
   const axisLabels = labels.map((label, index) => `<text x="${x(index)}" y="${height - 14}" text-anchor="middle" class="chart-axis">${svgText(label)}</text>`).join("");
   // Faixa transparente por coluna: tooltip combinado (todas as séries do mês) ao
   // passar o mouse. Fica por cima de tudo para capturar o hover. Opcional —
@@ -5070,7 +5070,7 @@ function lineChart(series, labels, columnTooltips = null, opts = {}) {
         const span = labels.length > 1 ? (width - pad.left - pad.right) / (labels.length - 1) : (width - pad.left - pad.right);
         const rx = Math.max(pad.left, x(index) - span / 2);
         const rw = Math.min(width - pad.right, x(index) + span / 2) - rx;
-        return `<rect x="${rx}" y="${pad.top}" width="${rw}" height="${height - pad.top - pad.bottom}" fill="transparent"><title>${svgText(columnTooltips[index])}</title></rect>`;
+        return `<rect x="${rx}" y="${pad.top}" width="${rw}" height="${height - pad.top - pad.bottom}" fill="transparent"><title>${svgText(maskMoneyText(columnTooltips[index]))}</title></rect>`;
       }).join("")
     : "";
   return `
@@ -5106,15 +5106,15 @@ function groupedBarChart(rows, series) {
     const bx = pad.left + rowIndex * groupWidth + 7 + itemIndex * barWidth;
     const by = value >= 0 ? y(value) : zeroY;
     const bh = Math.max(2, Math.abs(zeroY - y(value)));
-    return `<rect x="${bx}" y="${by}" width="${barWidth - 2}" height="${bh}" rx="3" fill="${item.color}"><title>${svgText(row.label)} - ${svgText(item.key)}: ${compactMoney(value)}</title></rect>`;
+    return `<rect x="${bx}" y="${by}" width="${barWidth - 2}" height="${bh}" rx="3" fill="${item.color}"><title>${svgText(row.label)} - ${svgText(item.key)}: ${maskMoneyText(compactMoney(value))}</title></rect>`;
   }).join("")).join("");
   const labels = rows.map((row, index) => `<text x="${pad.left + index * groupWidth + groupWidth / 2}" y="${height - 16}" text-anchor="middle" class="chart-axis">${svgText(row.label)}</text>`).join("");
   return `
     <div class="chart-wrap">
       <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Gráfico de barras">
         <line x1="${pad.left}" y1="${zeroY}" x2="${width - pad.right}" y2="${zeroY}" class="chart-axis-line"></line>
-        <text x="8" y="${pad.top + 8}" class="chart-axis">${compactMoney(max)}</text>
-        <text x="8" y="${zeroY - 4}" class="chart-axis">R$ 0</text>
+        <text x="8" y="${pad.top + 8}" class="chart-axis money-blur">${compactMoney(max)}</text>
+        <text x="8" y="${zeroY - 4}" class="chart-axis money-blur">R$ 0</text>
         ${barsSvg}
         ${labels}
       </svg>
@@ -5135,7 +5135,7 @@ function horizontalBarChart(rows, color) {
           <div class="hbar-row">
             <span>${svgText(row.label)}</span>
             <div class="hbar-track"><div class="hbar-fill ${value < 0 ? "negative" : ""}" style="width:${Math.max(4, Math.abs(value) / max * 100)}%; background:${value < 0 ? "#b42318" : color}"></div></div>
-            <strong>${compactMoney(value)}</strong>
+            <strong class="money-blur">${compactMoney(value)}</strong>
           </div>
         `;
       }).join("")}
