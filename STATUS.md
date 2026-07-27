@@ -1,6 +1,6 @@
 # STATUS — ObraSync
 
-> **Versão:** `v1.19.0` · 2026-06-28 · **Varredura:** 2026-06-27 · **Ambiente:** produção em `https://schimanskiengenharia.com.br/financeiro`
+> **Versão:** `v1.37.0` · 2026-07-27 · **Varredura:** 2026-06-27 · **Ambiente:** produção em `https://schimanskiengenharia.com.br/financeiro`
 
 ---
 
@@ -30,13 +30,15 @@ seção 3.
 
 Na **v1.19.0**, a Base SINAPI ganhou importação mensal por pacote com upload múltiplo, prévia, histórico por arquivo, reimportação controlada, referência padrão atual e snapshot do item SINAPI no orçamento. A leitura de XLSX agora exige PhpSpreadsheet.
 
+Na **v1.37.0**, o painel **Lucro Gerencial × Caixa Real** deixou de usar um mês/período isolado e passou a consolidar o intervalo dos filtros globais. Os cards mostram o total completo (lucro, entradas, saídas, caixa líquido, diferença e contas abertas/vencidas dos dois lados) e o gráfico detalha os meses em modo Mensal ou Acumulado. A fórmula anterior foi preservada e documentada; não houve endpoint, consulta SQL, migration ou alteração de dados. Títulos `Parcial` continuam integralmente em aberto e fora do caixa efetivo porque o banco não possui valor parcial liquidado. A validação visual em dados reais de produção continua pendente ao dono.
+
 ---
 
 ## 2. Módulos implementados e status
 
 | Módulo | Status | Observação |
 |---|---|---|
-| Dashboard (geral + por obra) | 🟢 Estável | Painel de execução de obras (endpoint + tooltip combinado); Lucro Gerencial vs Caixa Real recalculado + alertas (v1.14.0) |
+| Dashboard (geral + por obra) | 🟢 Estável | Painel de execução; Lucro Gerencial × Caixa Real consolidado pelo período global, com evolução mensal/acumulada e privacidade (v1.37.0) |
 | Cadastros (clientes, fornecedores, produtos, serviços, categorias, centros de custo, contas) | 🟢 Estável | CEP autofill **universal** (`.cep-input`, ViaCEP+BrasilAPI) em todos os forms; autofill de cliente **e fornecedor**; endereço próprio da obra com toggle (v1.18.0) |
 | Orçamento de Obra | 🟢 Estável | Etapas/tipos/4 visões/BDI por etapa/CSV + Realizado vs Orçado; busca SINAPI na base completa (v1.18.0) |
 | SINAPI / composições / cotações / Curva ABC | 🟢 Estável | Importador XLSX/CSV + assíncrono; cotações (v1.14.0); busca rápida `sinapi-buscar` + **export Excel por obra** `sinapi-export-obra` (PhpSpreadsheet) (v1.18.0) |

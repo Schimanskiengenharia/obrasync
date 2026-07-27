@@ -19,9 +19,10 @@ if (APP_ENV === "production" && location.protocol === "http:") {
   location.replace(location.href.replace(/^http:/, "https:"));
 }
 const APP_NAME = "ObraSync";
-const APP_VERSION = "v1.36.0";
+const APP_VERSION = "v1.37.0";
 const APP_VERSION_DATE = "2026-07-27";
 const APP_CHANGELOG = [
+  "Dashboard — Lucro Gerencial × Caixa Real por período total: o painel deixou de ter um mês/período próprio e agora usa as datas dos filtros globais com as quatro regras de intervalo (inicial+final; inicial→hoje; primeiro lançamento→final; primeiro lançamento→hoje), mostrando explicitamente o período analisado. Os cards são sempre consolidados sobre todo o intervalo e agora detalham lucro gerencial, entradas, saídas, caixa líquido, diferença lucro×caixa e contas a receber/pagar abertas e vencidas (valor + quantidade). O gráfico continua mensal como detalhamento e ganhou o seletor Mensal/Acumulado; no acumulado cada mês soma os anteriores desde o início do intervalo. O cálculo preserva a fórmula real anterior (competência por dueDate; caixa por receivedDate/paidDate com fallback de vencimento; cancelados fora; Parcial integralmente em aberto porque o schema não possui valor parcial liquidado), passa a respeitar obra/cliente/centro de custo e demais filtros dimensionais, não cria consultas por mês e mantém todos os montantes cobertos pelo modo privacidade (v1.37.0).",
   "Modo privacidade (Etapa 1 — dashboard): novo botão de olho na topbar e no dashboard que ESMAECE (borrão ilegível) todos os montantes em R$ da tela — cards KPI, colunas de dinheiro de todas as tabelas, painel Lucro x Caixa, alertas, widgets de execução de obras e os números dos gráficos (eixos e tooltips; as barras/linhas continuam visíveis — proporções sim, valores não). Percentuais, contagens e datas permanecem legíveis. O estado fica salvo no navegador (volta como estava ao recarregar) e o botão ativo fica destacado com olho cortado para não confundir com defeito. Exportações e documentos de impressão não mudam. Telas além do dashboard entram nas Etapas 2 e 3 (v1.36.0).",
   "Módulo RH/Pessoal — Fase 1 (cadastro, documentos e vencimentos): novo módulo \"RH / Pessoal\" no menu, visível só para `gestor_obra` (e admin/gerente/visualizador — os demais papéis, como financeiro/engenharia/consulta/equipe de campo, não veem a seção; decisão de privacidade dos dados de colaboradores). Cadastro de colaboradores (próprio, diarista, autônomo ou empreiteira — empreiteira exige vincular o fornecedor do cadastro; CPF único quando informado) com ficha própria mostrando os documentos (ASO, treinamentos NR, contrato...) e seus anexos (upload/download autenticado; excluir o documento remove também o arquivo do disco). Cada documento com data de validade ganha uma situação calculada (`rhDocSituacao`/badge `rhDocBadge`, reaproveitando as cores já usadas na Qualidade — vermelho VENCIDO, âmbar \"Vence em N dia(s)\" dentro da antecedência configurada no tipo de documento, verde Válido): aparece na ficha por documento e na lista de colaboradores como a pior situação da pessoa. Painel novo **Vencimentos** lista todos os documentos vigentes (o mais recente por pessoa e tipo) ordenados por validade, com filtros de situação/tipo/vínculo — a tela de acompanhamento diário. O dashboard ganhou um bloco de alerta (vermelho para vencidos, âmbar para vencendo) com a contagem geral. Tabelas novas `rh_colaboradores`/`rh_tipos_documento`/`rh_documentos` (migration `2026-07-22-rh-pessoal-f1.sql`). Fase 2 (alocação em obras + cron de alerta) e Fase 3 (diárias/medições de empreiteira) ficam para os próximos ciclos (v1.35.0).",
   "Cotações por MATERIAL (Parte 2) — Resultado das cotações + integração financeira: aba nova \"Resultado das cotações\" no módulo Cotações de Fornecedores mostra, por obra, o mapa de compras — os materiais CONCLUÍDOS agrupados pela EMPRESA vencedora, com subtotal por empresa e total geral. Em cada grupo, o botão \"Gerar conta a pagar\" cria UMA conta no Financeiro somando os materiais daquela empresa (o dono escolhe a categoria financeira e o vencimento no modal; a conta nasce Aberta, vinculada à obra e ao fornecedor, referenciando as cotações) — clicar de novo não duplica: cotação já vinculada nunca entra em outra conta e, se o grupo inteiro já tem conta, o sistema avisa e não recria (materiais novos concluídos depois geram uma conta só com eles). Quando a NF chegar, \"Anexar/Vincular NF\" registra uma nota nova (com upload de PDF/XML) ou vincula uma NF já cadastrada à conta — a NF aparece em Notas Fiscais e na coluna \"Nota fiscal\" de Contas a Pagar (v1.34.0).",
@@ -516,7 +517,7 @@ let serverStatus = "Conectando ao servidor";
 let authToken = null;
 let dashboardViewMode = "general";
 let dashboardProjectId = "";
-let lucroCaixaPeriod = "mesAtual"; // período do painel Lucro Gerencial vs Caixa Real
+let lucroCaixaEvolutionMode = "mensal"; // evolução mensal ou acumulada; cards usam sempre o período global completo
 let selectedWorkBudgetId = "";
 let workBudgetItemFilter = "all"; // filtro de execução: all|estouro|naoiniciado|andamento|concluido
 let workBudgetView = "etapa"; // visão do orçamento: etapa|centro|tipo|execucao
@@ -4259,74 +4260,172 @@ function lucroCaixaPeriodRange(key) {
   }
 }
 
-// Núcleo do cálculo dado um intervalo explícito e um filtro opcional de obra.
-function lucroCaixaCompute(start, end, projectId = "") {
+// Recorte dimensional próprio do painel. As datas NÃO passam por applyFilters():
+// competência usa dueDate e caixa usa receivedDate/paidDate, portanto a regra
+// genérica ("qualquer data do registro no intervalo") distorceria os totais.
+function lucroCaixaMatchesDimensions(row, kind, filters, projectScope = "") {
+  const project = row.projectId ? byId("projects", row.projectId) : null;
+  if (projectScope && !sameId(row.projectId, projectScope)) return false;
+  if (filters.projectId && !sameId(row.projectId, filters.projectId)) return false;
+  if (filters.clientId) {
+    const directClient = kind === "receivable" && sameId(row.clientId, filters.clientId);
+    const projectClient = project && sameId(project.clientId, filters.clientId);
+    if (!directClient && !projectClient) return false;
+  }
+  if (filters.supplierId) {
+    if (kind !== "payable" || !sameId(row.supplierId, filters.supplierId)) return false;
+  }
+  if (filters.costCenterId && !sameId(row.costCenterId, filters.costCenterId)) return false;
+  if (filters.categoryId && !sameId(row.categoryId, filters.categoryId)) return false;
+  if (filters.status && normFinStatus(row.status) !== normFinStatus(filters.status)) return false;
+  if (filters.projectStatus && (!project || project.status !== filters.projectStatus)) return false;
+  return true;
+}
+
+function lucroCaixaScopedRows(projectId = "") {
+  const filters = getFilters();
+  return {
+    filters,
+    receivable: (db.receivable || []).filter((row) => lucroCaixaMatchesDimensions(row, "receivable", filters, projectId)),
+    payable: (db.payable || []).filter((row) => lucroCaixaMatchesDimensions(row, "payable", filters, projectId)),
+  };
+}
+
+function lucroCaixaFirstAvailableDate(scoped, maxDate = "") {
+  const dates = [
+    ...scoped.receivable.filter((row) => !isCancelado(row.status)).flatMap((row) => [row.issueDate, row.dueDate, row.receivedDate]),
+    ...scoped.payable.filter((row) => !isCancelado(row.status)).flatMap((row) => [row.issueDate, row.dueDate, row.paidDate]),
+  ]
+    .map((value) => String(value || "").slice(0, 10))
+    .filter((value) => validDateInput(value) && (!maxDate || value <= maxDate))
+    .sort();
+  return dates[0] || "";
+}
+
+// Regras do período global: ambas; inicial→hoje; primeiro lançamento→final;
+// ou primeiro lançamento→hoje. O limite na busca da primeira data mantém um
+// intervalo válido quando o filtro final é anterior a todo o histórico.
+function lucroCaixaResolvePeriod(projectId = "", scoped = null) {
+  const data = scoped || lucroCaixaScopedRows(projectId);
+  const today = hojeLocal();
+  let { start, end } = data.filters;
+  if (start && !end) {
+    end = today;
+  } else if (!start && end) {
+    start = lucroCaixaFirstAvailableDate(data, end) || end;
+  } else if (!start && !end) {
+    end = today;
+    start = lucroCaixaFirstAvailableDate(data, today) || today;
+  }
+  return { start, end, valid: Boolean(start && end && start <= end) };
+}
+
+function lucroCaixaPeriodText(period) {
+  if (!period.start || !period.end) return "Período não definido";
+  return `${asDate(period.start)} a ${asDate(period.end)}`;
+}
+
+// Núcleo do cálculo dado um intervalo explícito. Recebe o escopo pronto para que
+// a evolução mensal não refaça filtros nem gere requisições/consultas por mês.
+function lucroCaixaCompute(start, end, projectId = "", scoped = null) {
   const inRange = (value) => { const d = String(value || "").slice(0, 10); return d && d >= start && d <= end; };
-  const matchProject = (row) => !projectId || sameId(row.projectId, projectId);
   const total = (rows) => rows.reduce((acc, row) => acc + Number(row.amount || 0), 0);
-  const receivable = (db.receivable || []).filter(matchProject);
-  const payable = (db.payable || []).filter(matchProject);
+  const data = scoped || lucroCaixaScopedRows(projectId);
+  const receivable = data.receivable;
+  const payable = data.payable;
 
   // LUCRO GERENCIAL (competência): TODAS as contas com vencimento (dueDate) no
   // período, qualquer status exceto Cancelado — recebidas + em aberto. Conta cada
   // título uma vez pelo vencimento, mesmo que já tenha sido recebido/pago numa data
   // de outro período (isso fechava o gap em que um título já recebido sumia do lucro).
-  const receitasTotais = total(receivable.filter((r) => !isCancelado(r.status) && inRange(r.dueDate)));
-  const custosTotais = total(payable.filter((p) => !isCancelado(p.status) && inRange(p.dueDate)));
+  const receitasRows = receivable.filter((r) => !isCancelado(r.status) && inRange(r.dueDate));
+  const custosRows = payable.filter((p) => !isCancelado(p.status) && inRange(p.dueDate));
+  const receitasTotais = total(receitasRows);
+  const custosTotais = total(custosRows);
 
   // CAIXA REAL (regime de caixa): só o efetivamente recebido/pago no período, pela
   // data efetiva (receivedDate/paidDate). Status case-insensitive (isRecebido/isPago).
   // Pode SUPERAR o lucro quando entram recebimentos de competências anteriores ou há
   // mais contas a pagar em aberto do que a receber — então a diferença pode ser negativa.
-  const recebidas = total(receivable.filter((r) => isRecebido(r.status) && inRange(r.receivedDate || r.dueDate)));
-  const pagas = total(payable.filter((p) => isPago(p.status) && inRange(p.paidDate || p.dueDate)));
+  const recebidasRows = receivable.filter((r) => isRecebido(r.status) && inRange(r.receivedDate || r.dueDate));
+  const pagasRows = payable.filter((p) => isPago(p.status) && inRange(p.paidDate || p.dueDate));
+  const recebidas = total(recebidasRows);
+  const pagas = total(pagasRows);
   // Em aberto pela competência (apoio à reconciliação/relatório).
-  const abertasReceber = total(receivable.filter((r) => isReceberAberto(r.status) && inRange(r.dueDate)));
-  const abertasPagar = total(payable.filter((p) => isPagarAberto(p.status) && inRange(p.dueDate)));
+  const abertasReceberRows = receivable.filter((r) => isReceberAberto(r.status) && inRange(r.dueDate));
+  const abertasPagarRows = payable.filter((p) => isPagarAberto(p.status) && inRange(p.dueDate));
+  const vencidasReceberRows = abertasReceberRows.filter((r) => isOverdue(r, "receivable"));
+  const vencidasPagarRows = abertasPagarRows.filter((p) => isOverdue(p, "payable"));
+  const abertasReceber = total(abertasReceberRows);
+  const abertasPagar = total(abertasPagarRows);
+  const vencidasReceber = total(vencidasReceberRows);
+  const vencidasPagar = total(vencidasPagarRows);
 
   const lucroGerencial = receitasTotais - custosTotais;
   const resultadoCaixa = recebidas - pagas;
   return {
     start, end, recebidas, pagas, abertasReceber, abertasPagar, receitasTotais, custosTotais,
+    vencidasReceber, vencidasPagar,
+    receitasCount: receitasRows.length,
+    custosCount: custosRows.length,
+    recebidasCount: recebidasRows.length,
+    pagasCount: pagasRows.length,
+    abertasReceberCount: abertasReceberRows.length,
+    abertasPagarCount: abertasPagarRows.length,
+    vencidasReceberCount: vencidasReceberRows.length,
+    vencidasPagarCount: vencidasPagarRows.length,
     lucroGerencial,
     resultadoCaixa,
     aReceberLiquido: lucroGerencial - resultadoCaixa,
   };
 }
 
-function lucroCaixaIndicators(periodKey, projectId = "") {
-  const { start, end } = lucroCaixaPeriodRange(periodKey);
-  return lucroCaixaCompute(start, end, projectId);
+function lucroCaixaIndicators(projectId = "", scoped = null, period = null) {
+  const data = scoped || lucroCaixaScopedRows(projectId);
+  const range = period || lucroCaixaResolvePeriod(projectId, data);
+  return lucroCaixaCompute(range.start, range.end, projectId, data);
 }
 
-// Série mensal (lucro gerencial x caixa real) para o gráfico de evolução.
-// Período "anoAtual" → meses corridos do ano (Jan → mês atual). Demais → janela
-// móvel de N meses terminando no mês atual. Assim o filtro de período afeta o eixo X.
-function lucroCaixaMonthlyRows(projectId = "", periodKey = "ultimos6Meses") {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = now.getMonth();
-  const buckets = [];
-  if (periodKey === "anoAtual") {
-    for (let mm = 0; mm <= m; mm++) buckets.push([y, mm]);
-  } else {
-    const count = ({ ultimos6Meses: 6, ultimos3Meses: 3, ultimoMes: 2, mesAtual: 6 })[periodKey] || 6;
-    for (let i = count - 1; i >= 0; i--) { const d = new Date(y, m - i, 1); buckets.push([d.getFullYear(), d.getMonth()]); }
+// Série mensal dentro do intervalo global. Primeiro e último buckets são
+// recortados pelas datas exatas, não pelo mês civil inteiro.
+function lucroCaixaMonthlyRows(projectId = "", period = null, scoped = null) {
+  const data = scoped || lucroCaixaScopedRows(projectId);
+  const range = period || lucroCaixaResolvePeriod(projectId, data);
+  if (!range.valid) return [];
+  const rows = [];
+  let [year, month] = range.start.slice(0, 7).split("-").map(Number);
+  const endMonth = range.end.slice(0, 7);
+  while (`${year}-${String(month).padStart(2, "0")}` <= endMonth) {
+    const monthKeyValue = `${year}-${String(month).padStart(2, "0")}`;
+    const monthStart = `${monthKeyValue}-01`;
+    const monthEnd = lucroCaixaFmtDate(new Date(year, month, 0));
+    const start = monthStart < range.start ? range.start : monthStart;
+    const end = monthEnd > range.end ? range.end : monthEnd;
+    const ind = lucroCaixaCompute(start, end, projectId, data);
+    rows.push({ month: monthKeyValue, lucro: ind.lucroGerencial, caixa: ind.resultadoCaixa });
+    month += 1;
+    if (month > 12) {
+      month = 1;
+      year += 1;
+    }
   }
-  return buckets.map(([yy, mm]) => {
-    const start = lucroCaixaFmtDate(new Date(yy, mm, 1));
-    const end = lucroCaixaFmtDate(new Date(yy, mm + 1, 0));
-    const ind = lucroCaixaCompute(start, end, projectId);
-    return { month: `${yy}-${String(mm + 1).padStart(2, "0")}`, lucro: ind.lucroGerencial, caixa: ind.resultadoCaixa };
+  return rows;
+}
+
+function lucroCaixaEvolutionRows(rows, mode = "mensal") {
+  if (mode !== "acumulado") return rows;
+  let lucro = 0;
+  let caixa = 0;
+  return rows.map((row) => {
+    lucro += Number(row.lucro || 0);
+    caixa += Number(row.caixa || 0);
+    return { ...row, lucro, caixa };
   });
 }
 
-function lucroCaixaMonthsForPeriod(periodKey) {
-  return ({ anoAtual: 12, ultimos6Meses: 6, ultimos3Meses: 3 })[periodKey] || 6;
-}
-
-function lucroCaixaChart(periodKey, projectId = "") {
-  const rows = lucroCaixaMonthlyRows(projectId, periodKey);
+function lucroCaixaChart(projectId = "", mode = "mensal", period = null, scoped = null) {
+  const baseRows = lucroCaixaMonthlyRows(projectId, period, scoped);
+  const rows = lucroCaixaEvolutionRows(baseRows, mode);
   const labels = rows.map((r) => monthLabel(r.month));
   // Tooltip combinado por mês: lucro gerencial, caixa real e a diferença
   // (= a receber líquido = lucro − caixa). Mostra as duas séries mesmo quando
@@ -4337,8 +4436,8 @@ function lucroCaixaChart(periodKey, projectId = "") {
     return `${monthLabel(r.month)}\nLucro Gerencial: ${compactMoney(r.lucro)}\nCaixa Real: ${compactMoney(r.caixa)}\nDiferença: ${compactMoney(diff)}\n${hint}`;
   });
   return chartPanel(
-    "Evolução: lucro gerencial x caixa",
-    `Resultado por competência e caixa real por mês${projectId ? " · " + svgText(nameOf("projects", projectId) || "obra") : ""}`,
+    `Evolução ${mode === "acumulado" ? "acumulada" : "mensal"}: lucro gerencial x caixa`,
+    `${mode === "acumulado" ? "Soma progressiva desde o início do intervalo" : "Detalhamento de cada mês do intervalo"}${projectId ? " · " + svgText(nameOf("projects", projectId) || "obra") : ""}`,
     lineChart([
       { label: "Lucro Gerencial (competência)", color: "#185FA5", values: rows.map((r) => r.lucro) },
       { label: "Caixa Real (regime de caixa)", color: "#3B6D11", values: rows.map((r) => r.caixa) },
@@ -4348,19 +4447,21 @@ function lucroCaixaChart(periodKey, projectId = "") {
 
 // Contas (a receber + a pagar) em aberto vencidas há mais de 30 dias — global,
 // independente do período selecionado (risco corrente).
-function lucroCaixaOverdue30(projectId = "") {
+function lucroCaixaOverdue30(projectId = "", scoped = null) {
   const cutoff = lucroCaixaFmtDate(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000));
-  const matchProject = (row) => !projectId || sameId(row.projectId, projectId);
   const overdue = (row) => { const d = String(row.dueDate || "").slice(0, 10); return d && d < cutoff; };
   const total = (rows) => rows.reduce((acc, row) => acc + Number(row.amount || 0), 0);
-  const receber = total((db.receivable || []).filter((r) => matchProject(r) && isReceberAberto(r.status) && overdue(r)));
-  const pagar = total((db.payable || []).filter((p) => matchProject(p) && isPagarAberto(p.status) && overdue(p)));
+  const data = scoped || lucroCaixaScopedRows(projectId);
+  const receber = total(data.receivable.filter((r) => isReceberAberto(r.status) && overdue(r)));
+  const pagar = total(data.payable.filter((p) => isPagarAberto(p.status) && overdue(p)));
   return { receber, pagar, total: receber + pagar };
 }
 
-function lucroCaixaPeriodSelect(id, selected) {
-  const options = LUCRO_CAIXA_PERIODS.map(([value, label]) => `<option value="${value}" ${value === selected ? "selected" : ""}>${label}</option>`).join("");
-  return `<label class="lucro-caixa-period">Período<select id="${id}">${options}</select></label>`;
+function lucroCaixaModeSelect(id, selected) {
+  const options = [["mensal", "Mensal"], ["acumulado", "Acumulado"]]
+    .map(([value, label]) => `<option value="${value}" ${value === selected ? "selected" : ""}>${label}</option>`)
+    .join("");
+  return `<label class="lucro-caixa-period">Evolução<select id="${id}">${options}</select></label>`;
 }
 
 function lucroCaixaAlerts(ind, over) {
@@ -4375,12 +4476,28 @@ function lucroCaixaAlerts(ind, over) {
   return alerts;
 }
 
-// Painel de 3 cards (Dashboard) com seletor de período, alertas automáticos,
-// recorte opcional por obra/projeto e gráfico de evolução mensal.
-function lucroCaixaPanel(periodKey, projectId = "") {
-  const ind = lucroCaixaIndicators(periodKey, projectId);
-  const alerts = lucroCaixaAlerts(ind, lucroCaixaOverdue30(projectId));
-  const tone = (value) => (value < 0 ? "negative" : value > 0 ? "positive" : "");
+function lucroCaixaCountLabel(count, singular, plural = `${singular}s`) {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function lucroCaixaCard(label, value, sub, valueClass = "", tone = "") {
+  return `
+    <article class="lc-card ${tone}">
+      <span class="lc-label">${label}</span>
+      <strong class="lc-value money-blur ${valueClass}">${asMoney(value)}</strong>
+      <span class="lc-sub">${sub}</span>
+    </article>`;
+}
+
+// Cards consolidados do intervalo global + evolução mensal/acumulada. O seletor
+// altera apenas o gráfico; todos os cards continuam representando o período total.
+function lucroCaixaPanel(projectId = "") {
+  const scoped = lucroCaixaScopedRows(projectId);
+  const period = lucroCaixaResolvePeriod(projectId, scoped);
+  const ind = lucroCaixaIndicators(projectId, scoped, period);
+  const alerts = lucroCaixaAlerts(ind, lucroCaixaOverdue30(projectId, scoped));
+  const resultTone = (value) => (value < 0 ? "negative" : value > 0 ? "positive" : "");
+  const resultColor = (value, positive = "lc-blue") => (value < 0 ? "lc-neg" : positive);
   const scopeNote = projectId ? `Obra: ${svgText(nameOf("projects", projectId) || "—")}` : "Visão geral da empresa";
   return `
     <section class="lucro-caixa-panel">
@@ -4388,52 +4505,46 @@ function lucroCaixaPanel(periodKey, projectId = "") {
         <div>
           <h3>Lucro Gerencial vs Caixa Real</h3>
           <p class="muted">${scopeNote} · competência x dinheiro efetivamente movimentado no período.</p>
+          <p class="lucro-caixa-range"><strong>Período analisado:</strong> ${lucroCaixaPeriodText(period)}</p>
         </div>
-        ${lucroCaixaPeriodSelect("dashLucroCaixaPeriod", periodKey)}
+        ${lucroCaixaModeSelect("dashLucroCaixaMode", lucroCaixaEvolutionMode)}
       </div>
       <div class="lucro-caixa-cards">
-        <article class="lc-card ${tone(ind.lucroGerencial)}">
-          <span class="lc-label">Lucro Gerencial</span>
-          <strong class="lc-value money-blur ${ind.lucroGerencial < 0 ? "lc-neg" : "lc-blue"}">${asMoney(ind.lucroGerencial)}</strong>
-          <span class="lc-sub">Receitas − Custos (competência)</span>
-        </article>
-        <article class="lc-card ${tone(ind.resultadoCaixa)}">
-          <span class="lc-label">Caixa Real</span>
-          <strong class="lc-value money-blur ${ind.resultadoCaixa < 0 ? "lc-neg" : "lc-green"}">${asMoney(ind.resultadoCaixa)}</strong>
-          <span class="lc-sub">Recebido − Pago (regime de caixa)</span>
-        </article>
-        <article class="lc-card ${tone(ind.aReceberLiquido)}">
-          <span class="lc-label">A receber líquido <span class="lc-info" tabindex="0" title="Este valor está no lucro mas ainda não entrou no caixa — são contas a receber em aberto menos contas a pagar em aberto">ⓘ</span></span>
-          <strong class="lc-value money-blur lc-amber">${asMoney(ind.aReceberLiquido)}</strong>
-          <span class="lc-sub">${ind.aReceberLiquido > 0
-            ? "Está no lucro mas ainda não entrou no caixa"
-            : ind.aReceberLiquido < 0
-              ? "Caixa real acima do lucro — recebimentos de períodos anteriores ou mais contas a pagar em aberto do que a receber"
-              : "Lucro e caixa estão sincronizados"}</span>
-        </article>
+        ${lucroCaixaCard("Lucro Gerencial", ind.lucroGerencial, `${lucroCaixaCountLabel(ind.receitasCount, "receita")} − ${lucroCaixaCountLabel(ind.custosCount, "custo")}`, resultColor(ind.lucroGerencial), resultTone(ind.lucroGerencial))}
+        ${lucroCaixaCard("Entradas de caixa", ind.recebidas, lucroCaixaCountLabel(ind.recebidasCount, "recebimento"), "lc-green", ind.recebidas > 0 ? "positive" : "")}
+        ${lucroCaixaCard("Saídas de caixa", ind.pagas, lucroCaixaCountLabel(ind.pagasCount, "pagamento"), ind.pagas > 0 ? "lc-neg" : "", ind.pagas > 0 ? "negative" : "")}
+        ${lucroCaixaCard("Caixa real líquido", ind.resultadoCaixa, "Entradas − saídas efetivas", resultColor(ind.resultadoCaixa, "lc-green"), resultTone(ind.resultadoCaixa))}
+        ${lucroCaixaCard("Diferença lucro × caixa", ind.aReceberLiquido, "Lucro gerencial − caixa real", ind.aReceberLiquido < 0 ? "lc-neg" : "lc-amber", resultTone(ind.aReceberLiquido))}
+        ${lucroCaixaCard("A receber em aberto", ind.abertasReceber, lucroCaixaCountLabel(ind.abertasReceberCount, "título"), "lc-blue", ind.abertasReceber > 0 ? "info" : "")}
+        ${lucroCaixaCard("A receber vencidas", ind.vencidasReceber, lucroCaixaCountLabel(ind.vencidasReceberCount, "título"), ind.vencidasReceber > 0 ? "lc-neg" : "", ind.vencidasReceber > 0 ? "negative" : "")}
+        ${lucroCaixaCard("A pagar em aberto", ind.abertasPagar, lucroCaixaCountLabel(ind.abertasPagarCount, "título"), ind.abertasPagar > 0 ? "lc-amber" : "", ind.abertasPagar > 0 ? "warning" : "")}
+        ${lucroCaixaCard("A pagar vencidas", ind.vencidasPagar, lucroCaixaCountLabel(ind.vencidasPagarCount, "título"), ind.vencidasPagar > 0 ? "lc-neg" : "", ind.vencidasPagar > 0 ? "negative" : "")}
       </div>
       ${alerts.length ? `<div class="lucro-caixa-alerts">${alerts.join("")}</div>` : ""}
-      <div class="lucro-caixa-chart">${lucroCaixaChart(periodKey, projectId)}</div>
+      <div class="lucro-caixa-chart">${lucroCaixaChart(projectId, lucroCaixaEvolutionMode, period, scoped)}</div>
     </section>`;
 }
 
 // Seção "Reconciliação Lucro x Caixa" para o relatório DRE Gerencial.
 // Respeita o filtro de obra/projeto da barra de filtros (getFilters).
-function lucroCaixaReconcSection(periodKey, projectId = "") {
-  const ind = lucroCaixaIndicators(periodKey, projectId);
-  const alerts = lucroCaixaAlerts(ind, lucroCaixaOverdue30(projectId));
+function lucroCaixaReconcSection(projectId = "") {
+  const scoped = lucroCaixaScopedRows(projectId);
+  const period = lucroCaixaResolvePeriod(projectId, scoped);
+  const ind = lucroCaixaIndicators(projectId, scoped, period);
+  const alerts = lucroCaixaAlerts(ind, lucroCaixaOverdue30(projectId, scoped));
   const scope = projectId ? ` · ${svgText(nameOf("projects", projectId) || "obra")}` : "";
   return `
     <section class="dre-bloco lucro-caixa-reconc">
       <div class="lucro-caixa-head">
         <h3>Reconciliação Lucro x Caixa</h3>
-        ${lucroCaixaPeriodSelect("dreLucroCaixaPeriod", periodKey)}
       </div>
-      <p class="muted">Por que o lucro de competência difere do dinheiro em caixa no período (${asDate(ind.start)} a ${asDate(ind.end)})${scope}.</p>
+      <p class="muted"><strong>Período analisado:</strong> ${lucroCaixaPeriodText(period)}${scope}. Por que o lucro de competência difere do dinheiro em caixa.</p>
       ${table("Reconciliação Lucro x Caixa", [
         { line: "Lucro gerencial (competência)", amount: ind.lucroGerencial },
+        { line: "Entradas de caixa", amount: ind.recebidas },
+        { line: "Saídas de caixa", amount: -ind.pagas },
         { line: "Caixa real (regime de caixa)", amount: ind.resultadoCaixa },
-        { line: "Diferença (a receber líquido)", amount: ind.aReceberLiquido },
+        { line: "Diferença (lucro − caixa)", amount: ind.aReceberLiquido },
         { line: "Receitas em aberto no período", amount: ind.abertasReceber },
         { line: "Despesas em aberto no período", amount: ind.abertasPagar },
       ], ["line", "amount"])}
@@ -4581,7 +4692,7 @@ function renderDashboard() {
         </button>
       </div>
     </section>
-    ${lucroCaixaPanel(lucroCaixaPeriod, activeDashboardProjectId())}
+    ${lucroCaixaPanel(activeDashboardProjectId())}
     <section class="kpi-grid dashboard-kpis">
       ${dashboardCards.map((card) => kpi(card[0], card[1], card[2] ?? true, card[3] ?? null)).join("")}
     </section>
@@ -4603,8 +4714,8 @@ function renderDashboard() {
     render();
   });
   qs("dashPrivacyToggle")?.addEventListener("click", togglePrivacyMode);
-  qs("dashLucroCaixaPeriod")?.addEventListener("change", (event) => {
-    lucroCaixaPeriod = event.target.value;
+  qs("dashLucroCaixaMode")?.addEventListener("change", (event) => {
+    lucroCaixaEvolutionMode = event.target.value;
     render();
   });
   loadDashboardExecution();
@@ -18428,15 +18539,11 @@ function renderDre() {
         { line: "A pagar (ainda não saiu)", amount: aPagar },
       ], ["line", "amount"])}
     </section>
-    ${lucroCaixaReconcSection(lucroCaixaPeriod, getFilters().projectId)}
+    ${lucroCaixaReconcSection(getFilters().projectId)}
     ${repasseSection}
   `;
   qs("dreToggleRepasse")?.addEventListener("change", (event) => {
     dreMostrarRepasse = event.target.checked;
-    renderDre();
-  });
-  qs("dreLucroCaixaPeriod")?.addEventListener("change", (event) => {
-    lucroCaixaPeriod = event.target.value;
     renderDre();
   });
 }

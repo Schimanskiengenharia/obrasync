@@ -1,6 +1,6 @@
 # ObraSync
 
-> Versão `v1.36.0` · 2026-07-27
+> Versão `v1.37.0` · 2026-07-27
 
 ObraSync é uma aplicação web em HTML, CSS, JavaScript puro, PHP e MariaDB/MySQL para gestão integrada de obras, financeiro, comercial e contabilidade gerencial. O frontend fica em `/var/www/financeiro`, a URL pública é `https://schimanskiengenharia.com.br/financeiro`, os dados persistentes ficam no banco e os arquivos de dados ficam fora da pasta pública.
 
@@ -12,8 +12,8 @@ Antes de atualizar em produção, faça backup do banco e de `/var/lib/financeir
 
 Esta seção orienta qualquer pessoa — ou outra IA — que precise continuar o trabalho sem se perder.
 
-- **Versão atual:** `v1.19.0` (2026-06-28). A versão fica em **dois lugares que devem andar juntos**: a constante `APP_VERSION`/`APP_VERSION_DATE` no topo de `app.js` (com `APP_CHANGELOG`) e o cabeçalho deste README. O painel "Versão" em Configurações lê de `APP_VERSION`.
-- **Cache busting:** sempre que `app.js` ou `styles.css` mudarem, **incremente o `?v=NNNN`** das tags correspondentes em `index.html` (hoje `app.js?v=1770`, `styles.css?v=1770`). Sem isso o navegador serve a versão velha.
+- **Versão atual:** `v1.37.0` (2026-07-27). A versão fica em **dois lugares que devem andar juntos**: a constante `APP_VERSION`/`APP_VERSION_DATE` no topo de `app.js` (com `APP_CHANGELOG`) e o cabeçalho deste README. O painel "Versão" em Configurações lê de `APP_VERSION`.
+- **Cache busting:** sempre que `app.js` ou `styles.css` mudarem, **incremente o `?v=NNNN`** das tags correspondentes em `index.html` (hoje `app.js?v=1801`, `styles.css?v=1801`). Sem isso o navegador serve a versão velha.
 - **Estado de saúde (2026-06-28):** em produção e estável. A leva **v1.15→v1.18** entregou o fluxo **Orçamento → Proposta com base SINAPI** (múltiplos orçamentos, BDI flexível, licitação, hierarquia por disciplina, modelos), **SINAPI no PDF + export Excel**, **contrato a partir da proposta** (template 13 cláusulas + anexos assinados), **CEP autofill universal** (corrigindo a regressão do CSP), **endereço próprio da obra** e a **exclusão de análise de viabilidade**; além do **fix do asDate** (Viabilidade travando). Ver o changelog abaixo e `STATUS.md` para o que está FEITO vs PENDENTE.
 - **Arquitetura:** SPA sem build. Todo o frontend está em `app.js` (arquivo único, ~15 mil linhas) + `index.html` (shell) + `styles.css`. Todo o backend está em `api/index.php` (arquivo único, ~8,7 mil linhas). O banco é MariaDB/MySQL (`financeiro`).
 - **Convenções do backend (siga-as):** respostas via `respond(['ok' => true, 'data' => ...])` e erros via `fail($msg, $status)`; INSERT/UPDATE genéricos via `insert_dynamic()`/`update_dynamic()` (descartam colunas inexistentes — toleram diferenças de schema); auditoria via `server_audit()`. Muitas tabelas novas são criadas sob demanda por funções `ensure_*` no próprio `index.php` (além das migrations).
@@ -26,6 +26,16 @@ Esta seção orienta qualquer pessoa — ou outra IA — que precise continuar o
 ## Histórico de Versões
 
 Mapa de cada marco do produto, do mais novo ao mais antigo, com as features e as tabelas/arquivos envolvidos. Use-o para entender *o que existe e por quê* antes de mexer.
+
+### v1.37.0 — 2026-07-27 · Lucro Gerencial × Caixa Real por período total
+
+- O painel do Dashboard passou a usar as datas dos **filtros globais**: intervalo inclusivo; somente inicial vai até hoje; somente final começa no primeiro lançamento disponível; sem datas usa primeiro lançamento até hoje. O período efetivo aparece no cabeçalho.
+- Os cards representam sempre o intervalo completo: lucro gerencial, entradas, saídas, caixa líquido, diferença lucro × caixa e contas a receber/pagar abertas e vencidas, com valor e quantidade.
+- O gráfico é o detalhamento mensal do mesmo intervalo e ganhou as visões **Mensal** e **Acumulado**; no acumulado cada mês soma os anteriores desde o início do recorte.
+- Fórmula preservada: competência por `dueDate` (exceto cancelados); caixa por `receivedDate`/`paidDate`, com fallback para `dueDate` quando um título liquidado não tem data efetiva. `Parcial` permanece integralmente em aberto e fora do caixa efetivo porque o schema atual não possui valor parcial liquidado.
+- Filtros de obra, cliente e centro de custo passam a recortar diretamente o painel. No cliente, despesas entram pelas obras vinculadas ao cliente; `accounts_payable` não possui `clientId` direto.
+- Sem endpoint ou schema novo: `accounts_receivable` e `accounts_payable` já chegam numa carga do bootstrap; o frontend agrega os meses sem consultas repetidas. Spec e plano: `docs/superpowers/specs/2026-07-27-lucro-caixa-periodo-total.md` e `docs/superpowers/plans/2026-07-27-lucro-caixa-periodo-total.md`.
+- Modo privacidade preservado em cards, alertas, eixos e tooltips; datas e quantidades continuam visíveis.
 
 ### v1.19.0 — 2026-06-28 · Importação mensal SINAPI com pacote, prévia e referência padrão
 
@@ -553,7 +563,7 @@ A tabela `role_permissions` permite customizar ações (visualizar, criar, edita
 - KPIs dinâmicos calculados do banco.
 - Gráficos SVG sem CDN.
 - Indicadores comerciais: propostas emitidas, aprovadas e taxa de conversão.
-- Filtros por período, cliente, obra/projeto, status da obra, centro de custo e categoria.
+- Filtros por período, cliente, obra/projeto, status da obra, centro de custo e categoria. O painel Lucro Gerencial × Caixa Real usa o intervalo total desses filtros e mostra evolução mensal ou acumulada.
 - Alertas para contas vencidas, custo acima do previsto e baixa margem.
 - Regra de datas: sem data = mostra tudo; só inicial = a partir de; só final = até; ambas = intervalo.
 

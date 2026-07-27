@@ -1691,6 +1691,12 @@ html[data-theme="dark"] .alert-warning {
 .lucro-caixa-head h3 { margin: 0; }
 .lucro-caixa-head .muted { margin: 2px 0 0; font-size: 12px; }
 
+.lucro-caixa-range {
+  margin: 8px 0 0;
+  color: var(--ink);
+  font-size: 13px;
+}
+
 .lucro-caixa-period {
   display: grid;
   gap: 4px;
@@ -1719,6 +1725,8 @@ html[data-theme="dark"] .alert-warning {
 
 .lc-card.positive { border-left-color: var(--green); }
 .lc-card.negative { border-left-color: var(--red); }
+.lc-card.warning { border-left-color: #b7791f; }
+.lc-card.info { border-left-color: #185FA5; }
 
 .lc-label {
   display: flex;
