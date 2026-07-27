@@ -390,6 +390,46 @@ function safeLocalSet(key, value) {
   }
 }
 
+// ── Modo privacidade (ocultar valores financeiros) ──────────────────────────
+// Borra todo montante em R$ na tela (cards, tabelas, gráficos, painéis, toasts).
+// Estado por navegador (localStorage). Os valores continuam no DOM — é proteção
+// contra olhares na tela (reunião/compartilhamento), não contra inspeção (spec).
+let privacyMode = safeLocalGet("finconta.privacy") === "1";
+
+// Contexto HTML visível: valor monetário borrável.
+function moneySpan(value) {
+  return `<span class="money-blur">${asMoney(value)}</span>`;
+}
+
+// Contextos de texto puro (toasts, <title> de SVG, confirm/alert): CSS não
+// alcança — o montante vira "R$ •••" enquanto o modo está ativo. O \s do JS
+// já casa o espaço não-quebrável (U+00A0) que o Intl usa em "R$ 1.234,56".
+const MONEY_TEXT_RE = /R\$\s?[\d.][\d.,]*/g;
+function maskMoneyText(text) {
+  if (!privacyMode) return text;
+  return String(text).replace(MONEY_TEXT_RE, "R$ •••");
+}
+
+// Sincroniza body + botão da topbar (o controle do dashboard renderiza no render()).
+function applyPrivacyMode() {
+  document.body.classList.toggle("privacy-mode", privacyMode);
+  const btn = document.getElementById("privacyBtn");
+  if (!btn) return;
+  btn.classList.toggle("active", privacyMode);
+  btn.innerHTML = `<i class="ti ${privacyMode ? "ti-eye-off" : "ti-eye"}"></i>`;
+  const label = privacyMode ? "Mostrar valores" : "Ocultar valores";
+  btn.title = label;
+  btn.setAttribute("aria-label", label);
+  btn.setAttribute("aria-pressed", privacyMode ? "true" : "false");
+}
+
+function togglePrivacyMode() {
+  privacyMode = !privacyMode;
+  safeLocalSet("finconta.privacy", privacyMode ? "1" : "0");
+  applyPrivacyMode();
+  render(); // gráficos e tooltips são gerados no render — precisam remontar
+}
+
 // ── Tema (claro / escuro / automático) ──────────────────────────────────────
 // O tema efetivo já foi aplicado pelo script inline do index.html antes do
 // primeiro paint; aqui ficam a troca em tempo real e a persistência por usuário.
@@ -19430,6 +19470,8 @@ function showTableSkeleton(tbodyId, cols = 5, rows = 6) {
 }
 qs("excelBtn").addEventListener("click", exportExcel);
 qs("pdfBtn").addEventListener("click", () => window.print());
+qs("privacyBtn").addEventListener("click", togglePrivacyMode);
+applyPrivacyMode(); // aplica o estado salvo já no boot (classe no body + ícone)
 qs("seedBtn").addEventListener("click", () => {
   if (!isAdmin()) return;
   if (serverMode) return alert("Com o servidor ativo, os dados persistentes ficam no banco. Use backup/migração em vez de restaurar exemplos.");

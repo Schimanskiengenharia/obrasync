@@ -6412,3 +6412,20 @@ html[data-theme="dark"] .ia-cmp-warn { color: #f0c279; }
   font: inherit;
 }
 .ia-enviar-check { display: flex; align-items: center; gap: 8px; color: var(--ink); }
+
+/* ── Modo privacidade: borra montantes em R$ quando body.privacy-mode ──────── */
+.privacy-mode .money-blur {
+  filter: blur(7px);
+  user-select: none;
+}
+/* Texto de SVG é menor e o viewBox escala — borrão proporcional. */
+.privacy-mode svg text.money-blur { filter: blur(5px); }
+/* Inputs de dinheiro: borrado até focar para editar. */
+.privacy-mode input[data-format="money"]:not(:focus) { filter: blur(7px); }
+/* Estado ATIVO inconfundível (spec: não pode parecer defeito). */
+.privacy-btn.active,
+.privacy-toggle.active {
+  background: var(--teal);
+  border-color: var(--teal);
+  color: #fff;
+}
