@@ -4369,7 +4369,7 @@ function lucroCaixaAlerts(ind, over) {
     alerts.push(`<div class="alert alert-warning">Atenção: ${Math.round(pctNaoRecebido)}% do lucro ainda não entrou no caixa. Verifique contas a receber em aberto.</div>`);
   }
   if (over.total > 0) {
-    alerts.push(`<div class="alert alert-danger">${asMoney(over.total)} em contas vencidas há mais de 30 dias.</div>`);
+    alerts.push(`<div class="alert alert-danger">${moneySpan(over.total)} em contas vencidas há mais de 30 dias.</div>`);
   }
   return alerts;
 }
@@ -4393,17 +4393,17 @@ function lucroCaixaPanel(periodKey, projectId = "") {
       <div class="lucro-caixa-cards">
         <article class="lc-card ${tone(ind.lucroGerencial)}">
           <span class="lc-label">Lucro Gerencial</span>
-          <strong class="lc-value ${ind.lucroGerencial < 0 ? "lc-neg" : "lc-blue"}">${asMoney(ind.lucroGerencial)}</strong>
+          <strong class="lc-value money-blur ${ind.lucroGerencial < 0 ? "lc-neg" : "lc-blue"}">${asMoney(ind.lucroGerencial)}</strong>
           <span class="lc-sub">Receitas − Custos (competência)</span>
         </article>
         <article class="lc-card ${tone(ind.resultadoCaixa)}">
           <span class="lc-label">Caixa Real</span>
-          <strong class="lc-value ${ind.resultadoCaixa < 0 ? "lc-neg" : "lc-green"}">${asMoney(ind.resultadoCaixa)}</strong>
+          <strong class="lc-value money-blur ${ind.resultadoCaixa < 0 ? "lc-neg" : "lc-green"}">${asMoney(ind.resultadoCaixa)}</strong>
           <span class="lc-sub">Recebido − Pago (regime de caixa)</span>
         </article>
         <article class="lc-card ${tone(ind.aReceberLiquido)}">
           <span class="lc-label">A receber líquido <span class="lc-info" tabindex="0" title="Este valor está no lucro mas ainda não entrou no caixa — são contas a receber em aberto menos contas a pagar em aberto">ⓘ</span></span>
-          <strong class="lc-value lc-amber">${asMoney(ind.aReceberLiquido)}</strong>
+          <strong class="lc-value money-blur lc-amber">${asMoney(ind.aReceberLiquido)}</strong>
           <span class="lc-sub">${ind.aReceberLiquido > 0
             ? "Está no lucro mas ainda não entrou no caixa"
             : ind.aReceberLiquido < 0
@@ -4575,6 +4575,9 @@ function renderDashboard() {
             ${projectOptions}
           </select>
         </label>
+        <button id="dashPrivacyToggle" type="button" class="secondary privacy-toggle ${privacyMode ? "active" : ""}">
+          <i class="ti ${privacyMode ? "ti-eye-off" : "ti-eye"}"></i> ${privacyMode ? "Valores ocultos" : "Ocultar valores"}
+        </button>
       </div>
     </section>
     ${lucroCaixaPanel(lucroCaixaPeriod, activeDashboardProjectId())}
@@ -4598,6 +4601,7 @@ function renderDashboard() {
     dashboardProjectId = event.target.value;
     render();
   });
+  qs("dashPrivacyToggle")?.addEventListener("click", togglePrivacyMode);
   qs("dashLucroCaixaPeriod")?.addEventListener("change", (event) => {
     lucroCaixaPeriod = event.target.value;
     render();
@@ -4733,7 +4737,7 @@ function dashboardExecutionWidgets(data) {
               <span class="exec-badge ${badgeClass(b)}">${asPercent(o.percentual)}</span>
             </div>
             <div class="exec-progress-bar small"><span class="${barClass(b)}" style="width:${Math.min(100, Math.round(o.percentual || 0))}%"></span></div>
-            <span class="muted">${asMoney(o.realizado)} realizado de ${asMoney(o.previsto)} previsto</span>
+            <span class="muted">${moneySpan(o.realizado)} realizado de ${moneySpan(o.previsto)} previsto</span>
           </button>`;
         }).join("")}
       </div>
@@ -4835,16 +4839,16 @@ function execTooltipHtml(d) {
   const row = (label, value, cls = "") => `<div class="exec-tt-row ${cls}"><span>${label}</span><strong>${value}</strong></div>`;
   if (d.estouro > 0 || d.pct > 100) {
     return head
-      + row("Previsto:", asMoney(d.previsto))
-      + row("Realizado:", asMoney(d.realizado))
-      + row("Estouro:", `${asMoney(d.estouro)} ⚠️`, "exec-tt-bad")
+      + row("Previsto:", moneySpan(d.previsto))
+      + row("Realizado:", moneySpan(d.realizado))
+      + row("Estouro:", `${moneySpan(d.estouro)} ⚠️`, "exec-tt-bad")
       + row("Execução:", asPercent(d.pct))
       + row("Itens:", `${d.itens} ${d.itens === 1 ? "item" : "itens"} com estouro`);
   }
   return head
-    + row("Previsto:", asMoney(d.previsto))
-    + row("Realizado:", asMoney(d.realizado))
-    + row("Saldo:", `${asMoney(d.saldo)} ✓`, "exec-tt-ok")
+    + row("Previsto:", moneySpan(d.previsto))
+    + row("Realizado:", moneySpan(d.realizado))
+    + row("Saldo:", `${moneySpan(d.saldo)} ✓`, "exec-tt-ok")
     + row("Execução:", asPercent(d.pct))
     + row("Estouro:", "— (nenhum)");
 }
@@ -4871,8 +4875,8 @@ function dashboardAlerts(metrics) {
   const alerts = [];
   // Cada lado das vencidas tem seu alerta: dívida da empresa em atraso é perda/
   // risco direto (danger); inadimplência de cliente pede cobrança (warning).
-  if (metrics.overduePayable > 0) alerts.push({ level: "danger", message: `${metrics.overduePayableCount} conta(s) a pagar vencida(s): ${asMoney(metrics.overduePayable)} — pagamento da empresa em atraso.` });
-  if (metrics.overdueReceivable > 0) alerts.push({ level: "warning", message: `Inadimplência: ${metrics.overdueReceivableCount} conta(s) a receber vencida(s) (${asMoney(metrics.overdueReceivable)}) — clientes em atraso.` });
+  if (metrics.overduePayable > 0) alerts.push({ level: "danger", message: `${metrics.overduePayableCount} conta(s) a pagar vencida(s): ${moneySpan(metrics.overduePayable)} — pagamento da empresa em atraso.` });
+  if (metrics.overdueReceivable > 0) alerts.push({ level: "warning", message: `Inadimplência: ${metrics.overdueReceivableCount} conta(s) a receber vencida(s) (${moneySpan(metrics.overdueReceivable)}) — clientes em atraso.` });
   if (metrics.project && metrics.delayedStages > 0) alerts.push({ level: "warning", message: `Cronograma com ${metrics.delayedStages} etapa(s) atrasada(s), atraso máximo de ${metrics.scheduleDelayDays} dia(s).` });
   if (metrics.project && metrics.realizedCost > metrics.costForecast && metrics.costForecast > 0) alerts.push({ level: "danger", message: "Custo realizado acima do previsto para esta obra." });
   const margin = metrics.project ? metrics.realizedMargin : metrics.margin;
@@ -4956,7 +4960,7 @@ function urgentKanbanCards() {
 function kpi(label, value, format = true, tone = null) {
   const numeric = typeof value === "number" ? value : null;
   const computedTone = tone ?? (numeric === null ? "" : numeric < 0 ? "negative" : numeric > 0 ? "positive" : "");
-  return `<article class="kpi ${computedTone}"><span>${label}</span><strong>${format ? asMoney(value) : svgText(value)}</strong></article>`;
+  return `<article class="kpi ${computedTone}"><span>${label}</span><strong class="${format ? "money-blur" : ""}">${format ? asMoney(value) : svgText(value)}</strong></article>`;
 }
 
 function resultByCostCenter() {
@@ -7107,7 +7111,10 @@ const HTML_CELL_FIELDS = new Set(["generatedLink", "hasPdf", "hasXml", "status",
 
 function tableCell(field, row, moduleKey = "") {
   const content = formatCell(field, row[field], row, moduleKey);
-  return HTML_CELL_FIELDS.has(field) ? content : escapeHtml(content);
+  const cell = HTML_CELL_FIELDS.has(field) ? content : escapeHtml(content);
+  // Modo privacidade: colunas de dinheiro borráveis. O embrulho vem DEPOIS do
+  // escape (asMoney não gera HTML — seguro; exportExcel ignora o span).
+  return isMoneyField(field) ? `<span class="money-blur">${cell}</span>` : cell;
 }
 
 function table(title, rows, fields, actions = false, actionKey = "") {
