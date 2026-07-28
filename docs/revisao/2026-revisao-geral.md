@@ -11,6 +11,26 @@
 
 ---
 
+## ⚠️ ESTE DOCUMENTO É UMA FOTOGRAFIA DE 2026-07-01 — confira o status antes de agir
+
+Os achados abaixo descrevem o código **como estava em 2026-07-01 (v1.25.1)**. Vários já foram
+corrigidos sem que este arquivo fosse atualizado. **Antes de "corrigir" qualquer item daqui,
+confirme no código-fonte que ele ainda existe.**
+
+**Conferência de 2026-07-28 (v1.38.2) — os 4 GRAVE:**
+
+| Item | Status hoje | Evidência |
+|---|---|---|
+| **G1** — `?module=ia` sem autorização | ✅ **RESOLVIDO** | `handle_ia_module()` em `api/index.php` autoriza por papel reusando a permissão de `workBudgets` (escrita → `create`, leitura → `view`), e `enviarParaOrcamento` exige também `projects/view`. O comentário no código descreve o furo antigo que foi fechado. |
+| **G2** — `create_due_alerts()` derruba o cron | ✅ **RESOLVIDO** | `api/cron/jobs.php`: `ensure_obra_notificacoes_alert_type()` amplia o ENUM antes do INSERT, contas sem `projectId` são puladas em vez de falhar, e o loop de jobs envolve **cada** job no seu próprio `try/catch` (uma falha não aborta os demais). |
+| **G3** — cascata apaga notas fiscais/orçamentos | ✅ **RESOLVIDO** | `migrations/2026-07-03-obra-soft-delete.sql` converteu as FKs `fiscal_documents.projectId` e `orcamentos_obras.projectId` de `ON DELETE CASCADE` para `ON DELETE RESTRICT`; a exclusão de obra virou soft-delete (arquivamento). |
+| **G4** — `schema.sql` desatualizado | ✅ **RESOLVIDO (2ª vez)** | Regenerado em 2026-07-03 e **defasado de novo** pelas migrations de 08/07 e 22/07. Em 2026-07-28 as 5 tabelas faltantes (`cotacao_categorias`, `cotacao_tipos_item`, `rh_colaboradores`, `rh_tipos_documento`, `rh_documentos`) foram recolocadas. **Este item regride a cada migration nova** — verifique junto com toda migration que crie tabela. |
+
+Os itens **MÉDIO (M1–M16)** e **PEQUENO (P1–P22)** ainda **não foram conferidos um a um** — trate cada um
+como "status desconhecido" e verifique no código antes de agir.
+
+---
+
 ## 🔴 GRAVE (corrigir urgente)
 
 **[G1] api/index.php:229-231 + 8899-8912 + 10534 — módulo `?module=ia` roteado SEM `authorize_request` (só sessão), incluindo ações de ESCRITA.**

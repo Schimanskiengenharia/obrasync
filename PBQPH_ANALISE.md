@@ -1,6 +1,15 @@
 # PBQPH_ANALISE — Integração PBQP-H / SiNAT no ObraSync
 
-> **Versão:** `v1.0` · **Data:** 2026-06-28 · **Tipo:** Análise de gaps + plano de implementação (documento — **nada foi implementado**)
+> **Versão:** `v1.0` · **Data:** 2026-06-28 · **Tipo:** Análise de gaps + plano de implementação
+>
+> ⚠️ **STATUS (conferido em 2026-07-28):** o "nada foi implementado" abaixo **não vale mais**. A
+> **Fase 1 proposta neste documento foi entregue na v1.14.0**, no mesmo dia em que o documento foi
+> escrito — qualificação de fornecedores de materiais controlados, rastreabilidade por lote, vínculo
+> FVM ↔ pedido de compra e PDF no PES (migrations `2026-06-27-pbqph-fase1.sql` e
+> `2026-06-27-qualificacao-fornecedores.sql`). **Fases 2 e 3 seguem pendentes**: ensaios/controle
+> tecnológico, `qualidade_equipe` com NRs e alertas de vencimento, PIT formal, relatório mensal de
+> qualidade em PDF, rastreabilidade ponta a ponta, bloqueio financeiro por recebimento reprovado e
+> evolução ao Nível A. Leia o restante como **plano das Fases 2-3**, não como diagnóstico atual.
 
 Este documento mapeia os 10 requisitos do PBQP-H/SiNAT pedidos contra o que o
 ObraSync **já possui**, aponta o que falta e propõe um plano de implementação em

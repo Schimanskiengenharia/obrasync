@@ -2270,3 +2270,81 @@ CREATE TABLE IF NOT EXISTS user_permissions (
   UNIQUE KEY uk_userperm (userId, module),
   INDEX idx_userperm_user (userId)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Recuperado em 2026-07-28: o G4 foi fechado em 2026-07-03, mas o arquivo voltou
+-- a defasar com as migrations posteriores. As 5 tabelas abaixo vêm de
+-- 2026-07-08-cotacao-categorias-tipos.sql e 2026-07-22-rh-pessoal-f1.sql, com o
+-- MESMO DDL das migrations (o seed de rh_tipos_documento fica só na migration —
+-- schema.sql descreve estrutura, não dados).
+-- Ordem importa: as tabelas referenciadas por FK vêm antes das que as referenciam.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS cotacao_categorias (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  nome VARCHAR(160) NOT NULL,
+  ordem INT NOT NULL DEFAULT 0,
+  status VARCHAR(30) NOT NULL DEFAULT 'Ativo',
+  createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_cotcat_nome (nome)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS cotacao_tipos_item (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  categoriaId BIGINT UNSIGNED NOT NULL,
+  nome VARCHAR(160) NOT NULL,
+  unidadePadrao VARCHAR(20) NULL,
+  ordem INT NOT NULL DEFAULT 0,
+  status VARCHAR(30) NOT NULL DEFAULT 'Ativo',
+  createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_cottipo_categoria FOREIGN KEY (categoriaId) REFERENCES cotacao_categorias(id) ON DELETE CASCADE,
+  UNIQUE KEY uk_cottipo_cat_nome (categoriaId, nome)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS rh_colaboradores (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  nome VARCHAR(160) NOT NULL,
+  cpf VARCHAR(14) NULL,
+  tipo_vinculo ENUM('proprio','diarista','autonomo','empreiteira') NOT NULL DEFAULT 'proprio',
+  fornecedor_id BIGINT UNSIGNED NULL,
+  funcao VARCHAR(120) NULL,
+  telefone VARCHAR(40) NULL,
+  status VARCHAR(30) NOT NULL DEFAULT 'Ativo',
+  observacoes TEXT NULL,
+  createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_rh_colab_cpf (cpf),
+  KEY idx_rh_colab_fornecedor (fornecedor_id),
+  CONSTRAINT fk_rh_colab_fornecedor FOREIGN KEY (fornecedor_id) REFERENCES suppliers(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS rh_tipos_documento (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  nome VARCHAR(140) NOT NULL,
+  exige_validade ENUM('Não','Sim') NOT NULL DEFAULT 'Sim',
+  dias_alerta INT NOT NULL DEFAULT 30,
+  descricao VARCHAR(255) NULL,
+  ordem INT NOT NULL DEFAULT 0,
+  status VARCHAR(30) NOT NULL DEFAULT 'Ativo',
+  createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_rh_tipo_nome (nome)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS rh_documentos (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  colaborador_id BIGINT UNSIGNED NOT NULL,
+  tipo_documento_id BIGINT UNSIGNED NOT NULL,
+  numero VARCHAR(80) NULL,
+  data_emissao DATE NULL,
+  data_validade DATE NULL,
+  arquivo_path VARCHAR(500) NULL,
+  arquivo_nome VARCHAR(255) NULL,
+  observacoes TEXT NULL,
+  createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  KEY idx_rh_doc_colab (colaborador_id),
+  KEY idx_rh_doc_validade (data_validade),
+  CONSTRAINT fk_rh_doc_colab FOREIGN KEY (colaborador_id) REFERENCES rh_colaboradores(id) ON DELETE RESTRICT,
+  CONSTRAINT fk_rh_doc_tipo FOREIGN KEY (tipo_documento_id) REFERENCES rh_tipos_documento(id) ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

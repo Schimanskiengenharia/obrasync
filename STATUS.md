@@ -1,6 +1,44 @@
 # STATUS — ObraSync
 
-> **Versão:** `v1.38.0` · 2026-07-27 · **Varredura:** 2026-06-27 · **Ambiente:** produção em `https://schimanskiengenharia.com.br/financeiro`
+> **Versão:** `v1.38.2` · 2026-07-28 · **Varredura:** 2026-07-28 · **Ambiente:** produção em `https://schimanskiengenharia.com.br/financeiro`
+
+> ⚠️ **Leia com atenção à data.** O corpo deste documento (seções 1 a 7) foi escrito na época da
+> **v1.12–v1.19** e não foi reescrito a cada release. Ele descreve corretamente a base do sistema,
+> mas **não reflete** as entregas de v1.20 em diante (Cotações por material, RH/Pessoal, Modo
+> privacidade, Tema dark, Lucro×Caixa por período total). Em particular, a tabela de tabelas do
+> banco na §7 está incompleta — faltam `cotacao_categorias`/`cotacao_tipos_item`,
+> `rh_colaboradores`/`rh_tipos_documento`/`rh_documentos` e as tabelas de IA
+> (`ia_embeddings`, `ia_depara_*`, `ia_compara_*`).
+>
+> **Fonte de verdade para o estado atual:** o changelog do `README.md` e o cabeçalho do `CLAUDE.md`.
+> Para o schema real: `schema.sql` + `migrations/` + os `ensure_*` do `api/index.php`.
+
+---
+
+## 0. Varredura de 2026-07-28 (v1.38.1 / v1.38.2)
+
+Leitura completa do código e verificação de estabilidade. Resultado: **estável**, com um bug
+corrigido e três frentes fechadas.
+
+- **Bug corrigido:** `cotacaoImprimir()` e `printViabilidadeReport()` chamavam `openPrintDialog()`,
+  função inexistente — os botões de PDF do comparativo de cotações e de imprimir a Análise de
+  Viabilidade lançavam `ReferenceError` desde 27-28/06. Agora usam `printStandaloneDocument()`.
+- **Onda A concluída:** `E1` (captura global de erros JS com dedupe, cooldown e trava anti-loop) e
+  `E2` (os 14 `.catch` vazios classificados — 12 registram via `ignorarFalha()`, 2 avisam o usuário
+  via `avisarFalha()`). Com isso a Onda A fica **completa** (NOVO-4, DEP3, NOVO-2, NOVO-3, E1, E2).
+- **Modo privacidade Etapa 2:** `showToast()` passou a mascarar montantes (o borrão do CSS não
+  alcança `textContent`) e 5 inputs ad-hoc ganharam `money-private`. Correção junto: a regex da
+  máscara engolia a pontuação da frase.
+- **Documentação reconciliada:** os 4 itens GRAVE da revisão geral de 2026-07-01 foram conferidos
+  no código — **todos os 4 já estavam resolvidos** (G1, G2, G3) ou foram fechados agora (G4,
+  `schema.sql` recompletado com 5 tabelas). Ver o bloco de status em
+  `docs/revisao/2026-revisao-geral.md`.
+- **Suíte de testes:** 7/7 blocos ok, com dois testes JS novos (`test_error_handler.js`,
+  `test_privacy_mask.js`) rodando junto com os PHP via `scripts/tests/run-all.sh`.
+
+**Pendente de servidor** (não dá para fazer daqui): rodar a migration
+`2026-07-22-rh-pessoal-f1.sql`, executar o roteiro de validação do RH F1, e a validação visual das
+v1.36–v1.38.
 
 ---
 
