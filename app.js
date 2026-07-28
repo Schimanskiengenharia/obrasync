@@ -19,9 +19,10 @@ if (APP_ENV === "production" && location.protocol === "http:") {
   location.replace(location.href.replace(/^http:/, "https:"));
 }
 const APP_NAME = "ObraSync";
-const APP_VERSION = "v1.37.0";
+const APP_VERSION = "v1.38.0";
 const APP_VERSION_DATE = "2026-07-27";
 const APP_CHANGELOG = [
+  "Tema Dark Neutro: o modo escuro abandona fundos e acentos verde/teal e passa a usar superfícies cinza-preto neutras (#0f1115, #15181e, #1b1f27 e #222731), bordas visíveis e azul LinkedIn para navegação, botões, links, foco, seleção, abas e controles. A paleta foi centralizada em tokens funcionais (--accent, --surface-hover, --focus-ring, --overlay e tokens de gráficos), incluindo login, sidebar/topbar, favoritos, filtros, cards, tabelas, dialogs, drawers, Agenda, Kanban, dashboards e plugin de seletividade. Gráficos preservam verde para lucro/resultado positivo, vermelho para negativo e âmbar para alerta; badges semânticos continuam separados. Tema claro, modo privacidade, PDFs, impressão, exportações, API, banco e cálculos permanecem inalterados (v1.38.0).",
   "Dashboard — Lucro Gerencial × Caixa Real por período total: o painel deixou de ter um mês/período próprio e agora usa as datas dos filtros globais com as quatro regras de intervalo (inicial+final; inicial→hoje; primeiro lançamento→final; primeiro lançamento→hoje), mostrando explicitamente o período analisado. Os cards são sempre consolidados sobre todo o intervalo e agora detalham lucro gerencial, entradas, saídas, caixa líquido, diferença lucro×caixa e contas a receber/pagar abertas e vencidas (valor + quantidade). O gráfico continua mensal como detalhamento e ganhou o seletor Mensal/Acumulado; no acumulado cada mês soma os anteriores desde o início do intervalo. O cálculo preserva a fórmula real anterior (competência por dueDate; caixa por receivedDate/paidDate com fallback de vencimento; cancelados fora; Parcial integralmente em aberto porque o schema não possui valor parcial liquidado), passa a respeitar obra/cliente/centro de custo e demais filtros dimensionais, não cria consultas por mês e mantém todos os montantes cobertos pelo modo privacidade (v1.37.0).",
   "Modo privacidade (Etapa 1 — dashboard): novo botão de olho na topbar e no dashboard que ESMAECE (borrão ilegível) todos os montantes em R$ da tela — cards KPI, colunas de dinheiro de todas as tabelas, painel Lucro x Caixa, alertas, widgets de execução de obras e os números dos gráficos (eixos e tooltips; as barras/linhas continuam visíveis — proporções sim, valores não). Percentuais, contagens e datas permanecem legíveis. O estado fica salvo no navegador (volta como estava ao recarregar) e o botão ativo fica destacado com olho cortado para não confundir com defeito. Exportações e documentos de impressão não mudam. Telas além do dashboard entram nas Etapas 2 e 3 (v1.36.0).",
   "Módulo RH/Pessoal — Fase 1 (cadastro, documentos e vencimentos): novo módulo \"RH / Pessoal\" no menu, visível só para `gestor_obra` (e admin/gerente/visualizador — os demais papéis, como financeiro/engenharia/consulta/equipe de campo, não veem a seção; decisão de privacidade dos dados de colaboradores). Cadastro de colaboradores (próprio, diarista, autônomo ou empreiteira — empreiteira exige vincular o fornecedor do cadastro; CPF único quando informado) com ficha própria mostrando os documentos (ASO, treinamentos NR, contrato...) e seus anexos (upload/download autenticado; excluir o documento remove também o arquivo do disco). Cada documento com data de validade ganha uma situação calculada (`rhDocSituacao`/badge `rhDocBadge`, reaproveitando as cores já usadas na Qualidade — vermelho VENCIDO, âmbar \"Vence em N dia(s)\" dentro da antecedência configurada no tipo de documento, verde Válido): aparece na ficha por documento e na lista de colaboradores como a pior situação da pessoa. Painel novo **Vencimentos** lista todos os documentos vigentes (o mais recente por pessoa e tipo) ordenados por validade, com filtros de situação/tipo/vínculo — a tela de acompanhamento diário. O dashboard ganhou um bloco de alerta (vermelho para vencidos, âmbar para vencendo) com a contagem geral. Tabelas novas `rh_colaboradores`/`rh_tipos_documento`/`rh_documentos` (migration `2026-07-22-rh-pessoal-f1.sql`). Fase 2 (alocação em obras + cron de alerta) e Fase 3 (diárias/medições de empreiteira) ficam para os próximos ciclos (v1.35.0).",
@@ -271,12 +272,12 @@ const SUBMODULE_ICONS = {
   clients: ["ti-users", "#534AB7"], suppliers: ["ti-truck", "#534AB7"], products: ["ti-package", "#7F77DD"],
   services: ["ti-tool", "#534AB7"], categories: ["ti-category", "#7F77DD"], costCenters: ["ti-building", "#534AB7"],
   bankAccounts: ["ti-building-bank", "#7F77DD"],
-  // Comercial (verde)
-  budgets: ["ti-calculator", "#3B6D11"], proposals: ["ti-file-text", "#639922"], proposalModels: ["ti-template", "#639922"],
-  proposalAreas: ["ti-sitemap", "#639922"], proposalActionTypes: ["ti-list-details", "#3B6D11"],
-  proposalServiceSubtypes: ["ti-list-check", "#639922"], sales: ["ti-file-certificate", "#3B6D11"],
-  // Viabilidade (teal)
-  viabilidadeObra: ["ti-clipboard-check", "#0F6E56"], viabilityAnalyses: ["ti-coin", "#0F6E56"],
+  // Comercial (navegação estrutural)
+  budgets: ["ti-calculator", "var(--accent)"], proposals: ["ti-file-text", "var(--accent)"], proposalModels: ["ti-template", "var(--accent)"],
+  proposalAreas: ["ti-sitemap", "var(--accent)"], proposalActionTypes: ["ti-list-details", "var(--accent)"],
+  proposalServiceSubtypes: ["ti-list-check", "var(--accent)"], sales: ["ti-file-certificate", "var(--accent)"],
+  // Viabilidade (acento estrutural do tema)
+  viabilidadeObra: ["ti-clipboard-check", "var(--accent)"], viabilityAnalyses: ["ti-coin", "var(--accent)"],
   // Obras/Projetos + orçamento de obra + SINAPI (azul)
   projects: ["ti-building-skyscraper", "#185FA5"], cotacoes: ["ti-tag", "#185FA5"], workBudgets: ["ti-calculator", "#378ADD"],
   workBudgetItems: ["ti-list-details", "#185FA5"], projectCosts: ["ti-coin", "#185FA5"], projectRevenues: ["ti-cash", "#378ADD"],
@@ -294,14 +295,14 @@ const SUBMODULE_ICONS = {
   // Contabilidade (coral)
   chartAccounts: ["ti-hierarchy", "#993C1D"], journalEntries: ["ti-pencil", "#993C1D"], dre: ["ti-report-analytics", "#993C1D"],
   taxDocuments: ["ti-file-invoice", "#993C1D"], taxes: ["ti-percentage", "#993C1D"],
-  // Relatórios (teal)
-  reports: ["ti-chart-bar", "#0F6E56"], reportFinancial: ["ti-chart-bar", "#0F6E56"], reportClient: ["ti-user", "#0F6E56"],
-  reportSupplier: ["ti-truck", "#0F6E56"], reportCostCenter: ["ti-building", "#0F6E56"], reportProject: ["ti-building-skyscraper", "#0F6E56"],
-  exports: ["ti-download", "#0F6E56"],
-  // Qualidade PBQP-H (teal/coral)
-  qualidadeDashboard: ["ti-gauge", "#0F6E56"], qualidadePolitica: ["ti-file-text", "#0F6E56"], qualidadePes: ["ti-clipboard-text", "#0F6E56"],
-  qualidadePqo: ["ti-clipboard-check", "#0F6E56"], qualidadeFvs: ["ti-checklist", "#0F6E56"], qualidadeFvm: ["ti-package", "#0F6E56"],
-  qualidadeNc: ["ti-alert-triangle", "#A32D2D"], qualidadeTreinamentos: ["ti-school", "#0F6E56"], qualidadeAuditorias: ["ti-clipboard-check", "#0F6E56"],
+  // Relatórios (acento estrutural do tema)
+  reports: ["ti-chart-bar", "var(--accent)"], reportFinancial: ["ti-chart-bar", "var(--accent)"], reportClient: ["ti-user", "var(--accent)"],
+  reportSupplier: ["ti-truck", "var(--accent)"], reportCostCenter: ["ti-building", "var(--accent)"], reportProject: ["ti-building-skyscraper", "var(--accent)"],
+  exports: ["ti-download", "var(--accent)"],
+  // Qualidade PBQP-H (acento estrutural/coral semântico)
+  qualidadeDashboard: ["ti-gauge", "var(--accent)"], qualidadePolitica: ["ti-file-text", "var(--accent)"], qualidadePes: ["ti-clipboard-text", "var(--accent)"],
+  qualidadePqo: ["ti-clipboard-check", "var(--accent)"], qualidadeFvs: ["ti-checklist", "var(--accent)"], qualidadeFvm: ["ti-package", "var(--accent)"],
+  qualidadeNc: ["ti-alert-triangle", "#A32D2D"], qualidadeTreinamentos: ["ti-school", "var(--accent)"], qualidadeAuditorias: ["ti-clipboard-check", "var(--accent)"],
   // Configurações (cinza)
   companySettings: ["ti-building", "#5F5E5A"], users: ["ti-users", "#5F5E5A"], permissions: ["ti-lock", "#5F5E5A"],
   systemVersion: ["ti-info-circle", "#5F5E5A"], workTypes: ["ti-list", "#5F5E5A"], workStatuses: ["ti-activity", "#5F5E5A"],
@@ -314,7 +315,7 @@ const SUBMODULE_ICONS = {
   // IA (azul)
   iaBusca: ["ti-search", "#185FA5"], iaDepara: ["ti-arrows-exchange", "#185FA5"], iaCompara: ["ti-scale", "#185FA5"], iaIndex: ["ti-database-cog", "#185FA5"], iaTest: ["ti-plug-connected", "#185FA5"],
   // RH/Pessoal (Fase 1).
-  rhColaboradores: ["ti-id-badge-2", "#185FA5"], rhVencimentos: ["ti-alarm", "#c0392b"], rhTiposDocumento: ["ti-file-certificate", "#3B6D11"],
+  rhColaboradores: ["ti-id-badge-2", "#185FA5"], rhVencimentos: ["ti-alarm", "#c0392b"], rhTiposDocumento: ["ti-file-certificate", "var(--accent)"],
 };
 function submenuIconHtml(moduleKey) {
   const [ic, color] = SUBMODULE_ICONS[moduleKey] || ["ti-point", "#8a93a6"];
@@ -1685,7 +1686,7 @@ const seed = {
   ],
   workStatuses: [
     { id: "ws1", name: "Planejamento", description: "Obra em estudo ou orçamento.", color: "#2563eb", sortOrder: 1, status: "Ativo" },
-    { id: "ws2", name: "Em andamento", description: "Obra em execução.", color: "#0f766e", sortOrder: 2, status: "Ativo" },
+    { id: "ws2", name: "Em andamento", description: "Obra em execução.", color: "#0a66c2", sortOrder: 2, status: "Ativo" },
     { id: "ws3", name: "Concluída", description: "Obra finalizada.", color: "#147a47", sortOrder: 3, status: "Ativo" },
   ],
   standardStages: [
@@ -4439,8 +4440,8 @@ function lucroCaixaChart(projectId = "", mode = "mensal", period = null, scoped 
     `Evolução ${mode === "acumulado" ? "acumulada" : "mensal"}: lucro gerencial x caixa`,
     `${mode === "acumulado" ? "Soma progressiva desde o início do intervalo" : "Detalhamento de cada mês do intervalo"}${projectId ? " · " + svgText(nameOf("projects", projectId) || "obra") : ""}`,
     lineChart([
-      { label: "Lucro Gerencial (competência)", color: "#185FA5", values: rows.map((r) => r.lucro) },
-      { label: "Caixa Real (regime de caixa)", color: "#3B6D11", values: rows.map((r) => r.caixa) },
+      { label: "Lucro Gerencial (competência)", color: "var(--green)", values: rows.map((r) => r.lucro) },
+      { label: "Caixa Real (regime de caixa)", color: "var(--chart-primary)", values: rows.map((r) => r.caixa) },
     ], labels, tooltips, { strokeWidth: 2, dotRadius: 4 })
   );
 }
@@ -4497,7 +4498,7 @@ function lucroCaixaPanel(projectId = "") {
   const ind = lucroCaixaIndicators(projectId, scoped, period);
   const alerts = lucroCaixaAlerts(ind, lucroCaixaOverdue30(projectId, scoped));
   const resultTone = (value) => (value < 0 ? "negative" : value > 0 ? "positive" : "");
-  const resultColor = (value, positive = "lc-blue") => (value < 0 ? "lc-neg" : positive);
+  const resultColor = (value, positive = "lc-green") => (value < 0 ? "lc-neg" : positive);
   const scopeNote = projectId ? `Obra: ${svgText(nameOf("projects", projectId) || "—")}` : "Visão geral da empresa";
   return `
     <section class="lucro-caixa-panel">
@@ -4612,18 +4613,18 @@ function renderDashboard() {
       ${chartPanel("Receita x custo da obra", "Receita recebida, pendente e custos", groupedBarChart([
         { label: project.name, "Receita recebida": metrics.revenueReceived, "Receita pendente": metrics.revenuePending, "Custo realizado": metrics.realizedCost, "Custo previsto": metrics.costForecast },
       ], [
-        { key: "Receita recebida", color: "#0f766e" },
-        { key: "Receita pendente", color: "#2563eb" },
-        { key: "Custo realizado", color: "#b42318" },
-        { key: "Custo previsto", color: "#b8872d" },
+        { key: "Receita recebida", color: "var(--chart-primary)" },
+        { key: "Receita pendente", color: "var(--chart-secondary)" },
+        { key: "Custo realizado", color: "var(--red)" },
+        { key: "Custo previsto", color: "var(--gold)" },
       ]))}
       ${chartPanel("Previsto x realizado da obra", "Orçamento, receita e custo", groupedBarChart([
         { label: project.name, "Receita contratada": metrics.revenueContracted, "Receita recebida": metrics.revenueReceived, "Custo previsto": metrics.costForecast, "Custo realizado": metrics.realizedCost },
       ], [
-        { key: "Receita contratada", color: "#0f766e" },
-        { key: "Receita recebida", color: "#2563eb" },
-        { key: "Custo previsto", color: "#b8872d" },
-        { key: "Custo realizado", color: "#b42318" },
+        { key: "Receita contratada", color: "var(--chart-primary)" },
+        { key: "Receita recebida", color: "var(--chart-secondary)" },
+        { key: "Custo previsto", color: "var(--gold)" },
+        { key: "Custo realizado", color: "var(--red)" },
       ]))}
       ${chartPanel("Despesas por categoria da obra", "Agrupamento de contas a pagar", horizontalBarChart(expensesByCategoryRows(), "#b8872d"))}
       ${chartPanel("Contas a pagar por vencimento", "Valores agrupados por mês", horizontalBarChart(payableByDueMonthRows(), "#b42318"))}
@@ -4631,22 +4632,22 @@ function renderDashboard() {
       ${chartPanel("Lucro previsto x realizado", "Comparativo de resultado da obra", groupedBarChart([
         { label: project.name, "Lucro previsto": metrics.expectedProfit, "Lucro realizado": metrics.realizedProfit },
       ], [
-        { key: "Lucro previsto", color: "#0f766e" },
-        { key: "Lucro realizado", color: "#2563eb" },
+        { key: "Lucro previsto", color: "var(--chart-primary)", negativeColor: "var(--red)" },
+        { key: "Lucro realizado", color: "var(--green)", negativeColor: "var(--red)" },
       ]))}
       ${chartPanel("Evolução financeira mensal", "Receita, despesa e resultado", lineChart([
-        { label: "Receita", color: "#0f766e", values: monthlyResult.map((row) => row.revenue) },
-        { label: "Despesa", color: "#b42318", values: monthlyResult.map((row) => row.expense) },
-        { label: "Resultado", color: "#2563eb", values: monthlyResult.map((row) => row.result) },
+        { label: "Receita", color: "var(--chart-primary)", values: monthlyResult.map((row) => row.revenue) },
+        { label: "Despesa", color: "var(--red)", values: monthlyResult.map((row) => row.expense) },
+        { label: "Resultado", color: "var(--chart-secondary)", values: monthlyResult.map((row) => row.result) },
       ], monthlyResult.map((row) => monthLabel(row.month))))}
-      ${chartPanel("Distribuição de custos da obra", "Material, mão de obra, terceirizados, impostos, administrativo e outros", horizontalBarChart(costDistributionRows(), "#0f766e"))}
+      ${chartPanel("Distribuição de custos da obra", "Material, mão de obra, terceirizados, impostos, administrativo e outros", horizontalBarChart(costDistributionRows(), "var(--chart-primary)"))}
     ` : `
       ${chartPanel("Fluxo de caixa previsto x realizado", "Entradas, saídas e saldo final por mês", lineChart([
-        { label: "Entradas previstas", color: "#0f766e", values: cashFlow.map((row) => row.entradasPrevistas) },
-        { label: "Entradas realizadas", color: "#2563eb", values: cashFlow.map((row) => row.entradasRealizadas) },
-        { label: "Saídas previstas", color: "#b8872d", values: cashFlow.map((row) => row.saidasPrevistas) },
-        { label: "Saídas realizadas", color: "#b42318", values: cashFlow.map((row) => row.saidasRealizadas) },
-        { label: "Saldo final", color: "#147a47", values: cashFlow.map((row) => row.saldoFinal) },
+        { label: "Entradas previstas", color: "var(--chart-primary)", values: cashFlow.map((row) => row.entradasPrevistas) },
+        { label: "Entradas realizadas", color: "var(--chart-secondary)", values: cashFlow.map((row) => row.entradasRealizadas) },
+        { label: "Saídas previstas", color: "var(--gold)", values: cashFlow.map((row) => row.saidasPrevistas) },
+        { label: "Saídas realizadas", color: "var(--red)", values: cashFlow.map((row) => row.saidasRealizadas) },
+        { label: "Saldo final", color: "var(--green)", values: cashFlow.map((row) => row.saldoFinal) },
       ], cashFlow.map((row) => monthLabel(row.month))))}
       ${chartPanel("Receita x despesa mensal", "Receita, despesa e resultado gerencial", groupedBarChart(monthlyResult.map((row) => ({
         label: monthLabel(row.month),
@@ -4654,17 +4655,17 @@ function renderDashboard() {
         Despesa: row.expense,
         Resultado: row.result,
       })), [
-        { key: "Receita", color: "#0f766e" },
-        { key: "Despesa", color: "#b42318" },
-        { key: "Resultado", color: "#2563eb" },
+        { key: "Receita", color: "var(--chart-primary)" },
+        { key: "Despesa", color: "var(--red)" },
+        { key: "Resultado", color: "var(--chart-secondary)", negativeColor: "var(--red)" },
       ]))}
       ${chartPanel("Contas a receber por status", "Recebido, aberto, vencido, parcial e cancelado", horizontalBarChart(receivableByStatusRows(), "#2563eb"))}
       ${chartPanel("Contas a pagar por status", "Pago, aberto, vencido, parcial e cancelado", horizontalBarChart(payableByStatusRows(), "#b42318"))}
       ${chartPanel("Despesas por categoria", "Agrupamento por categoria financeira", horizontalBarChart(expensesByCategoryRows(), "#b8872d"))}
-      ${chartPanel("Lucro por produto e serviço", "Preço de venda menos custo estimado ou unitário", horizontalBarChart(profitByOffering().sort((a, b) => b.value - a.value).slice(0, 8), "#0f766e"))}
-      ${chartPanel("Resultado por centro de custo", "Receitas menos despesas por centro", groupedBarChart(dashboardCostCenterRows().map((row) => ({ label: row.label, Resultado: row.value })), [{ key: "Resultado", color: "#147a47" }]))}
+      ${chartPanel("Lucro por produto e serviço", "Preço de venda menos custo estimado ou unitário", horizontalBarChart(profitByOffering().sort((a, b) => b.value - a.value).slice(0, 8), "var(--green)"))}
+      ${chartPanel("Resultado por centro de custo", "Receitas menos despesas por centro", groupedBarChart(dashboardCostCenterRows().map((row) => ({ label: row.label, Resultado: row.value })), [{ key: "Resultado", color: "var(--green)", negativeColor: "var(--red)" }]))}
       ${chartPanel("Faturamento por cliente", "Receita agrupada por cliente", horizontalBarChart(revenueByClientRows(), "#2563eb"))}
-      ${chartPanel("Resultado por obra/projeto", "Lucro ou prejuízo por obra", horizontalBarChart(resultByProjectRows(), "#0f766e"))}
+      ${chartPanel("Resultado por obra/projeto", "Lucro ou prejuízo por obra", horizontalBarChart(resultByProjectRows(), "var(--green)"))}
     `;
   qs("content").innerHTML = `
     <section class="dashboard-intro">
@@ -5218,7 +5219,8 @@ function groupedBarChart(rows, series) {
     const bx = pad.left + rowIndex * groupWidth + 7 + itemIndex * barWidth;
     const by = value >= 0 ? y(value) : zeroY;
     const bh = Math.max(2, Math.abs(zeroY - y(value)));
-    return `<rect x="${bx}" y="${by}" width="${barWidth - 2}" height="${bh}" rx="3" fill="${item.color}"><title>${svgText(row.label)} - ${svgText(item.key)}: ${maskMoneyText(compactMoney(value))}</title></rect>`;
+    const fill = value < 0 && item.negativeColor ? item.negativeColor : item.color;
+    return `<rect x="${bx}" y="${by}" width="${barWidth - 2}" height="${bh}" rx="3" fill="${fill}"><title>${svgText(row.label)} - ${svgText(item.key)}: ${maskMoneyText(compactMoney(value))}</title></rect>`;
   }).join("")).join("");
   const labels = rows.map((row, index) => `<text x="${pad.left + index * groupWidth + groupWidth / 2}" y="${height - 16}" text-anchor="middle" class="chart-axis">${svgText(row.label)}</text>`).join("");
   return `
@@ -5246,7 +5248,7 @@ function horizontalBarChart(rows, color) {
         return `
           <div class="hbar-row">
             <span>${svgText(row.label)}</span>
-            <div class="hbar-track"><div class="hbar-fill ${value < 0 ? "negative" : ""}" style="width:${Math.max(4, Math.abs(value) / max * 100)}%; background:${value < 0 ? "#b42318" : color}"></div></div>
+            <div class="hbar-track"><div class="hbar-fill ${value < 0 ? "negative" : ""}" style="width:${Math.max(4, Math.abs(value) / max * 100)}%; background:${value < 0 ? "var(--red)" : color}"></div></div>
             <strong class="money-blur">${compactMoney(value)}</strong>
           </div>
         `;
@@ -17604,7 +17606,7 @@ function renderProjectReport() {
       </div>
     </section>
     ${table("Relatório por obra", rows, ["name", "total"])}
-    ${chartPanel("Resultado por obra/projeto", "Receita menos despesas por obra", horizontalBarChart(resultByProjectRows(), "#0f766e"))}
+    ${chartPanel("Resultado por obra/projeto", "Receita menos despesas por obra", horizontalBarChart(resultByProjectRows(), "var(--green)"))}
     ${generateDocumentFooter()}
   `;
 }
@@ -17620,11 +17622,11 @@ function renderCashFlow() {
       ${kpi("Saldo inicial", bankOpeningBalance())}
     </section>
     ${chartPanel("Fluxo de caixa mensal", "Previsto, realizado e saldo final", lineChart([
-      { label: "Entradas previstas", color: "#0f766e", values: rows.map((row) => row.entradasPrevistas) },
-      { label: "Entradas realizadas", color: "#2563eb", values: rows.map((row) => row.entradasRealizadas) },
-      { label: "Saídas previstas", color: "#b8872d", values: rows.map((row) => row.saidasPrevistas) },
-      { label: "Saídas realizadas", color: "#b42318", values: rows.map((row) => row.saidasRealizadas) },
-      { label: "Saldo final", color: "#147a47", values: rows.map((row) => row.saldoFinal) },
+      { label: "Entradas previstas", color: "var(--chart-primary)", values: rows.map((row) => row.entradasPrevistas) },
+      { label: "Entradas realizadas", color: "var(--chart-secondary)", values: rows.map((row) => row.entradasRealizadas) },
+      { label: "Saídas previstas", color: "var(--gold)", values: rows.map((row) => row.saidasPrevistas) },
+      { label: "Saídas realizadas", color: "var(--red)", values: rows.map((row) => row.saidasRealizadas) },
+      { label: "Saldo final", color: "var(--green)", values: rows.map((row) => row.saldoFinal) },
     ], rows.map((row) => monthLabel(row.month))))}
     ${table("Fluxo de caixa", rows.map((row) => ({ ...row, month: monthLabel(row.month) })), ["month", "entradasPrevistas", "entradasRealizadas", "saidasPrevistas", "saidasRealizadas", "saldoFinal"])}
   `;

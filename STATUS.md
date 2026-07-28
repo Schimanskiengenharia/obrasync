@@ -1,6 +1,6 @@
 # STATUS — ObraSync
 
-> **Versão:** `v1.37.0` · 2026-07-27 · **Varredura:** 2026-06-27 · **Ambiente:** produção em `https://schimanskiengenharia.com.br/financeiro`
+> **Versão:** `v1.38.0` · 2026-07-27 · **Varredura:** 2026-06-27 · **Ambiente:** produção em `https://schimanskiengenharia.com.br/financeiro`
 
 ---
 
@@ -31,6 +31,8 @@ seção 3.
 Na **v1.19.0**, a Base SINAPI ganhou importação mensal por pacote com upload múltiplo, prévia, histórico por arquivo, reimportação controlada, referência padrão atual e snapshot do item SINAPI no orçamento. A leitura de XLSX agora exige PhpSpreadsheet.
 
 Na **v1.37.0**, o painel **Lucro Gerencial × Caixa Real** deixou de usar um mês/período isolado e passou a consolidar o intervalo dos filtros globais. Os cards mostram o total completo (lucro, entradas, saídas, caixa líquido, diferença e contas abertas/vencidas dos dois lados) e o gráfico detalha os meses em modo Mensal ou Acumulado. A fórmula anterior foi preservada e documentada; não houve endpoint, consulta SQL, migration ou alteração de dados. Títulos `Parcial` continuam integralmente em aberto e fora do caixa efetivo porque o banco não possui valor parcial liquidado. A validação visual em dados reais de produção continua pendente ao dono.
+
+Na **v1.38.0**, o tema dark foi neutralizado de ponta a ponta: superfícies cinza-preto, sidebar/topbar neutras e azul para navegação, foco, seleção, links e botões principais. Verdes ficaram restritos a sucesso, concluído, recebido, lucro e resultado positivo; vermelho e âmbar continuam semânticos. O tema claro foi preservado por tokens, e o plugin de seletividade recebeu a mesma base visual sem alterar seu canvas/PDF. Modo privacidade, impressão, exportações, API, banco, schema, dados e cálculos não foram alterados. A validação visual final em servidor, com dados reais e viewports desktop/mobile, continua pendente ao dono.
 
 ---
 

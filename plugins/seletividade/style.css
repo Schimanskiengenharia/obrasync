@@ -4,11 +4,24 @@
   --bg: #f4f7f6;
   --panel: #ffffff;
   --panel-2: #eef4f2;
+  --topbar-surface: var(--panel);
+  --surface-hover: var(--panel-2);
   --ink: #172322;
   --muted: #60716e;
+  --disabled: #7d8986;
   --line: #d8e1de;
-  --teal: #0f766e;
-  --teal-2: #134e4a;
+  --line-soft: var(--line);
+  --accent: #0f766e;
+  --accent-hover: #0d6c65;
+  --accent-focus: #0f766e;
+  --accent-ink: #134e4a;
+  --accent-soft: rgba(15, 118, 110, 0.12);
+  --accent-soft-strong: rgba(15, 118, 110, 0.2);
+  --accent-shadow: rgba(15, 118, 110, 0.28);
+  --focus-ring: rgba(15, 118, 110, 0.15);
+  --overlay: rgba(0, 0, 0, 0.45);
+  --teal: var(--accent);
+  --teal-2: var(--accent-ink);
   --gold: #b8872d;
   --red: #b42318;
   --green: #147a47;
@@ -19,17 +32,36 @@
 }
 
 html[data-theme="dark"] {
-  --bg: #0e1615;
-  --panel: #17211f;
-  --panel-2: #22322f;
-  --ink: #e6f1ee;
-  --muted: #9ab1ac;
-  --line: #2c3c38;
-  --teal-2: #5eead4;
-  --shadow: 0 14px 40px rgba(0, 0, 0, 0.5);
-  --field: #101a18;
+  --bg: #0f1115;
+  --panel: #1b1f27;
+  --panel-2: #222731;
+  --topbar-surface: #15181e;
+  --surface-hover: #292f3a;
+  --ink: #f3f4f6;
+  --muted: #a7afbd;
+  --disabled: #737c8c;
+  --line: #303744;
+  --line-soft: #262c35;
+  --accent: #0a66c2;
+  --accent-hover: #1677d2;
+  --accent-focus: #4c9aff;
+  --accent-ink: #4c9aff;
+  --accent-soft: rgba(10, 102, 194, 0.18);
+  --accent-soft-strong: rgba(10, 102, 194, 0.28);
+  --accent-shadow: rgba(10, 102, 194, 0.32);
+  --focus-ring: rgba(76, 154, 255, 0.28);
+  --overlay: rgba(0, 0, 0, 0.58);
+  --gold: #fbbf24;
+  --red: #f87171;
+  --green: #34d399;
+  --shadow: 0 14px 40px rgba(0, 0, 0, 0.32);
+  --field: #222731;
   color-scheme: dark;
 }
+
+html[data-theme="dark"] .sidebar { background: #15181e; }
+html[data-theme="dark"] .results tr:not(.group):hover td { background: var(--surface-hover); }
+html[data-theme="dark"] .sel-modal-overlay { background: var(--overlay); }
 
 * { box-sizing: border-box; }
 
@@ -80,7 +112,7 @@ body:not(.checking) .session-gate { display: none; }
   gap: 16px;
   flex-wrap: wrap;
   padding: 14px 22px;
-  background: var(--panel);
+  background: var(--topbar-surface);
   box-shadow: 4px 0 24px rgba(0, 0, 0, 0.08);
 }
 
@@ -132,30 +164,30 @@ button, .btn-link {
 }
 
 .primary {
-  background: var(--teal);
+  background: var(--accent);
   color: #fff;
-  box-shadow: 0 2px 8px rgba(15, 118, 110, 0.25);
+  box-shadow: 0 2px 8px var(--accent-shadow);
 }
 
-/* brightness no hover (e não var(--teal-2)): no tema dark --teal-2 é um teal
-   claro (#5eead4) e o texto branco do botão ficaria ilegível. */
+/* O hover usa um token próprio para manter contraste com o texto branco. */
 .primary:hover {
-  filter: brightness(1.1);
-  box-shadow: 0 4px 16px rgba(15, 118, 110, 0.35);
+  background: var(--accent-hover);
+  filter: none;
+  box-shadow: 0 4px 16px var(--accent-shadow);
   transform: translateY(-1px);
 }
 
 .primary:active {
   filter: none;
   transform: translateY(0px);
-  box-shadow: 0 1px 4px rgba(15, 118, 110, 0.2);
+  box-shadow: 0 1px 4px var(--accent-soft-strong);
 }
 
 .secondary { background: var(--field); color: var(--ink); border: 1px solid var(--line); }
 
 .secondary:hover {
-  background: var(--panel-2);
-  border-color: var(--teal);
+  background: var(--surface-hover);
+  border-color: var(--accent);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
   transform: translateY(-1px);
 }
@@ -165,7 +197,7 @@ button, .btn-link {
 }
 
 button:focus-visible, .btn-link:focus-visible {
-  outline: 2px solid var(--teal);
+  outline: 2px solid var(--accent-focus);
   outline-offset: 3px;
 }
 
@@ -207,7 +239,7 @@ summary {
   cursor: pointer;
   font-weight: 800;
   padding: 12px 0;
-  color: var(--teal-2);
+  color: var(--accent-ink);
   transition: color 0.15s ease;
   list-style: none;
   display: flex;
@@ -231,11 +263,11 @@ details:not([open]) summary::after {
 }
 
 summary:hover {
-  color: var(--teal);
+  color: var(--accent);
 }
 
 summary:hover::after {
-  color: var(--teal);
+  color: var(--accent);
 }
 
 details h4 {
@@ -274,14 +306,16 @@ input, select {
 }
 
 input:hover, select:hover {
-  border-color: var(--teal);
+  border-color: var(--accent-focus);
 }
 
 input:focus, select:focus {
   outline: none;
-  border-color: var(--teal);
-  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.15);
+  border-color: var(--accent-focus);
+  box-shadow: 0 0 0 3px var(--focus-ring);
 }
+
+input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 
 .hint { font-weight: 500; font-size: 12px; color: var(--muted); align-self: center; }
 
@@ -407,16 +441,16 @@ input:focus, select:focus {
 }
 
 .mode-btn:hover:not(.active) {
-  border-color: var(--teal);
-  color: var(--teal);
+  border-color: var(--accent);
+  color: var(--accent);
   transform: translateY(-1px);
 }
 
 .mode-btn.active {
-  background: var(--teal);
-  border-color: var(--teal);
+  background: var(--accent);
+  border-color: var(--accent);
   color: #fff;
-  box-shadow: 0 2px 8px rgba(15, 118, 110, 0.3);
+  box-shadow: 0 2px 8px var(--accent-shadow);
 }
 
 .badge {
@@ -479,7 +513,7 @@ input:focus, select:focus {
   font-size: 13px;
 }
 
-.footer a { color: var(--teal); font-weight: 700; text-decoration: none; }
+.footer a { color: var(--accent); font-weight: 700; text-decoration: none; }
 
 @media (max-width: 1100px) {
   .layout { grid-template-columns: 1fr; }
@@ -782,11 +816,11 @@ input:focus, select:focus {
 .estudo-atual-badge {
   margin: 4px 0 0;
   font-size: 12px;
-  color: var(--teal);
+  color: var(--accent);
   font-weight: 600;
   display: inline-block;
   padding: 3px 10px;
-  background: rgba(15, 118, 110, 0.10);
+  background: var(--accent-soft);
   border-radius: 999px;
   white-space: nowrap;
   overflow: hidden;
@@ -866,8 +900,8 @@ input:focus, select:focus {
 
 .sel-modal-label input:focus {
   outline: none;
-  border-color: var(--teal);
-  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.15);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
 .sel-modal-actions {
@@ -926,13 +960,13 @@ input:focus, select:focus {
 }
 
 .sel-item:hover {
-  border-color: var(--teal);
-  box-shadow: 0 2px 8px rgba(15, 118, 110, 0.10);
+  border-color: var(--accent);
+  box-shadow: 0 2px 8px var(--accent-soft);
 }
 
 .sel-item-ativo {
-  border-color: var(--teal);
-  background: rgba(15, 118, 110, 0.06);
+  border-color: var(--accent);
+  background: var(--accent-soft);
 }
 
 .sel-item-info {

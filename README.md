@@ -1,6 +1,6 @@
 # ObraSync
 
-> Versão `v1.37.0` · 2026-07-27
+> Versão `v1.38.0` · 2026-07-27
 
 ObraSync é uma aplicação web em HTML, CSS, JavaScript puro, PHP e MariaDB/MySQL para gestão integrada de obras, financeiro, comercial e contabilidade gerencial. O frontend fica em `/var/www/financeiro`, a URL pública é `https://schimanskiengenharia.com.br/financeiro`, os dados persistentes ficam no banco e os arquivos de dados ficam fora da pasta pública.
 
@@ -12,8 +12,8 @@ Antes de atualizar em produção, faça backup do banco e de `/var/lib/financeir
 
 Esta seção orienta qualquer pessoa — ou outra IA — que precise continuar o trabalho sem se perder.
 
-- **Versão atual:** `v1.37.0` (2026-07-27). A versão fica em **dois lugares que devem andar juntos**: a constante `APP_VERSION`/`APP_VERSION_DATE` no topo de `app.js` (com `APP_CHANGELOG`) e o cabeçalho deste README. O painel "Versão" em Configurações lê de `APP_VERSION`.
-- **Cache busting:** sempre que `app.js` ou `styles.css` mudarem, **incremente o `?v=NNNN`** das tags correspondentes em `index.html` (hoje `app.js?v=1801`, `styles.css?v=1801`). Sem isso o navegador serve a versão velha.
+- **Versão atual:** `v1.38.0` (2026-07-27). A versão fica em **dois lugares que devem andar juntos**: a constante `APP_VERSION`/`APP_VERSION_DATE` no topo de `app.js` (com `APP_CHANGELOG`) e o cabeçalho deste README. O painel "Versão" em Configurações lê de `APP_VERSION`.
+- **Cache busting:** sempre que `app.js` ou `styles.css` mudarem, **incremente o `?v=NNNN`** das tags correspondentes em `index.html` (hoje `app.js?v=1802`, `styles.css?v=1802`). Sem isso o navegador serve a versão velha.
 - **Estado de saúde (2026-06-28):** em produção e estável. A leva **v1.15→v1.18** entregou o fluxo **Orçamento → Proposta com base SINAPI** (múltiplos orçamentos, BDI flexível, licitação, hierarquia por disciplina, modelos), **SINAPI no PDF + export Excel**, **contrato a partir da proposta** (template 13 cláusulas + anexos assinados), **CEP autofill universal** (corrigindo a regressão do CSP), **endereço próprio da obra** e a **exclusão de análise de viabilidade**; além do **fix do asDate** (Viabilidade travando). Ver o changelog abaixo e `STATUS.md` para o que está FEITO vs PENDENTE.
 - **Arquitetura:** SPA sem build. Todo o frontend está em `app.js` (arquivo único, ~15 mil linhas) + `index.html` (shell) + `styles.css`. Todo o backend está em `api/index.php` (arquivo único, ~8,7 mil linhas). O banco é MariaDB/MySQL (`financeiro`).
 - **Convenções do backend (siga-as):** respostas via `respond(['ok' => true, 'data' => ...])` e erros via `fail($msg, $status)`; INSERT/UPDATE genéricos via `insert_dynamic()`/`update_dynamic()` (descartam colunas inexistentes — toleram diferenças de schema); auditoria via `server_audit()`. Muitas tabelas novas são criadas sob demanda por funções `ensure_*` no próprio `index.php` (além das migrations).
@@ -26,6 +26,16 @@ Esta seção orienta qualquer pessoa — ou outra IA — que precise continuar o
 ## Histórico de Versões
 
 Mapa de cada marco do produto, do mais novo ao mais antigo, com as features e as tabelas/arquivos envolvidos. Use-o para entender *o que existe e por quê* antes de mexer.
+
+### v1.38.0 — 2026-07-27 · Tema Dark Neutro
+
+- O tema escuro passou a usar fundo `#0f1115`, sidebar/topbar `#15181e`, cards `#1b1f27`, campos `#222731`, hover `#292f3a` e bordas `#303744`, eliminando a aparência verde/teal das superfícies.
+- Azul é agora o acento estrutural no dark: botões principais, item ativo da sidebar, links, foco, favoritos, abas, indicadores e controles. O tema claro mantém a paleta anterior por meio dos mesmos tokens.
+- Tokens funcionais novos centralizam acento, foco, hover, overlays, superfícies e séries de gráficos; aliases antigos de teal permanecem apenas para compatibilidade e resolvem para azul no dark.
+- Gráficos de Dashboard, Lucro Gerencial × Caixa, fluxo de caixa e relatórios distinguem navegação/caixa em azul, lucro e resultados positivos em verde, negativos em vermelho e alertas/planejado em âmbar.
+- Login, sidebar aberta/recolhida, topbar, filtros, cards, tabelas, formulários, dialogs, drawers, Agenda, Kanban, módulos e plugin de seletividade foram cobertos. Badges semânticos receberam variantes dark sem fundos pastel claros.
+- Modo privacidade v1.36.0 preservado: blur, botões sincronizados, eixos/tooltips monetários e visibilidade de percentuais/contagens não mudaram. Impressão, PDFs, exportações, API, banco, schema, dados e cálculos não foram alterados.
+- Inventário e plano: `docs/superpowers/specs/2026-07-27-dark-theme-neutral.md` e `docs/superpowers/plans/2026-07-27-dark-theme-neutral.md`.
 
 ### v1.37.0 — 2026-07-27 · Lucro Gerencial × Caixa Real por período total
 
