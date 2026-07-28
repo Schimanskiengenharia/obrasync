@@ -1,6 +1,6 @@
 # ObraSync
 
-> Versão `v1.38.0` · 2026-07-27
+> Versão `v1.38.1` · 2026-07-28
 
 ObraSync é uma aplicação web em HTML, CSS, JavaScript puro, PHP e MariaDB/MySQL para gestão integrada de obras, financeiro, comercial e contabilidade gerencial. O frontend fica em `/var/www/financeiro`, a URL pública é `https://schimanskiengenharia.com.br/financeiro`, os dados persistentes ficam no banco e os arquivos de dados ficam fora da pasta pública.
 
@@ -12,8 +12,8 @@ Antes de atualizar em produção, faça backup do banco e de `/var/lib/financeir
 
 Esta seção orienta qualquer pessoa — ou outra IA — que precise continuar o trabalho sem se perder.
 
-- **Versão atual:** `v1.38.0` (2026-07-27). A versão fica em **dois lugares que devem andar juntos**: a constante `APP_VERSION`/`APP_VERSION_DATE` no topo de `app.js` (com `APP_CHANGELOG`) e o cabeçalho deste README. O painel "Versão" em Configurações lê de `APP_VERSION`.
-- **Cache busting:** sempre que `app.js` ou `styles.css` mudarem, **incremente o `?v=NNNN`** das tags correspondentes em `index.html` (hoje `app.js?v=1802`, `styles.css?v=1802`). Sem isso o navegador serve a versão velha.
+- **Versão atual:** `v1.38.1` (2026-07-28). A versão fica em **dois lugares que devem andar juntos**: a constante `APP_VERSION`/`APP_VERSION_DATE` no topo de `app.js` (com `APP_CHANGELOG`) e o cabeçalho deste README. O painel "Versão" em Configurações lê de `APP_VERSION`.
+- **Cache busting:** sempre que `app.js` ou `styles.css` mudarem, **incremente o `?v=NNNN`** das tags correspondentes em `index.html` (hoje `app.js?v=1803`, `styles.css?v=1803`). Sem isso o navegador serve a versão velha.
 - **Estado de saúde (2026-06-28):** em produção e estável. A leva **v1.15→v1.18** entregou o fluxo **Orçamento → Proposta com base SINAPI** (múltiplos orçamentos, BDI flexível, licitação, hierarquia por disciplina, modelos), **SINAPI no PDF + export Excel**, **contrato a partir da proposta** (template 13 cláusulas + anexos assinados), **CEP autofill universal** (corrigindo a regressão do CSP), **endereço próprio da obra** e a **exclusão de análise de viabilidade**; além do **fix do asDate** (Viabilidade travando). Ver o changelog abaixo e `STATUS.md` para o que está FEITO vs PENDENTE.
 - **Arquitetura:** SPA sem build. Todo o frontend está em `app.js` (arquivo único, ~15 mil linhas) + `index.html` (shell) + `styles.css`. Todo o backend está em `api/index.php` (arquivo único, ~8,7 mil linhas). O banco é MariaDB/MySQL (`financeiro`).
 - **Convenções do backend (siga-as):** respostas via `respond(['ok' => true, 'data' => ...])` e erros via `fail($msg, $status)`; INSERT/UPDATE genéricos via `insert_dynamic()`/`update_dynamic()` (descartam colunas inexistentes — toleram diferenças de schema); auditoria via `server_audit()`. Muitas tabelas novas são criadas sob demanda por funções `ensure_*` no próprio `index.php` (além das migrations).
@@ -26,6 +26,14 @@ Esta seção orienta qualquer pessoa — ou outra IA — que precise continuar o
 ## Histórico de Versões
 
 Mapa de cada marco do produto, do mais novo ao mais antigo, com as features e as tabelas/arquivos envolvidos. Use-o para entender *o que existe e por quê* antes de mexer.
+
+### v1.38.1 — 2026-07-28 · Impressão corrigida + rede de segurança de erros (Onda A: E1/E2)
+
+- **Correção:** `cotacaoImprimir()` (botão PDF do comparativo de cotações) e `printViabilidadeReport()` (botão Imprimir da Análise de Viabilidade) chamavam `openPrintDialog()`, função que **nunca existiu** no projeto. Os dois botões lançavam `ReferenceError` e não imprimiam nada desde 27-28/06/2026 (commits `9fcc994` e `2ac307d`). Passaram a usar `printStandaloneDocument()`, a função real usada por contrato, RDO e pedido de compra.
+- **E1 — captura global de erros JS:** `window.addEventListener("error")` (com `capture: true`, para pegar também recurso que não carrega) e `unhandledrejection` instalados no **topo** de `app.js` — a posição importa: sendo um arquivo único, um erro no meio dele impediria listeners registrados no fim de existir. O handler tem trava de reentrância (nunca reporta a própria falha), dedupe por assinatura (1 min) e cooldown de toast (10 s), e nunca propaga exceção. Erro de carregamento de recurso vai só ao console, sem assustar o usuário.
+- **E2 — `.catch` vazios:** os 14 pontos que engoliam erro em silêncio foram classificados e tratados. Doze são acessórios e passaram a registrar via `ignorarFalha(contexto)` (histórico de status de proposta, cards de kanban, autofill de cliente/fornecedor, logout no servidor, refresh em segundo plano, leitura do histórico de acessos). Dois passaram a avisar o usuário via `avisarFalha(contexto, mensagem)` porque deixavam a tela com dado incompleto: desvincular itens ao remover etapa do orçamento, e carregar itens da cotação.
+- **Testes:** nova suíte JS em `scripts/tests/js/`, com `test_error_handler.js` (11 asserções) exercitando dedupe, cooldown, anti-loop, ausência de `document.body` e poda do Map — extraindo o bloco **real** do `app.js` via `vm`, para o teste não passar caso o código quebre. `run-all.sh` agora roda os testes JS junto com os PHP: 6/6 blocos ok.
+- Sem migration, sem mudança de schema, sem alteração de API, cálculo, impressão ou export.
 
 ### v1.38.0 — 2026-07-27 · Tema Dark Neutro
 

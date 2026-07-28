@@ -19,9 +19,84 @@ if (APP_ENV === "production" && location.protocol === "http:") {
   location.replace(location.href.replace(/^http:/, "https:"));
 }
 const APP_NAME = "ObraSync";
-const APP_VERSION = "v1.38.0";
-const APP_VERSION_DATE = "2026-07-27";
+
+// ─── Captura global de erros JS ────────────────────────────────────────────
+// Instalada aqui no TOPO de propósito: app.js é um arquivo único, então um erro
+// no meio dele impede que listeners registrados lá embaixo cheguem a existir.
+// Três garantias: o handler nunca derruba a aplicação, nunca reporta a própria
+// falha (trava de reentrância) e nunca vira metralhadora de toast (dedupe + cooldown).
+const ERROR_TOAST_COOLDOWN_MS = 10 * 1000; // no máximo um toast a cada 10s
+const ERROR_DEDUPE_WINDOW_MS = 60 * 1000;  // a mesma falha só volta a avisar após 1 min
+let errorHandlerRunning = false;
+let lastErrorToastAt = 0;
+const seenErrors = new Map();
+
+function reportGlobalError(kind, message, detail) {
+  // Se o próprio relatório falhar, sai calado: um erro dentro do handler
+  // dispararia o handler de novo e entraria em recursão.
+  if (errorHandlerRunning) return;
+  errorHandlerRunning = true;
+  try {
+    const texto = String(message || "erro desconhecido");
+    const assinatura = `${kind}|${texto}|${detail || ""}`;
+    const agora = Date.now();
+    // Poda as assinaturas vencidas para o Map não crescer sem limite numa sessão longa.
+    for (const [chave, quando] of seenErrors) {
+      if (agora - quando > ERROR_DEDUPE_WINDOW_MS) seenErrors.delete(chave);
+    }
+    const repetido = seenErrors.has(assinatura);
+    seenErrors.set(assinatura, agora);
+    // O console recebe SEMPRE (é a fonte de depuração); só o toast é racionado.
+    console.error(`[${APP_NAME} ${kind}]`, texto, detail || "");
+    if (repetido) return;
+    if (agora - lastErrorToastAt < ERROR_TOAST_COOLDOWN_MS) return;
+    if (!document.body) return; // erro antes do body existir: só console
+    lastErrorToastAt = agora;
+    showToast("Ocorreu um erro inesperado nesta tela. Se algo não carregou, recarregue a página (Ctrl+Shift+R).", 6000);
+  } catch (_) {
+    // Falhar ao reportar não pode escalar — engolir é o comportamento correto aqui.
+  } finally {
+    errorHandlerRunning = false;
+  }
+}
+
+// captura=true porque erro de carregamento de recurso não borbulha até window.
+window.addEventListener("error", (event) => {
+  // Recurso que não carregou (img/script/link) chega com o elemento como alvo e
+  // sem message: vale registrar, mas não é motivo de assustar o usuário com toast.
+  if (event.target && event.target !== window && event.target.tagName) {
+    console.error(`[${APP_NAME} recurso]`, event.target.tagName, event.target.src || event.target.href || "");
+    return;
+  }
+  reportGlobalError("erro", event.message || event.error?.message, `${event.filename || ""}:${event.lineno || 0}`);
+}, true);
+
+window.addEventListener("unhandledrejection", (event) => {
+  const motivo = event.reason;
+  const origem = motivo?.stack ? String(motivo.stack).split("\n")[1]?.trim() : "";
+  reportGlobalError("promise", motivo?.message || motivo, origem);
+});
+
+// Falha ACESSÓRIA: a ação principal do usuário já concluiu e esta etapa é
+// secundária (registro de histórico, card de kanban, refresh em segundo plano).
+// Não interrompe o fluxo, mas deixa rastro — `.catch(() => {})` mudo escondia
+// problema real sem nenhum sinal de que algo deixou de acontecer.
+function ignorarFalha(contexto) {
+  return (erro) => console.warn(`[${APP_NAME} acessório] ${contexto}:`, erro?.message || erro);
+}
+
+// Falha que o usuário PRECISA saber: sem ela o que está na tela fica incorreto
+// ou incompleto, e seguir em silêncio levaria a decidir com base em dado errado.
+function avisarFalha(contexto, mensagem) {
+  return (erro) => {
+    console.error(`[${APP_NAME} falha] ${contexto}:`, erro?.message || erro);
+    showToast(mensagem, 5000);
+  };
+}
+const APP_VERSION = "v1.38.1";
+const APP_VERSION_DATE = "2026-07-28";
 const APP_CHANGELOG = [
+  "Correção e rede de segurança de erros: o botão de PDF do comparativo de cotações e o de imprimir da Análise de Viabilidade voltaram a funcionar — ambos chamavam uma função de impressão que não existia e falhavam sem nenhuma mensagem desde 27/06. Junto com a correção entrou uma rede de proteção: erros de JavaScript que antes sumiam no console agora avisam o usuário com um aviso discreto (no máximo um a cada 10 segundos, sem repetir a mesma falha dentro de um minuto) e ficam registrados para diagnóstico. As 14 falhas que eram engolidas em silêncio pelo código passaram a ser registradas, e duas delas — desvincular itens ao remover uma etapa do orçamento e carregar os itens de uma cotação — agora avisam explicitamente, porque deixavam a tela mostrando dado incompleto sem que ninguém percebesse (v1.38.1).",
   "Tema Dark Neutro: o modo escuro abandona fundos e acentos verde/teal e passa a usar superfícies cinza-preto neutras (#0f1115, #15181e, #1b1f27 e #222731), bordas visíveis e azul LinkedIn para navegação, botões, links, foco, seleção, abas e controles. A paleta foi centralizada em tokens funcionais (--accent, --surface-hover, --focus-ring, --overlay e tokens de gráficos), incluindo login, sidebar/topbar, favoritos, filtros, cards, tabelas, dialogs, drawers, Agenda, Kanban, dashboards e plugin de seletividade. Gráficos preservam verde para lucro/resultado positivo, vermelho para negativo e âmbar para alerta; badges semânticos continuam separados. Tema claro, modo privacidade, PDFs, impressão, exportações, API, banco e cálculos permanecem inalterados (v1.38.0).",
   "Dashboard — Lucro Gerencial × Caixa Real por período total: o painel deixou de ter um mês/período próprio e agora usa as datas dos filtros globais com as quatro regras de intervalo (inicial+final; inicial→hoje; primeiro lançamento→final; primeiro lançamento→hoje), mostrando explicitamente o período analisado. Os cards são sempre consolidados sobre todo o intervalo e agora detalham lucro gerencial, entradas, saídas, caixa líquido, diferença lucro×caixa e contas a receber/pagar abertas e vencidas (valor + quantidade). O gráfico continua mensal como detalhamento e ganhou o seletor Mensal/Acumulado; no acumulado cada mês soma os anteriores desde o início do intervalo. O cálculo preserva a fórmula real anterior (competência por dueDate; caixa por receivedDate/paidDate com fallback de vencimento; cancelados fora; Parcial integralmente em aberto porque o schema não possui valor parcial liquidado), passa a respeitar obra/cliente/centro de custo e demais filtros dimensionais, não cria consultas por mês e mantém todos os montantes cobertos pelo modo privacidade (v1.37.0).",
   "Modo privacidade (Etapa 1 — dashboard): novo botão de olho na topbar e no dashboard que ESMAECE (borrão ilegível) todos os montantes em R$ da tela — cards KPI, colunas de dinheiro de todas as tabelas, painel Lucro x Caixa, alertas, widgets de execução de obras e os números dos gráficos (eixos e tooltips; as barras/linhas continuam visíveis — proporções sim, valores não). Percentuais, contagens e datas permanecem legíveis. O estado fica salvo no navegador (volta como estava ao recarregar) e o botão ativo fica destacado com olho cortado para não confundir com defeito. Exportações e documentos de impressão não mudam. Telas além do dashboard entram nas Etapas 2 e 3 (v1.36.0).",
@@ -7366,7 +7441,7 @@ function printContract(contractId) {
   printStandaloneDocument(contractPdfHtml(contract));
   // Marca como "gerado" se ainda estava em rascunho (não bloqueia a impressão).
   if (contract.status_contrato !== "gerado" && contract.status_contrato !== "assinado") {
-    updateIntegratedRecord("sales", contractId, { status_contrato: "gerado" }).catch(() => {});
+    updateIntegratedRecord("sales", contractId, { status_contrato: "gerado" }).catch(ignorarFalha("marcar contrato como gerado"));
   }
 }
 
@@ -7873,7 +7948,7 @@ function carregarDadosCliente(clienteId, callback) {
   if (serverMode) {
     apiModuleRequest(`?module=clients&action=get&id=${encodeURIComponent(clienteId)}`)
       .then((data) => { if (data && data.id) callback(data); })
-      .catch(() => {});
+      .catch(ignorarFalha("autofill: buscar cliente"));
   }
 }
 
@@ -7957,7 +8032,7 @@ function carregarDadosFornecedor(fornecedorId, callback) {
   if (serverMode) {
     apiModuleRequest(`?module=suppliers&action=get&id=${encodeURIComponent(fornecedorId)}`)
       .then((data) => { if (data && data.id) callback(data); })
-      .catch(() => {});
+      .catch(ignorarFalha("autofill: buscar fornecedor"));
   }
 }
 
@@ -8933,7 +9008,7 @@ async function saveForm(event) {
       previousStatus: previousRecord.status || "",
       newStatus: data.status || "",
       notes: "Status alterado pelo cadastro de proposta.",
-    }).catch(() => {});
+    }).catch(ignorarFalha("registrar histórico de status da proposta"));
   }
   if (!serverMode && editing.key === "projects" && !editing.id) {
     const project = db.projects.at(-1);
@@ -8941,10 +9016,10 @@ async function saveForm(event) {
     saveDb();
   }
   if (!serverMode && editing.key === "purchaseOrders" && !editing.id) {
-    await createLocalPurchaseKanbanCard(db.purchaseOrders.at(-1)).catch(() => {});
+    await createLocalPurchaseKanbanCard(db.purchaseOrders.at(-1)).catch(ignorarFalha("criar card de kanban do pedido"));
   }
   if (!serverMode && editing.key === "projectMilestones" && data.status === "Concluído" && previousRecord?.status !== data.status) {
-    await createLocalMilestoneBillingEvent(editing.id).catch(() => {});
+    await createLocalMilestoneBillingEvent(editing.id).catch(ignorarFalha("criar evento de faturamento do marco"));
   }
   const savedName = data.name || data.titulo || data.username || data.number || editing.id || "";
   logAudit(editing.id ? "edit" : "create", editing.key, String(savedName));
@@ -8952,7 +9027,7 @@ async function saveForm(event) {
     // API já derrubou as demais sessões; encerra também a local e volta ao login.
     qs("recordDialog").close();
     logAudit("logout", "sistema", `Logout: ${currentUser?.username}`);
-    if (serverMode && authToken) apiRequest("logout", { method: "POST" }).catch(() => {});
+    if (serverMode && authToken) apiRequest("logout", { method: "POST" }).catch(ignorarFalha("encerrar sessão no servidor"));
     clearAuthSession();
     clearTimeout(sessionWarnTimer);
     clearInterval(sessionWarnIntervalId);
@@ -10822,7 +10897,8 @@ async function removeBudgetEtapa(etapaId) {
     // Solta os itens da etapa antes de removê-la.
     const its = (db.workBudgetItems || []).filter((it) => sameId(it.etapa_id, etapaId));
     for (const it of its) {
-      if (serverMode) await apiRequest(`${apiResources.workBudgetItems}/${it.id}`, { method: "PUT", body: JSON.stringify({ etapa_id: "" }) }).catch(() => {});
+      if (serverMode) await apiRequest(`${apiResources.workBudgetItems}/${it.id}`, { method: "PUT", body: JSON.stringify({ etapa_id: "" }) })
+        .catch(avisarFalha("soltar item da etapa removida", "Um ou mais itens não puderam ser desvinculados da etapa. Confira a lista antes de continuar."));
       else { it.etapa_id = ""; }
     }
     await removeRecord("orcamentoEtapas", etapaId);
@@ -14785,7 +14861,7 @@ function cotacaoImprimir() {
       </section>
       ${generateDocumentFooter()}
     </article>`;
-  openPrintDialog(html);
+  printStandaloneDocument(html);
 }
 
 // ─── Módulo de Análise de Viabilidade por tipo de obra (frontend) ───────────
@@ -15437,7 +15513,7 @@ function printViabilidadeReport() {
       </section>
       ${generateDocumentFooter()}
     </article>`;
-  openPrintDialog(html);
+  printStandaloneDocument(html);
 }
 
 // Gate de viabilidade antes de gerar uma proposta a partir do orçamento.
@@ -17172,7 +17248,7 @@ function setupPurchaseOrderForm() {
         }));
         renderRows();
       })
-      .catch(() => {});
+      .catch(avisarFalha("carregar itens da cotação", "Não foi possível carregar os itens desta cotação. Feche e abra novamente."));
   }
 }
 
@@ -17896,7 +17972,7 @@ async function conciliarTransacao(index, table, recordId) {
     });
     marcarLinhaOfxResolvida(index, `<span class="ofx-badge ofx-badge-green">✅ ${payload.data.linkedOnly ? "Vinculado" : `Conciliado — ${payload.data.status}`}</span>`);
     showToast(payload.message || "Conciliado com sucesso.");
-    refreshData().catch(() => {}); // atualiza db em segundo plano, sem fechar o painel
+    refreshData().catch(ignorarFalha("refresh após conciliar OFX")); // em segundo plano, sem fechar o painel
   } catch (error) {
     alert(`Erro ao conciliar: ${error.message}`);
     if (btn) { btn.disabled = false; btn.textContent = "🔗 Conciliar"; }
@@ -17924,7 +18000,7 @@ async function importarAvulso(index) {
     }
     marcarLinhaOfxResolvida(index, '<span class="ofx-badge ofx-badge-blue">➕ Importado avulso</span>');
     showToast("➕ Movimento avulso importado.");
-    refreshData().catch(() => {});
+    refreshData().catch(ignorarFalha("refresh após importar movimento avulso"));
   } catch (error) {
     alert(`Erro ao importar: ${error.message}`);
     if (btn) { btn.disabled = false; btn.textContent = "➕ Avulso"; }
@@ -18378,7 +18454,7 @@ async function salvarDrawerNfseEntidade() {
     fecharDrawerNfseEntidade();
     const alvo = vinculadas > 1 ? `${vinculadas} NFs deste lote` : `NF ${nf.numero}`;
     showToast(`✅ ${table === "clients" ? "Cliente" : "Fornecedor"} "${nf.entityNome}" cadastrado e vinculado a ${alvo}.`);
-    refreshData().catch(() => {});
+    refreshData().catch(ignorarFalha("refresh após vincular entidade da NFS-e"));
   } catch (error) {
     alert(`Erro ao salvar: ${error.message}`);
   } finally {
@@ -19249,7 +19325,10 @@ function logAccess(mod) {
   if (!currentUser || !mod) return;
   const key = `finconta.ah.${currentUser.id}`;
   let hist = [];
-  try { hist = JSON.parse(localStorage.getItem(key) || "[]"); } catch {}
+  // localStorage corrompido/ilegível: o histórico volta a [] e segue — é cache de
+  // conveniência, não dado de negócio. Registrado para não sumir sem rastro.
+  try { hist = JSON.parse(localStorage.getItem(key) || "[]"); }
+  catch (erro) { console.warn(`[${APP_NAME} acessório] ler histórico de acessos:`, erro?.message || erro); }
   hist.push({ module: mod, label: moduleLabels[mod] || mod, ts: new Date().toISOString() });
   safeLocalSet(key, JSON.stringify(hist.slice(-10)));
 }
@@ -19600,7 +19679,7 @@ qs("seedBtn").addEventListener("click", () => {
 qs("loginForm").addEventListener("submit", handleLogin);
 qs("logoutBtn").addEventListener("click", () => {
   logAudit("logout", "sistema", `Logout: ${currentUser?.username}`);
-  if (serverMode && authToken) apiRequest("logout", { method: "POST" }).catch(() => {});
+  if (serverMode && authToken) apiRequest("logout", { method: "POST" }).catch(ignorarFalha("encerrar sessão no servidor"));
   clearAuthSession();
   clearTimeout(sessionWarnTimer);
   clearInterval(sessionWarnIntervalId);

@@ -24,6 +24,9 @@ rodar bash "${DIR}/static-checks.sh"
 for t in "${DIR}"/php/test_*.php; do
   rodar php ${PHP_ARGS[@]+"${PHP_ARGS[@]}"} "${t}"
 done
+for t in "${DIR}"/js/test_*.js; do
+  rodar node "${t}"
+done
 rodar bash "${DIR}/test-backup.sh"
 
 echo "----------------------------------------"
