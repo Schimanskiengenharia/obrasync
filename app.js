@@ -93,9 +93,10 @@ function avisarFalha(contexto, mensagem) {
     showToast(mensagem, 5000);
   };
 }
-const APP_VERSION = "v1.38.2";
+const APP_VERSION = "v1.38.3";
 const APP_VERSION_DATE = "2026-07-28";
 const APP_CHANGELOG = [
+  "Modo privacidade (Etapa 3 — cobertura completa do sistema): o modo privacidade deixa de ser só do dashboard e passa a cobrir o sistema inteiro. Foram varridos os 163 pontos que exibem dinheiro e tratados os 114 que aparecem na tela: Custo da Obra (itens, totais, execução previsto × realizado e as visões por etapa, centro de custo e tipo), telas de IA (busca semântica, de-para e comparador), Cotações por material e Resultado das cotações, Compras da Obra, Centros de custo, Curva ABC, Conciliação bancária, prévia de importação de NFS-e, Viabilidade financeira, Agenda, cronograma e os modais de parcelas, quitação antecipada, gerar conta e anexar nota. Onde o valor não é HTML — título de evento da agenda, item de lista suspensa, total que se atualiza enquanto você digita — a proteção troca o montante por \"R$ •••\", porque ali o borrão não teria efeito. Documentos continuam mostrando os valores por regra: PDF e impressão de proposta, contrato, pedido de compra e comparativo de cotações, exportações para Excel/CSV e o texto gravado da proposta (v1.38.3).",
   "Modo privacidade (Etapa 2 — avisos e campos de valor): com o modo ativo, os avisos que aparecem no rodapé da tela deixam de mostrar montantes — o valor vira \"R$ •••\" (antes o borrão do CSS não alcançava esse texto, então um aviso de conta gerada exibia o valor cheio). Os campos de valor que ficavam de fora — valor unitário do item de orçamento, valor da nota em Anexar NF de conta e de pedido, preço do item no gerador de proposta e valor unitário do item do pedido de compra — passaram a ser borrados até você clicar neles para editar. Correção junto: a máscara comia a pontuação da frase (\"R$ 4.310,00.\" perdia o ponto final e \"R$ 1.000,00,\" perdia a vírgula). Mensagens do sistema que citam \"valor\" sem exibir montante e o campo de reajuste de parcelas (que precisa continuar editável) seguem inalterados (v1.38.2).",
   "Correção e rede de segurança de erros: o botão de PDF do comparativo de cotações e o de imprimir da Análise de Viabilidade voltaram a funcionar — ambos chamavam uma função de impressão que não existia e falhavam sem nenhuma mensagem desde 27/06. Junto com a correção entrou uma rede de proteção: erros de JavaScript que antes sumiam no console agora avisam o usuário com um aviso discreto (no máximo um a cada 10 segundos, sem repetir a mesma falha dentro de um minuto) e ficam registrados para diagnóstico. As 14 falhas que eram engolidas em silêncio pelo código passaram a ser registradas, e duas delas — desvincular itens ao remover uma etapa do orçamento e carregar os itens de uma cotação — agora avisam explicitamente, porque deixavam a tela mostrando dado incompleto sem que ninguém percebesse (v1.38.1).",
   "Tema Dark Neutro: o modo escuro abandona fundos e acentos verde/teal e passa a usar superfícies cinza-preto neutras (#0f1115, #15181e, #1b1f27 e #222731), bordas visíveis e azul LinkedIn para navegação, botões, links, foco, seleção, abas e controles. A paleta foi centralizada em tokens funcionais (--accent, --surface-hover, --focus-ring, --overlay e tokens de gráficos), incluindo login, sidebar/topbar, favoritos, filtros, cards, tabelas, dialogs, drawers, Agenda, Kanban, dashboards e plugin de seletividade. Gráficos preservam verde para lucro/resultado positivo, vermelho para negativo e âmbar para alerta; badges semânticos continuam separados. Tema claro, modo privacidade, PDFs, impressão, exportações, API, banco e cálculos permanecem inalterados (v1.38.0).",
@@ -5177,7 +5178,7 @@ function bars(rows) {
     <div class="bar-row">
       <strong>${svgText(r.label)}</strong>
       <span class="bar-track"><span class="bar-fill" style="width:${Math.max(4, Math.abs(r.value) / max * 100)}%"></span></span>
-      <span>${asMoney(r.value)}</span>
+      <span>${moneySpan(r.value)}</span>
     </div>`).join("")}</div>`;
 }
 
@@ -5484,12 +5485,12 @@ function viabilityCard(row, editable) {
         <span class="viability-verdict ${tone}">${escapeHtml(verdict)}${manual ? " (manual)" : ""}</span>
       </header>
       <div class="viability-indicators">
-        <div><span>Contrato</span><strong>${asMoney(m.contractValue)}</strong></div>
-        <div><span>Custo estimado</span><strong>${asMoney(m.estimatedCost)}</strong></div>
-        <div><span>Margem bruta</span><strong class="${m.grossMargin < 0 ? "neg" : ""}">${asMoney(m.grossMargin)}</strong></div>
+        <div><span>Contrato</span><strong>${moneySpan(m.contractValue)}</strong></div>
+        <div><span>Custo estimado</span><strong>${moneySpan(m.estimatedCost)}</strong></div>
+        <div><span>Margem bruta</span><strong class="${m.grossMargin < 0 ? "neg" : ""}">${moneySpan(m.grossMargin)}</strong></div>
         <div><span>Margem %</span><strong>${asPercent(m.marginPercent)}</strong></div>
         <div><span>Payback</span><strong>${m.paybackMonths ? `${m.paybackMonths.toFixed(1)} meses` : "—"}</strong></div>
-        <div><span>VPL (TMA ${asPercent(Number(row.tmaPercent || 0))})</span><strong class="${m.npv < 0 ? "neg" : ""}">${asMoney(m.npv)}</strong></div>
+        <div><span>VPL (TMA ${asPercent(Number(row.tmaPercent || 0))})</span><strong class="${m.npv < 0 ? "neg" : ""}">${moneySpan(m.npv)}</strong></div>
         <div><span>TIR estimada</span><strong>${m.irrPercent === null ? "—" : asPercent(m.irrPercent)}</strong></div>
         <div><span>Status</span><strong>${escapeHtml(row.status || "Em análise")}</strong></div>
       </div>
@@ -5816,7 +5817,7 @@ function renderIaBuscaResultados(rows) {
           <div class="ia-result-head">${tag}<strong>${escapeHtml(row.code || "")}</strong>${row.unit ? `<span class="ia-result-unit">${escapeHtml(row.unit)}</span>` : ""}</div>
           <div class="ia-result-desc">${escapeHtml(row.description || "")}</div>
         </div>
-        <div class="ia-result-valor">${asMoney(row.valor)}</div>
+        <div class="ia-result-valor">${moneySpan(row.valor)}</div>
       </article>`;
   }).join("");
   box.innerHTML = `
@@ -6091,7 +6092,7 @@ function iaDeparaSelectFilter(id, label, lista, selecionado) {
 function iaSecaoRowHtml(it, totalColunas) {
   const isSubtotal = it.tipoLinha === "subtotal";
   const valorBruto = it.valorUnitOrigem ?? it.valorOrigem;
-  const valor = isSubtotal && valorBruto != null ? ` <span class="ia-dp-secao-valor">${asMoney(valorBruto)}</span>` : "";
+  const valor = isSubtotal && valorBruto != null ? ` <span class="ia-dp-secao-valor">${moneySpan(valorBruto)}</span>` : "";
   return `
     <tr class="${isSubtotal ? "ia-dp-subtotal" : "ia-dp-secao"}">
       <td class="ia-dp-linha">${it.linhaPlanilha ?? ""}</td>
@@ -6124,8 +6125,8 @@ function iaDeparaRowHtml(it) {
     matchCell = `<div class="ia-dp-match">${mtag}<strong>${escapeHtml(it.matchCode || "")}</strong>${it.matchUnit ? ` <span class="ia-result-unit">${escapeHtml(it.matchUnit)}</span>` : ""}<div class="ia-dp-match-desc">${escapeHtml(it.matchDescription || "")}</div></div>`;
   }
   const valor = it.matchValor != null
-    ? asMoney(it.matchValor)
-    : (it.valorOrigem != null ? `<span class="muted" title="valor da planilha (origem)">${asMoney(it.valorOrigem)}</span>` : "");
+    ? moneySpan(it.matchValor)
+    : (it.valorOrigem != null ? `<span class="muted" title="valor da planilha (origem)">${moneySpan(it.valorOrigem)}</span>` : "");
   let acao;
   if (it.statusClassificacao === "cotacao_propria") {
     acao = `<button class="secondary ia-dp-mini" type="button" data-dp-criar="${it.id}">Criar comp. própria</button>`;
@@ -6136,8 +6137,8 @@ function iaDeparaRowHtml(it) {
   const extras = [
     it.unidadeOrigem ? `un: ${escapeHtml(it.unidadeOrigem)}` : "",
     it.quantidade != null ? `qtd: ${escapeHtml(String(it.quantidade))}` : "",
-    it.materialUnit != null ? `Mat ${asMoney(it.materialUnit)}` : "",
-    it.maoObraUnit != null ? `M.O. ${asMoney(it.maoObraUnit)}` : "",
+    it.materialUnit != null ? `Mat ${moneySpan(it.materialUnit)}` : "",
+    it.maoObraUnit != null ? `M.O. ${moneySpan(it.maoObraUnit)}` : "",
   ].filter(Boolean).join(" · ");
   return `
     <tr class="ia-dp-tr ${Number(it.aceito) === 1 ? "is-aceito" : ""}">
@@ -6372,11 +6373,11 @@ function iaComparaResumoHtml(resumo) {
   return `
     <div class="ia-cmp-resumo">
       <div class="ia-cmp-resumo-item ia-cmp-r-econ">
-        <span class="ia-cmp-r-num">${asMoney(resumo.economiaTotal || 0)}</span>
+        <span class="ia-cmp-r-num">${moneySpan(resumo.economiaTotal || 0)}</span>
         <span class="ia-cmp-r-lbl">Economia estimada<br><span class="muted">${Number(resumo.planilhaMaisBarata || 0)} itens com planilha mais barata</span></span>
       </div>
       <div class="ia-cmp-resumo-item ia-cmp-r-exc">
-        <span class="ia-cmp-r-num">${asMoney(resumo.excessoTotal || 0)}</span>
+        <span class="ia-cmp-r-num">${moneySpan(resumo.excessoTotal || 0)}</span>
         <span class="ia-cmp-r-lbl">Excesso estimado<br><span class="muted">${Number(resumo.sinapiMaisBarata || 0)} itens com planilha mais cara</span></span>
       </div>
       <div class="ia-cmp-resumo-item ia-cmp-r-eq">
@@ -6385,7 +6386,7 @@ function iaComparaResumoHtml(resumo) {
       </div>
     </div>
     ${(resumo.totalPlanilhaComparado || resumo.totalSinapiComparado)
-      ? `<div class="muted" style="margin:2px 0 10px">Itens comparados (qtd × unitário): total planilha ${asMoney(resumo.totalPlanilhaComparado || 0)} × total SINAPI ${asMoney(resumo.totalSinapiComparado || 0)}</div>`
+      ? `<div class="muted" style="margin:2px 0 10px">Itens comparados (qtd × unitário): total planilha ${moneySpan(resumo.totalPlanilhaComparado || 0)} × total SINAPI ${moneySpan(resumo.totalSinapiComparado || 0)}</div>`
       : ""}`;
 }
 
@@ -6451,9 +6452,9 @@ function iaComparaBadge(it) {
   const dif = Math.abs(Number(it.diferencaValor || 0));
   const pct = Math.abs(Number(it.diferencaPercent || 0));
   if (p === "planilha") {
-    return `<span class="ia-cmp-badge ia-cmp-planilha">Planilha −${asMoney(dif)} (−${pct.toFixed(1)}%)</span>`;
+    return `<span class="ia-cmp-badge ia-cmp-planilha">Planilha −${moneySpan(dif)} (−${pct.toFixed(1)}%)</span>`;
   }
-  return `<span class="ia-cmp-badge ia-cmp-sinapi">SINAPI mais barata · planilha +${asMoney(dif)} (+${pct.toFixed(1)}%)</span>`;
+  return `<span class="ia-cmp-badge ia-cmp-sinapi">SINAPI mais barata · planilha +${moneySpan(dif)} (+${pct.toFixed(1)}%)</span>`;
 }
 
 function iaComparaRowHtml(it) {
@@ -6483,23 +6484,23 @@ function iaComparaRowHtml(it) {
   // Detalhe da composição do valor da planilha (Material + M.O.), quando presente.
   const matMo = (it.materialUnit != null || it.maoObraUnit != null)
     ? `<div class="muted ia-dp-un">${[
-        it.materialUnit != null ? `Mat ${asMoney(it.materialUnit)}` : "",
-        it.maoObraUnit != null ? `M.O. ${asMoney(it.maoObraUnit)}` : "",
+        it.materialUnit != null ? `Mat ${moneySpan(it.materialUnit)}` : "",
+        it.maoObraUnit != null ? `M.O. ${moneySpan(it.maoObraUnit)}` : "",
       ].filter(Boolean).join(" + ")}</div>`
     : "";
   const valPlanilha = it.valorUnitOrigem != null
-    ? `<span class="${low === "planilha" ? "ia-cmp-low" : ""}">${asMoney(it.valorUnitOrigem)}</span>`
+    ? `<span class="${low === "planilha" ? "ia-cmp-low" : ""}">${moneySpan(it.valorUnitOrigem)}</span>`
     : '<span class="muted">—</span>';
   const valSinapi = it.matchValor != null
-    ? `<span class="${low === "sinapi" ? "ia-cmp-low" : ""}">${asMoney(it.matchValor)}</span>`
+    ? `<span class="${low === "sinapi" ? "ia-cmp-low" : ""}">${moneySpan(it.matchValor)}</span>`
     : '<span class="muted">—</span>';
   // Totais (qtd × unitário) e a diferença por total — verde quando a planilha
   // economiza (dif negativa), vermelho quando está mais cara que a SINAPI.
-  const totPlanilha = it.totalOrigem != null ? asMoney(it.totalOrigem) : '<span class="muted">—</span>';
-  const totSinapi = it.totalSinapi != null ? asMoney(it.totalSinapi) : '<span class="muted">—</span>';
+  const totPlanilha = it.totalOrigem != null ? moneySpan(it.totalOrigem) : '<span class="muted">—</span>';
+  const totSinapi = it.totalSinapi != null ? moneySpan(it.totalSinapi) : '<span class="muted">—</span>';
   const dt = it.diferencaTotal;
   const difTotal = dt != null
-    ? `<span class="ia-cmp-badge ${dt < 0 ? "ia-cmp-planilha" : (dt > 0 ? "ia-cmp-sinapi" : "ia-cmp-igual")}">${dt > 0 ? "+" : (dt < 0 ? "−" : "")}${asMoney(Math.abs(dt))}</span>`
+    ? `<span class="ia-cmp-badge ${dt < 0 ? "ia-cmp-planilha" : (dt > 0 ? "ia-cmp-sinapi" : "ia-cmp-igual")}">${dt > 0 ? "+" : (dt < 0 ? "−" : "")}${moneySpan(Math.abs(dt))}</span>`
     : '<span class="muted">—</span>';
   const aceito = Number(it.aceito) === 1;
   const acao = `<button class="${aceito ? "ia-dp-aceito" : "secondary"} ia-dp-mini" type="button" data-cmp-aceitar="${it.id}">${aceito ? "✓ Aceito" : "Aceitar"}</button>`;
@@ -6777,11 +6778,11 @@ function setupViabilityFormPreview() {
     preview.innerHTML = `
       <h4>Cálculos automáticos</h4>
       <div class="viability-indicators">
-        <div><span>Margem bruta</span><strong>${asMoney(m.grossMargin)}</strong></div>
+        <div><span>Margem bruta</span><strong>${moneySpan(m.grossMargin)}</strong></div>
         <div><span>Margem %</span><strong>${asPercent(m.marginPercent)}</strong></div>
-        <div><span>Lucro estimado</span><strong>${asMoney(m.grossMargin)}</strong></div>
+        <div><span>Lucro estimado</span><strong>${moneySpan(m.grossMargin)}</strong></div>
         <div><span>Payback</span><strong>${m.paybackMonths ? `${m.paybackMonths.toFixed(1)} meses` : "—"}</strong></div>
-        <div><span>VPL</span><strong class="${m.npv < 0 ? "neg" : ""}">${asMoney(m.npv)}</strong></div>
+        <div><span>VPL</span><strong class="${m.npv < 0 ? "neg" : ""}">${moneySpan(m.npv)}</strong></div>
         <div><span>TIR estimada</span><strong>${m.irrPercent === null ? "—" : asPercent(m.irrPercent)}</strong></div>
       </div>
       <p class="viability-suggestion">Parecer sugerido: <span class="viability-verdict ${viabilityTone(m.autoVerdict)}">${m.autoVerdict}</span>${isManual ? ` · Parecer final (manual): <span class="viability-verdict ${viabilityTone(finalVerdict)}">${escapeHtml(finalVerdict)}</span>` : ""}</p>
@@ -6856,7 +6857,7 @@ function renderCostCenters() {
         ${cc.descricao_uso ? `<span class="cc-info" tabindex="0" title="${escapeHtml(cc.descricao_uso)}">ℹ</span>` : ""}
       </td>
       <td><span class="cc-badge cc-badge-${tipo}">${costCenterTipoLabel(tipo)}</span></td>
-      <td class="cc-saldo ${saldo < 0 ? "cc-neg" : saldo > 0 ? "cc-pos" : ""}">${asMoney(saldo)}</td>
+      <td class="cc-saldo ${saldo < 0 ? "cc-neg" : saldo > 0 ? "cc-pos" : ""}">${moneySpan(saldo)}</td>
       <td><span class="status ${ativo ? "success" : ""}">${ativo ? "Ativo" : "Inativo"}</span></td>
       <td><div class="row-actions">
         ${editable ? `<button class="secondary" type="button" data-cc-edit="${cc.id}">Editar</button>` : ""}
@@ -6911,7 +6912,7 @@ function costCenterHistoryPaneHtml(ccId, periodKey) {
     <tr class="${isDup ? "cc-dup" : ""}">
       <td>${m.date ? asDate(m.date) : "—"}${isDup ? ` <span class="cc-dup-warn" tabindex="0" title="Possível duplicidade — verifique se este lançamento já está registrado em Contas a Pagar">⚠️</span>` : ""}</td>
       <td>${svgText(m.desc)}</td>
-      <td class="${m.kind === "entrada" ? "cc-pos" : m.kind === "saida" ? "cc-neg" : ""}">${m.kind === "entrada" ? "+" : m.kind === "saida" ? "−" : ""}${asMoney(m.value)}</td>
+      <td class="${m.kind === "entrada" ? "cc-pos" : m.kind === "saida" ? "cc-neg" : ""}">${m.kind === "entrada" ? "+" : m.kind === "saida" ? "−" : ""}${moneySpan(m.value)}</td>
       <td>${m.kind === "entrada" ? "Entrada" : m.kind === "saida" ? "Saída" : "—"}</td>
       <td>${svgText(m.origin)}</td>
       <td><div class="row-actions">
@@ -6924,9 +6925,9 @@ function costCenterHistoryPaneHtml(ccId, periodKey) {
     <div class="cc-hist-head">
       <label>Período<select id="ccHistPeriod">${periodOptions}</select></label>
       <div class="cc-hist-totais">
-        <span class="cc-pos">Entradas: ${asMoney(entradas)}</span>
-        <span class="cc-neg">Saídas: ${asMoney(saidas)}</span>
-        <span class="${entradas - saidas < 0 ? "cc-neg" : "cc-pos"}"><strong>Saldo: ${asMoney(entradas - saidas)}</strong></span>
+        <span class="cc-pos">Entradas: ${moneySpan(entradas)}</span>
+        <span class="cc-neg">Saídas: ${moneySpan(saidas)}</span>
+        <span class="${entradas - saidas < 0 ? "cc-neg" : "cc-pos"}"><strong>Saldo: ${moneySpan(entradas - saidas)}</strong></span>
       </div>
     </div>
     <div class="table-wrap">
@@ -7158,7 +7159,7 @@ function setupCashPayableLink() {
   const open = (db.payable || []).filter((p) => p.status !== "Pago" && p.status !== "Cancelado")
     .sort((a, b) => String(a.dueDate || "").localeCompare(String(b.dueDate || "")));
   const options = ['<option value="">— Não vincular —</option>'].concat(open.map((p) =>
-    `<option value="${escapeHtml(p.id)}">${escapeHtml(`${p.document || "Conta"} · ${asMoney(p.amount)} · vence ${asDate(String(p.dueDate || "").slice(0, 10)) || "—"}`)}</option>`)).join("");
+    `<option value="${escapeHtml(p.id)}">${escapeHtml(`${p.document || "Conta"} · ${maskMoneyText(asMoney(p.amount))} · vence ${asDate(String(p.dueDate || "").slice(0, 10)) || "—"}`)}</option>`)).join("");
   const wrap = document.createElement("label");
   wrap.className = "full cash-link-field";
   wrap.innerHTML = `Vincular a conta a pagar (opcional)<select id="cashLinkPayable">${options}</select><span class="field-hint">Ao vincular, a conta a pagar é baixada automaticamente e o valor deixa de contar em dobro no centro de custo.</span>`;
@@ -7204,7 +7205,7 @@ function duplicatesReportPanel() {
     <tr>
       <td>${pr.date ? asDate(pr.date) : "—"}</td>
       <td>${svgText(nameOf("costCenters", pr.costCenterId) || "—")}</td>
-      <td class="cc-neg">${asMoney(pr.value)}</td>
+      <td class="cc-neg">${moneySpan(pr.value)}</td>
       <td>${svgText(pr.cashDesc)}</td>
       <td>${svgText(pr.payDesc)}${pr.supplier ? ` <span class="muted">· ${svgText(pr.supplier)}</span>` : ""}</td>
       <td><div class="row-actions">
@@ -7903,7 +7904,7 @@ function setupPayableCashLink() {
     && dates.includes(String(m.date || "").slice(0, 10)) && !(m.referencia_tipo === "CONTA_PAGAR" && m.referencia_id));
   const list = candidates.length ? candidates.map((m) => `
     <div class="pcl-row">
-      <span>${asDate(String(m.date || "").slice(0, 10)) || "—"} · ${asMoney(m.amount)} · ${svgText(m.history || m.originDocument || "Caixa")}${m.costCenterId ? ` · ${svgText(nameOf("costCenters", m.costCenterId) || "")}` : ""}</span>
+      <span>${asDate(String(m.date || "").slice(0, 10)) || "—"} · ${moneySpan(m.amount)} · ${svgText(m.history || m.originDocument || "Caixa")}${m.costCenterId ? ` · ${svgText(nameOf("costCenters", m.costCenterId) || "")}` : ""}</span>
       <button type="button" class="secondary" data-pcl-link="${escapeHtml(m.id)}">Vincular</button>
     </div>`).join("") : '<p class="muted">Nenhum movimento de caixa com mesmo valor e data encontrado.</p>';
   const section = document.createElement("div");
@@ -8651,7 +8652,7 @@ function groupParcels(rid) {
 function openRecurrenceParcels(rid) {
   const parcels = groupParcels(rid);
   if (!parcels.length) return;
-  const rowsHtml = parcels.map((p) => `<div class="agenda-detail-row"><dt>${svgText(p.document || ("Parcela " + p.parcela_numero))}</dt><dd>${asDate(String(p.dueDate || "").slice(0, 10))} · ${asMoney(p.amount)} · ${svgText(p.status)}${p.juros_aplicado != null && p.juros_aplicado !== "" ? " ⚡" : ""}</dd></div>`).join("");
+  const rowsHtml = parcels.map((p) => `<div class="agenda-detail-row"><dt>${svgText(p.document || ("Parcela " + p.parcela_numero))}</dt><dd>${asDate(String(p.dueDate || "").slice(0, 10))} · ${moneySpan(p.amount)} · ${svgText(p.status)}${p.juros_aplicado != null && p.juros_aplicado !== "" ? " ⚡" : ""}</dd></div>`).join("");
   const dialog = document.createElement("dialog");
   dialog.className = "agenda-detail-dialog";
   dialog.innerHTML = `<div class="modal-box agenda-detail-box"><h3>Parcelas da recorrência</h3><dl class="agenda-detail-list">${rowsHtml}</dl><div class="agenda-detail-actions"><button type="button" class="secondary" data-close>Fechar</button></div></div>`;
@@ -8678,7 +8679,7 @@ function openEarlySettlement(rid) {
             <input type="checkbox" class="settle-check" data-id="${escapeHtml(p.id)}" data-amount="${Number(p.amount || 0)}" checked>
             <span class="settlement-name">${svgText(p.document || ("Parcela " + p.parcela_numero))}</span>
             <span class="muted">${asDate(String(p.dueDate || "").slice(0, 10))}</span>
-            <strong>${asMoney(p.amount)}</strong>
+            <strong>${moneySpan(p.amount)}</strong>
           </label>`).join("")}
       </div>
       <div class="settlement-fields">
@@ -8700,7 +8701,7 @@ function openEarlySettlement(rid) {
     const juros = parseMoneyInput(dialog.querySelector("#settleJuros").value);
     const desconto = parseMoneyInput(dialog.querySelector("#settleDesconto").value);
     const total = Math.max(0, original + juros - desconto);
-    dialog.querySelector("#settleSummary").innerHTML = `${selected.length} parcela(s) · Valor original: <strong>${asMoney(original)}</strong> · Juros: <strong>${asMoney(juros)}</strong> · Desconto: <strong>${asMoney(desconto)}</strong> · Total a pagar: <strong>${asMoney(total)}</strong>`;
+    dialog.querySelector("#settleSummary").innerHTML = `${selected.length} parcela(s) · Valor original: <strong>${moneySpan(original)}</strong> · Juros: <strong>${moneySpan(juros)}</strong> · Desconto: <strong>${moneySpan(desconto)}</strong> · Total a pagar: <strong>${moneySpan(total)}</strong>`;
   };
   dialog.querySelectorAll(".settle-check, #settleJuros, #settleDesconto").forEach((el) => el.addEventListener("input", updateSummary));
   updateSummary();
@@ -9610,7 +9611,7 @@ function agendaFinancialEvents(startKey, endKey) {
     else if (dateKey < todayKey) color = "vencido";
     events.push({
       dateKey, color, icon: "$", collection: "receivable", id: row.id,
-      title: `Receber: ${nameOf("clients", row.clientId) || row.document || "—"} · ${asMoney(row.amount)}`,
+      title: `Receber: ${nameOf("clients", row.clientId) || row.document || "—"} · ${maskMoneyText(asMoney(row.amount))}`,
     });
   });
 
@@ -9630,7 +9631,7 @@ function agendaFinancialEvents(startKey, endKey) {
     }
     events.push({
       dateKey, color, icon, collection: "payable", id: row.id,
-      title: `${icon === "⚡" ? "Quitado antecip.: " : "Pagar: "}${nameOf("suppliers", row.supplierId) || row.document || "—"} · ${asMoney(row.amount)}`,
+      title: `${icon === "⚡" ? "Quitado antecip.: " : "Pagar: "}${nameOf("suppliers", row.supplierId) || row.document || "—"} · ${maskMoneyText(asMoney(row.amount))}`,
     });
   });
 
@@ -9652,7 +9653,7 @@ function agendaFinancialEvents(startKey, endKey) {
     if (!inRange(dateKey)) return;
     events.push({
       dateKey, color: "compra", icon: "📦", collection: "purchaseOrders", id: row.id,
-      title: `Compra: ${row.number || "—"} · ${asMoney(row.amount)}`,
+      title: `Compra: ${row.number || "—"} · ${maskMoneyText(asMoney(row.amount))}`,
     });
   });
 
@@ -9695,7 +9696,7 @@ function agendaFinancialDetailRows(collection, row) {
     ["Obra/Projeto", nameOf("projects", row.projectId)],
     ["Vencimento", d(row.dueDate)],
     ["Recebimento", d(row.receivedDate)],
-    ["Valor", asMoney(row.amount)],
+    ["Valor", maskMoneyText(asMoney(row.amount))],
     ["Status", row.status],
   ];
   if (collection === "payable") return [
@@ -9704,7 +9705,7 @@ function agendaFinancialDetailRows(collection, row) {
     ["Obra/Projeto", nameOf("projects", row.projectId)],
     ["Vencimento", d(row.dueDate)],
     ["Pagamento", d(row.paidDate)],
-    ["Valor", asMoney(row.amount)],
+    ["Valor", maskMoneyText(asMoney(row.amount))],
     ["Status", row.status],
   ];
   if (collection === "projectMilestones") return [
@@ -9721,7 +9722,7 @@ function agendaFinancialDetailRows(collection, row) {
     ["Obra/Projeto", nameOf("projects", row.projectId)],
     ["Data do pedido", d(row.date)],
     ["Previsão de entrega", d(row.expectedDate)],
-    ["Valor", asMoney(row.amount)],
+    ["Valor", maskMoneyText(asMoney(row.amount))],
     ["Status", row.status],
   ];
   return [];
@@ -10259,7 +10260,7 @@ function scheduleStepCards(rows) {
             <div class="progress-line"><span style="width:${Math.min(100, Number(row.actualPhysicalPercent || row.physicalProgress || 0))}%"></span></div>
             <dl>
               <div><dt>Físico</dt><dd>${asPercent(row.actualPhysicalPercent || row.physicalProgress || 0)}</dd></div>
-              <div><dt>Financeiro</dt><dd>${asMoney(row.actualFinancialAmount || 0)}</dd></div>
+              <div><dt>Financeiro</dt><dd>${moneySpan(row.actualFinancialAmount || 0)}</dd></div>
               <div><dt>Previsto</dt><dd>${asDate(row.plannedStartDate || row.startDate)} até ${asDate(row.plannedEndDate || row.endForecast)}</dd></div>
               <div><dt>Real</dt><dd>${asDate(row.actualStartDate)} até ${asDate(row.actualEndDate)}</dd></div>
               <div><dt>Responsável</dt><dd>${svgText(row.responsible || "Não informado")}</dd></div>
@@ -10564,7 +10565,7 @@ function renderWorkBudgetExecutionSection(budget, items, editable) {
     <section class="exec-progress-panel">
       <div class="exec-progress-head">
         <strong>Execução geral da obra: ${asPercent(pctGeral)}</strong>
-        <span class="muted">${asMoney(totalReal)} realizado de ${asMoney(totalPrev)} previsto</span>
+        <span class="muted">${moneySpan(totalReal)} realizado de ${moneySpan(totalPrev)} previsto</span>
       </div>
       <div class="exec-progress-bar"><span class="${barClass}" style="width:${Math.min(100, Math.round(pctGeral))}%"></span></div>
       ${estouroCount ? `<button type="button" class="exec-estouro-alert" id="execEstouroBtn">⚠️ ${estouroCount} item(ns) com estouro de quantidade — clique para ver</button>` : ""}
@@ -10585,12 +10586,12 @@ function renderWorkBudgetExecutionSection(budget, items, editable) {
               <td>${svgText(item.description || "")}</td>
               <td>${svgText(item.unit || "")}</td>
               <td>${fmtQty(ex.qtd)}</td>
-              <td>${asMoney(ex.vu)}</td>
-              <td>${asMoney(ex.totalPrev)}</td>
+              <td>${moneySpan(ex.vu)}</td>
+              <td>${moneySpan(ex.totalPrev)}</td>
               <td><strong>${fmtQty(ex.real)}</strong></td>
               <td>${asPercent(ex.pct)}</td>
-              <td>${asMoney(ex.totalReal)}</td>
-              <td class="${ex.saldo < 0 ? "cc-neg" : ""}">${asMoney(ex.saldo)}</td>
+              <td>${moneySpan(ex.totalReal)}</td>
+              <td class="${ex.saldo < 0 ? "cc-neg" : ""}">${moneySpan(ex.saldo)}</td>
               <td>${budgetItemStatusBadge(ex.pct, ex.estouro)}</td>
               ${editable ? `<td><div class="row-actions">
                 <button type="button" class="secondary" data-exec-update="${item.id}">Atualizar</button>
@@ -10601,10 +10602,10 @@ function renderWorkBudgetExecutionSection(budget, items, editable) {
         <tfoot>
           <tr class="exec-totals">
             <td colspan="5">Totais</td>
-            <td>${asMoney(totalPrev)}</td>
+            <td>${moneySpan(totalPrev)}</td>
             <td colspan="2">${asPercent(pctGeral)}</td>
-            <td>${asMoney(totalReal)}</td>
-            <td class="${saldoTotal < 0 ? "cc-neg" : ""}">${asMoney(saldoTotal)}</td>
+            <td>${moneySpan(totalReal)}</td>
+            <td class="${saldoTotal < 0 ? "cc-neg" : ""}">${moneySpan(saldoTotal)}</td>
             <td colspan="${editable ? 2 : 1}"></td>
           </tr>
         </tfoot>
@@ -10741,7 +10742,7 @@ function budgetViewSwitcher() {
 function budgetTotalizadores(budget, items) {
   const tt = budgetTipoTotals(items);
   const tot = budgetTotals(budget, items);
-  const tipoRows = BUDGET_TIPOS.filter(([v]) => tt[v] > 0).map(([v, l]) => `<div class="bt-row"><span>${l}</span><strong>${asMoney(tt[v])}</strong></div>`).join("");
+  const tipoRows = BUDGET_TIPOS.filter(([v]) => tt[v] > 0).map(([v, l]) => `<div class="bt-row"><span>${l}</span><strong>${moneySpan(tt[v])}</strong></div>`).join("");
   return `
     <section class="budget-totais">
       <div class="budget-totais-tipos">
@@ -10749,9 +10750,9 @@ function budgetTotalizadores(budget, items) {
         ${tipoRows || '<div class="bt-row"><span>Sem itens</span><strong>R$ 0,00</strong></div>'}
       </div>
       <div class="budget-totais-final">
-        <div class="bt-row"><span>Custo direto (sem BDI)</span><strong>${asMoney(tot.custoDireto)}</strong></div>
-        <div class="bt-row"><span>BDI ${asPercent(budget.bdiPercent || 0)}</span><strong>${asMoney(tot.bdiValor)}</strong></div>
-        <div class="bt-row bt-total"><span>TOTAL COM BDI</span><strong>${asMoney(tot.totalComBdi)}</strong></div>
+        <div class="bt-row"><span>Custo direto (sem BDI)</span><strong>${moneySpan(tot.custoDireto)}</strong></div>
+        <div class="bt-row"><span>BDI ${asPercent(budget.bdiPercent || 0)}</span><strong>${moneySpan(tot.bdiValor)}</strong></div>
+        <div class="bt-row bt-total"><span>TOTAL COM BDI</span><strong>${moneySpan(tot.totalComBdi)}</strong></div>
       </div>
     </section>`;
 }
@@ -10765,8 +10766,8 @@ function renderBudgetEtapaView(budget, items, editable) {
     <td><span class="bt-tipo">${budgetTipoShort(it.tipo)}</span></td>
     <td>${svgText(it.unit || "")}</td>
     <td>${fmtQty(it.quantity)}</td>
-    <td>${asMoney(it.unitCost)}</td>
-    <td>${asMoney(budgetItemCost(it))}</td>
+    <td>${moneySpan(it.unitCost)}</td>
+    <td>${moneySpan(budgetItemCost(it))}</td>
     ${editable ? `<td class="no-print"><div class="row-actions">
       <button type="button" class="secondary" data-action-key="workBudgetItems" data-edit="${it.id}" title="Editar">✎</button>
       <button type="button" class="danger" data-action-key="workBudgetItems" data-delete="${it.id}" title="Remover">✕</button>
@@ -10777,7 +10778,7 @@ function renderBudgetEtapaView(budget, items, editable) {
     return `<section class="budget-etapa">
       <header class="budget-etapa-head">
         <strong>${etapa ? `${etapa.codigo ? etapa.codigo + " — " : ""}${svgText(etapa.nome)}` : "Itens sem etapa"}</strong>
-        <span class="budget-etapa-sub">Subtotal: ${asMoney(subtotal)}${etapa ? ` · BDI ${asPercent(budgetEtapaBdi(etapa, budget))}` : ""}</span>
+        <span class="budget-etapa-sub">Subtotal: ${moneySpan(subtotal)}${etapa ? ` · BDI ${asPercent(budgetEtapaBdi(etapa, budget))}` : ""}</span>
         ${editable && etapa ? `<span class="budget-etapa-acts no-print"><button type="button" class="secondary" data-etapa-edit="${etapa.id}">editar</button><button type="button" class="danger" data-etapa-remove="${etapa.id}">remover</button></span>` : ""}
       </header>
       <div class="table-wrap"><table class="budget-items-table">
@@ -10802,14 +10803,14 @@ function renderBudgetCentroView(items) {
     totalGeral += sub;
     const name = cc === "__none" ? "Sem centro de custo" : (nameOf("costCenters", cc) || "Centro de custo");
     return `<section class="budget-group">
-      <header><strong>${svgText(name)}</strong><span>${asMoney(sub)}</span></header>
+      <header><strong>${svgText(name)}</strong><span>${moneySpan(sub)}</span></header>
       <div class="table-wrap"><table class="budget-items-table"><tbody>
-        ${grp.map((it) => `<tr><td>${svgText(it.codigo || it.code || "")}</td><td>${svgText(it.description || "")}</td><td class="bt-num">${asMoney(budgetItemCost(it))}</td></tr>`).join("")}
-        <tr class="budget-group-sub"><td colspan="2">Subtotal</td><td class="bt-num">${asMoney(sub)}</td></tr>
+        ${grp.map((it) => `<tr><td>${svgText(it.codigo || it.code || "")}</td><td>${svgText(it.description || "")}</td><td class="bt-num">${moneySpan(budgetItemCost(it))}</td></tr>`).join("")}
+        <tr class="budget-group-sub"><td colspan="2">Subtotal</td><td class="bt-num">${moneySpan(sub)}</td></tr>
       </tbody></table></div>
     </section>`;
   }).join("");
-  return `${blocks || '<p class="muted">Sem itens.</p>'}<div class="budget-group-total">TOTAL GERAL: ${asMoney(totalGeral)}</div>`;
+  return `${blocks || '<p class="muted">Sem itens.</p>'}<div class="budget-group-total">TOTAL GERAL: ${moneySpan(totalGeral)}</div>`;
 }
 
 function renderBudgetTipoView(items) {
@@ -10820,11 +10821,11 @@ function renderBudgetTipoView(items) {
   return `<section class="budget-tipo-view">
     ${rows.length ? rows.map((r) => `<div class="budget-tipo-row">
       <span class="budget-tipo-name">${r.l}</span>
-      <span class="budget-tipo-val">${asMoney(r.val)}</span>
+      <span class="budget-tipo-val">${moneySpan(r.val)}</span>
       <span class="budget-tipo-pct">${asPercent(r.pct)}</span>
       <span class="budget-tipo-bar"><span style="width:${Math.round(r.pct)}%"></span></span>
     </div>`).join("") : '<p class="muted">Sem itens.</p>'}
-    <div class="budget-tipo-row budget-tipo-total"><span class="budget-tipo-name">TOTAL</span><span class="budget-tipo-val">${asMoney(totalReal)}</span><span></span><span></span></div>
+    <div class="budget-tipo-row budget-tipo-total"><span class="budget-tipo-name">TOTAL</span><span class="budget-tipo-val">${moneySpan(totalReal)}</span><span></span><span></span></div>
   </section>`;
 }
 
@@ -10930,7 +10931,7 @@ function openBudgetItemModal(budget, etapaId) {
       const valor = tab === "sinapi" ? Number(r.unitCost || 0) : Number(r.suggestedPrice || r.estimatedCost || 0);
       const ref = tab === "sinapi" ? byId("sinapiReferences", r.sinapiReferenceId) || r : {};
       const refLabel = tab === "sinapi" ? ` · ${escapeHtml(ref.uf || r.uf || "")} ${String(ref.referenceMonth || r.referenceMonth || "").padStart(2, "0")}/${escapeHtml(ref.referenceYear || r.referenceYear || "")} ${escapeHtml(ref.priceType || r.priceType || r.referenceType || "")}` : "";
-      return `<button type="button" class="budget-item-result" data-pick="${escapeHtml(r.id)}">${escapeHtml((r.code ? r.code + " - " : "") + (r.description || ""))} <span class="muted">${escapeHtml(r.unit || "")} · ${asMoney(valor)}${refLabel}</span></button>`;
+      return `<button type="button" class="budget-item-result" data-pick="${escapeHtml(r.id)}">${escapeHtml((r.code ? r.code + " - " : "") + (r.description || ""))} <span class="muted">${escapeHtml(r.unit || "")} · ${moneySpan(valor)}${refLabel}</span></button>`;
     }).join("");
   };
   const tabHtml = () => {
@@ -10947,7 +10948,7 @@ function openBudgetItemModal(budget, etapaId) {
     const qtd = parseMoneyInput(dialog.querySelector("#biQtd")?.value || "0");
     const vu = parseMoneyInput(dialog.querySelector("#biVu")?.value || "0");
     const totalEl = dialog.querySelector("#biTotal");
-    if (totalEl) totalEl.textContent = asMoney(qtd * vu);
+    if (totalEl) totalEl.textContent = maskMoneyText(asMoney(qtd * vu));
   };
 
   const paint = () => {
@@ -10965,7 +10966,7 @@ function openBudgetItemModal(budget, etapaId) {
           <label>Centro de custo<select id="biCc">${ccOptions}</select></label>
           <label>Quantidade<input id="biQtd" inputmode="decimal" value="1"></label>
           <label>Valor unitário (R$)<input id="biVu" class="money-private" inputmode="decimal" value="0,00"></label>
-          <div class="budget-item-total">Total: <strong id="biTotal">${asMoney(0)}</strong></div>
+          <div class="budget-item-total">Total: <strong id="biTotal">${maskMoneyText(asMoney(0))}</strong></div>
         </div>
         <div class="agenda-detail-actions">
           <button type="button" class="primary" id="biSalvar">Adicionar ao orçamento</button>
@@ -11619,7 +11620,7 @@ function renderAbcCurve() {
           ${budgets.map((row) => `<option value="${row.id}" ${sameId(row.id, selectedWorkBudgetId) ? "selected" : ""}>${svgText(row.name || row.id)}</option>`).join("")}
         </select>
       </label>
-      <div class="schedule-next"><span>Total analisado</span><strong>${asMoney(rows.reduce((total, row) => total + Number(row.totalPrice || 0), 0))}</strong></div>
+      <div class="schedule-next"><span>Total analisado</span><strong>${moneySpan(rows.reduce((total, row) => total + Number(row.totalPrice || 0), 0))}</strong></div>
     </section>
     ${table("Curva ABC do orçamento", rows, ["abcPosition", "description", "unit", "quantity", "totalPrice", "individualPercent", "accumulatedPercent", "abcClass"])}
   `;
@@ -13541,7 +13542,7 @@ async function renderCotacaoMaterialLista() {
       <td>${svgText(m.tipo_nome || "—")}</td>
       <td>${Number(m.quantity || 0).toLocaleString("pt-BR")}${m.unit ? " " + svgText(m.unit) : ""}</td>
       <td>${svgText(propostasTxt)}</td>
-      <td>${m.menor_valor != null ? asMoney(m.menor_valor) : "—"}</td>
+      <td>${m.menor_valor != null ? moneySpan(m.menor_valor) : "—"}</td>
       <td>${cotacaoBadge(COTMAT_STATUS, m.status)}</td>
       <td>
         <button class="secondary" type="button" data-mat-abrir="${escapeHtml(m.id)}">Abrir</button>
@@ -13605,11 +13606,11 @@ function renderCotacaoMaterialDetalhe() {
     return `
     <article class="cot-mat-card ${isMenor ? "cot-mat-menor" : ""} ${venceu ? "cot-mat-venc" : ""}">
       <div class="cot-mat-forn"><span>${svgText(p.fornecedor_nome || "Fornecedor removido")}</span>${venceu ? '<span class="sup-qual sup-qual-verde">✓ Vencedora</span>' : ""}</div>
-      <div class="cot-mat-valor">${asMoney(v)}${m.unit ? ` <span class="muted cot-mat-un">/ ${svgText(m.unit)}</span>` : ""}</div>
+      <div class="cot-mat-valor">${moneySpan(v)}${m.unit ? ` <span class="muted cot-mat-un">/ ${svgText(m.unit)}</span>` : ""}</div>
       <div>${isMenor
         ? '<span class="ia-cmp-badge ia-cmp-planilha">Menor valor</span>'
-        : (difR != null ? `<span class="ia-cmp-badge ia-cmp-sinapi">+${asMoney(difR)} · +${difP.toFixed(1)}%</span>` : "")}</div>
-      ${qtd > 0 && v > 0 ? `<div class="muted">Total (${qtd.toLocaleString("pt-BR")}${m.unit ? " " + svgText(m.unit) : ""}): <strong>${asMoney(qtd * v)}</strong></div>` : ""}
+        : (difR != null ? `<span class="ia-cmp-badge ia-cmp-sinapi">+${moneySpan(difR)} · +${difP.toFixed(1)}%</span>` : "")}</div>
+      ${qtd > 0 && v > 0 ? `<div class="muted">Total (${qtd.toLocaleString("pt-BR")}${m.unit ? " " + svgText(m.unit) : ""}): <strong>${moneySpan(qtd * v)}</strong></div>` : ""}
       ${p.marca ? `<div class="muted">Marca: ${svgText(p.marca)}</div>` : ""}
       ${p.prazo_entrega ? `<div class="muted">Prazo: ${svgText(p.prazo_entrega)}</div>` : ""}
       ${p.observacao ? `<div class="muted">${svgText(p.observacao)}</div>` : ""}
@@ -13823,7 +13824,7 @@ function openCotacaoMaterialConcluir(m) {
   const linhas = propostas.map((p) => {
     const v = Number(p.valor_unitario || 0);
     return `<label class="cot-mat-radio"><input type="radio" name="cotVenc" value="${escapeHtml(p.id)}" ${v === menor ? "checked" : ""}>
-      <span>${escapeHtml(p.fornecedor_nome || "Fornecedor")} — <strong>${asMoney(v)}</strong>${v === menor ? ' <span class="ia-cmp-badge ia-cmp-planilha">Menor valor</span>' : ""}${p.marca ? ` · ${escapeHtml(p.marca)}` : ""}</span></label>`;
+      <span>${escapeHtml(p.fornecedor_nome || "Fornecedor")} — <strong>${moneySpan(v)}</strong>${v === menor ? ' <span class="ia-cmp-badge ia-cmp-planilha">Menor valor</span>' : ""}${p.marca ? ` · ${escapeHtml(p.marca)}` : ""}</span></label>`;
   }).join("");
   const { close, q, dialog } = viabilidadeDialog(`
     <div class="viab-modal">
@@ -13919,8 +13920,8 @@ async function renderCotacaoResultado() {
       <tr>
         <td>${svgText(r.description || "")}<div class="muted ia-dp-un">${svgText(r.categoria_nome || "")}${r.tipo_nome ? " › " + svgText(r.tipo_nome) : ""}</div></td>
         <td>${Number(r.quantity || 0).toLocaleString("pt-BR")}${r.unit ? " " + svgText(r.unit) : ""}</td>
-        <td>${asMoney(r.valor_unitario || 0)}${r.marca ? `<div class="muted ia-dp-un">${svgText(r.marca)}</div>` : ""}</td>
-        <td class="ia-dp-valor">${asMoney(r.valor_item || 0)}</td>
+        <td>${moneySpan(r.valor_unitario || 0)}${r.marca ? `<div class="muted ia-dp-un">${svgText(r.marca)}</div>` : ""}</td>
+        <td class="ia-dp-valor">${moneySpan(r.valor_item || 0)}</td>
         <td>${r.conta_pagar_id
           ? `<span class="status success">✓ ${svgText(r.conta_document || "Conta gerada")}</span>`
           : '<span class="muted">sem conta</span>'}</td>
@@ -13929,7 +13930,7 @@ async function renderCotacaoResultado() {
       const nfs = (db.fiscalDocuments || []).filter((nf) => sameId(nf.payableId, ct.id) && nf.status !== "Cancelada");
       const nfsTxt = nfs.map((nf) => `NF ${svgText(nf.documentNumber || "")}`).join(", ");
       return `<div class="cot-res-conta">
-        <span><strong>${svgText(ct.document || "Conta a pagar")}</strong> · ${svgText(ct.status || "")} · vence ${asDate(ct.vencimento)} · ${asMoney(ct.valor || 0)}</span>
+        <span><strong>${svgText(ct.document || "Conta a pagar")}</strong> · ${svgText(ct.status || "")} · vence ${asDate(ct.vencimento)} · ${moneySpan(ct.valor || 0)}</span>
         <span>${nfs.length ? `<span class="status success">${nfsTxt}</span>` : '<span class="muted">NF pendente</span>'}
         ${podeNf ? `<button type="button" class="secondary ia-dp-mini" data-res-nf="${escapeHtml(ct.id)}">${nfs.length ? "+ Outra NF" : "Anexar/Vincular NF"}</button>` : ""}</span>
       </div>`;
@@ -13938,7 +13939,7 @@ async function renderCotacaoResultado() {
     <section class="table-wrap cot-res-grupo">
       <header class="cot-res-head">
         <div><strong>${svgText(g.nome)}</strong> <span class="muted">— ganhou ${g.rows.length} material(is)</span></div>
-        <div class="cot-res-sub">Subtotal: <strong>${asMoney(subtotal)}</strong></div>
+        <div class="cot-res-sub">Subtotal: <strong>${moneySpan(subtotal)}</strong></div>
       </header>
       <table>
         <thead><tr><th>Material</th><th>Qtde</th><th>Valor unit.</th><th>Total</th><th>Conta a pagar</th></tr></thead>
@@ -13947,13 +13948,13 @@ async function renderCotacaoResultado() {
       <footer class="cot-res-foot">
         ${contasHtml}
         ${editable && pendentes.length && g.fornecedorId
-          ? `<button type="button" class="primary" data-res-gerar="${escapeHtml(String(g.fornecedorId))}">Gerar conta a pagar (${asMoney(valorPendente)}${pendentes.length < g.rows.length ? ` · ${pendentes.length} sem conta` : ""})</button>`
+          ? `<button type="button" class="primary" data-res-gerar="${escapeHtml(String(g.fornecedorId))}">Gerar conta a pagar (${moneySpan(valorPendente)}${pendentes.length < g.rows.length ? ` · ${pendentes.length} sem conta` : ""})</button>`
           : ""}
       </footer>
     </section>`;
   }).join("");
   content.innerHTML = headHtml + (itens.length
-    ? blocos + `<section class="cot-res-total">Total geral das cotações concluídas: <strong>${asMoney(totalGeral)}</strong></section>`
+    ? blocos + `<section class="cot-res-total">Total geral das cotações concluídas: <strong>${moneySpan(totalGeral)}</strong></section>`
     : '<div class="empty">Nenhuma cotação CONCLUÍDA nesta obra ainda. Conclua as cotações por material (escolhendo a proposta vencedora) para montar o mapa de compras.</div>');
   wireHead();
   content.querySelectorAll("[data-res-gerar]").forEach((b) => b.addEventListener("click", () => {
@@ -13980,14 +13981,14 @@ function openCotacaoGerarConta(g) {
   if (!cats.length) return alert("Cadastre uma categoria financeira antes (Financeiro → Categorias).");
   const catOpts = ['<option value="">— Escolha a categoria —</option>']
     .concat(cats.map((c) => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}${c.type ? ` (${escapeHtml(c.type)})` : ""}</option>`)).join("");
-  const linhas = pendentes.map((r) => `<li>${escapeHtml(r.description || "")} — <strong>${asMoney(r.valor_item || 0)}</strong></li>`).join("");
+  const linhas = pendentes.map((r) => `<li>${escapeHtml(r.description || "")} — <strong>${moneySpan(r.valor_item || 0)}</strong></li>`).join("");
   const { close, q } = viabilidadeDialog(`
     <div class="viab-modal">
       <header class="viab-modal-head"><h3>Gerar conta a pagar — ${escapeHtml(g.nome)}</h3><button type="button" class="viab-x" data-close>✕</button></header>
       <div class="viab-modal-body">
         <p class="muted">Uma conta única para a empresa, somando os materiais vencidos ainda sem conta:</p>
         <ul class="cot-res-lista">${linhas}</ul>
-        <p>Valor da conta: <strong>${asMoney(total)}</strong> · Obra: ${escapeHtml(nameOf("projects", cotacaoResObra) || "—")}</p>
+        <p>Valor da conta: <strong>${moneySpan(total)}</strong> · Obra: ${escapeHtml(nameOf("projects", cotacaoResObra) || "—")}</p>
         <div class="form-grid">
           <label>Categoria financeira *<select id="gcCat">${catOpts}</select></label>
           <label>Vencimento *<input type="date" id="gcVenc"></label>
@@ -14028,13 +14029,13 @@ function openCotacaoAnexarNf(conta) {
   if (!canEditModule("fiscalDocuments")) return;
   const soltas = (db.fiscalDocuments || []).filter((nf) => !nf.payableId && !nf.receivableId && nf.status !== "Cancelada");
   const soltaOpts = ['<option value="">— Registrar uma NF nova —</option>']
-    .concat(soltas.map((nf) => `<option value="${escapeHtml(nf.id)}">NF ${escapeHtml(nf.documentNumber || "")} · ${asMoney(nf.amount || 0)}${nf.projectId ? ` · ${escapeHtml(nameOf("projects", nf.projectId) || "")}` : ""}</option>`)).join("");
+    .concat(soltas.map((nf) => `<option value="${escapeHtml(nf.id)}">NF ${escapeHtml(nf.documentNumber || "")} · ${maskMoneyText(asMoney(nf.amount || 0))}${nf.projectId ? ` · ${escapeHtml(nameOf("projects", nf.projectId) || "")}` : ""}</option>`)).join("");
   const tipos = ["Nota Fiscal de Produto", "Nota Fiscal de Serviço", "Recibo", "Comprovante", "Outro"];
   const { close, q } = viabilidadeDialog(`
     <div class="viab-modal">
       <header class="viab-modal-head"><h3>Anexar/Vincular NF — ${escapeHtml(conta.document || "conta a pagar")}</h3><button type="button" class="viab-x" data-close>✕</button></header>
       <div class="viab-modal-body">
-        <p class="muted">Fornecedor: ${escapeHtml(conta.fornecedorNome || "—")} · Conta: ${asMoney(conta.valor || 0)}. A NF entra em Notas Fiscais vinculada à obra e a esta conta a pagar.</p>
+        <p class="muted">Fornecedor: ${escapeHtml(conta.fornecedorNome || "—")} · Conta: ${moneySpan(conta.valor || 0)}. A NF entra em Notas Fiscais vinculada à obra e a esta conta a pagar.</p>
         <div class="form-grid">
           <label>NF já cadastrada (sem vínculo)<select id="anfExistente">${soltaOpts}</select></label>
         </div>
@@ -14195,7 +14196,7 @@ function renderCotacaoDetalhe() {
       <td>${svgText(i.descricao)}</td>
       <td>${svgText(i.unidade || "")}</td>
       <td>${i.quantidade != null ? Number(i.quantidade).toLocaleString("pt-BR") : ""}</td>
-      <td>${i.valor_unitario != null ? asMoney(i.valor_unitario) : "—"}</td>
+      <td>${i.valor_unitario != null ? moneySpan(i.valor_unitario) : "—"}</td>
       <td>${i.diferenca_percentual != null ? Number(i.diferenca_percentual).toFixed(1) + "%" : "—"}</td>
       <td>${cotacaoBadge(COTACAO_COMPARA, i.status_comparacao)}</td>
     </tr>`).join("");
@@ -14204,7 +14205,7 @@ function renderCotacaoDetalhe() {
       <div>
         <button class="secondary" type="button" id="cotVoltar">← Voltar</button>
         <h2>Cotação — ${svgText(c.fornecedor_nome)}</h2>
-        <p>${c.obra_id ? "Obra: " + svgText(nameOf("projects", c.obra_id) || "—") + " · " : ""}${cotacaoBadge(COTACAO_STATUS, c.status)} · ${itens.length} itens · Total ${asMoney(totalCotado)}${c.score != null ? " · Score " + Number(c.score).toFixed(0) + "%" : ""}</p>
+        <p>${c.obra_id ? "Obra: " + svgText(nameOf("projects", c.obra_id) || "—") + " · " : ""}${cotacaoBadge(COTACAO_STATUS, c.status)} · ${itens.length} itens · Total ${moneySpan(totalCotado)}${c.score != null ? " · Score " + Number(c.score).toFixed(0) + "%" : ""}</p>
       </div>
       <div class="viab-detail-actions">
         ${editable ? '<button class="secondary" type="button" id="cotEditar">Editar itens</button>' : ""}
@@ -14477,14 +14478,14 @@ function paintCompraMatriz() {
       const v = Number(c.valor_unitario || 0);
       const dif = custo > 0 && v > 0 ? ((v - custo) / custo) * 100 : null;
       const difBadge = dif != null
-        ? `<span class="ia-cmp-badge ${dif < -0.05 ? "ia-cmp-planilha" : (dif > 0.05 ? "ia-cmp-sinapi" : "ia-cmp-igual")}">${dif > 0 ? "+" : ""}${dif.toFixed(1)}% · ${dif > 0 ? "+" : "−"}${asMoney(Math.abs(v - custo))}</span>`
+        ? `<span class="ia-cmp-badge ${dif < -0.05 ? "ia-cmp-planilha" : (dif > 0.05 ? "ia-cmp-sinapi" : "ia-cmp-igual")}">${dif > 0 ? "+" : ""}${dif.toFixed(1)}% · ${dif > 0 ? "+" : "−"}${moneySpan(Math.abs(v - custo))}</span>`
         : "";
       const venceu = Number(c.vencedor) === 1;
       const acao = editable
         ? `<button type="button" class="${venceu ? "ia-dp-aceito" : "secondary"} ia-dp-mini" data-compra-venc="${c.id}" data-venc-atual="${venceu ? 1 : 0}">${venceu ? "✓ Vencedor" : "Escolher"}</button>`
         : (venceu ? "✓ Vencedor" : "");
       return `<td class="compra-cell ${v > 0 && v === menor ? "compra-menor" : ""} ${venceu ? "compra-venc" : ""}">
-        <strong>${asMoney(v)}</strong>
+        <strong>${moneySpan(v)}</strong>
         <div>${difBadge}</div>
         ${c.marca ? `<div class="muted ia-dp-un">${escapeHtml(c.marca)}</div>` : ""}
         ${c.prazo_entrega ? `<div class="muted ia-dp-un">prazo: ${escapeHtml(c.prazo_entrega)}</div>` : ""}
@@ -14493,7 +14494,7 @@ function paintCompraMatriz() {
     }).join("");
     return `<tr>
       <td class="ia-dp-desc">${svgText((it.code ? it.code + " - " : "") + (it.description || ""))}<div class="muted ia-dp-un">${svgText(it.unit || "")} · qtd ${Number(it.quantity || 0).toLocaleString("pt-BR")}</div></td>
-      <td class="ia-dp-valor">${asMoney(custo)}</td>
+      <td class="ia-dp-valor">${moneySpan(custo)}</td>
       ${celulas}
       <td>${editable ? `<button type="button" class="secondary ia-dp-mini" data-compra-add="${it.id}">+ Cotação</button>` : ""}</td>
     </tr>`;
@@ -14549,7 +14550,7 @@ function openCompraCotacaoForm(orcItemId) {
     <div class="viab-modal">
       <header class="viab-modal-head"><h3>Cotação de compra</h3><button type="button" class="viab-x" data-close>✕</button></header>
       <div class="viab-modal-body">
-        <p><strong>${svgText((item.code ? item.code + " - " : "") + (item.description || ""))}</strong><br><span class="muted">Custo orçado: ${asMoney(item.unitCost || 0)}${item.unit ? " · " + svgText(item.unit) : ""}</span></p>
+        <p><strong>${svgText((item.code ? item.code + " - " : "") + (item.description || ""))}</strong><br><span class="muted">Custo orçado: ${moneySpan(item.unitCost || 0)}${item.unit ? " · " + svgText(item.unit) : ""}</span></p>
         <div class="form-grid">
           <label>Fornecedor<select id="ccForn">${supOpts}</select></label>
           <label>Valor unitário cotado (R$)<input id="ccValor" inputmode="decimal" placeholder="0,00"></label>
@@ -14607,7 +14608,7 @@ function renderCompras() {
     const nfs = (db.fiscalDocuments || []).filter((nf) => sameId(nf.purchaseOrderId, po.id));
     const conta = (db.payable || []).find((p) => (p.referencia_tipo === "PEDIDO_COMPRA" || p.referenceType === "PEDIDO_COMPRA") && sameId(p.referencia_id ?? p.referenceId, po.id));
     const nfCell = nfs.length
-      ? nfs.map((nf) => `<div>NF ${svgText(nf.documentNumber || "")} · ${asMoney(nf.amount || 0)}</div>`).join("")
+      ? nfs.map((nf) => `<div>NF ${svgText(nf.documentNumber || "")} · ${moneySpan(nf.amount || 0)}</div>`).join("")
       : '<span class="muted">—</span>';
     const contaCell = conta
       ? `<div>${svgText(conta.document || "Conta lançada")}<div class="muted ia-dp-un">${svgText(conta.status || "")} · vence ${asDate(conta.dueDate)}</div></div>`
@@ -14617,7 +14618,7 @@ function renderCompras() {
       <td><strong>${svgText(po.number || po.id)}</strong><div class="muted ia-dp-un">${asDate(po.date)}</div></td>
       <td>${svgText(nameOf("projects", po.projectId) || "—")}</td>
       <td>${svgText(nameOf("suppliers", po.supplierId) || "—")}</td>
-      <td class="ia-dp-valor">${asMoney(po.amount || 0)}</td>
+      <td class="ia-dp-valor">${moneySpan(po.amount || 0)}</td>
       <td>${cotacaoBadge(COMPRAS_STATUS, po.status)}</td>
       <td>${nfCell}</td>
       <td>${contaCell}</td>
@@ -14650,7 +14651,7 @@ function openComprasRegistrar(poId) {
     <div class="viab-modal">
       <header class="viab-modal-head"><h3>Registrar compra — pedido ${escapeHtml(po.number || po.id)}</h3><button type="button" class="viab-x" data-close>✕</button></header>
       <div class="viab-modal-body">
-        <p class="muted">Fornecedor: ${escapeHtml(nameOf("suppliers", po.supplierId) || "—")} · Obra: ${escapeHtml(nameOf("projects", po.projectId) || "—")} · Pedido: ${asMoney(po.amount || 0)}</p>
+        <p class="muted">Fornecedor: ${escapeHtml(nameOf("suppliers", po.supplierId) || "—")} · Obra: ${escapeHtml(nameOf("projects", po.projectId) || "—")} · Pedido: ${moneySpan(po.amount || 0)}</p>
         <div class="form-grid">
           <label>Número da nota fiscal<input id="cnfNumero" placeholder="000.000.000"></label>
           <label>Data de emissão<input type="date" id="cnfData" value="${hojeLocal()}"></label>
@@ -15604,7 +15605,7 @@ function openSavedProposalPreview(proposalId) {
       <div class="proposal-budget-summary">
         <strong>${svgText(proposal.number || "Proposta")}</strong>
         <span>${svgText(nameOf("clients", proposal.clientId) || "")}</span>
-        <span>${asMoney(proposal.amount || 0)} - ${svgText(proposal.status || "")}</span>
+        <span>${moneySpan(proposal.amount || 0)} - ${svgText(proposal.status || "")}</span>
       </div>
       ${canSeeInternal ? `<div class="proposal-view-toggle no-print">
         <button type="button" class="secondary active" id="proposalViewClient">Visão cliente</button>
@@ -15853,7 +15854,7 @@ function renderProposalGroupsPanel() {
             const bdi = custoU > 0 ? ((Number(it.unitPrice || 0) - custoU) / custoU) * 100 : 0;
             return `<tr>
               <td>${svgText((it.code ? it.code + " - " : "") + (it.description || ""))}</td>
-              <td>${asMoney(custoU)}</td>
+              <td>${moneySpan(custoU)}</td>
               <td>${formatQuantity(it.quantity)}</td>
               <td><input class="pg-item-price money-private" data-item="${escapeHtml(it.id)}" inputmode="decimal" value="${formatMoneyInput(Number(it.unitPrice || 0))}" style="width:7rem"></td>
               <td>${asPercent(bdi)}</td>
@@ -15875,9 +15876,9 @@ function renderProposalGroupsPanel() {
             <tr>
               <td><input class="pg-nome" data-idx="${idx}" value="${escapeHtml(g.nome_grupo)}"></td>
               <td><input class="pg-disc" data-idx="${idx}" list="proposalDisciplinas" value="${escapeHtml(g.disciplina || "")}" placeholder="—" style="width:8rem"></td>
-              <td>${asMoney(g.custo)}</td>
+              <td>${moneySpan(g.custo)}</td>
               ${bdiCell(g, idx)}
-              <td>${asMoney(g.venda)}</td>
+              <td>${moneySpan(g.venda)}</td>
               <td>${calc.grupos.length > 1 ? `<button type="button" class="link-button danger pg-remove" data-idx="${idx}" title="Remover">✕</button>` : ""}</td>
             </tr>
             <tr class="pg-desc-row">
@@ -15885,8 +15886,8 @@ function renderProposalGroupsPanel() {
             </tr>`).join("")}
         </tbody>
         ${multi ? `<tfoot>
-          <tr class="pg-total"><td>Total</td><td></td><td>${asMoney(calc.custoTotal)}</td><td>${asPercent(calc.bdiPonderado)} <span class="muted">pond.</span></td><td>${asMoney(calc.vendaTotal)}</td><td></td></tr>
-          <tr class="pg-margem"><td colspan="6" class="muted">Margem bruta: ${asMoney(margem)} (${asPercent(margemPct)})</td></tr>
+          <tr class="pg-total"><td>Total</td><td></td><td>${moneySpan(calc.custoTotal)}</td><td>${asPercent(calc.bdiPonderado)} <span class="muted">pond.</span></td><td>${moneySpan(calc.vendaTotal)}</td><td></td></tr>
+          <tr class="pg-margem"><td colspan="6" class="muted">Margem bruta: ${moneySpan(margem)} (${asPercent(margemPct)})</td></tr>
         </tfoot>` : ""}
       </table>
       ${available ? `<div class="proposal-groups-add no-print">
@@ -15899,7 +15900,7 @@ function renderProposalGroupsPanel() {
         <label class="proposal-licitacao-toggle"><input type="checkbox" id="proposalModoLicitacao" ${proposalGeneratorState.modoLicitacao ? "checked" : ""}> Proposta para licitação (referência SINAPI)</label>
         ${proposalGeneratorState.modoLicitacao ? `<label>BDI de referência (%)<input id="proposalBdiReferencia" inputmode="decimal" value="${escapeHtml(proposalGeneratorState.bdiReferencia ?? 0)}" style="width:6rem"></label>` : ""}
       </div>
-      ${!multi ? `<div class="proposal-groups-summary muted">Custo ${asMoney(calc.custoTotal)} · BDI ${asPercent(calc.bdiPonderado)} · Venda ${asMoney(calc.vendaTotal)} · Margem ${asMoney(margem)} (${asPercent(margemPct)})</div>` : ""}
+      ${!multi ? `<div class="proposal-groups-summary muted">Custo ${moneySpan(calc.custoTotal)} · BDI ${asPercent(calc.bdiPonderado)} · Venda ${moneySpan(calc.vendaTotal)} · Margem ${moneySpan(margem)} (${asPercent(margemPct)})</div>` : ""}
       ${itemTable}
       <div class="proposal-groups-actions no-print">
         <button type="button" class="secondary" id="proposalExportSinapi">Exportar SINAPI (Excel)</button>
@@ -17164,9 +17165,9 @@ function setupPurchaseOrderForm() {
       <tbody id="poItemsBody"></tbody>
     </table></div>
     <div class="po-items-totals">
-      <span>Subtotal: <strong id="poSubtotal">${asMoney(0)}</strong></span>
-      <span>Desconto: <strong id="poDescontoView">${asMoney(0)}</strong></span>
-      <span class="po-total-geral">Total geral: <strong id="poTotalGeral">${asMoney(0)}</strong></span>
+      <span>Subtotal: <strong id="poSubtotal">${maskMoneyText(asMoney(0))}</strong></span>
+      <span>Desconto: <strong id="poDescontoView">${maskMoneyText(asMoney(0))}</strong></span>
+      <span class="po-total-geral">Total geral: <strong id="poTotalGeral">${maskMoneyText(asMoney(0))}</strong></span>
     </div>`;
   formFields.appendChild(box);
 
@@ -17187,13 +17188,13 @@ function setupPurchaseOrderForm() {
       const total = Number(it.quantidade || 0) * Number(it.valor_unitario || 0);
       subtotal += total;
       const cell = body.querySelector(`tr[data-idx="${i}"] .po-i-total`);
-      if (cell) cell.textContent = asMoney(total);
+      if (cell) cell.textContent = maskMoneyText(asMoney(total));
     });
     const desconto = descontoInput ? parseMoneyInput(descontoInput.value) : 0;
     const totalGeral = Math.max(0, subtotal - desconto);
-    box.querySelector("#poSubtotal").textContent = asMoney(subtotal);
-    box.querySelector("#poDescontoView").textContent = asMoney(desconto);
-    box.querySelector("#poTotalGeral").textContent = asMoney(totalGeral);
+    box.querySelector("#poSubtotal").textContent = maskMoneyText(asMoney(subtotal));
+    box.querySelector("#poDescontoView").textContent = maskMoneyText(asMoney(desconto));
+    box.querySelector("#poTotalGeral").textContent = maskMoneyText(asMoney(totalGeral));
     if (amountInput) {
       if (purchaseOrderItemsState.length) { amountInput.value = formatMoneyInput(totalGeral); amountInput.readOnly = true; }
       else { amountInput.readOnly = false; }
@@ -17207,7 +17208,7 @@ function setupPurchaseOrderForm() {
         <td><input class="po-i-unid" value="${escapeHtml(it.unidade || "un")}"></td>
         <td><input class="po-i-qtd" inputmode="decimal" value="${escapeHtml(String(it.quantidade ?? 1).replace(".", ","))}"></td>
         <td><input class="po-i-vu money-private" inputmode="decimal" value="${formatMoneyInput(it.valor_unitario || 0)}"></td>
-        <td class="po-i-total">${asMoney(Number(it.quantidade || 0) * Number(it.valor_unitario || 0))}</td>
+        <td class="po-i-total">${maskMoneyText(asMoney(Number(it.quantidade || 0) * Number(it.valor_unitario || 0)))}</td>
         <td><select class="po-i-budget">${budgetOptionsHtml(it.work_budget_item_id)}</select></td>
         <td><button type="button" class="danger po-i-remove" title="Remover item">✕</button></td>
       </tr>`).join("");
@@ -17790,10 +17791,10 @@ function renderReconciliation() {
         <div class="ofx-kpi-card">
           <div class="ofx-kpi-bank">${svgText(row.bank || row.name)}</div>
           <div class="ofx-kpi-name">${svgText(row.name)}</div>
-          <div class="ofx-kpi-saldo ${row.saldoFinal >= 0 ? "ofx-entrada" : "ofx-saida"}">${asMoney(row.saldoFinal)}</div>
+          <div class="ofx-kpi-saldo ${row.saldoFinal >= 0 ? "ofx-entrada" : "ofx-saida"}">${moneySpan(row.saldoFinal)}</div>
           <div class="ofx-kpi-detail">
-            <span class="ofx-entrada">▲ ${asMoney(row.entradasRealizadas)}</span>
-            <span class="ofx-saida">▼ ${asMoney(row.saidasRealizadas)}</span>
+            <span class="ofx-entrada">▲ ${moneySpan(row.entradasRealizadas)}</span>
+            <span class="ofx-saida">▼ ${moneySpan(row.saidasRealizadas)}</span>
           </div>
           <div class="ofx-kpi-status">${svgText(row.status || "")}</div>
         </div>
@@ -17894,7 +17895,7 @@ function renderizarPreviewOFX(data) {
       <tbody>
         ${ofxTransacoes.map((txn, index) => {
           const tipoHtml = `<span class="ofx-type ${txn.type === "Entrada" ? "ofx-entrada" : "ofx-saida"}">${txn.type === "Entrada" ? "▲" : "▼"} ${txn.type}</span>`;
-          const valorHtml = `<span class="ofx-amount ${txn.type === "Entrada" ? "ofx-entrada" : "ofx-saida"}">${txn.type === "Entrada" ? "+" : "-"} ${asMoney(txn.amount)}</span>`;
+          const valorHtml = `<span class="ofx-amount ${txn.type === "Entrada" ? "ofx-entrada" : "ofx-saida"}">${txn.type === "Entrada" ? "+" : "-"} ${moneySpan(txn.amount)}</span>`;
           if (txn.duplicate) {
             return `
               <tr class="ofx-dup" data-idx="${index}">
@@ -18244,7 +18245,7 @@ function renderizarPreviewNfse(data) {
       <span class="ofx-badge">📄 ${data.total} NFS-e no arquivo</span>
       <span class="ofx-badge ofx-badge-green">▲ ${data.emitidas} emitidas → A Receber</span>
       <span class="ofx-badge ofx-badge-yellow">▼ ${data.recebidas} recebidas → A Pagar</span>
-      <span class="ofx-badge">💰 Total: ${asMoney(data.valorTotal)}</span>
+      <span class="ofx-badge">💰 Total: ${moneySpan(data.valorTotal)}</span>
     </div>
     <div class="nfse-obra-bar">
       <span>🏗️ A obra é opcional: defina por nota na coluna "Obra", ou aplique uma de uma vez às que ficarem sem obra.</span>
@@ -18289,7 +18290,7 @@ function renderizarPreviewNfse(data) {
               <td>${asDate(nf.dataEmissao)}</td>
               <td class="nfse-cell-entidade">${entidadeHtml}</td>
               <td class="ofx-memo" title="${svgText(nf.discriminacao)}">${svgText(resumoDisc)}</td>
-              <td class="ofx-amount ${nf.tipo === "emitida" ? "ofx-entrada" : "ofx-saida"}">${nf.tipo === "emitida" ? "+" : "-"} ${asMoney(nf.valorLiquido)}</td>
+              <td class="ofx-amount ${nf.tipo === "emitida" ? "ofx-entrada" : "ofx-saida"}">${nf.tipo === "emitida" ? "+" : "-"} ${moneySpan(nf.valorLiquido)}</td>
               <td><span class="ofx-badge ${nf.tipo === "emitida" ? "ofx-badge-green" : "ofx-badge-yellow"}">${nf.tipo === "emitida" ? "▲ A Receber" : "▼ A Pagar"}</span></td>
               <td class="nfse-cell-obra">${obraCell}</td>
               <td>${nf.jaImportada ? '<span class="ofx-badge ofx-badge-gray">⏭️ Já importada</span>' : '<span class="ofx-badge ofx-badge-green">✅ Nova</span>'}</td>

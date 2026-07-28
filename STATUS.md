@@ -1,6 +1,6 @@
 # STATUS — ObraSync
 
-> **Versão:** `v1.38.2` · 2026-07-28 · **Varredura:** 2026-07-28 · **Ambiente:** produção em `https://schimanskiengenharia.com.br/financeiro`
+> **Versão:** `v1.38.3` · 2026-07-28 · **Varredura:** 2026-07-28 · **Ambiente:** produção em `https://schimanskiengenharia.com.br/financeiro`
 
 > ⚠️ **Leia com atenção à data.** O corpo deste documento (seções 1 a 7) foi escrito na época da
 > **v1.12–v1.19** e não foi reescrito a cada release. Ele descreve corretamente a base do sistema,
@@ -15,10 +15,10 @@
 
 ---
 
-## 0. Varredura de 2026-07-28 (v1.38.1 / v1.38.2)
+## 0. Varredura de 2026-07-28 (v1.38.1 → v1.38.3)
 
 Leitura completa do código e verificação de estabilidade. Resultado: **estável**, com um bug
-corrigido e três frentes fechadas.
+corrigido e quatro frentes fechadas.
 
 - **Bug corrigido:** `cotacaoImprimir()` e `printViabilidadeReport()` chamavam `openPrintDialog()`,
   função inexistente — os botões de PDF do comparativo de cotações e de imprimir a Análise de
@@ -29,12 +29,20 @@ corrigido e três frentes fechadas.
 - **Modo privacidade Etapa 2:** `showToast()` passou a mascarar montantes (o borrão do CSS não
   alcança `textContent`) e 5 inputs ad-hoc ganharam `money-private`. Correção junto: a regex da
   máscara engolia a pontuação da frase.
+- **Modo privacidade Etapa 3 — CONCLUÍDO:** os 163 usos de `asMoney` foram classificados um a um;
+  104 viraram `moneySpan` (tela HTML) e 18 viraram `maskMoneyText` (texto puro: `textContent`,
+  atributo, `<option>`, título de evento). Os 38 de documento (PDF/impressão/Excel/texto gravado)
+  ficaram intactos por regra. **Com isso o modo privacidade cobre o sistema inteiro** — não só o
+  dashboard.
 - **Documentação reconciliada:** os 4 itens GRAVE da revisão geral de 2026-07-01 foram conferidos
   no código — **todos os 4 já estavam resolvidos** (G1, G2, G3) ou foram fechados agora (G4,
   `schema.sql` recompletado com 5 tabelas). Ver o bloco de status em
   `docs/revisao/2026-revisao-geral.md`.
-- **Suíte de testes:** 7/7 blocos ok, com dois testes JS novos (`test_error_handler.js`,
-  `test_privacy_mask.js`) rodando junto com os PHP via `scripts/tests/run-all.sh`.
+- **Suíte de testes:** 8/8 blocos ok, com três testes JS novos rodando junto com os PHP via
+  `scripts/tests/run-all.sh`: `test_error_handler.js` (E1), `test_privacy_mask.js` (máscara de
+  texto) e `test_privacy_coverage.js` — este último é um **guarda de regra**, que falha se alguém
+  usar `moneySpan` em `textContent`/atributo/`<option>`/dentro de `escapeHtml`, se um gerador de
+  documento passar a usar `moneySpan`, ou se um `.catch` vazio voltar ao código.
 
 **Pendente de servidor** (não dá para fazer daqui): rodar a migration
 `2026-07-22-rh-pessoal-f1.sql`, executar o roteiro de validação do RH F1, e a validação visual das

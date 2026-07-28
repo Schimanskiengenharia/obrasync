@@ -1,6 +1,6 @@
 # ObraSync
 
-> Versão `v1.38.2` · 2026-07-28
+> Versão `v1.38.3` · 2026-07-28
 
 ObraSync é uma aplicação web em HTML, CSS, JavaScript puro, PHP e MariaDB/MySQL para gestão integrada de obras, financeiro, comercial e contabilidade gerencial. O frontend fica em `/var/www/financeiro`, a URL pública é `https://schimanskiengenharia.com.br/financeiro`, os dados persistentes ficam no banco e os arquivos de dados ficam fora da pasta pública.
 
@@ -12,8 +12,8 @@ Antes de atualizar em produção, faça backup do banco e de `/var/lib/financeir
 
 Esta seção orienta qualquer pessoa — ou outra IA — que precise continuar o trabalho sem se perder.
 
-- **Versão atual:** `v1.38.2` (2026-07-28). A versão fica em **dois lugares que devem andar juntos**: a constante `APP_VERSION`/`APP_VERSION_DATE` no topo de `app.js` (com `APP_CHANGELOG`) e o cabeçalho deste README. O painel "Versão" em Configurações lê de `APP_VERSION`.
-- **Cache busting:** sempre que `app.js` ou `styles.css` mudarem, **incremente o `?v=NNNN`** das tags correspondentes em `index.html` (hoje `app.js?v=1804`, `styles.css?v=1804`). Sem isso o navegador serve a versão velha.
+- **Versão atual:** `v1.38.3` (2026-07-28). A versão fica em **dois lugares que devem andar juntos**: a constante `APP_VERSION`/`APP_VERSION_DATE` no topo de `app.js` (com `APP_CHANGELOG`) e o cabeçalho deste README. O painel "Versão" em Configurações lê de `APP_VERSION`.
+- **Cache busting:** sempre que `app.js` ou `styles.css` mudarem, **incremente o `?v=NNNN`** das tags correspondentes em `index.html` (hoje `app.js?v=1805`, `styles.css?v=1805`). Sem isso o navegador serve a versão velha.
 - **Estado de saúde (2026-06-28):** em produção e estável. A leva **v1.15→v1.18** entregou o fluxo **Orçamento → Proposta com base SINAPI** (múltiplos orçamentos, BDI flexível, licitação, hierarquia por disciplina, modelos), **SINAPI no PDF + export Excel**, **contrato a partir da proposta** (template 13 cláusulas + anexos assinados), **CEP autofill universal** (corrigindo a regressão do CSP), **endereço próprio da obra** e a **exclusão de análise de viabilidade**; além do **fix do asDate** (Viabilidade travando). Ver o changelog abaixo e `STATUS.md` para o que está FEITO vs PENDENTE.
 - **Arquitetura:** SPA sem build. Todo o frontend está em `app.js` (arquivo único, ~15 mil linhas) + `index.html` (shell) + `styles.css`. Todo o backend está em `api/index.php` (arquivo único, ~8,7 mil linhas). O banco é MariaDB/MySQL (`financeiro`).
 - **Convenções do backend (siga-as):** respostas via `respond(['ok' => true, 'data' => ...])` e erros via `fail($msg, $status)`; INSERT/UPDATE genéricos via `insert_dynamic()`/`update_dynamic()` (descartam colunas inexistentes — toleram diferenças de schema); auditoria via `server_audit()`. Muitas tabelas novas são criadas sob demanda por funções `ensure_*` no próprio `index.php` (além das migrations).
@@ -26,6 +26,17 @@ Esta seção orienta qualquer pessoa — ou outra IA — que precise continuar o
 ## Histórico de Versões
 
 Mapa de cada marco do produto, do mais novo ao mais antigo, com as features e as tabelas/arquivos envolvidos. Use-o para entender *o que existe e por quê* antes de mexer.
+
+### v1.38.3 — 2026-07-28 · Modo privacidade — Etapa 3 (cobertura de todo o sistema)
+
+Fecha o modo privacidade: de recurso do dashboard, passa a cobrir o sistema inteiro. Os **163 usos de `asMoney`** foram classificados um a um (não por varredura cega) e tratados assim:
+
+- **104 ocorrências → `moneySpan()`** (conteúdo HTML de tela): Custo da Obra (itens, `budgetTotalizadores`, `renderWorkBudgetExecutionSection`, visões etapa/centro/tipo), telas de IA (`renderIaBuscaResultados`, `iaDeparaRowHtml`, `iaCompara*`), Cotações por material e Resultado das cotações, Compras da Obra e matriz de compra, Centros de custo, Curva ABC, Conciliação/prévia OFX, prévia de NFS-e, Viabilidade financeira, cards do cronograma, painel de grupos da proposta e os modais de parcelas/quitação/gerar conta/anexar NF.
+- **18 ocorrências → `maskMoneyText()`** (texto puro — o borrão do CSS não alcança): `title` de evento da Agenda e suas linhas de detalhe (consumidas por `svgText`), conteúdo de `<option>` (o parser HTML **descarta** elementos filhos ali, então um `<span>` sumiria), e todos os totais atualizados via `.textContent` (`#biTotal` do modal de item, `#poSubtotal`/`#poDescontoView`/`#poTotalGeral` do pedido de compra). Nesses casos o template inicial **também** usa `maskMoneyText`, para casar com o método de atualização — senão o `<span>` desapareceria no primeiro `recompute()`.
+- **38 ocorrências intocadas** (documento/export, por regra do módulo): `proposalDocumentHtml` e auxiliares, `proposalVariablesFor`/`proposalItemsText`/`moneyToWords` (texto gravado no banco), `contractPdfHtml`/`buildContractObjeto`, `openPurchaseOrderPrint`, `cotacaoImprimir` e `savedProposalInternalHtml` — esta última classificada como documento **por precaução**: é injetada em `#proposalPreview`, o mesmo nó que o botão de imprimir usa, e não tem `.no-print` protegendo.
+- **Teste-guarda novo:** `scripts/tests/js/test_privacy_coverage.js` (23 asserções) falha se `moneySpan` for usado em `textContent`, atributo, `<option>` ou dentro de `escapeHtml`/`svgText`; se qualquer um dos 14 geradores de documento passar a usar `moneySpan`; ou se um `.catch` vazio voltar ao código. As cinco regras foram verificadas contra código deliberadamente errado, para garantir que o teste realmente falha quando deve.
+
+Suíte: 8/8 blocos ok. Sem migration, schema ou API.
 
 ### v1.38.2 — 2026-07-28 · Modo privacidade — Etapa 2 (texto puro e inputs ad-hoc)
 
