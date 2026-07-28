@@ -89,6 +89,14 @@ Seleção do motor por configuração (`config['ia_extrator']`, default `'ollama
 - `extrator_externo()` — **não implementado agora**; o ponto de extensão fica pronto para o dia em
   que a precisão local não bastar, sem reescrever o resto.
 
+**Verificado no código (2026-07-28):** `ollama_generate()` já faz `array_merge` das opções recebidas
+sobre o corpo da requisição, então tanto o modo JSON (`'format' => 'json'`) quanto a troca de modelo
+(`'model' => 'qwen2.5:7b-instruct'`) entram por parâmetro — **sem alterar a função existente**. A
+constante `OLLAMA_GEN_MODEL` (hoje `llama3.2:3b`) continua sendo o default do resto do sistema; o
+modelo de extração vira constante própria (`OLLAMA_EXTRACT_MODEL`), para não afetar quem já usa a
+geração atual. `OLLAMA_TIMEOUT` (120 s) precisa ser revisto para o worker, onde uma chamada a um 7B
+pode passar disso — o timeout do worker é independente do timeout de request HTTP.
+
 ### 5.2 O worker
 
 `scripts/cotacao_import_worker.php`, espelhando `scripts/ia_depara_worker.php` (guarda de CLI,
