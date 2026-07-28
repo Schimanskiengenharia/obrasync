@@ -98,9 +98,22 @@ proposta — por isso `cotacao_atributo_valores.cotacaoId` aponta para `cotacoes
 português nas novas de 2026-06 em diante). Aqui os nomes de coluna seguem **o molde
 `obra_campos_personalizados`** (`fieldName`/`fieldType`/`options`/`required`/`sortOrder`), como o
 item A2 do backlog determina explicitamente, e **não** o padrão local da família `cotacao_*`
-(`nome`/`ordem`). O motivo é prático, não estético: o frontend já sabe renderizar um campo a partir
-desses nomes, e reusá-los permite aproveitar essa lógica em vez de duplicá-la. Já o nome do pai
-(`tipoItemId`) segue a família `cotacao_*`.
+(`nome`/`ordem`). O nome do pai (`tipoItemId`) segue a família `cotacao_*`.
+
+O motivo é **consistência com o molde que o backlog mandou seguir** — e só isso.
+
+> ⚠️ **Não há lógica de renderização para reaproveitar.** Uma versão anterior desta spec afirmava
+> que o frontend "já sabe renderizar um campo a partir desses nomes". Isso foi verificado no código
+> e **é falso**: `customFields`/`customFieldValues` (`app.js:1581-1603`) são duas telas de CRUD
+> genérico administrativo, e o campo `value` é renderizado **sempre como `<textarea>` fixo**,
+> ignorando o `fieldType`. Não existe nenhuma ocorrência de parsing de `options` por `;` (nem
+> `split(";")` no JS nem `explode(';', ...)` no PHP) em todo o projeto, e `db.customFields` não é
+> consumido fora dessas configs.
+>
+> **Consequência para o dimensionamento:** o dispatch por `fieldType` (select para Seleção,
+> checkboxes para Múltipla escolha, input de data, toggle Sim/Não), o parser de `options` e a
+> validação client-side são **desenvolvimento novo do zero**, não adaptação de tela existente. É a
+> parte mais cara desta fase e o plano de implementação deve reservar tempo para ela.
 
 **Entrega:** migration `2026-07-28-cotacao-atributos-tipo.sql` (aditiva, idempotente, com
 `IF NOT EXISTS`) **e** função `ensure_cotacao_atributos_tables()` no `api/index.php`, chamada no
@@ -114,7 +127,7 @@ Quatro ações novas em `?module=cotacoes`, no mesmo molde de `categoriaSalvar`/
 
 | Ação | Método | Payload | Resposta |
 |---|---|---|---|
-| `atributoList` | GET | `tipoItemId` (ou `categoriaId` para trazer de todos os tipos da disciplina) | Lista de atributos ordenada por `sortOrder` |
+| `atributoList` | GET | `tipoItemId` | Lista de atributos daquele tipo, ordenada por `sortOrder` |
 | `atributoSalvar` | POST | `{id?, tipoItemId, fieldName, fieldType, options, required, sortOrder, status}` | Registro salvo; duplicata de `fieldName` no mesmo tipo → **409** |
 | `atributoExcluir` | POST | `{id}` | Exclui se nunca usado; se houver valores gravados, **recusa e orienta a inativar** (`status='Inativo'`) |
 | `atributoOrdenar` | POST | `{ids: [...]}` | `sortOrder` = posição, em transação |
@@ -122,14 +135,32 @@ Quatro ações novas em `?module=cotacoes`, no mesmo molde de `categoriaSalvar`/
 **Preenchimento dos valores.** O `materialSalvar` existente passa a aceitar
 `atributos: {<atributoId>: "<valor>"}` no payload e grava em `cotacao_atributo_valores` **na mesma
 transação** do material — se a gravação dos atributos falhar, o material não é salvo pela metade.
-`materialGet` e `materialList` passam a devolver os valores preenchidos junto do material.
+Verificado: `materialSalvar` é chamado de **um único ponto** no frontend (`app.js:13758`), então não
+há caminho paralelo que quebre ao estender o payload.
+
+**Leitura sem N+1.** `materialGet` e `materialList` passam a devolver os valores preenchidos, mas
+`materialList` (`api/index.php:4273-4291`) é hoje um único `SELECT` com subqueries agregadas e pode
+retornar dezenas ou centenas de materiais. Buscar atributos por linha criaria um N+1 clássico. A
+estratégia é **uma segunda query só**, com os ids já listados:
+
+```sql
+SELECT v.cotacaoId, v.atributoId, v.value, a.fieldName, a.fieldType
+  FROM cotacao_atributo_valores v
+  JOIN cotacao_tipo_atributos a ON a.id = v.atributoId
+ WHERE v.cotacaoId IN (<ids da página>)
+```
+
+O resultado é agrupado por `cotacaoId` em PHP e anexado a cada material. Duas queries no total,
+independente da quantidade de linhas.
 
 **Validação no servidor** (nunca só no cliente — o payload pode vir de fora do formulário):
 - `required='Sim'` com valor vazio → **422** nomeando o campo que falta.
 - `Seleção` com valor fora de `options` → **422**.
 - `Múltipla escolha` com qualquer item fora de `options` → **422**.
 - `Número`/`Moeda`/`Percentual` com valor não numérico → **422**.
-- `Data` fora de `YYYY-MM-DD` → **422**.
+- `Data` inválida → **422**. Validar com `DateTime::createFromFormat('Y-m-d', $v)` **e conferir o
+  round-trip** (ou `checkdate()`): uma regex de formato aceitaria `2026-13-40`, que casa o padrão
+  mas não é uma data real.
 - `atributoId` que não pertence ao `tipoItemId` do material → **422** (evita gravar valor de um tipo
   em material de outro).
 
@@ -182,11 +213,32 @@ vermelho de relance, sem transformar a lista numa planilha.
 **Material sem tipo de item.** `cotacoes.tipoItemId` é opcional hoje e continua sendo. Material sem
 tipo simplesmente não exibe seção de atributos — não é erro.
 
+**Cotação fora de "Em cotação" não aceita edição de atributo.** `materialSalvar`
+(`api/index.php:4343-4345`) já recusa qualquer edição quando `status !== 'Em cotação'` (422,
+"reabra antes"), e o frontend só oferece "Editar dados" quando a cotação está aberta
+(`app.js:13632`). Como os atributos entram pelo mesmo payload, **corrigir uma cor errada numa
+cotação Concluída exige reabri-la**. É coerente com o resto do sistema e foi mantido de propósito —
+mas precisa estar claro para quem usa, porque não é óbvio. A UI deve exibir os atributos em modo
+leitura nesse estado, em vez de simplesmente escondê-los.
+
 **Troca de tipo de item com atributos preenchidos.** Ao trocar o tipo de um material que já tem
 valores gravados, o sistema **pergunta antes de salvar**: descartar os valores que não pertencem ao
 tipo novo, ou mantê-los gravados (ocultos, recuperáveis se o tipo original for restaurado). Nenhuma
 das duas ações acontece em silêncio. O diálogo só aparece quando há valores preenchidos que ficariam
 órfãos — trocar o tipo de um material sem preenchimento não pergunta nada.
+
+**Como a ocultação funciona, explicitamente:** não há coluna de visibilidade em
+`cotacao_atributo_valores`. O valor órfão fica invisível porque a query que alimenta a UI **junta
+pelo tipo atual do material**:
+
+```sql
+... FROM cotacao_atributo_valores v
+    JOIN cotacao_tipo_atributos a ON a.id = v.atributoId
+   WHERE v.cotacaoId = ? AND a.tipoItemId = <tipoItemId atual do material>
+```
+
+Sem essa condição no JOIN, os valores órfãos apareceriam junto dos novos — é o erro fácil de cometer
+aqui, e por isso está escrito.
 
 **Atributo inativado.** Some do formulário de materiais novos, mas valores já gravados continuam
 sendo exibidos na lista e na edição, marcados como inativos — mesmo padrão de `status` do resto do
@@ -196,9 +248,17 @@ sistema (categorias, tipos de item, tipos de documento do RH).
 que já tem valores gravados é **recusado** com orientação para inativar — a regra do projeto é que
 mudanças destrutivas em dado de produção exigem decisão explícita, nunca efeito colateral.
 
-**Duplicidade.** `fieldName` é único por tipo de item (`uk_cotattr_tipo_nome`); a colisão retorna
-409 com mensagem amigável, aproveitando o tratamento de `SQLSTATE 23000` que já existe no CRUD
-genérico desde a v1.35.0.
+**Duplicidade.** `fieldName` é único por tipo de item (`uk_cotattr_tipo_nome`) e a colisão retorna
+409 com mensagem amigável — mas por **pré-checagem manual**, não por captura de exceção.
+
+> ⚠️ Uma versão anterior desta spec dizia que isso aproveitaria o tratamento de `SQLSTATE 23000` do
+> CRUD genérico. **Não se aplica:** `fail_if_integrity_violation()` (`api/index.php:2202-2211`) só é
+> chamado nos catches de `create_record`/`update_record`/`delete_record`, o caminho REST via
+> `resource_map` — que responde no formato `{ok, ...}`. O dispatcher de `?module=cotacoes` é código
+> procedural próprio e **não passa por lá**. O padrão correto é o dos handlers vizinhos
+> `categoriaSalvar`/`tipoSalvar` (`api/index.php:4700-4757`): um `SELECT ... WHERE nome = ? AND
+> id <> ? LIMIT 1` antes do INSERT/UPDATE, respondendo 409 via `cotacao_respond()`. O índice UNIQUE
+> continua valendo como rede de segurança no banco.
 
 ## 8. Testes e validação
 
@@ -222,6 +282,9 @@ o que independe de banco, e o resto vira roteiro de servidor.
    testar as duas respostas.
 6. Tentar excluir um atributo com valores gravados — deve recusar e orientar a inativar.
 7. Tentar criar dois atributos com o mesmo nome no mesmo tipo — deve dar 409 amigável.
+8. Concluir uma cotação e tentar corrigir um atributo dela — deve recusar pedindo para reabrir
+   (comportamento herdado de `materialSalvar`), exibindo os atributos em modo leitura.
+9. Preencher um atributo de Data com `2026-13-40` — deve dar 422, não aceitar.
 
 ## 9. Riscos
 
