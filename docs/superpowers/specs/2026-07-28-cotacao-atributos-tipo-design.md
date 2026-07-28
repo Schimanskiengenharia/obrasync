@@ -240,8 +240,21 @@ texto → um modelo local (maior que o `llama3.2:3b` atual) devolve JSON estrutu
 variação, contendo descrição, quantidade, unidade, valor unitário, valor total **e os atributos
 cadastrados nesta Fase 1** → tela de conferência onde o usuário revisa e corrige antes de gravar.
 
-Pontos que a spec da Fase 2 terá de decidir e que **não** estão decididos aqui: qual modelo local
-(depende do hardware do servidor, ainda não levantado); se cada variação vira uma `cotacoes`
-separada ou um material com múltiplas linhas; como sinalizar baixa confiança da extração; e o que
-acontece com o fluxo de importação por arquivo que já existe na aba "Importação de arquivos" —
-convive, é substituído ou passa a chamar o mesmo motor.
+**Porte do modelo — decidido em 2026-07-28: faixa 7B.** Candidato principal
+`qwen2.5:7b-instruct` (bom em português e em devolver JSON válido), a confirmar contra o hardware
+real. Duas consequências que a spec da Fase 2 terá de absorver:
+
+1. **Memória.** Um 7B quantizado (Q4) ocupa cerca de 4,5 GB só de pesos, mais o cache de contexto —
+   na prática exige uns 6 GB livres. Se o servidor não tiver essa folga, o modelo entra em swap e a
+   extração fica inutilizável. **Pendência de levantamento:** RAM livre e presença de GPU no
+   servidor (`free -h` e `nvidia-smi`).
+2. **A extração tem de ser assíncrona.** Em CPU, um 7B gera na ordem de 5–15 tokens/s; uma cotação
+   com algumas dezenas de itens em JSON pode levar minutos. Uma requisição HTTP síncrona estouraria
+   o timeout. O fluxo deve seguir o padrão de worker que o projeto já usa em
+   `scripts/ia_depara_worker.php` — enfileira o job, dispara o worker em background com `nohup`, e a
+   tela faz polling de status, exatamente como o de-para e o comparador já fazem hoje.
+
+Pontos que a spec da Fase 2 terá de decidir e que **não** estão decididos aqui: se cada variação
+vira uma `cotacoes` separada ou um material com múltiplas linhas; como sinalizar baixa confiança da
+extração para o revisor; e o que acontece com o fluxo de importação por arquivo que já existe na aba
+"Importação de arquivos" — convive, é substituído ou passa a chamar o mesmo motor.
