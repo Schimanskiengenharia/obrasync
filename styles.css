@@ -6512,8 +6512,12 @@ html[data-theme="dark"] .ia-cmp-warn { color: #f0c279; }
 }
 /* Texto de SVG é menor e o viewBox escala — borrão proporcional. */
 .privacy-mode svg text.money-blur { filter: blur(5px); }
-/* Inputs de dinheiro: borrado até focar para editar. */
-.privacy-mode input[data-format="money"]:not(:focus) { filter: blur(7px); }
+/* Inputs de dinheiro: borrado até focar para editar. A classe money-private cobre
+   os inputs ad-hoc que NÃO podem usar data-format="money" — esse atributo liga a
+   formatação automática no blur e mudaria o comportamento de campos que já têm
+   handler próprio (Etapa 2). */
+.privacy-mode input[data-format="money"]:not(:focus),
+.privacy-mode input.money-private:not(:focus) { filter: blur(7px); }
 /* Estado ATIVO inconfundível (spec: não pode parecer defeito). */
 .privacy-btn.active,
 .privacy-toggle.active {

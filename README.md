@@ -1,6 +1,6 @@
 # ObraSync
 
-> Versão `v1.38.1` · 2026-07-28
+> Versão `v1.38.2` · 2026-07-28
 
 ObraSync é uma aplicação web em HTML, CSS, JavaScript puro, PHP e MariaDB/MySQL para gestão integrada de obras, financeiro, comercial e contabilidade gerencial. O frontend fica em `/var/www/financeiro`, a URL pública é `https://schimanskiengenharia.com.br/financeiro`, os dados persistentes ficam no banco e os arquivos de dados ficam fora da pasta pública.
 
@@ -12,8 +12,8 @@ Antes de atualizar em produção, faça backup do banco e de `/var/lib/financeir
 
 Esta seção orienta qualquer pessoa — ou outra IA — que precise continuar o trabalho sem se perder.
 
-- **Versão atual:** `v1.38.1` (2026-07-28). A versão fica em **dois lugares que devem andar juntos**: a constante `APP_VERSION`/`APP_VERSION_DATE` no topo de `app.js` (com `APP_CHANGELOG`) e o cabeçalho deste README. O painel "Versão" em Configurações lê de `APP_VERSION`.
-- **Cache busting:** sempre que `app.js` ou `styles.css` mudarem, **incremente o `?v=NNNN`** das tags correspondentes em `index.html` (hoje `app.js?v=1803`, `styles.css?v=1803`). Sem isso o navegador serve a versão velha.
+- **Versão atual:** `v1.38.2` (2026-07-28). A versão fica em **dois lugares que devem andar juntos**: a constante `APP_VERSION`/`APP_VERSION_DATE` no topo de `app.js` (com `APP_CHANGELOG`) e o cabeçalho deste README. O painel "Versão" em Configurações lê de `APP_VERSION`.
+- **Cache busting:** sempre que `app.js` ou `styles.css` mudarem, **incremente o `?v=NNNN`** das tags correspondentes em `index.html` (hoje `app.js?v=1804`, `styles.css?v=1804`). Sem isso o navegador serve a versão velha.
 - **Estado de saúde (2026-06-28):** em produção e estável. A leva **v1.15→v1.18** entregou o fluxo **Orçamento → Proposta com base SINAPI** (múltiplos orçamentos, BDI flexível, licitação, hierarquia por disciplina, modelos), **SINAPI no PDF + export Excel**, **contrato a partir da proposta** (template 13 cláusulas + anexos assinados), **CEP autofill universal** (corrigindo a regressão do CSP), **endereço próprio da obra** e a **exclusão de análise de viabilidade**; além do **fix do asDate** (Viabilidade travando). Ver o changelog abaixo e `STATUS.md` para o que está FEITO vs PENDENTE.
 - **Arquitetura:** SPA sem build. Todo o frontend está em `app.js` (arquivo único, ~15 mil linhas) + `index.html` (shell) + `styles.css`. Todo o backend está em `api/index.php` (arquivo único, ~8,7 mil linhas). O banco é MariaDB/MySQL (`financeiro`).
 - **Convenções do backend (siga-as):** respostas via `respond(['ok' => true, 'data' => ...])` e erros via `fail($msg, $status)`; INSERT/UPDATE genéricos via `insert_dynamic()`/`update_dynamic()` (descartam colunas inexistentes — toleram diferenças de schema); auditoria via `server_audit()`. Muitas tabelas novas são criadas sob demanda por funções `ensure_*` no próprio `index.php` (além das migrations).
@@ -26,6 +26,15 @@ Esta seção orienta qualquer pessoa — ou outra IA — que precise continuar o
 ## Histórico de Versões
 
 Mapa de cada marco do produto, do mais novo ao mais antigo, com as features e as tabelas/arquivos envolvidos. Use-o para entender *o que existe e por quê* antes de mexer.
+
+### v1.38.2 — 2026-07-28 · Modo privacidade — Etapa 2 (texto puro e inputs ad-hoc)
+
+- **`showToast()`** passou a filtrar a mensagem por `maskMoneyText()`. Toast usa `textContent`, então o borrão do CSS não alcançava parte do texto — o aviso "Conta a pagar gerada: COT-12 · R$ 4.310,00" exibia o valor cheio mesmo com o modo ativo.
+- **Correção na máscara:** `MONEY_TEXT_RE` era `/R\$\s?[\d.][\d.,]*/g` — o `[\d.,]*` guloso engolia a pontuação da frase ("R$ 4.310,00." perdia o ponto final; "R$ 1.000,00," perdia a vírgula). Agora o montante precisa terminar em dígito: `/R\$\s?\d(?:[\d.]*\d)?(?:,\d+)?/g`. Não vazava valor, mas com todo toast passando pela máscara o defeito ficou visível.
+- **Cinco inputs ad-hoc** ganharam a classe `money-private`, coberta por seletor novo em `styles.css` (borra até receber foco): `#biVu` (valor unitário do item de orçamento), `#anfValor` (valor da nota em Anexar NF de conta), `#cnfValor` (idem no pedido de compra), `.pg-item-price` (preço do item no gerador de proposta) e `.po-i-vu` (valor unitário do item do pedido). A classe é separada de `data-format="money"` de propósito: esse atributo liga formatação automática no blur e mudaria o comportamento de campos que já têm handler próprio.
+- **Mensagens nativas:** a varredura por `alert`/`confirm`/`prompt` com montante **não encontrou nenhum alvo** — as mensagens do sistema citam "valor" genericamente, sem exibir cifras. O único `prompt` com valor (reajuste de parcelas em aberto) usa o montante como *default editável* e foi deixado intacto, conforme o plano: mascarar quebraria a edição.
+- **Testes:** `scripts/tests/js/test_privacy_mask.js` (13 asserções) cobre formato pt-BR, espaço não-quebrável do `Intl`, múltiplos montantes na mesma frase, preservação de percentual/data/contagem, entrada não-string e modo desligado. Suíte: 7/7 blocos ok.
+- Sem migration, schema ou API. Exports, PDFs e impressão seguem intocados por regra do módulo.
 
 ### v1.38.1 — 2026-07-28 · Impressão corrigida + rede de segurança de erros (Onda A: E1/E2)
 

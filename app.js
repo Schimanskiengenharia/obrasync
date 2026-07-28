@@ -93,9 +93,10 @@ function avisarFalha(contexto, mensagem) {
     showToast(mensagem, 5000);
   };
 }
-const APP_VERSION = "v1.38.1";
+const APP_VERSION = "v1.38.2";
 const APP_VERSION_DATE = "2026-07-28";
 const APP_CHANGELOG = [
+  "Modo privacidade (Etapa 2 — avisos e campos de valor): com o modo ativo, os avisos que aparecem no rodapé da tela deixam de mostrar montantes — o valor vira \"R$ •••\" (antes o borrão do CSS não alcançava esse texto, então um aviso de conta gerada exibia o valor cheio). Os campos de valor que ficavam de fora — valor unitário do item de orçamento, valor da nota em Anexar NF de conta e de pedido, preço do item no gerador de proposta e valor unitário do item do pedido de compra — passaram a ser borrados até você clicar neles para editar. Correção junto: a máscara comia a pontuação da frase (\"R$ 4.310,00.\" perdia o ponto final e \"R$ 1.000,00,\" perdia a vírgula). Mensagens do sistema que citam \"valor\" sem exibir montante e o campo de reajuste de parcelas (que precisa continuar editável) seguem inalterados (v1.38.2).",
   "Correção e rede de segurança de erros: o botão de PDF do comparativo de cotações e o de imprimir da Análise de Viabilidade voltaram a funcionar — ambos chamavam uma função de impressão que não existia e falhavam sem nenhuma mensagem desde 27/06. Junto com a correção entrou uma rede de proteção: erros de JavaScript que antes sumiam no console agora avisam o usuário com um aviso discreto (no máximo um a cada 10 segundos, sem repetir a mesma falha dentro de um minuto) e ficam registrados para diagnóstico. As 14 falhas que eram engolidas em silêncio pelo código passaram a ser registradas, e duas delas — desvincular itens ao remover uma etapa do orçamento e carregar os itens de uma cotação — agora avisam explicitamente, porque deixavam a tela mostrando dado incompleto sem que ninguém percebesse (v1.38.1).",
   "Tema Dark Neutro: o modo escuro abandona fundos e acentos verde/teal e passa a usar superfícies cinza-preto neutras (#0f1115, #15181e, #1b1f27 e #222731), bordas visíveis e azul LinkedIn para navegação, botões, links, foco, seleção, abas e controles. A paleta foi centralizada em tokens funcionais (--accent, --surface-hover, --focus-ring, --overlay e tokens de gráficos), incluindo login, sidebar/topbar, favoritos, filtros, cards, tabelas, dialogs, drawers, Agenda, Kanban, dashboards e plugin de seletividade. Gráficos preservam verde para lucro/resultado positivo, vermelho para negativo e âmbar para alerta; badges semânticos continuam separados. Tema claro, modo privacidade, PDFs, impressão, exportações, API, banco e cálculos permanecem inalterados (v1.38.0).",
   "Dashboard — Lucro Gerencial × Caixa Real por período total: o painel deixou de ter um mês/período próprio e agora usa as datas dos filtros globais com as quatro regras de intervalo (inicial+final; inicial→hoje; primeiro lançamento→final; primeiro lançamento→hoje), mostrando explicitamente o período analisado. Os cards são sempre consolidados sobre todo o intervalo e agora detalham lucro gerencial, entradas, saídas, caixa líquido, diferença lucro×caixa e contas a receber/pagar abertas e vencidas (valor + quantidade). O gráfico continua mensal como detalhamento e ganhou o seletor Mensal/Acumulado; no acumulado cada mês soma os anteriores desde o início do intervalo. O cálculo preserva a fórmula real anterior (competência por dueDate; caixa por receivedDate/paidDate com fallback de vencimento; cancelados fora; Parcial integralmente em aberto porque o schema não possui valor parcial liquidado), passa a respeitar obra/cliente/centro de custo e demais filtros dimensionais, não cria consultas por mês e mantém todos os montantes cobertos pelo modo privacidade (v1.37.0).",
@@ -482,7 +483,10 @@ function moneySpan(value) {
 // Contextos de texto puro (toasts, <title> de SVG, confirm/alert): CSS não
 // alcança — o montante vira "R$ •••" enquanto o modo está ativo. O \s do JS
 // já casa o espaço não-quebrável (U+00A0) que o Intl usa em "R$ 1.234,56".
-const MONEY_TEXT_RE = /R\$\s?[\d.][\d.,]*/g;
+// O montante precisa TERMINAR em dígito: `[\d.,]*` guloso engolia a pontuação da
+// frase ("R$ 4.310,00." virava "R$ •••" sem o ponto final, e "R$ 1.000,00," comia
+// a vírgula). Não vazava valor, mas com a Etapa 2 todo toast passa por aqui.
+const MONEY_TEXT_RE = /R\$\s?\d(?:[\d.]*\d)?(?:,\d+)?/g;
 function maskMoneyText(text) {
   if (!privacyMode) return text;
   return String(text).replace(MONEY_TEXT_RE, "R$ •••");
@@ -10960,7 +10964,7 @@ function openBudgetItemModal(budget, etapaId) {
           <label>Tipo<select id="biTipo">${tipoOptions}</select></label>
           <label>Centro de custo<select id="biCc">${ccOptions}</select></label>
           <label>Quantidade<input id="biQtd" inputmode="decimal" value="1"></label>
-          <label>Valor unitário (R$)<input id="biVu" inputmode="decimal" value="0,00"></label>
+          <label>Valor unitário (R$)<input id="biVu" class="money-private" inputmode="decimal" value="0,00"></label>
           <div class="budget-item-total">Total: <strong id="biTotal">${asMoney(0)}</strong></div>
         </div>
         <div class="agenda-detail-actions">
@@ -14038,7 +14042,7 @@ function openCotacaoAnexarNf(conta) {
           <div class="form-grid">
             <label>Número da nota fiscal *<input id="anfNumero" maxlength="100" placeholder="000.000.000"></label>
             <label>Data de emissão<input type="date" id="anfData" value="${hojeLocal()}"></label>
-            <label>Valor da nota (R$)<input id="anfValor" inputmode="decimal" value="${formatMoneyInput(Number(conta.valor || 0))}"></label>
+            <label>Valor da nota (R$)<input id="anfValor" class="money-private" inputmode="decimal" value="${formatMoneyInput(Number(conta.valor || 0))}"></label>
             <label>Tipo<select id="anfTipo">${tipos.map((t) => `<option value="${t}">${t}</option>`).join("")}</select></label>
             <label>PDF da nota (opcional)<input type="file" id="anfPdf" accept=".pdf"></label>
             <label>XML da nota (opcional)<input type="file" id="anfXml" accept=".xml"></label>
@@ -14650,7 +14654,7 @@ function openComprasRegistrar(poId) {
         <div class="form-grid">
           <label>Número da nota fiscal<input id="cnfNumero" placeholder="000.000.000"></label>
           <label>Data de emissão<input type="date" id="cnfData" value="${hojeLocal()}"></label>
-          <label>Valor da nota (R$)<input id="cnfValor" inputmode="decimal" value="${formatMoneyInput(Number(po.amount || 0))}"></label>
+          <label>Valor da nota (R$)<input id="cnfValor" class="money-private" inputmode="decimal" value="${formatMoneyInput(Number(po.amount || 0))}"></label>
           <label>Tipo<select id="cnfTipo">${tipos.map((t) => `<option value="${t}">${t}</option>`).join("")}</select></label>
         </div>
         <p class="muted">Ao registrar: a NF entra em Notas fiscais vinculada à obra e ao pedido; a conta a pagar é lançada (se ainda não existe); e as quantidades compradas somam no realizado do Custo da Obra.</p>
@@ -15851,7 +15855,7 @@ function renderProposalGroupsPanel() {
               <td>${svgText((it.code ? it.code + " - " : "") + (it.description || ""))}</td>
               <td>${asMoney(custoU)}</td>
               <td>${formatQuantity(it.quantity)}</td>
-              <td><input class="pg-item-price" data-item="${escapeHtml(it.id)}" inputmode="decimal" value="${formatMoneyInput(Number(it.unitPrice || 0))}" style="width:7rem"></td>
+              <td><input class="pg-item-price money-private" data-item="${escapeHtml(it.id)}" inputmode="decimal" value="${formatMoneyInput(Number(it.unitPrice || 0))}" style="width:7rem"></td>
               <td>${asPercent(bdi)}</td>
             </tr>`;
           }).join("")}
@@ -17202,7 +17206,7 @@ function setupPurchaseOrderForm() {
         <td><input class="po-i-desc" value="${escapeHtml(it.descricao || "")}" placeholder="Descrição do item"></td>
         <td><input class="po-i-unid" value="${escapeHtml(it.unidade || "un")}"></td>
         <td><input class="po-i-qtd" inputmode="decimal" value="${escapeHtml(String(it.quantidade ?? 1).replace(".", ","))}"></td>
-        <td><input class="po-i-vu" inputmode="decimal" value="${formatMoneyInput(it.valor_unitario || 0)}"></td>
+        <td><input class="po-i-vu money-private" inputmode="decimal" value="${formatMoneyInput(it.valor_unitario || 0)}"></td>
         <td class="po-i-total">${asMoney(Number(it.quantidade || 0) * Number(it.valor_unitario || 0))}</td>
         <td><select class="po-i-budget">${budgetOptionsHtml(it.work_budget_item_id)}</select></td>
         <td><button type="button" class="danger po-i-remove" title="Remover item">✕</button></td>
@@ -19490,7 +19494,9 @@ function showToast(message, duration = 2000) {
   toast.id = "appToast";
   toast.className = "app-toast";
   toast.setAttribute("role", "status");
-  toast.textContent = message;
+  // Texto puro: o CSS de privacidade não alcança um pedaço do textContent, então
+  // o montante é substituído por "R$ •••" antes de chegar à tela.
+  toast.textContent = maskMoneyText(message);
   document.body.appendChild(toast);
   setTimeout(() => toast.remove(), duration);
 }
