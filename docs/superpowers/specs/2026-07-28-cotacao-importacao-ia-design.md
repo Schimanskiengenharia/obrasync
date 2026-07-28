@@ -32,7 +32,7 @@ hoje é busca por similaridade (embeddings). Esta fase põe a capacidade de leit
 | Decisão | Escolha |
 |---|---|
 | Onde roda | Local (Ollama no servidor), atrás de uma interface trocável por configuração |
-| Porte do modelo | **7B** — candidato `qwen2.5:7b-instruct` (bom em português e em JSON válido) |
+| Porte do modelo | **7–8B** — candidatos: `qwen2.5:7b-instruct` (Q4, padrão) ou **Bonsai-8B** (1-bit). Ver §5.4 |
 | Natureza dos PDFs | Digitais, com texto selecionável (sem OCR nesta fase) |
 | Execução | **Assíncrona**, via worker — um 7B em CPU levaria minutos e estouraria o timeout HTTP |
 | Gravação | **Nunca automática** — revisão humana obrigatória antes de criar qualquer registro |
@@ -118,6 +118,47 @@ Instruções em português, saída em JSON estrito (usando o modo JSON do Ollama
 - Um exemplo resolvido (few-shot) com uma linha de cabo, mostrando a separação por cor.
 - A lista de tipos e atributos válidos daquela disciplina, com os valores possíveis.
 - Números em formato brasileiro no documento; a saída deve vir numérica.
+
+### 5.4 Escolha do modelo — e por que o Ollama NÃO sai
+
+O usuário levantou trocar o Ollama pelo **Bonsai-8B (GGUF)**. Levantamento de 2026-07-28:
+
+**O Bonsai-8B é real e interessante para este caso.** É um modelo **1-bit** da prism-ml: cerca de
+1,125 bit por peso, arquivo GGUF de **~1,16 GB**, e desempenho relatado na casa de 88 tokens/s em
+hardware modesto, com média de 70,5 em seis categorias de benchmark. Se confirmar em campo, resolve
+de uma vez a restrição de memória que ameaçava esta fase — 1,16 GB contra ~4,5 GB de um 7B em Q4.
+
+**Duas correções de premissa:**
+
+1. **Não existe Bonsai em Q4/Q5.** O formato é `Q1_0` (originalmente `Q1_0_g128`, renomeado no
+   llama.cpp em abril/2026). Ser 1-bit é a própria natureza do modelo; quantizá-lo em Q4 seria
+   outro modelo.
+2. **Trocar de modelo não exige remover o Ollama** — o Ollama é justamente um runtime que executa
+   GGUF, e há Bonsai publicado no próprio catálogo dele. Trocar modelo é `pull` + apontar a
+   constante.
+
+**Remover o Ollama quebraria três funcionalidades em produção.** Verificação no código:
+`ollama_embed()` (modelo `all-minilm`) é chamado em quatro pontos reais — `handle_ia_busca_semantica`
+(`api/index.php:10969`), `ia_compara_worker.php:160`, `ia_depara_worker.php:162` e
+`ia_index_worker.php:129` — e sustenta os ~25 mil vetores de `ia_embeddings` usados pela busca
+semântica, pelo de-para em lote e pelo comparador de orçamento. Já `ollama_generate()` é chamado em
+**um único lugar**: o ping de teste. Ou seja, **hoje o Ollama existe em produção essencialmente para
+embeddings**, e o Bonsai é modelo de geração — não substitui embedding nenhum.
+
+**Decisão:** o Ollama **permanece** como serviço de embeddings. O Bonsai entra, se entrar, como
+motor de **extração** — que é exatamente o papel isolado pela interface da §5.1. Um não exclui o
+outro.
+
+**Risco a validar antes de adotar o Bonsai:** o suporte a `Q1_0` depende da versão do llama.cpp
+embutida no runtime (a implementação de referência usa um fork da PrismML com kernels próprios de
+atenção híbrida), e há relatos de falha de carga em runtimes desatualizados (`invalid ggml type 41`).
+Some-se a isso que 1-bit é uma compressão agressiva e **extração estruturada em JSON é tarefa
+sensível a precisão** — o benchmark médio não garante desempenho nesta tarefa específica.
+
+**Como decidir sem apostar:** a interface da §5.1 permite rodar os dois contra o **mesmo** conjunto
+de PDFs reais e comparar com as barreiras da §7 já ligadas (aritmética, ancoragem no texto, atributo
+fora da lista). Vence o que exigir menos correção manual na tela de conferência. Se o Bonsai
+empatar, ele ganha por tamanho e velocidade.
 
 ## 6. Reaproveitamento de material entre fornecedores
 
