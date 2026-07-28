@@ -9,6 +9,27 @@
 
 ---
 
+## ⚠️ STATUS (conferido em 2026-07-28) — o "pior defeito" já foi corrigido
+
+**F4a — "a aprovação de proposta sempre cria obra nova mesmo quando já existe `projectId`"
+(descrito neste documento como o pior defeito): ✅ RESOLVIDO.** Conferido em `api/index.php`, no
+bloco de aprovação de proposta (`$key === 'proposals'` com `PUT`/`PATCH`):
+
+- **F4a-1:** quando `proposal.projectId` aponta para uma obra viva (`deletedAt IS NULL`), a obra é
+  **reusada** (`$obraReusada = true`); obra nova só é criada quando não há vínculo ou a obra
+  vinculada foi arquivada.
+- **Herança não destrutiva:** `revenueContracted` só é preenchida se ainda estiver vazia.
+- **F4a-3:** status `Planejamento` é promovido a `Em andamento`; os demais status são preservados.
+- **Bônus:** a automação agora só roda na **transição** para Aprovada — reeditar uma proposta já
+  aprovada não duplica mais obra e orçamento (o frontend reenvia o registro inteiro, status
+  incluso, e isso duplicava antes).
+
+As demais frentes (F1, F2, F3, F4b, F5) **não foram conferidas** nesta passagem — trate como
+status desconhecido e verifique no código antes de agir. Sobre a F5 (ciclo de compras), o
+diagnóstico mais recente é `2026-07-27-varredura-cotacoes-obras.md`.
+
+---
+
 ## FRENTE 1 — Dashboard: cores dos avisos
 
 **Desejado:** avisos de perda de dinheiro (contas a pagar, contas vencidas) em VERMELHO; avisos de atenção em AMARELO.
