@@ -411,40 +411,102 @@ cubra parte. **Recebimento parcial não é representável** — ou o item conta 
 **Falta:** tabela de vínculo NF↔item (`fiscal_document_items` com `purchase_order_item_id` e
 quantidade faturada).
 
-### 6.5 Como verificar se já aconteceu em produção
+### 6.5 Como medir o estrago em produção — consultas prontas
 
-Consultas **somente leitura**, para medir o estrago antes de decidir a correção:
+> Todas são **exclusivamente `SELECT`**: nenhum `INSERT`, `UPDATE`, `DELETE`, `CREATE` ou tabela
+> temporária. Podem rodar em produção sem alterar dado.
+> Nomes de tabela e coluna **conferidos contra `schema.sql`** em 2026-07-29 (o banco é misto
+> inglês/português: `work_budget_item_id`/`quantidade` no pedido, `quantity`/`quantidade_realizada`/
+> `description` no orçamento, `amount`/`referencia_tipo`/`projectId` nas contas).
 
-```sql
--- (1) Itens de orçamento com MAIS DE UM pedido apontando para eles (dupla contagem provável)
-SELECT poi.work_budget_item_id, COUNT(DISTINCT poi.purchase_order_id) AS pedidos,
-       GROUP_CONCAT(DISTINCT poi.purchase_order_id) AS quais
-  FROM purchase_order_items poi
- WHERE poi.work_budget_item_id IS NOT NULL
- GROUP BY poi.work_budget_item_id
-HAVING pedidos > 1;
+Senha uma vez por sessão — e limpe ao terminar com `unset MYSQL_PWD`, pois ela fica visível no
+ambiente do processo enquanto estiver definida:
 
--- (2) Itens cujo realizado passou do previsto (sintoma de dupla contagem)
-SELECT id, description, quantity AS previsto, quantidade_realizada AS realizado
-  FROM orcamento_obra_itens
- WHERE quantidade_realizada > quantity AND quantity > 0;
-
--- (3) Quanto do gasto da obra veio pelo fluxo B1 (invisível ao realizado)
-SELECT referencia_tipo, COUNT(*) AS contas, SUM(amount) AS total
-  FROM accounts_payable
- WHERE referencia_tipo IN ('COTACAO_MATERIAL','PEDIDO_COMPRA')
- GROUP BY referencia_tipo;
-
--- (4) Itens com mais de um vencedor na mesma cotação
-SELECT orcamento_item_id, COUNT(*) AS vencedores
-  FROM cotacao_itens
- WHERE vencedor = 1 AND orcamento_item_id IS NOT NULL
- GROUP BY orcamento_item_id
-HAVING vencedores > 1;
+```bash
+export MYSQL_PWD='SENHA_DO_APP'
 ```
 
-A consulta (3) é a mais reveladora: mostra qual fatia do dinheiro da obra passa por um caminho que
-o painel de execução não enxerga.
+#### (1) Itens de orçamento com mais de um pedido de compra
+
+Mede se a não-idempotência da §6.2 já ocorreu de fato.
+
+```bash
+mysql -u financeiro_app -h 127.0.0.1 financeiro -e "SELECT oi.projectId AS obra, poi.work_budget_item_id AS item, LEFT(oi.description,45) AS descricao, COUNT(DISTINCT poi.purchase_order_id) AS pedidos, GROUP_CONCAT(DISTINCT poi.purchase_order_id ORDER BY poi.purchase_order_id) AS quais_pedidos FROM purchase_order_items poi JOIN orcamento_obra_itens oi ON oi.id = poi.work_budget_item_id GROUP BY oi.projectId, poi.work_budget_item_id, oi.description HAVING pedidos > 1 ORDER BY pedidos DESC, obra"
+```
+
+- **Vazio** → nunca aconteceu; o furo é **latente** e pode esperar.
+- **Qualquer linha** → **já está corrompendo dado**; priorizar a correção. `pedidos = 2` é o caso
+  típico (clique duplo no botão).
+
+#### (2) Itens cujo realizado passou do previsto
+
+Sintoma visível da dupla contagem, do lado do painel de execução.
+
+```bash
+mysql -u financeiro_app -h 127.0.0.1 financeiro -e "SELECT id AS item, projectId AS obra, LEFT(description,45) AS descricao, quantity AS previsto, quantidade_realizada AS realizado, ROUND(quantidade_realizada / NULLIF(quantity,0) * 100, 1) AS pct FROM orcamento_obra_itens WHERE quantity > 0 AND quantidade_realizada > quantity ORDER BY pct DESC LIMIT 50"
+```
+
+Nem toda linha é defeito:
+- **`pct` entre 100 e ~115%** → provavelmente **legítimo** (quebra, perda, sobra de segurança).
+- **`pct` perto de 200%** → **assinatura da dupla contagem** — a quantidade foi somada duas vezes.
+- **`pct` acima de 300%** → mais de duas somas, ou erro de digitação na quantidade do pedido.
+
+**Cruzamento decisivo:** item que aparece **nesta consulta e na (1)** é dupla contagem
+**confirmada**. Só nesta, provavelmente é compra a mais legítima ou ajuste manual.
+
+#### (3) Itens com mais de um vencedor de cotação
+
+Mede a falta de rodada/vigência da §6.3.
+
+```bash
+mysql -u financeiro_app -h 127.0.0.1 financeiro -e "SELECT ci.orcamento_item_id AS item, LEFT(oi.description,45) AS descricao, COUNT(*) AS vencedores FROM cotacao_itens ci LEFT JOIN orcamento_obra_itens oi ON oi.id = ci.orcamento_item_id WHERE ci.vencedor = 1 AND ci.orcamento_item_id IS NOT NULL GROUP BY ci.orcamento_item_id, oi.description HAVING vencedores > 1 ORDER BY vencedores DESC"
+```
+
+- **Vazio** → nenhuma decisão ambígua.
+- **Com linhas** → **médio, não urgente**: não corrompe o realizado, mas o sistema não sabe qual
+  fornecedor venceu aquele item — atrapalha auditoria e pode gerar pedido ao fornecedor errado.
+
+#### (4) Gasto por origem — geral
+
+Mede o furo da §6.1: quanto do dinheiro passa pelo fluxo que o painel de execução **não enxerga**.
+
+```bash
+mysql -u financeiro_app -h 127.0.0.1 financeiro -e "SELECT COALESCE(referencia_tipo,'(sem referencia)') AS origem, COUNT(*) AS contas, ROUND(SUM(amount),2) AS total_rs FROM accounts_payable GROUP BY referencia_tipo ORDER BY total_rs DESC"
+```
+
+#### (4b) O mesmo, só na obra Asilo São João Bosco (`projectId = 7`)
+
+```bash
+mysql -u financeiro_app -h 127.0.0.1 financeiro -e "SELECT COALESCE(referencia_tipo,'(sem referencia)') AS origem, COUNT(*) AS contas, ROUND(SUM(amount),2) AS total_rs FROM accounts_payable WHERE projectId = 7 GROUP BY referencia_tipo ORDER BY total_rs DESC"
+```
+
+Esta é a que decide a prioridade da frente 6.1:
+- **`COTACAO_MATERIAL` ausente ou abaixo de ~5% do total** → o fluxo B1 quase não é usado; impacto
+  prático pequeno, **pode esperar**.
+- **`COTACAO_MATERIAL` acima de ~20% do total** → essa fatia inteira do custo está **invisível** ao
+  previsto × realizado; a obra parece mais barata e menos executada do que é. **Priorizar 6.1.**
+- **`PEDIDO_COMPRA`** é a fatia que o painel enxerga — a base de comparação.
+- **`(sem referencia)`** são contas lançadas à mão. Volume alto aqui muda a conversa: o problema
+  deixa de ser "dois fluxos" e passa a ser "o realizado quase não é alimentado por nada".
+
+Comparar **(4b)** com **(4)**: se a obra 7 tiver proporção de `COTACAO_MATERIAL` bem acima da média,
+é ela a mais distorcida — e serve de caso de teste quando a correção vier.
+
+Nota: as consultas (4) e (4b) não filtram contas canceladas. Para excluí-las, acrescente
+`AND status <> 'Cancelado'` ao `WHERE`.
+
+#### Tabela de decisão
+
+| Resultado | Leitura | Ação |
+|---|---|---|
+| (1) vazia **e** (2) vazia | Realizado íntegro | 6.2 pode esperar |
+| (1) com linhas | Dado já corrompido | **Priorizar 6.2** |
+| Mesmo item em (1) e (2), `pct` ≈ 200% | Dupla contagem confirmada | **Priorizar 6.2** + corrigir itens |
+| `COTACAO_MATERIAL` relevante em (4)/(4b) | Custo invisível ao realizado | **Priorizar 6.1** |
+| Só (3) com linhas | Ambiguidade de decisão de compra | Médio, sem pressa |
+
+Se alguma consulta falhar por coluna inexistente, isso por si só é um achado: significa que o banco
+divergiu do `schema.sql`.
 
 ### Ordem sugerida para esta frente (quando for retomada)
 
