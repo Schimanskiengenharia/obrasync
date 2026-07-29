@@ -1,6 +1,6 @@
 # STATUS — ObraSync
 
-> **Versão:** `v1.38.3` · 2026-07-28 · **Varredura:** 2026-07-28 · **Ambiente:** produção em `https://schimanskiengenharia.com.br/financeiro`
+> **Versão:** `v1.38.4` · 2026-07-29 · **Varredura:** 2026-07-28 · **Ambiente:** produção em `https://schimanskiengenharia.com.br/financeiro`
 
 > ⚠️ **Leia com atenção à data.** O corpo deste documento (seções 1 a 7) foi escrito na época da
 > **v1.12–v1.19** e não foi reescrito a cada release. Ele descreve corretamente a base do sistema,
@@ -47,6 +47,30 @@ corrigido e quatro frentes fechadas.
 **Pendente de servidor** (não dá para fazer daqui): rodar a migration
 `2026-07-22-rh-pessoal-f1.sql`, executar o roteiro de validação do RH F1, e a validação visual das
 v1.36–v1.38.
+
+---
+
+## 0.1 Correção do 500 do Kanban (v1.38.4, 2026-07-29)
+
+Bug **pré-existente**, reportado pelo dono e diagnosticado por leitura de código (o log de produção
+não estava sendo gravado em lugar algum — ver abaixo).
+
+- **Causa raiz:** `kanban_cards.ordem` é `INT` (máx 2.147.483.647) e o frontend gravava
+  `Date.now()` — milissegundos, ~1,78 trilhão, **831× o limite**. O `INSERT` estourava com
+  `SQLSTATE 22003` que, por estar fora da classe 23000, não era convertido em resposta amigável e
+  virava o 500 genérico do catch global.
+- **Contraprova:** a automação de pedido de compra usa `time()` no PHP (segundos, cabe no INT) e
+  **sempre funcionou**; só o caminho do formulário e o de arrastar card quebravam.
+- **Correção:** helper `kanbanOrdemAgora()` nos 4 pontos que gravavam `ordem`.
+- **Blindagem:** `sql_error_response()` passou a traduzir a classe **22xxx** em 422 com mensagem
+  clara, para **todos os módulos**. Erros de infraestrutura seguem virando 500 de propósito.
+- **Cegueira de log resolvida:** o sistema tinha `log_errors=1` sem `error_log` definido — sob
+  PHP-FPM os erros iam para o log do pool, e o `error.log` do Apache ficava vazio. Agora grava em
+  `/var/lib/financeiro/logs/php-error.log`.
+
+**A verificar no servidor:** que o usuário do PHP (`www-data`) tenha escrita em
+`/var/lib/financeiro/logs/` — sem isso o log continua indo para o destino padrão (o código não
+quebra, apenas não usa o caminho novo).
 
 ---
 

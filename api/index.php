@@ -14,6 +14,16 @@ header('X-Content-Type-Options: nosniff');
 // pelo try/catch global. Vale também para o caminho antes do try (load_config/db).
 ini_set('display_errors', '0');
 ini_set('log_errors', '1');
+// DESTINO do log — sem isto, `log_errors=1` só entrega ao logger do SAPI e, sob
+// PHP-FPM, o erro vai para o log do pool em vez do Apache. Na prática o erro
+// "sumia": foi exatamente o que impediu o diagnóstico do 500 do Kanban em
+// 2026-07-28 (error.log do Apache sem uma linha do ObraSync).
+// Só aponta se o diretório existir E for gravável pelo usuário do PHP; caso
+// contrário mantém o destino padrão — logar no lugar errado é melhor que não logar.
+const ERROR_LOG_PATH = '/var/lib/financeiro/logs/php-error.log';
+if (is_dir(dirname(ERROR_LOG_PATH)) && is_writable(dirname(ERROR_LOG_PATH))) {
+    ini_set('error_log', ERROR_LOG_PATH);
+}
 
 const CONFIG_PATH = '/etc/financeiro/config.php';
 // Tempo máximo de inatividade da sessão: igual ao AUTH_TIMEOUT_MS do frontend (30 min).
@@ -2199,15 +2209,51 @@ function delete_record(PDO $pdo, array $meta, int $id): void
 // sistema. Chamada nos catches do CRUD genérico (create/update/delete via
 // resource_map, todos os recursos se beneficiam); qualquer outro erro sobe
 // intacto para o catch global de sempre.
+// Traduz o SQLSTATE do banco numa resposta amigável, ou devolve null quando o
+// erro DEVE subir para o catch global — falha de infraestrutura/deploy (tabela ou
+// coluna inexistente, conexão) é problema nosso e precisa aparecer como 500 para
+// ser investigada, não ser mascarada como erro do usuário.
+// Função PURA de propósito: testável sem banco (scripts/tests/php/test_sql_error_response.php).
+function sql_error_response(?string $sqlstate, string $context): ?array
+{
+    $sqlstate = (string) $sqlstate;
+    if ($sqlstate === '') {
+        return null;
+    }
+    // Classe 23 — integridade: duplicata, FK ou NOT NULL violado.
+    if ($sqlstate === '23000') {
+        if ($context === 'delete') {
+            return ['message' => 'Não foi possível excluir: registro vinculado a outros dados.', 'status' => 409];
+        }
+        return ['message' => 'Não foi possível salvar: valor duplicado (ex.: CPF ou nome já cadastrado) ou registro vinculado a outros dados.', 'status' => 409];
+    }
+    // Classe 22 — o DADO não cabe/não serve para a coluna. É erro do dado, não do
+    // servidor: devolver 500 fazia o usuário achar que o sistema caiu. Foi o que
+    // aconteceu no Kanban (2026-07-28: `ordem INT` recebendo Date.now() em
+    // milissegundos, 22003) e antes no comparador de IA (v1.24.2, também 22003).
+    if (str_starts_with($sqlstate, '22')) {
+        $mensagem = match ($sqlstate) {
+            '22003' => 'Não foi possível salvar: um valor numérico está acima do limite aceito para o campo.',
+            '22007', '22008' => 'Não foi possível salvar: data ou hora inválida.',
+            '22001' => 'Não foi possível salvar: um texto informado é maior que o limite do campo.',
+            default => 'Não foi possível salvar: valor inválido para o formato de um dos campos.',
+        };
+        return ['message' => $mensagem, 'status' => 422];
+    }
+    return null;
+}
+
 function fail_if_integrity_violation(PDOException $e, string $context): void
 {
-    if ($e->getCode() !== '23000' && ($e->errorInfo[0] ?? null) !== '23000') {
-        throw $e;
+    // O SQLSTATE aparece ora em errorInfo[0], ora no code, conforme o driver —
+    // tenta os dois antes de desistir (tolerância que já existia aqui).
+    foreach ([(string) ($e->errorInfo[0] ?? ''), (string) $e->getCode()] as $sqlstate) {
+        $resposta = sql_error_response($sqlstate, $context);
+        if ($resposta !== null) {
+            fail($resposta['message'], $resposta['status']);
+        }
     }
-    if ($context === 'delete') {
-        fail('Não foi possível excluir: registro vinculado a outros dados.', 409);
-    }
-    fail('Não foi possível salvar: valor duplicado (ex.: CPF ou nome já cadastrado) ou registro vinculado a outros dados.', 409);
+    throw $e;
 }
 
 function get_record(PDO $pdo, array $meta, int $id): array

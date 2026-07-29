@@ -93,9 +93,10 @@ function avisarFalha(contexto, mensagem) {
     showToast(mensagem, 5000);
   };
 }
-const APP_VERSION = "v1.38.3";
-const APP_VERSION_DATE = "2026-07-28";
+const APP_VERSION = "v1.38.4";
+const APP_VERSION_DATE = "2026-07-29";
 const APP_CHANGELOG = [
+  "Correção: erro ao criar e ao arrastar card no Kanban. Criar um card pelo formulário ou mover um card entre colunas devolvia \"Erro interno no servidor\" e nada era salvo — um defeito antigo, não uma novidade. A causa: o sistema gravava a ordem do card em milissegundos, um número 831 vezes maior do que o campo comporta, e o banco recusava a gravação. Cards criados automaticamente ao aprovar um pedido de compra nunca falharam, porque esse caminho já usava a unidade certa — o que explica o problema parecer intermitente. Junto vieram duas proteções: erros de valor fora do limite, data inválida ou texto longo demais agora aparecem como aviso claro em qualquer tela do sistema, em vez do \"erro interno\" genérico; e os erros do servidor passaram a ser gravados em arquivo próprio, porque não estavam sendo registrados em lugar algum — foi o que dificultou este diagnóstico (v1.38.4).",
   "Modo privacidade (Etapa 3 — cobertura completa do sistema): o modo privacidade deixa de ser só do dashboard e passa a cobrir o sistema inteiro. Foram varridos os 163 pontos que exibem dinheiro e tratados os 114 que aparecem na tela: Custo da Obra (itens, totais, execução previsto × realizado e as visões por etapa, centro de custo e tipo), telas de IA (busca semântica, de-para e comparador), Cotações por material e Resultado das cotações, Compras da Obra, Centros de custo, Curva ABC, Conciliação bancária, prévia de importação de NFS-e, Viabilidade financeira, Agenda, cronograma e os modais de parcelas, quitação antecipada, gerar conta e anexar nota. Onde o valor não é HTML — título de evento da agenda, item de lista suspensa, total que se atualiza enquanto você digita — a proteção troca o montante por \"R$ •••\", porque ali o borrão não teria efeito. Documentos continuam mostrando os valores por regra: PDF e impressão de proposta, contrato, pedido de compra e comparativo de cotações, exportações para Excel/CSV e o texto gravado da proposta (v1.38.3).",
   "Modo privacidade (Etapa 2 — avisos e campos de valor): com o modo ativo, os avisos que aparecem no rodapé da tela deixam de mostrar montantes — o valor vira \"R$ •••\" (antes o borrão do CSS não alcançava esse texto, então um aviso de conta gerada exibia o valor cheio). Os campos de valor que ficavam de fora — valor unitário do item de orçamento, valor da nota em Anexar NF de conta e de pedido, preço do item no gerador de proposta e valor unitário do item do pedido de compra — passaram a ser borrados até você clicar neles para editar. Correção junto: a máscara comia a pontuação da frase (\"R$ 4.310,00.\" perdia o ponto final e \"R$ 1.000,00,\" perdia a vírgula). Mensagens do sistema que citam \"valor\" sem exibir montante e o campo de reajuste de parcelas (que precisa continuar editável) seguem inalterados (v1.38.2).",
   "Correção e rede de segurança de erros: o botão de PDF do comparativo de cotações e o de imprimir da Análise de Viabilidade voltaram a funcionar — ambos chamavam uma função de impressão que não existia e falhavam sem nenhuma mensagem desde 27/06. Junto com a correção entrou uma rede de proteção: erros de JavaScript que antes sumiam no console agora avisam o usuário com um aviso discreto (no máximo um a cada 10 segundos, sem repetir a mesma falha dentro de um minuto) e ficam registrados para diagnóstico. As 14 falhas que eram engolidas em silêncio pelo código passaram a ser registradas, e duas delas — desvincular itens ao remover uma etapa do orçamento e carregar os itens de uma cotação — agora avisam explicitamente, porque deixavam a tela mostrando dado incompleto sem que ninguém percebesse (v1.38.1).",
@@ -7746,7 +7747,7 @@ function openForm(key, id = null) {
   if (!id && key === "kanbanCards") {
     row.coluna_id = kanbanNewColumnId || "";
     row.prioridade = "media";
-    row.ordem = Date.now();
+    row.ordem = kanbanOrdemAgora();
   }
   if (!id && key === "viabilityAnalyses") {
     row.analysisDate = hojeLocal();
@@ -9128,8 +9129,19 @@ function normalizeAgendaEvent(data) {
   if (!data.status) data.status = "agendado";
 }
 
+// Ordem do card em SEGUNDOS, não milissegundos. `kanban_cards.ordem` é INT
+// (máximo 2.147.483.647) e Date.now() vale ~1,78 trilhão — 831x o limite. O INSERT
+// estourava com SQLSTATE 22003 e, por estar fora da classe 23000, virava 500
+// genérico: era a causa do "Erro interno no servidor" ao criar ou arrastar card.
+// Segundos (~1,78 bilhão) cabem e alinham com o time() que o PHP já usa na
+// automação de pedido de compra — que por isso nunca quebrou.
+// Use SEMPRE este helper ao gravar `ordem`; nunca Date.now() direto.
+function kanbanOrdemAgora() {
+  return Math.floor(Date.now() / 1000);
+}
+
 function normalizeKanbanCard(data) {
-  data.ordem = Number(data.ordem || Date.now());
+  data.ordem = Number(data.ordem || kanbanOrdemAgora());
   if (!data.prioridade) data.prioridade = "media";
   if (!data.obra_id && selectedKanbanBoardId) data.obra_id = byId("kanbanBoards", selectedKanbanBoardId)?.obra_id || "";
 }
@@ -9151,7 +9163,9 @@ async function createLocalPurchaseKanbanCard(order) {
     prioridade: "media",
     referencia_tipo: "PEDIDO_COMPRA",
     referencia_id: order.id,
-    ordem: Date.now(),
+    // Segundos também no modo local: a tela de Migração leva estes registros para
+    // o banco, e em milissegundos eles estourariam o INT lá na frente.
+    ordem: kanbanOrdemAgora(),
   });
   saveDb();
 }
@@ -10020,7 +10034,7 @@ async function moveKanbanCard(cardId, columnId) {
   const card = byId("kanbanCards", cardId);
   if (!card || sameId(card.coluna_id, columnId)) return;
   const targetColumn = (db.kanbanColumns || []).find((column) => sameId(column.id, columnId));
-  await updateIntegratedRecord("kanbanCards", cardId, { coluna_id: columnId, ordem: Date.now() });
+  await updateIntegratedRecord("kanbanCards", cardId, { coluna_id: columnId, ordem: kanbanOrdemAgora() });
   if (targetColumn && normalizedText(targetColumn.nome) === normalizedText("Concluído") && card.referencia_tipo && confirm("Card movido para Concluído. Deseja atualizar o status do item vinculado?")) {
     alert("Atualização do item vinculado depende do tipo de referência e deve ser confirmada no módulo de origem.");
   }

@@ -1,6 +1,6 @@
 # ObraSync
 
-> Versão `v1.38.3` · 2026-07-28
+> Versão `v1.38.4` · 2026-07-29
 
 ObraSync é uma aplicação web em HTML, CSS, JavaScript puro, PHP e MariaDB/MySQL para gestão integrada de obras, financeiro, comercial e contabilidade gerencial. O frontend fica em `/var/www/financeiro`, a URL pública é `https://schimanskiengenharia.com.br/financeiro`, os dados persistentes ficam no banco e os arquivos de dados ficam fora da pasta pública.
 
@@ -12,8 +12,8 @@ Antes de atualizar em produção, faça backup do banco e de `/var/lib/financeir
 
 Esta seção orienta qualquer pessoa — ou outra IA — que precise continuar o trabalho sem se perder.
 
-- **Versão atual:** `v1.38.3` (2026-07-28). A versão fica em **dois lugares que devem andar juntos**: a constante `APP_VERSION`/`APP_VERSION_DATE` no topo de `app.js` (com `APP_CHANGELOG`) e o cabeçalho deste README. O painel "Versão" em Configurações lê de `APP_VERSION`.
-- **Cache busting:** sempre que `app.js` ou `styles.css` mudarem, **incremente o `?v=NNNN`** das tags correspondentes em `index.html` (hoje `app.js?v=1805`, `styles.css?v=1805`). Sem isso o navegador serve a versão velha.
+- **Versão atual:** `v1.38.4` (2026-07-29). A versão fica em **dois lugares que devem andar juntos**: a constante `APP_VERSION`/`APP_VERSION_DATE` no topo de `app.js` (com `APP_CHANGELOG`) e o cabeçalho deste README. O painel "Versão" em Configurações lê de `APP_VERSION`.
+- **Cache busting:** sempre que `app.js` ou `styles.css` mudarem, **incremente o `?v=NNNN`** das tags correspondentes em `index.html` (hoje `app.js?v=1806`, `styles.css?v=1806`). Sem isso o navegador serve a versão velha.
 - **Estado de saúde (2026-06-28):** em produção e estável. A leva **v1.15→v1.18** entregou o fluxo **Orçamento → Proposta com base SINAPI** (múltiplos orçamentos, BDI flexível, licitação, hierarquia por disciplina, modelos), **SINAPI no PDF + export Excel**, **contrato a partir da proposta** (template 13 cláusulas + anexos assinados), **CEP autofill universal** (corrigindo a regressão do CSP), **endereço próprio da obra** e a **exclusão de análise de viabilidade**; além do **fix do asDate** (Viabilidade travando). Ver o changelog abaixo e `STATUS.md` para o que está FEITO vs PENDENTE.
 - **Arquitetura:** SPA sem build. Todo o frontend está em `app.js` (arquivo único, ~15 mil linhas) + `index.html` (shell) + `styles.css`. Todo o backend está em `api/index.php` (arquivo único, ~8,7 mil linhas). O banco é MariaDB/MySQL (`financeiro`).
 - **Convenções do backend (siga-as):** respostas via `respond(['ok' => true, 'data' => ...])` e erros via `fail($msg, $status)`; INSERT/UPDATE genéricos via `insert_dynamic()`/`update_dynamic()` (descartam colunas inexistentes — toleram diferenças de schema); auditoria via `server_audit()`. Muitas tabelas novas são criadas sob demanda por funções `ensure_*` no próprio `index.php` (além das migrations).
@@ -26,6 +26,19 @@ Esta seção orienta qualquer pessoa — ou outra IA — que precise continuar o
 ## Histórico de Versões
 
 Mapa de cada marco do produto, do mais novo ao mais antigo, com as features e as tabelas/arquivos envolvidos. Use-o para entender *o que existe e por quê* antes de mexer.
+
+### v1.38.4 — 2026-07-29 · Correção do 500 no Kanban + blindagem da classe 22xxx
+
+**O bug.** Criar card pelo formulário ou arrastar card entre colunas retornava 500 e não salvava. Defeito **pré-existente**, não regressão. Causa raiz: `kanban_cards.ordem` é `INT` (máximo 2.147.483.647) e o frontend gravava `Date.now()` — milissegundos, hoje ~1,78 trilhão, **831× o limite**. O `INSERT` estourava com `SQLSTATE 22003`, que por estar **fora da classe 23000** não era convertido em resposta amigável e caía no catch global como 500 genérico.
+
+**A contraprova que fechou o diagnóstico:** o mesmo campo é preenchido em dois lugares. A automação (aprovar pedido de compra) usa `time()` no PHP — segundos, ~1,78 bilhão, cabe no INT e **sempre funcionou**. O formulário usava `Date.now()` no JS e **nunca funcionou**. Por isso o problema parecia intermitente.
+
+- **Correção:** helper `kanbanOrdemAgora()` (`Math.floor(Date.now()/1000)`) aplicado nos 4 pontos que gravavam `ordem` — `openForm` de card novo, `normalizeKanbanCard`, `moveKanbanCard` e `createLocalPurchaseKanbanCard`. Este último é modo local, mas foi corrigido porque a tela de Migração leva esses registros ao banco.
+- **Blindagem (vale para o sistema inteiro):** `sql_error_response()` — função pura nova — passou a traduzir também a **classe 22xxx** em 422 com mensagem clara: `22003` (valor acima do limite), `22007`/`22008` (data inválida), `22001` (texto longo demais) e um genérico para o resto da classe. Antes, qualquer overflow ou tipo inválido em **qualquer módulo** virava 500 — o mesmo padrão já havia mordido no comparador de IA (v1.24.2, também 22003). Erros de infraestrutura (`42S02` tabela inexistente, `42S22` coluna inexistente, conexão) **continuam subindo como 500** de propósito: são problema nosso e precisam aparecer.
+- **Log de erro com destino.** O sistema tinha `log_errors=1` mas **nunca definia `error_log`** — sob PHP-FPM os erros iam para o log do pool e o `error.log` do Apache ficava sem uma linha sequer. Foi o que impediu capturar este erro. Agora aponta para `/var/lib/financeiro/logs/php-error.log`, e só se o diretório existir e for gravável (senão mantém o padrão — logar no lugar errado é melhor que não logar).
+- **Testes:** `test_sql_error_response.php` (27 asserções, incluindo que nenhuma mensagem vaza SQL ou nome de tabela) e `test_kanban_ordem.js` (6 asserções, verificando o `app.js` real e falhando se algum ponto voltar a gravar `ordem` em milissegundos). Suíte: **10/10 blocos**.
+
+Sem migration. A solução estrutural do campo `ordem` (sequencial `MAX+1` ou migrar a coluna para `BIGINT`) fica para ciclo próprio — o teste avisa quando o prazo do INT se aproximar, em 2038.
 
 ### v1.38.3 — 2026-07-28 · Modo privacidade — Etapa 3 (cobertura de todo o sistema)
 
