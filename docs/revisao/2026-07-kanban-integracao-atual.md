@@ -12,6 +12,24 @@
 
 ---
 
+## Decisões tomadas (2026-07-29, pelo dono, após este diagnóstico)
+
+O diagnóstico foi aceito integralmente, incluindo o contraponto. As decisões:
+
+1. **Suprimentos NÃO será Kanban.** Quando chegar a hora, será uma **lista filtrável** com estado e
+   coluna de prazo. Motivo aceito: um quadro que não aceita arrastar mente sobre o que oferece.
+2. **NÃO haverá Kanban de Execução.** O cronograma (`obra_cronograma_etapas`) já é o quadro de
+   status e carrega o gate FVS do PBQP-H; duplicar contornaria o controle de qualidade.
+3. **Documentação vira módulo próprio**, no molde do RH F1 — não quadro. **Fica na fila**, não agora.
+4. Os furos de integridade do ciclo de compras passam a ser **pendência própria, independente do
+   Kanban** — registrados na §6 abaixo, criada para isso.
+5. **Nada disso entra agora.** Prioridade atual: validações pendentes no servidor e a **Onda B**.
+
+Em consequência, as seções 2, 3 e 4 deste documento deixam de ser "avaliação de proposta" e passam
+a valer como **levantamento do estado atual** desses módulos, para quando cada frente for retomada.
+
+---
+
 ## Resposta curta
 
 **A pergunta central — "dá para derivar a coluna do quadro de Suprimentos?" — tem resposta NÃO com
@@ -307,6 +325,132 @@ Não encontrei no repositório evidência do número de itens por obra (não há
 `orcamento_obra_itens` nem citação em docs) — então não afirmo ordem de grandeza. O que é **fato
 verificado** é a ausência de paginação: se a obra tiver centenas de itens e houver dezenas de obras,
 o bootstrap cresce proporcionalmente, sem teto.
+
+---
+
+## 6. PENDÊNCIA PRÓPRIA — integridade do ciclo de compras
+
+> Registrada como frente **independente do Kanban** por decisão de 2026-07-29. Estes furos existem
+> hoje, em produção, e **afetam o previsto × realizado da obra** — não são pré-requisito de uma
+> feature futura, são defeitos de integridade do fluxo que já roda.
+
+### 6.1 Dois fluxos financeiros paralelos que não se enxergam
+
+O mesmo material pode ser comprado por dois caminhos que geram contas a pagar por
+`referencia_tipo` diferentes e **nunca se cruzam**:
+
+| | Fluxo B1 — "Cotações por material" | Fluxo B2 — "Custo da Obra → pedido" |
+|---|---|---|
+| Onde nasce | `materialsalvar` (`api/index.php:4349-4410`) | `compraregistrar` (`api/index.php:4025-4091`) |
+| Liga ao item de orçamento? | **Não** — nunca grava `orcamento_item_id` nem `workBudgetId` | Sim, via `cotacao_itens.orcamento_item_id` |
+| Conta a pagar | `referencia_tipo='COTACAO_MATERIAL'` (`:4699`) | `referencia_tipo='PEDIDO_COMPRA'` (`:14209`) |
+| Gera pedido de compra? | Não | Sim |
+| Alimenta `quantidade_realizada`? | **Não** | Sim, no recebimento |
+
+**Consequência direta no previsto × realizado:** todo material comprado pelo B1 é invisível para o
+painel de execução. O custo sai do caixa (a conta a pagar existe e é paga), mas o **realizado da
+obra não se move** — porque só `automate_received_purchase_order` alimenta `quantidade_realizada`, e
+o B1 não passa por pedido. Quanto mais a empresa usar o fluxo B1, mais o previsto × realizado
+subestima o executado.
+
+**Falta:** um vínculo entre `cotacoes` (com `categoriaId IS NOT NULL`) e `orcamento_obra_itens`.
+A coluna `cotacoes.workBudgetId` existe no schema (`schema.sql:1434`) e **nunca é preenchida** —
+é a candidata natural.
+
+### 6.2 Não-idempotência do "Gerar pedido de compra" — dupla contagem no realizado
+
+`compraGerarPedido` (`api/index.php:4098-4183`) seleciona os vencedores (`:4111-4116`) **sem excluir
+os que já viraram pedido**, e não existe `UNIQUE(work_budget_item_id)` nem verificação de
+pré-existência. Clicar duas vezes gera **dois pedidos apontando para o mesmo item de orçamento**.
+
+**Aqui está o impacto mais grave no previsto × realizado.** A soma do recebimento é acumulativa:
+
+```php
+UPDATE orcamento_obra_itens SET quantidade_realizada = COALESCE(quantidade_realizada,0) + ? WHERE id = ?
+```
+(`api/index.php:6501`)
+
+**Justiça com o código existente:** há sim proteção contra reprocessar o **mesmo** pedido — a
+chamada por REST exige transição de status (`status_changed_to(..., ['Recebido'])`,
+`api/index.php:2169`) e o caminho da aba Compras tem guarda explícita
+(`if ($statusAtual !== 'Recebido')`, `:4234`, com comentário "não repete se já Recebido"). O furo
+**não** é reprocessar o mesmo pedido.
+
+O furo é que **a guarda é por pedido, não por item**. Dois pedidos distintos apontando para o mesmo
+`orcamento_obra_itens.id` são, para essa guarda, dois eventos legítimos — e cada recebimento soma.
+O item termina com **o dobro** da quantidade realizada, e o dashboard de execução
+(`handle_dashboard_execution_module`, `api/index.php:6571-6639`) acusa **estouro falso**.
+
+Um segundo caminho leva ao mesmo lugar: voltar o status de "Recebido" para outro e avançar de novo
+dispara `status_changed_to` outra vez, somando de novo — a guarda é sobre a *transição*, não sobre
+o fato já ter ocorrido.
+
+**Falta:** verificação de pré-existência em `compraGerarPedido` (anti-join contra
+`purchase_order_items` já criados) e/ou trava de unicidade item↔pedido ativo; e, para o
+recebimento, registrar o que já foi somado por item em vez de confiar no status do pedido.
+
+### 6.3 Falta de rodada/vigência na cotação
+
+`cotacao_itens` não tem campo que separe decisão vigente de decisão histórica. Uma segunda cotação
+do mesmo item convive com a primeira sem sinalização; `vencedor` não tem `UNIQUE`
+(`migrations/2026-07-06-cotacao-compra-vencedor.sql:8`) e nada impede dois vencedores para o mesmo
+item. Além disso, `compraregistrar` reaproveita o cabeçalho `cotacao_fornecedor` mais recente por
+fornecedor+obra (`api/index.php:4052`, `ORDER BY id DESC LIMIT 1`) e um novo pedido **sobrescreve o
+`purchase_order_id` do cabeçalho inteiro** (`:4170`), inclusive de propostas de rodadas antigas —
+por isso `cotacao_fornecedor.purchase_order_id` não é confiável como sinal por item.
+
+**Falta:** campo de rodada/vigência em `cotacao_itens` (ou `supersededAt`).
+
+### 6.4 Nota fiscal sem granularidade de item
+
+`fiscal_documents.purchaseOrderId` (`schema.sql:763`) aponta para o **pedido inteiro**; não existe
+vínculo NF↔item. `comprasregistrar` marca o pedido todo como Recebido (`:4234`) e
+`automate_received_purchase_order` soma **todos** os itens de uma vez (`:6496-6513`), mesmo que a NF
+cubra parte. **Recebimento parcial não é representável** — ou o item conta inteiro, ou não conta.
+
+**Falta:** tabela de vínculo NF↔item (`fiscal_document_items` com `purchase_order_item_id` e
+quantidade faturada).
+
+### 6.5 Como verificar se já aconteceu em produção
+
+Consultas **somente leitura**, para medir o estrago antes de decidir a correção:
+
+```sql
+-- (1) Itens de orçamento com MAIS DE UM pedido apontando para eles (dupla contagem provável)
+SELECT poi.work_budget_item_id, COUNT(DISTINCT poi.purchase_order_id) AS pedidos,
+       GROUP_CONCAT(DISTINCT poi.purchase_order_id) AS quais
+  FROM purchase_order_items poi
+ WHERE poi.work_budget_item_id IS NOT NULL
+ GROUP BY poi.work_budget_item_id
+HAVING pedidos > 1;
+
+-- (2) Itens cujo realizado passou do previsto (sintoma de dupla contagem)
+SELECT id, description, quantity AS previsto, quantidade_realizada AS realizado
+  FROM orcamento_obra_itens
+ WHERE quantidade_realizada > quantity AND quantity > 0;
+
+-- (3) Quanto do gasto da obra veio pelo fluxo B1 (invisível ao realizado)
+SELECT referencia_tipo, COUNT(*) AS contas, SUM(amount) AS total
+  FROM accounts_payable
+ WHERE referencia_tipo IN ('COTACAO_MATERIAL','PEDIDO_COMPRA')
+ GROUP BY referencia_tipo;
+
+-- (4) Itens com mais de um vencedor na mesma cotação
+SELECT orcamento_item_id, COUNT(*) AS vencedores
+  FROM cotacao_itens
+ WHERE vencedor = 1 AND orcamento_item_id IS NOT NULL
+ GROUP BY orcamento_item_id
+HAVING vencedores > 1;
+```
+
+A consulta (3) é a mais reveladora: mostra qual fatia do dinheiro da obra passa por um caminho que
+o painel de execução não enxerga.
+
+### Ordem sugerida para esta frente (quando for retomada)
+
+Do mais barato e mais urgente para o mais estrutural: **6.2** (idempotência — é o que corrompe dado
+hoje, e a correção é local), depois **6.1** (vínculo do B1, que destrava o previsto × realizado
+real), depois **6.3** e **6.4**, que são mudanças de modelo e pedem ciclo próprio.
 
 ---
 
