@@ -1,6 +1,6 @@
 # ObraSync
 
-> Versão `v1.38.4` · 2026-07-29
+> Versão `v1.38.5` · 2026-07-29
 
 ObraSync é uma aplicação web em HTML, CSS, JavaScript puro, PHP e MariaDB/MySQL para gestão integrada de obras, financeiro, comercial e contabilidade gerencial. O frontend fica em `/var/www/financeiro`, a URL pública é `https://schimanskiengenharia.com.br/financeiro`, os dados persistentes ficam no banco e os arquivos de dados ficam fora da pasta pública.
 
@@ -12,8 +12,8 @@ Antes de atualizar em produção, faça backup do banco e de `/var/lib/financeir
 
 Esta seção orienta qualquer pessoa — ou outra IA — que precise continuar o trabalho sem se perder.
 
-- **Versão atual:** `v1.38.4` (2026-07-29). A versão fica em **dois lugares que devem andar juntos**: a constante `APP_VERSION`/`APP_VERSION_DATE` no topo de `app.js` (com `APP_CHANGELOG`) e o cabeçalho deste README. O painel "Versão" em Configurações lê de `APP_VERSION`.
-- **Cache busting:** sempre que `app.js` ou `styles.css` mudarem, **incremente o `?v=NNNN`** das tags correspondentes em `index.html` (hoje `app.js?v=1806`, `styles.css?v=1806`). Sem isso o navegador serve a versão velha.
+- **Versão atual:** `v1.38.5` (2026-07-29). A versão fica em **dois lugares que devem andar juntos**: a constante `APP_VERSION`/`APP_VERSION_DATE` no topo de `app.js` (com `APP_CHANGELOG`) e o cabeçalho deste README. O painel "Versão" em Configurações lê de `APP_VERSION`.
+- **Cache busting:** sempre que `app.js` ou `styles.css` mudarem, **incremente o `?v=NNNN`** das tags correspondentes em `index.html` (hoje `app.js?v=1807`, `styles.css?v=1807`). Sem isso o navegador serve a versão velha.
 - **Estado de saúde (2026-06-28):** em produção e estável. A leva **v1.15→v1.18** entregou o fluxo **Orçamento → Proposta com base SINAPI** (múltiplos orçamentos, BDI flexível, licitação, hierarquia por disciplina, modelos), **SINAPI no PDF + export Excel**, **contrato a partir da proposta** (template 13 cláusulas + anexos assinados), **CEP autofill universal** (corrigindo a regressão do CSP), **endereço próprio da obra** e a **exclusão de análise de viabilidade**; além do **fix do asDate** (Viabilidade travando). Ver o changelog abaixo e `STATUS.md` para o que está FEITO vs PENDENTE.
 - **Arquitetura:** SPA sem build. Todo o frontend está em `app.js` (arquivo único, ~15 mil linhas) + `index.html` (shell) + `styles.css`. Todo o backend está em `api/index.php` (arquivo único, ~8,7 mil linhas). O banco é MariaDB/MySQL (`financeiro`).
 - **Convenções do backend (siga-as):** respostas via `respond(['ok' => true, 'data' => ...])` e erros via `fail($msg, $status)`; INSERT/UPDATE genéricos via `insert_dynamic()`/`update_dynamic()` (descartam colunas inexistentes — toleram diferenças de schema); auditoria via `server_audit()`. Muitas tabelas novas são criadas sob demanda por funções `ensure_*` no próprio `index.php` (além das migrations).
@@ -26,6 +26,19 @@ Esta seção orienta qualquer pessoa — ou outra IA — que precise continuar o
 ## Histórico de Versões
 
 Mapa de cada marco do produto, do mais novo ao mais antigo, com as features e as tabelas/arquivos envolvidos. Use-o para entender *o que existe e por quê* antes de mexer.
+
+### v1.38.5 — 2026-07-29 · Card do Kanban nascia no board errado (e o rótulo dos selects)
+
+**O sintoma:** o card salvava (o 500 da v1.38.4 estava resolvido) mas **sumia da tela** — ia para um board de outra obra. Card da obra 7 gravado na coluna 1, que pertence ao board da obra 6.
+
+**A causa raiz eram duas cadeias de fallback divergentes no próprio sistema.** `nameOf()` — usada para **exibir** em tabelas — reconhece `row.nome`. O `<select>` de FK do `inputFor()` — usado para **editar** — não reconhecia. Como `kanban_colunas` tem o campo em português (`nome`), o formulário caía no último recurso da cadeia e mostrava **o ID cru**. Somado a isso, o select listava as colunas de **todos os 10 boards** sem qualquer separação. Não havia como escolher certo.
+
+- **`rowLabel(row)`** — fonte única de rótulo, usada agora por `nameOf()` **e** pelo select. Elimina a divergência estruturalmente. O alcance vai muito além do Kanban: **12 tabelas** usam `nome` em português e exibiam ID ao editar — disciplinas de obra, categorias e tipos de cotação, colaboradores e tipos de documento do RH, etapas de orçamento, grupos e modelos de proposta, análises e grupos de viabilidade, boards e colunas do Kanban.
+- **Select de coluna agrupado por board e obra:** cada opção aparece sob um `<optgroup>` com o nome do board e da obra (ex.: "Kanban - Recurso Federal Asilo (Recurso Federal Asilo)"), e boards sem obra ficam em grupo próprio.
+- **Validação de coerência:** `normalizeKanbanCard()` passou a devolver mensagem de erro e **bloquear o salvamento** quando a obra do card diverge da obra do board dono da coluna, explicando que o card não apareceria na tela daquela obra. Sem obra informada, herda a do board da coluna. Board sem obra não bloqueia nada.
+- **Testes:** `test_kanban_coerencia.js` (14 asserções) reproduz o cenário exato do bug — card da obra 7 na coluna do board da obra 6 — e verifica as funções reais do `app.js`. Suíte: **11/11 blocos**.
+
+Sem migration. Os cards já gravados com board incoerente **não foram alterados** — a correção é para novos; a normalização dos existentes ficou para decisão do dono.
 
 ### v1.38.4 — 2026-07-29 · Correção do 500 no Kanban + blindagem da classe 22xxx
 

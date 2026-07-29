@@ -93,9 +93,10 @@ function avisarFalha(contexto, mensagem) {
     showToast(mensagem, 5000);
   };
 }
-const APP_VERSION = "v1.38.4";
+const APP_VERSION = "v1.38.5";
 const APP_VERSION_DATE = "2026-07-29";
 const APP_CHANGELOG = [
+  "Correção: card do Kanban nascia no quadro errado e sumia da tela. Ao criar um card, a lista de colunas mostrava apenas números, sem nome, e misturava as colunas de todos os quadros de todas as obras — não havia como escolher a certa. O card era salvo, mas num quadro de outra obra, e por isso não aparecia. Agora cada coluna aparece com seu nome, agrupada pelo quadro e pela obra a que pertence (ex.: \"Kanban - Asilo São João Bosco\"), e o sistema recusa salvar um card cuja obra não seja a do quadro escolhido, explicando o motivo. A mesma correção alcança todo o sistema: campos de seleção de disciplinas de obra, categorias e tipos de cotação, colaboradores e tipos de documento do RH, etapas de orçamento, grupos e modelos de proposta e análises de viabilidade também mostravam número em vez de nome ao editar — passam todos a exibir o nome (v1.38.5).",
   "Correção: erro ao criar e ao arrastar card no Kanban. Criar um card pelo formulário ou mover um card entre colunas devolvia \"Erro interno no servidor\" e nada era salvo — um defeito antigo, não uma novidade. A causa: o sistema gravava a ordem do card em milissegundos, um número 831 vezes maior do que o campo comporta, e o banco recusava a gravação. Cards criados automaticamente ao aprovar um pedido de compra nunca falharam, porque esse caminho já usava a unidade certa — o que explica o problema parecer intermitente. Junto vieram duas proteções: erros de valor fora do limite, data inválida ou texto longo demais agora aparecem como aviso claro em qualquer tela do sistema, em vez do \"erro interno\" genérico; e os erros do servidor passaram a ser gravados em arquivo próprio, porque não estavam sendo registrados em lugar algum — foi o que dificultou este diagnóstico (v1.38.4).",
   "Modo privacidade (Etapa 3 — cobertura completa do sistema): o modo privacidade deixa de ser só do dashboard e passa a cobrir o sistema inteiro. Foram varridos os 163 pontos que exibem dinheiro e tratados os 114 que aparecem na tela: Custo da Obra (itens, totais, execução previsto × realizado e as visões por etapa, centro de custo e tipo), telas de IA (busca semântica, de-para e comparador), Cotações por material e Resultado das cotações, Compras da Obra, Centros de custo, Curva ABC, Conciliação bancária, prévia de importação de NFS-e, Viabilidade financeira, Agenda, cronograma e os modais de parcelas, quitação antecipada, gerar conta e anexar nota. Onde o valor não é HTML — título de evento da agenda, item de lista suspensa, total que se atualiza enquanto você digita — a proteção troca o montante por \"R$ •••\", porque ali o borrão não teria efeito. Documentos continuam mostrando os valores por regra: PDF e impressão de proposta, contrato, pedido de compra e comparativo de cotações, exportações para Excel/CSV e o texto gravado da proposta (v1.38.3).",
   "Modo privacidade (Etapa 2 — avisos e campos de valor): com o modo ativo, os avisos que aparecem no rodapé da tela deixam de mostrar montantes — o valor vira \"R$ •••\" (antes o borrão do CSS não alcançava esse texto, então um aviso de conta gerada exibia o valor cheio). Os campos de valor que ficavam de fora — valor unitário do item de orçamento, valor da nota em Anexar NF de conta e de pedido, preço do item no gerador de proposta e valor unitário do item do pedido de compra — passaram a ser borrados até você clicar neles para editar. Correção junto: a máscara comia a pontuação da frase (\"R$ 4.310,00.\" perdia o ponto final e \"R$ 1.000,00,\" perdia a vírgula). Mensagens do sistema que citam \"valor\" sem exibir montante e o campo de reajuste de parcelas (que precisa continuar editável) seguem inalterados (v1.38.2).",
@@ -2294,10 +2295,22 @@ function byId(collection, id) {
   return hit;
 }
 
-function nameOf(collection, id) {
-  const row = byId(collection, id);
+// Rótulo legível de um registro — UMA fonte de verdade.
+// Havia duas cadeias divergentes: esta (exibição em tabelas), que reconhecia
+// `nome`, e a do <select> de FK em inputFor(), que NÃO reconhecia. O resultado é
+// que as 12 tabelas com coluna `nome` em português (kanban_colunas, kanban_boards,
+// cotacao_categorias, cotacao_tipos_item, rh_colaboradores, rh_tipos_documento,
+// orcamento_etapas, obra_disciplinas, proposta_grupos/modelos, viabilidade_*)
+// apareciam corretamente na lista e como ID CRU no formulário de edição — foi o
+// que fez o card do Kanban nascer na coluna errada em 2026-07-29.
+// Ao criar entidade nova com nome noutro campo, acrescente aqui e os dois lados seguem juntos.
+function rowLabel(row) {
   if (!row) return "";
-  return row.name || row.nome || row.titulo || row.stageName || row.title || row.number || row.document || row.code || row.fieldName || row.description || "";
+  return row.name || row.nome || row.titulo || row.stageName || row.title || row.number || row.document || row.username || row.code || row.fieldName || row.description || "";
+}
+
+function nameOf(collection, id) {
+  return rowLabel(byId(collection, id));
 }
 
 function asMoney(value) {
@@ -7813,7 +7826,25 @@ function inputFor(key, field, label, type, options, value = "", row = {}) {
       const archived = (db.projectsArchived || []).find((row) => sameId(row.id, value));
       if (archived) lookupRows = lookupRows.concat([{ ...archived, name: `${archived.name} (arquivada)` }]);
     }
-    return `<label>${label}<select name="${field}" ${required}><option value="">${lookup[1]}</option>${lookupRows.map((row) => `<option value="${escapeHtml(row.id)}" ${String(row.id) === String(value) ? "selected" : ""}>${escapeHtml(`${row.code ? `${row.code} - ` : ""}${row.name || row.number || row.document || row.username || row.id}`)}</option>`).join("")}</select></label>`;
+    // Coluna do Kanban: o id sozinho não diz nada e as colunas de TODOS os boards
+    // vinham misturadas — foi assim que um card da obra 7 nasceu numa coluna do
+    // board da obra 6. Cada opção passa a dizer a que board e obra pertence, e a
+    // lista é agrupada por board para não haver como errar.
+    if (type === "kanbanColumn") {
+      const grupos = new Map();
+      lookupRows.forEach((col) => {
+        const board = byId("kanbanBoards", col.board_id);
+        const obra = board?.obra_id ? nameOf("projects", board.obra_id) : "";
+        const titulo = `${rowLabel(board) || `Board ${col.board_id}`}${obra ? ` (${obra})` : " (sem obra)"}`;
+        if (!grupos.has(titulo)) grupos.set(titulo, []);
+        grupos.get(titulo).push(col);
+      });
+      const grupoHtml = [...grupos.entries()].map(([titulo, cols]) =>
+        `<optgroup label="${escapeHtml(titulo)}">${cols.map((col) => `<option value="${escapeHtml(col.id)}" ${String(col.id) === String(value) ? "selected" : ""}>${escapeHtml(rowLabel(col) || `Coluna ${col.id}`)}</option>`).join("")}</optgroup>`
+      ).join("");
+      return `<label>${label}<select name="${field}" ${required}><option value="">${lookup[1]}</option>${grupoHtml}</select></label>`;
+    }
+    return `<label>${label}<select name="${field}" ${required}><option value="">${lookup[1]}</option>${lookupRows.map((row) => `<option value="${escapeHtml(row.id)}" ${String(row.id) === String(value) ? "selected" : ""}>${escapeHtml(`${row.code ? `${row.code} - ` : ""}${rowLabel(row) || row.id}`)}</option>`).join("")}</select></label>`;
   }
   if (isMoneyField(field) || type === "money") return `<label>${label}<input name="${field}" type="text" inputmode="decimal" value="${formatMoneyInput(value)}" placeholder="${placeholder}" data-format="money" ${required}></label>`;
   if (isPercentField(field)) return `<label>${label}<input name="${field}" type="text" inputmode="decimal" value="${formatPercentInput(value)}" placeholder="${placeholder}" data-format="percent" ${required}></label>`;
@@ -8879,7 +8910,10 @@ async function saveForm(event) {
   if (editing.key === "quotes") normalizeQuote(data);
   if (editing.key === "ownCompositions") normalizeOwnComposition(data);
   if (editing.key === "agendaEvents") normalizeAgendaEvent(data);
-  if (editing.key === "kanbanCards") normalizeKanbanCard(data);
+  if (editing.key === "kanbanCards") {
+    const kanbanError = normalizeKanbanCard(data);
+    if (kanbanError) return alert(kanbanError);
+  }
   if (editing.key === "viabilityAnalyses") {
     const viabilityError = normalizeViabilityAnalysis(data);
     if (viabilityError) return alert(viabilityError);
@@ -9140,10 +9174,31 @@ function kanbanOrdemAgora() {
   return Math.floor(Date.now() / 1000);
 }
 
+// Board dono de uma coluna (kanban_colunas.board_id → kanban_boards).
+function kanbanBoardDaColuna(colunaId) {
+  const coluna = byId("kanbanColumns", colunaId);
+  return coluna ? byId("kanbanBoards", coluna.board_id) : null;
+}
+
+// Devolve mensagem de erro (string) quando o card é incoerente, ou "" quando está ok.
 function normalizeKanbanCard(data) {
   data.ordem = Number(data.ordem || kanbanOrdemAgora());
   if (!data.prioridade) data.prioridade = "media";
-  if (!data.obra_id && selectedKanbanBoardId) data.obra_id = byId("kanbanBoards", selectedKanbanBoardId)?.obra_id || "";
+
+  const board = kanbanBoardDaColuna(data.coluna_id);
+  // Sem obra informada: herda a do board dono da coluna (e só então cai para o
+  // board selecionado na tela, como era antes).
+  if (!data.obra_id) {
+    data.obra_id = board?.obra_id || byId("kanbanBoards", selectedKanbanBoardId)?.obra_id || "";
+    return "";
+  }
+  // Com obra informada: ela PRECISA ser a do board dono da coluna. Divergir faz o
+  // card desaparecer — ele existe, mas num board que a tela da obra não mostra.
+  // Foi o que aconteceu em 2026-07-29 (card da obra 7 na coluna 1, board da obra 6).
+  if (board && board.obra_id && !sameId(board.obra_id, data.obra_id)) {
+    return `A coluna escolhida pertence ao board "${rowLabel(board)}", da obra "${nameOf("projects", board.obra_id)}", mas o card está marcado para a obra "${nameOf("projects", data.obra_id)}". Escolha uma coluna do board da obra correta — senão o card não aparecerá na tela dessa obra.`;
+  }
+  return "";
 }
 
 async function createLocalPurchaseKanbanCard(order) {
