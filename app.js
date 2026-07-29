@@ -93,9 +93,10 @@ function avisarFalha(contexto, mensagem) {
     showToast(mensagem, 5000);
   };
 }
-const APP_VERSION = "v1.38.5";
+const APP_VERSION = "v1.39.0";
 const APP_VERSION_DATE = "2026-07-29";
 const APP_CHANGELOG = [
+  "Kanban: visao \"Todos os boards\" e identificacao por obra. O seletor de quadros passa a agrupar os boards POR OBRA, com o nome da obra visivel — antes os dez quadros apareciam numa lista unica e era facil abrir o da obra errada. Nova opcao \"Todos os boards\" mostra os cards de todas as obras juntos, agrupados pelo nome da coluna (A fazer, Fazendo, Concluido), com etiqueta de obra e de quadro em cada card, e filtros por obra, responsavel e prioridade. Nessa visao arrastar fica desativado de proposito: como a mesma coluna existe em varios quadros, soltar o card nao definiria para qual quadro ele iria — para mover, abra o quadro especifico (v1.39.0).",
   "Correção: card do Kanban nascia no quadro errado e sumia da tela. Ao criar um card, a lista de colunas mostrava apenas números, sem nome, e misturava as colunas de todos os quadros de todas as obras — não havia como escolher a certa. O card era salvo, mas num quadro de outra obra, e por isso não aparecia. Agora cada coluna aparece com seu nome, agrupada pelo quadro e pela obra a que pertence (ex.: \"Kanban - Asilo São João Bosco\"), e o sistema recusa salvar um card cuja obra não seja a do quadro escolhido, explicando o motivo. A mesma correção alcança todo o sistema: campos de seleção de disciplinas de obra, categorias e tipos de cotação, colaboradores e tipos de documento do RH, etapas de orçamento, grupos e modelos de proposta e análises de viabilidade também mostravam número em vez de nome ao editar — passam todos a exibir o nome (v1.38.5).",
   "Correção: erro ao criar e ao arrastar card no Kanban. Criar um card pelo formulário ou mover um card entre colunas devolvia \"Erro interno no servidor\" e nada era salvo — um defeito antigo, não uma novidade. A causa: o sistema gravava a ordem do card em milissegundos, um número 831 vezes maior do que o campo comporta, e o banco recusava a gravação. Cards criados automaticamente ao aprovar um pedido de compra nunca falharam, porque esse caminho já usava a unidade certa — o que explica o problema parecer intermitente. Junto vieram duas proteções: erros de valor fora do limite, data inválida ou texto longo demais agora aparecem como aviso claro em qualquer tela do sistema, em vez do \"erro interno\" genérico; e os erros do servidor passaram a ser gravados em arquivo próprio, porque não estavam sendo registrados em lugar algum — foi o que dificultou este diagnóstico (v1.38.4).",
   "Modo privacidade (Etapa 3 — cobertura completa do sistema): o modo privacidade deixa de ser só do dashboard e passa a cobrir o sistema inteiro. Foram varridos os 163 pontos que exibem dinheiro e tratados os 114 que aparecem na tela: Custo da Obra (itens, totais, execução previsto × realizado e as visões por etapa, centro de custo e tipo), telas de IA (busca semântica, de-para e comparador), Cotações por material e Resultado das cotações, Compras da Obra, Centros de custo, Curva ABC, Conciliação bancária, prévia de importação de NFS-e, Viabilidade financeira, Agenda, cronograma e os modais de parcelas, quitação antecipada, gerar conta e anexar nota. Onde o valor não é HTML — título de evento da agenda, item de lista suspensa, total que se atualiza enquanto você digita — a proteção troca o montante por \"R$ •••\", porque ali o borrão não teria efeito. Documentos continuam mostrando os valores por regra: PDF e impressão de proposta, contrato, pedido de compra e comparativo de cotações, exportações para Excel/CSV e o texto gravado da proposta (v1.38.3).",
@@ -620,6 +621,10 @@ let agendaCursorDate = agendaSafeDateString(new Date());
 let agendaProjectFilter = "";
 let agendaTypeFilter = "";
 let selectedKanbanBoardId = "";
+// Visão consolidada: valor especial do seletor de board. Agrupa os cards de TODOS
+// os boards pelo NOME da coluna (não pelo id — "A fazer" existe em cada board).
+const KANBAN_TODOS = "__todos__";
+let kanbanFiltros = { obra: "", responsavel: "", prioridade: "" };
 let agendaNewDate = "";
 let viabilityProjectFilter = "";
 let viabilityStatusFilter = "";
@@ -9508,31 +9513,107 @@ function renderAgenda() {
   renderAgendaWeek();
 }
 
+// Boards agrupados por obra, para o seletor. Boards sem obra ficam num grupo
+// próprio no fim — antes todos apareciam numa lista só, e com dez boards (dois
+// por obra) era fácil abrir o quadro da obra errada.
+function kanbanBoardsPorObra() {
+  const grupos = new Map();
+  (db.kanbanBoards || []).forEach((board) => {
+    const titulo = board.obra_id ? (nameOf("projects", board.obra_id) || `Obra ${board.obra_id}`) : "Sem obra vinculada";
+    if (!grupos.has(titulo)) grupos.set(titulo, []);
+    grupos.get(titulo).push(board);
+  });
+  return [...grupos.entries()].sort(([a], [b]) => {
+    if (a === "Sem obra vinculada") return 1;
+    if (b === "Sem obra vinculada") return -1;
+    return a.localeCompare(b, "pt-BR");
+  });
+}
+
+// Cards da visão consolidada, já filtrados.
+function kanbanCardsFiltrados() {
+  return (db.kanbanCards || []).filter((card) => {
+    const board = kanbanBoardDaColuna(card.coluna_id);
+    if (kanbanFiltros.obra && !sameId(board?.obra_id, kanbanFiltros.obra)) return false;
+    if (kanbanFiltros.responsavel && !sameId(card.responsavel_id, kanbanFiltros.responsavel)) return false;
+    if (kanbanFiltros.prioridade && (card.prioridade || "media") !== kanbanFiltros.prioridade) return false;
+    return true;
+  });
+}
+
 function renderKanban() {
   ensureLocalDefaultKanban();
   const editable = canEditModule("kanban");
   const boards = db.kanbanBoards || [];
-  if (!selectedKanbanBoardId || !boards.some((board) => sameId(board.id, selectedKanbanBoardId))) selectedKanbanBoardId = boards[0]?.id || "";
+  const modoTodos = selectedKanbanBoardId === KANBAN_TODOS;
+  if (!modoTodos && (!selectedKanbanBoardId || !boards.some((board) => sameId(board.id, selectedKanbanBoardId)))) {
+    selectedKanbanBoardId = boards[0]?.id || "";
+  }
   const board = boards.find((row) => sameId(row.id, selectedKanbanBoardId));
-  const boardOptions = boards.map((row) => `<option value="${row.id}" ${sameId(row.id, selectedKanbanBoardId) ? "selected" : ""}>${svgText(row.nome)}</option>`).join("");
+  const boardOptions = `<option value="${KANBAN_TODOS}" ${modoTodos ? "selected" : ""}>Todos os boards</option>`
+    + kanbanBoardsPorObra().map(([obra, lista]) =>
+        `<optgroup label="${escapeHtml(obra)}">${lista.map((row) => `<option value="${row.id}" ${sameId(row.id, selectedKanbanBoardId) ? "selected" : ""}>${svgText(rowLabel(row) || `Board ${row.id}`)}</option>`).join("")}</optgroup>`
+      ).join("");
   const columns = (db.kanbanColumns || []).filter((column) => sameId(column.board_id, selectedKanbanBoardId)).sort((a, b) => Number(a.ordem || 0) - Number(b.ordem || 0));
+
+  // Visão consolidada: agrupa por NOME de coluna, porque o mesmo nome existe em
+  // todos os boards e é isso que o usuário quer comparar lado a lado.
+  let corpo = "";
+  if (modoTodos) {
+    const cards = kanbanCardsFiltrados();
+    const porNome = new Map();
+    (db.kanbanColumns || []).slice().sort((a, b) => Number(a.ordem || 0) - Number(b.ordem || 0)).forEach((col) => {
+      const nome = rowLabel(col) || `Coluna ${col.id}`;
+      if (!porNome.has(nome)) porNome.set(nome, []);
+    });
+    cards.forEach((card) => {
+      const col = byId("kanbanColumns", card.coluna_id);
+      const nome = rowLabel(col) || "Sem coluna";
+      if (!porNome.has(nome)) porNome.set(nome, []);
+      porNome.get(nome).push(card);
+    });
+    const grupos = [...porNome.entries()].filter(([, lista]) => lista.length > 0);
+    corpo = grupos.length
+      ? grupos.map(([nome, lista]) => `
+          <div class="kanban-column">
+            <header><h3>${svgText(nome)}</h3><span>${lista.length}</span></header>
+            <div class="kanban-card-list">
+              ${lista.sort((a, b) => Number(a.ordem || 0) - Number(b.ordem || 0)).map((card) => kanbanCardHtml(card, editable, true)).join("")}
+            </div>
+          </div>`).join("")
+      : '<div class="empty">Nenhum card encontrado com os filtros atuais.</div>';
+  } else {
+    corpo = columns.map((column) => kanbanColumnHtml(column, editable)).join("") || '<div class="empty">Nenhuma coluna neste board.</div>';
+  }
+
+  const obrasComBoard = [...new Set((db.kanbanBoards || []).map((b) => b.obra_id).filter(Boolean))];
+  const filtrosHtml = modoTodos ? `
+    <label>Obra<select id="kanbanFiltroObra"><option value="">Todas</option>${obrasComBoard.map((id) => `<option value="${escapeHtml(id)}" ${sameId(id, kanbanFiltros.obra) ? "selected" : ""}>${svgText(nameOf("projects", id))}</option>`).join("")}</select></label>
+    <label>Responsável<select id="kanbanFiltroResp"><option value="">Todos</option>${(db.users || []).map((u) => `<option value="${escapeHtml(u.id)}" ${sameId(u.id, kanbanFiltros.responsavel) ? "selected" : ""}>${svgText(rowLabel(u))}</option>`).join("")}</select></label>
+    <label>Prioridade<select id="kanbanFiltroPrio"><option value="">Todas</option>${["baixa", "media", "alta", "urgente"].map((p) => `<option value="${p}" ${p === kanbanFiltros.prioridade ? "selected" : ""}>${priorityLabel(p)}</option>`).join("")}</select></label>` : "";
+
   qs("content").innerHTML = `
     <section class="module-head">
       <div>
         <h2>Kanban</h2>
         <p>Boards por obra, compras e tarefas gerais, com cards arrastáveis por coluna.</p>
       </div>
-      ${editable ? '<button id="newKanbanCard" class="primary" type="button">Novo card</button>' : ""}
+      ${editable && !modoTodos ? '<button id="newKanbanCard" class="primary" type="button">Novo card</button>' : ""}
     </section>
     <section class="schedule-toolbar kanban-toolbar">
       <label>Board<select id="kanbanBoardSelect">${boardOptions}</select></label>
-      <span>${board?.obra_id ? `Obra: ${svgText(nameOf("projects", board.obra_id))}` : "Sem obra vinculada"}</span>
+      ${modoTodos
+        ? `<span class="field-hint">Visão consolidada — cards de todas as obras. Arrastar fica disponível ao abrir um board.</span>${filtrosHtml}`
+        : `<span>${board?.obra_id ? `Obra: ${svgText(nameOf("projects", board.obra_id))}` : "Sem obra vinculada"}</span>`}
     </section>
     <section class="kanban-board">
-      ${columns.map((column) => kanbanColumnHtml(column, editable)).join("") || '<div class="empty">Nenhuma coluna neste board.</div>'}
+      ${corpo}
     </section>
   `;
   qs("kanbanBoardSelect").addEventListener("change", (event) => { selectedKanbanBoardId = event.target.value; renderKanban(); });
+  qs("kanbanFiltroObra")?.addEventListener("change", (e) => { kanbanFiltros.obra = e.target.value; renderKanban(); });
+  qs("kanbanFiltroResp")?.addEventListener("change", (e) => { kanbanFiltros.responsavel = e.target.value; renderKanban(); });
+  qs("kanbanFiltroPrio")?.addEventListener("change", (e) => { kanbanFiltros.prioridade = e.target.value; renderKanban(); });
   qs("newKanbanCard")?.addEventListener("click", () => openKanbanCardForm(columns[0]?.id || ""));
   qs("content").querySelectorAll("[data-kanban-card]").forEach((card) => {
     card.addEventListener("dragstart", (event) => event.dataTransfer.setData("text/plain", card.dataset.kanbanCard));
@@ -10065,11 +10146,23 @@ function kanbanColumnHtml(column, editable) {
   `;
 }
 
-function kanbanCardHtml(card, editable) {
+function kanbanCardHtml(card, editable, mostrarOrigem = false) {
   const overdue = card.data_vencimento && card.data_vencimento < localDateString(new Date()) && !kanbanCardDone(card);
   const priority = card.prioridade || "media";
+  // Na visão consolidada o card precisa dizer de onde veio — sem isso, dez cards
+  // "A fazer" de obras diferentes ficam indistinguíveis.
+  const board = mostrarOrigem ? kanbanBoardDaColuna(card.coluna_id) : null;
+  const origem = board
+    ? `<div class="kanban-card-origem">
+         <span class="kanban-badge-obra">${svgText(board.obra_id ? nameOf("projects", board.obra_id) : "Sem obra")}</span>
+         <span class="kanban-badge-board">${svgText(rowLabel(board) || `Board ${board.id}`)}</span>
+       </div>`
+    : "";
+  // draggable=false na visão consolidada: soltar num grupo por NOME de coluna não
+  // define para qual board o card iria.
   return `
-    <article class="kanban-card priority-${priority} ${overdue ? "overdue" : ""}" draggable="${editable}" data-kanban-card="${card.id}">
+    <article class="kanban-card priority-${priority} ${overdue ? "overdue" : ""}" draggable="${editable && !mostrarOrigem}" data-kanban-card="${card.id}">
+      ${origem}
       <strong>${svgText(card.titulo)}</strong>
       <p>${svgText(card.descricao || "")}</p>
       <footer>

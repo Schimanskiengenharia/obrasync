@@ -48,7 +48,13 @@ const sandbox = {
 vm.createContext(sandbox);
 
 // Extrai as funções REAIS do app.js (não cópias).
-for (const marca of ["function rowLabel(row) {", "function kanbanBoardDaColuna(colunaId) {", "function normalizeKanbanCard(data) {"]) {
+for (const marca of [
+  "function rowLabel(row) {",
+  "function kanbanBoardDaColuna(colunaId) {",
+  "function normalizeKanbanCard(data) {",
+  "function kanbanBoardsPorObra() {",
+  "function kanbanCardsFiltrados() {",
+]) {
   const ini = src.indexOf(marca);
   if (ini < 0) { console.error("FALHA: não achei no app.js: " + marca); process.exit(1); }
   // Vai até a linha que fecha a função na coluna 0.
@@ -93,6 +99,46 @@ const novo = { coluna_id: 5, obra_id: 7, titulo: "defaults" };
 sandbox.normalizeKanbanCard(novo);
 t_assert("prioridade default 'media'", novo.prioridade === "media");
 t_assert("ordem preenchida em segundos (cabe no INT)", Number.isInteger(novo.ordem) && novo.ordem > 0 && novo.ordem <= 2147483647);
+
+// ── Visão consolidada: agrupamento por obra e filtros ───────────────────────
+sandbox.kanbanFiltros = { obra: "", responsavel: "", prioridade: "" };
+db.kanbanCards = [
+  { id: 1, coluna_id: 1, titulo: "A", prioridade: "alta", responsavel_id: 10 },   // board 1, obra 6
+  { id: 2, coluna_id: 5, titulo: "B", prioridade: "media", responsavel_id: 11 },  // board 2, obra 7
+  { id: 3, coluna_id: 5, titulo: "C", prioridade: "alta", responsavel_id: 10 },   // board 2, obra 7
+  { id: 4, coluna_id: 9, titulo: "D", prioridade: "baixa", responsavel_id: 11 },  // board 9, sem obra
+];
+
+const grupos = sandbox.kanbanBoardsPorObra();
+t_assert("agrupa boards por obra", grupos.length === 3);
+t_assert("grupo 'Sem obra vinculada' vai para o fim", grupos[grupos.length - 1][0] === "Sem obra vinculada");
+t_assert("obras ficam em ordem alfabética",
+  grupos[0][0] === "Recurso Federal Asilo" && grupos[1][0] === "Residencial Atacama",
+  grupos.map((g) => g[0]).join(" | "));
+
+t_assert("sem filtro, traz todos os cards", sandbox.kanbanCardsFiltrados().length === 4);
+
+sandbox.kanbanFiltros = { obra: 7, responsavel: "", prioridade: "" };
+t_assert("filtro por obra usa o board da coluna (não o campo do card)",
+  sandbox.kanbanCardsFiltrados().map((c) => c.id).join(",") === "2,3");
+
+sandbox.kanbanFiltros = { obra: "", responsavel: 10, prioridade: "" };
+t_assert("filtro por responsável", sandbox.kanbanCardsFiltrados().map((c) => c.id).join(",") === "1,3");
+
+sandbox.kanbanFiltros = { obra: "", responsavel: "", prioridade: "alta" };
+t_assert("filtro por prioridade", sandbox.kanbanCardsFiltrados().map((c) => c.id).join(",") === "1,3");
+
+sandbox.kanbanFiltros = { obra: 7, responsavel: 10, prioridade: "alta" };
+t_assert("filtros combinam (E, não OU)", sandbox.kanbanCardsFiltrados().map((c) => c.id).join(",") === "3");
+
+sandbox.kanbanFiltros = { obra: 6, responsavel: 11, prioridade: "" };
+t_assert("combinação sem resultado devolve lista vazia", sandbox.kanbanCardsFiltrados().length === 0);
+
+// Card cuja prioridade não foi gravada conta como "media" (default do schema).
+db.kanbanCards.push({ id: 5, coluna_id: 1, titulo: "E", responsavel_id: 10 });
+sandbox.kanbanFiltros = { obra: "", responsavel: "", prioridade: "media" };
+t_assert("prioridade ausente é tratada como 'media'",
+  sandbox.kanbanCardsFiltrados().map((c) => c.id).join(",") === "2,5");
 
 console.log(`test_kanban_coerencia: ${ok}/${ok + falhas} ok`);
 process.exit(falhas ? 1 : 0);

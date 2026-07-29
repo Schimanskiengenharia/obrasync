@@ -3576,6 +3576,33 @@ html[data-theme="dark"] .kpi.warning strong {
   box-shadow: var(--shadow);
 }
 
+/* Origem do card na visão consolidada ("Todos os boards"): sem isto, cards de
+   obras diferentes na mesma coluna ficam indistinguíveis. Usa os tokens do tema
+   para acompanhar claro/escuro. */
+.kanban-card-origem {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 2px;
+}
+.kanban-badge-obra,
+.kanban-badge-board {
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 999px;
+  line-height: 1.5;
+}
+.kanban-badge-obra {
+  background: var(--accent-soft, var(--panel-2));
+  color: var(--accent-ink, var(--ink));
+}
+.kanban-badge-board {
+  background: var(--panel-2);
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+
 .kanban-card.overdue {
   border-color: #d92d20;
   border-left-color: #d92d20;
