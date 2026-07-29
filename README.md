@@ -1,6 +1,6 @@
 # ObraSync
 
-> Versão `v1.39.0` · 2026-07-29
+> Versão `v1.39.1` · 2026-07-29
 
 ObraSync é uma aplicação web em HTML, CSS, JavaScript puro, PHP e MariaDB/MySQL para gestão integrada de obras, financeiro, comercial e contabilidade gerencial. O frontend fica em `/var/www/financeiro`, a URL pública é `https://schimanskiengenharia.com.br/financeiro`, os dados persistentes ficam no banco e os arquivos de dados ficam fora da pasta pública.
 
@@ -12,8 +12,8 @@ Antes de atualizar em produção, faça backup do banco e de `/var/lib/financeir
 
 Esta seção orienta qualquer pessoa — ou outra IA — que precise continuar o trabalho sem se perder.
 
-- **Versão atual:** `v1.39.0` (2026-07-29). A versão fica em **dois lugares que devem andar juntos**: a constante `APP_VERSION`/`APP_VERSION_DATE` no topo de `app.js` (com `APP_CHANGELOG`) e o cabeçalho deste README. O painel "Versão" em Configurações lê de `APP_VERSION`.
-- **Cache busting:** sempre que `app.js` ou `styles.css` mudarem, **incremente o `?v=NNNN`** das tags correspondentes em `index.html` (hoje `app.js?v=1808`, `styles.css?v=1808`). Sem isso o navegador serve a versão velha.
+- **Versão atual:** `v1.39.1` (2026-07-29). A versão fica em **dois lugares que devem andar juntos**: a constante `APP_VERSION`/`APP_VERSION_DATE` no topo de `app.js` (com `APP_CHANGELOG`) e o cabeçalho deste README. O painel "Versão" em Configurações lê de `APP_VERSION`.
+- **Cache busting:** sempre que `app.js` ou `styles.css` mudarem, **incremente o `?v=NNNN`** das tags correspondentes em `index.html` (hoje `app.js?v=1809`, `styles.css?v=1809`). Sem isso o navegador serve a versão velha.
 - **Estado de saúde (2026-06-28):** em produção e estável. A leva **v1.15→v1.18** entregou o fluxo **Orçamento → Proposta com base SINAPI** (múltiplos orçamentos, BDI flexível, licitação, hierarquia por disciplina, modelos), **SINAPI no PDF + export Excel**, **contrato a partir da proposta** (template 13 cláusulas + anexos assinados), **CEP autofill universal** (corrigindo a regressão do CSP), **endereço próprio da obra** e a **exclusão de análise de viabilidade**; além do **fix do asDate** (Viabilidade travando). Ver o changelog abaixo e `STATUS.md` para o que está FEITO vs PENDENTE.
 - **Arquitetura:** SPA sem build. Todo o frontend está em `app.js` (arquivo único, ~15 mil linhas) + `index.html` (shell) + `styles.css`. Todo o backend está em `api/index.php` (arquivo único, ~8,7 mil linhas). O banco é MariaDB/MySQL (`financeiro`).
 - **Convenções do backend (siga-as):** respostas via `respond(['ok' => true, 'data' => ...])` e erros via `fail($msg, $status)`; INSERT/UPDATE genéricos via `insert_dynamic()`/`update_dynamic()` (descartam colunas inexistentes — toleram diferenças de schema); auditoria via `server_audit()`. Muitas tabelas novas são criadas sob demanda por funções `ensure_*` no próprio `index.php` (além das migrations).
@@ -26,6 +26,19 @@ Esta seção orienta qualquer pessoa — ou outra IA — que precise continuar o
 ## Histórico de Versões
 
 Mapa de cada marco do produto, do mais novo ao mais antigo, com as features e as tabelas/arquivos envolvidos. Use-o para entender *o que existe e por quê* antes de mexer.
+
+### v1.39.1 — 2026-07-29 · Dashboard: polimento (impeccable) — semântica de cor, estado vazio e robustez
+
+Auditoria da tela pela skill `impeccable polish`. Aplicado só o que é **inequívoco** — as releases v1.36–v1.38 do Dashboard ainda aguardam validação visual do dono, e a tela **não tinha nenhum teste**.
+
+- **Cor invertida (o achado mais grave):** o card "Etapas atrasadas" não passava `tone`, e `kpi()` colore automaticamente qualquer número — verde se `> 0`. Resultado: o card ficava **verde quanto mais etapas atrasadas houvesse**, e neutro quando não havia nenhuma. A mesma métrica já gerava alerta `warning` em `dashboardAlerts`, ou seja, card e alerta se contradiziam na mesma tela. Agora usa tom explícito.
+- **Percentuais sem cor:** margem prevista, margem realizada e percentual financeiro executado chegam ao `kpi()` como **string já formatada**, então `numeric` era `null` e o tom caía sempre em vazio. Uma margem de −40% tinha o mesmo estilo neutro de +40%, ao lado do card de lucro em R$ que é colorido por ser número puro. Helper novo `kpiToneNumero(n)` deriva o tom do número **antes** de formatar; execução acima de 100% passa a sinalizar estouro.
+- **Estado vazio do painel Lucro × Caixa:** sem nenhum lançamento no escopo, `lucroCaixaResolvePeriod` caía no fallback e **inventava um período de um dia** (hoje→hoje), exibindo nove cards zerados — indistinguível de falha de carregamento. Agora explica que não há lançamento, reusando o padrão `.empty` já existente no projeto.
+- **Robustez:** `renderDashboard()` não tinha `try/catch`, embora outras telas tenham. Por ser a **primeira tela após o login**, qualquer exceção deixava a área de conteúdo em branco — que o usuário lê como "o sistema caiu". Agora mostra o motivo e orienta. O corpo foi extraído para `renderDashboardBody()` para não reindentar 190 linhas só por causa do `try`.
+- **Acessibilidade:** os gráficos se anunciavam como "Gráfico de linha"/"Gráfico de barras" — genérico e **repetido** (a mesma tela tem dois ou três, indistinguíveis no leitor de tela). `chartPanel()` passou a injetar o título real no `aria-label`, resolvendo todos de uma vez sem tocar nas doze chamadas. Cabeçalhos de tabela ganharam `scope="col"` (aditivo, sem efeito visual, vale para todas as telas).
+- **Teste novo:** `test_dashboard_polish.js` (20 asserções) — o **primeiro teste do Dashboard**. Cobre os tons, o guard (inclusive que ele não interfere no caminho feliz), a injeção do `aria-label` e a regressão do card verde. Suíte: **12/12 blocos**.
+
+**Levantado e NÃO aplicado** (precisa de decisão, está no corpo do relatório da auditoria): conflito entre o filtro global de obra e o seletor do próprio dashboard, que pode zerar a tela sem aviso; widget de execução que ignora a visão por obra; ordem dos blocos (alertas aparecem depois de dois blocos pesados); recontagem O(n²) em `dashboardCostCenterRows`/`resultByProjectRows`; e `kpi()` colorindo de verde contagens neutras como "Fornecedores vinculados".
 
 ### v1.39.0 — 2026-07-29 · Kanban: visão "Todos os boards" e identificação por obra
 

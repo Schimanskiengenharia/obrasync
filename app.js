@@ -93,9 +93,10 @@ function avisarFalha(contexto, mensagem) {
     showToast(mensagem, 5000);
   };
 }
-const APP_VERSION = "v1.39.0";
+const APP_VERSION = "v1.39.1";
 const APP_VERSION_DATE = "2026-07-29";
 const APP_CHANGELOG = [
+  "Dashboard — acabamento e robustez: o cartao \"Etapas atrasadas\" ficava VERDE quanto mais etapas atrasadas houvesse (e neutro quando nao havia nenhuma) — agora fica vermelho, coerente com o alerta que a mesma informacao ja gerava. Margem prevista, margem realizada e percentual financeiro executado passam a ter cor: margem negativa aparece como prejuizo e execucao acima de 100% como estouro, o que antes ficava com o mesmo tom neutro de um resultado positivo. O painel Lucro x Caixa deixa de mostrar nove valores zerados quando a obra ainda nao tem lancamento nenhum e passa a explicar que nao ha dado. Se algo falhar ao montar a tela, aparece uma mensagem com o motivo em vez da tela em branco — por ser a primeira tela apos o login, o branco era lido como sistema fora do ar. Acessibilidade: cada grafico passa a se anunciar pelo proprio titulo para leitores de tela (havia dois \"Grafico de linha\" indistinguiveis na mesma tela) e os cabecalhos de tabela ganharam marcacao de coluna (v1.39.1).",
   "Kanban: visao \"Todos os boards\" e identificacao por obra. O seletor de quadros passa a agrupar os boards POR OBRA, com o nome da obra visivel — antes os dez quadros apareciam numa lista unica e era facil abrir o da obra errada. Nova opcao \"Todos os boards\" mostra os cards de todas as obras juntos, agrupados pelo nome da coluna (A fazer, Fazendo, Concluido), com etiqueta de obra e de quadro em cada card, e filtros por obra, responsavel e prioridade. Nessa visao arrastar fica desativado de proposito: como a mesma coluna existe em varios quadros, soltar o card nao definiria para qual quadro ele iria — para mover, abra o quadro especifico (v1.39.0).",
   "Correção: card do Kanban nascia no quadro errado e sumia da tela. Ao criar um card, a lista de colunas mostrava apenas números, sem nome, e misturava as colunas de todos os quadros de todas as obras — não havia como escolher a certa. O card era salvo, mas num quadro de outra obra, e por isso não aparecia. Agora cada coluna aparece com seu nome, agrupada pelo quadro e pela obra a que pertence (ex.: \"Kanban - Asilo São João Bosco\"), e o sistema recusa salvar um card cuja obra não seja a do quadro escolhido, explicando o motivo. A mesma correção alcança todo o sistema: campos de seleção de disciplinas de obra, categorias e tipos de cotação, colaboradores e tipos de documento do RH, etapas de orçamento, grupos e modelos de proposta e análises de viabilidade também mostravam número em vez de nome ao editar — passam todos a exibir o nome (v1.38.5).",
   "Correção: erro ao criar e ao arrastar card no Kanban. Criar um card pelo formulário ou mover um card entre colunas devolvia \"Erro interno no servidor\" e nada era salvo — um defeito antigo, não uma novidade. A causa: o sistema gravava a ordem do card em milissegundos, um número 831 vezes maior do que o campo comporta, e o banco recusava a gravação. Cards criados automaticamente ao aprovar um pedido de compra nunca falharam, porque esse caminho já usava a unidade certa — o que explica o problema parecer intermitente. Junto vieram duas proteções: erros de valor fora do limite, data inválida ou texto longo demais agora aparecem como aviso claro em qualquer tela do sistema, em vez do \"erro interno\" genérico; e os erros do servidor passaram a ser gravados em arquivo próprio, porque não estavam sendo registrados em lugar algum — foi o que dificultou este diagnóstico (v1.38.4).",
@@ -4593,6 +4594,25 @@ function lucroCaixaCard(label, value, sub, valueClass = "", tone = "") {
 // altera apenas o gráfico; todos os cards continuam representando o período total.
 function lucroCaixaPanel(projectId = "") {
   const scoped = lucroCaixaScopedRows(projectId);
+  // Sem NENHUM lançamento no escopo, lucroCaixaResolvePeriod cai no fallback e
+  // inventa um período de um dia (hoje→hoje): o painel mostrava nove cards
+  // zerados, indistinguível de falha de carregamento. Dizer que não há dado é
+  // informação; R$ 0,00 sem contexto não é.
+  if (!scoped.receivable.length && !scoped.payable.length) {
+    const ondeVazio = projectId
+      ? `a obra "${svgText(nameOf("projects", projectId) || "—")}"`
+      : "a empresa";
+    return `
+      <section class="lucro-caixa-panel">
+        <div class="lucro-caixa-head">
+          <div>
+            <h3>Lucro Gerencial vs Caixa Real</h3>
+            <p class="muted">${projectId ? `Obra: ${svgText(nameOf("projects", projectId) || "—")}` : "Visão geral da empresa"}</p>
+          </div>
+        </div>
+        <div class="empty">Ainda não há contas a receber ou a pagar cadastradas para ${ondeVazio} no período filtrado. O comparativo aparece assim que houver o primeiro lançamento financeiro.</div>
+      </section>`;
+  }
   const period = lucroCaixaResolvePeriod(projectId, scoped);
   const ind = lucroCaixaIndicators(projectId, scoped, period);
   const alerts = lucroCaixaAlerts(ind, lucroCaixaOverdue30(projectId, scoped));
@@ -4652,7 +4672,20 @@ function lucroCaixaReconcSection(projectId = "") {
     </section>`;
 }
 
+// O dashboard é a PRIMEIRA tela depois do login. Sem esta guarda, qualquer exceção
+// no meio da montagem deixava a área de conteúdo em branco, sem explicação — e o
+// usuário lê tela branca como "o sistema caiu". Mesmo padrão de renderAgendaWeek.
+// O corpo fica em função própria para não reindentar 190 linhas só por causa do try.
 function renderDashboard() {
+  try {
+    renderDashboardBody();
+  } catch (err) {
+    qs("content").innerHTML = `<div class="empty" style="padding:32px;color:var(--red)">Não foi possível montar o dashboard: ${escapeHtml(err.message)}. Recarregue a página; se persistir, avise o administrador.</div>`;
+    console.error("renderDashboard:", err);
+  }
+}
+
+function renderDashboardBody() {
   const metrics = dashboardMetrics();
   const cashFlow = monthlyCashFlowRows();
   const monthlyResult = monthlyResultRows();
@@ -4668,16 +4701,25 @@ function renderDashboard() {
     ["Despesas em aberto da obra", metrics.openPayable],
     ["Lucro previsto da obra", metrics.expectedProfit],
     ["Lucro realizado da obra", metrics.realizedProfit],
-    ["Margem prevista", asPercent(metrics.expectedMargin), false],
-    ["Margem realizada", asPercent(metrics.realizedMargin), false],
+    // Margem é resultado: negativa é prejuízo e precisa aparecer como tal. Sem o tom
+    // explícito, -40% ficava com o mesmo estilo neutro de +40%, ao lado do card de
+    // lucro em R$ que é colorido automaticamente por ser número puro.
+    ["Margem prevista", asPercent(metrics.expectedMargin), false, kpiToneNumero(metrics.expectedMargin)],
+    ["Margem realizada", asPercent(metrics.realizedMargin), false, kpiToneNumero(metrics.realizedMargin)],
     ["Saldo financeiro da obra", metrics.currentBalance],
     ["Percentual físico realizado", asPercent(metrics.physicalProgress), false],
     ["Percentual financeiro realizado", asPercent(metrics.scheduleFinancialExecution), false],
     ["Previsto x realizado", metrics.scheduleDifference],
     ["Etapas concluídas", metrics.completedStages, false],
-    ["Etapas atrasadas", metrics.delayedStages, false],
+    // Contagem de PROBLEMA: sem tom explícito o kpi() pintaria de verde quanto mais
+    // etapas atrasadas houvesse, e de neutro quando não houvesse nenhuma — invertido.
+    // O alerta gerado pela mesma métrica em dashboardAlerts já usa "warning".
+    ["Etapas atrasadas", metrics.delayedStages, false, metrics.delayedStages > 0 ? "negative" : ""],
     ["Próximo marco", metrics.nextMilestone, false],
-    ["Percentual financeiro executado", asPercent(metrics.financialExecution), false],
+    // Percentuais chegam como STRING já formatada, então kpi() não consegue inferir
+    // o tom: uma execução acima de 100% (estouro de custo) ficava igual a uma dentro
+    // do previsto. O tom vem do número original, antes de formatar.
+    ["Percentual financeiro executado", asPercent(metrics.financialExecution), false, metrics.financialExecution > 100 ? "negative" : ""],
     ["A pagar vencidas da obra", metrics.overduePayable, true, metrics.overduePayable > 0 ? "negative" : ""],
     ["Inadimplência da obra (a receber vencidas)", metrics.overdueReceivable, true, metrics.overdueReceivable > 0 ? "warning" : ""],
     ["Propostas vinculadas", metrics.linkedProposals, false],
@@ -5169,6 +5211,14 @@ function urgentKanbanCards() {
     .slice(0, 8);
 }
 
+// Tom de um KPI a partir do NÚMERO original, para uso quando o valor exibido é
+// string formatada (percentual): nesse caso kpi() não consegue inferir sozinho.
+function kpiToneNumero(n) {
+  const v = Number(n);
+  if (!Number.isFinite(v) || v === 0) return "";
+  return v < 0 ? "negative" : "positive";
+}
+
 function kpi(label, value, format = true, tone = null) {
   const numeric = typeof value === "number" ? value : null;
   const computedTone = tone ?? (numeric === null ? "" : numeric < 0 ? "negative" : numeric > 0 ? "positive" : "");
@@ -5203,6 +5253,14 @@ function bars(rows) {
 
 // Helpers de gráficos SVG: evitam dependências externas e funcionam abrindo o index.html direto.
 function chartPanel(title, subtitle, chart) {
+  // Acessibilidade: lineChart/groupedBarChart emitem aria-label genérico ("Gráfico
+  // de linha"), e a mesma tela chega a ter dois ou três — para quem usa leitor de
+  // tela ficam indistinguíveis. Como aqui o título existe, ele substitui o genérico.
+  // Uma troca só, sem alterar as chamadas espalhadas pelo arquivo.
+  const rotulo = String(title || "").replace(/<[^>]*>/g, "").trim();
+  const grafico = rotulo
+    ? String(chart).replace(/aria-label="Gráfico de (?:linha|barras)"/, `aria-label="${escapeHtml(rotulo)}"`)
+    : chart;
   return `
     <article class="chart-card">
       <header>
@@ -5211,7 +5269,7 @@ function chartPanel(title, subtitle, chart) {
           <p>${subtitle}</p>
         </div>
       </header>
-      ${chart}
+      ${grafico}
     </article>
   `;
 }
@@ -7336,7 +7394,7 @@ function table(title, rows, fields, actions = false, actionKey = "") {
   const canDel = actions && (!actionKey || canDeleteRecord(actionKey));
   return `<section class="table-wrap" data-export-title="${escapeHtml(title)}">
     <table>
-      <thead><tr>${fields.map((field) => `<th>${labelFor(field)}</th>`).join("")}${actions ? "<th>Ações</th>" : ""}</tr></thead>
+      <thead><tr>${fields.map((field) => `<th scope="col">${labelFor(field)}</th>`).join("")}${actions ? '<th scope="col">Ações</th>' : ""}</tr></thead>
       <tbody>
         ${rows.map((row) => {
           const extra = extraRowActions(actionKey, row);
