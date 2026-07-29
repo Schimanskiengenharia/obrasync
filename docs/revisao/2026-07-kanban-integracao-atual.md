@@ -328,7 +328,40 @@ o bootstrap cresce proporcionalmente, sem teto.
 
 ---
 
-## 6. PENDÊNCIA PRÓPRIA — integridade do ciclo de compras
+## 6. Integridade do ciclo de compras — **REBAIXADA: furos 100% teóricos**
+
+> ### ⚠️ MEDIÇÃO EM PRODUÇÃO — 2026-07-29 · o ciclo de compras NUNCA rodou
+>
+> As consultas da §6.5 foram executadas no banco de produção. Resultado:
+>
+> | Consulta | Resultado |
+> |---|---|
+> | (1) itens em mais de um pedido | **vazia** — nenhuma dupla contagem |
+> | (2) realizado acima do previsto | **vazia** — nenhum item inflado |
+> | (3) vencedor duplicado | **vazia** — nenhuma decisão ambígua |
+> | (4) gasto por origem | 62 contas a pagar, **R$ 167.616** — **61 `(sem referencia)`** + 1 `CAIXA_MANUAL`. **Zero** `COTACAO_MATERIAL`, **zero** `PEDIDO_COMPRA` |
+> | (4b) obra 7 (Asilo São João Bosco) | **vazia** — nenhuma conta a pagar vinculada à obra |
+>
+> **Conclusão: os quatro furos descritos abaixo são teóricos.** Nenhum dado está corrompido, e
+> nenhum será enquanto o fluxo de compras não for usado — os dois fluxos concorrentes nunca
+> produziram um único registro em produção. **A frente 6 fica rebaixada**: não é dívida ativa, é
+> risco latente que só se materializa quando o ciclo de compras entrar em uso de verdade.
+>
+> **O que a medição revelou de mais importante não foi o esperado.** O guia de leitura previa que um
+> volume alto de `(sem referencia)` "mudaria a conversa" — e foi exatamente o que aconteceu:
+> **98,4% das contas a pagar (61 de 62) são lançadas à mão**, fora de qualquer fluxo automático.
+> Isso desloca a questão real, registrada em §6.6.
+
+### 6.0 Como reler as seções seguintes
+
+As §6.1 a §6.4 continuam **tecnicamente corretas** como descrição do código — os furos existem. O
+que mudou é a **prioridade**: leia-as como "o que precisa ser resolvido **antes** de o ciclo de
+compras entrar em uso", não como "o que está quebrado agora". A ordem sugerida ao fim da seção
+continua válida para esse momento futuro.
+
+---
+
+## 6 (original). Descrição técnica dos furos — integridade do ciclo de compras
 
 > Registrada como frente **independente do Kanban** por decisão de 2026-07-29. Estes furos existem
 > hoje, em produção, e **afetam o previsto × realizado da obra** — não são pré-requisito de uma
@@ -507,6 +540,33 @@ Nota: as consultas (4) e (4b) não filtram contas canceladas. Para excluí-las, 
 
 Se alguma consulta falhar por coluna inexistente, isso por si só é um achado: significa que o banco
 divergiu do `schema.sql`.
+
+### 6.6 O que a medição revelou de fato — o realizado não é alimentado
+
+Este é o achado que substitui a frente 6 em relevância prática. Não é proposta de trabalho — é
+**informação operacional** para quem for usar o sistema numa obra real.
+
+**O sistema tem dois "realizados" diferentes, e nenhum dos dois está sendo alimentado hoje:**
+
+| "Realizado" | De onde vem | Situação medida |
+|---|---|---|
+| **Custo realizado da obra** (card do dashboard) | contas a pagar **pagas** + saídas de caixa, filtradas por `projectId` (`app.js:4069`) | A obra 7 **não tem nenhuma conta a pagar vinculada** (consulta 4b vazia) |
+| **Execução física** (`orcamento_obra_itens.quantidade_realizada`) | só duas portas: recebimento de pedido (`api/index.php:6501`) ou digitação manual na aba Execução (`:6551`) | **Não há pedido nenhum** em produção; resta apenas a digitação manual |
+
+**Consequência prática, a saber antes de usar:** o dashboard de uma obra só mostra "Custo realizado"
+se as contas a pagar tiverem a **obra vinculada** (`projectId`). Como as 62 contas existentes não
+apontam para a obra 7, o card dessa obra exibe **R$ 0,00** — e isso não é defeito do cálculo, é
+ausência de vínculo no lançamento. Do mesmo modo, o painel Previsto × Realizado do orçamento só sai
+do zero se alguém atualizar a quantidade executada na aba Execução, item a item.
+
+**Ressalva de honestidade:** não foi verificado no banco se as 61 contas `(sem referencia)` têm
+`projectId` preenchido apontando para *outras* obras ou se estão sem obra alguma — a consulta (4b)
+só provou que **nenhuma aponta para a obra 7**. A distinção importa e vale uma conferência quando o
+uso começar (`SELECT projectId, COUNT(*) FROM accounts_payable GROUP BY projectId`).
+
+Nada aqui exige decisão agora. Fica registrado para que, ao usar o sistema numa obra real, um
+"Custo realizado = R$ 0,00" seja lido como **falta de vínculo no lançamento**, e não como erro do
+sistema — que é a conclusão natural de quem vê o número zerado.
 
 ### Ordem sugerida para esta frente (quando for retomada)
 

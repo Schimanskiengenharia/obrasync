@@ -74,6 +74,53 @@ quebra, apenas não usa o caminho novo).
 
 ---
 
+## 0.2 Pendências conhecidas e NÃO implementadas (2026-07-29)
+
+Registradas por decisão do dono, que **congelou frentes novas** para usar o sistema numa obra real
+antes de construir mais: *"as próximas decisões saem do uso, não do desenho"*. Nada aqui deve ser
+implementado sem pedido explícito.
+
+### Dashboard — levantadas pela auditoria `impeccable polish` (v1.39.1)
+
+1. **Conflito entre os dois filtros de obra** *(o único que produz informação enganosa)*. O seletor
+   de obra do próprio dashboard (`dashboardProjectId`) e o filtro global do topo (`#filterProject`)
+   são independentes e **se somam**. Apontando para obras diferentes, a interseção fica vazia:
+   KPIs, painel Lucro × Caixa e gráficos zeram inteiros, **sem nada avisar** — parece "obra sem
+   lançamento". Pontos: `dashboardRows()` (`app.js:3962-3966`) e `lucroCaixaMatchesDimensions()`
+   (`app.js:4366-4383`), ambos aplicando `filters.projectId` **além** do escopo já escolhido.
+2. **Widget "Execução das Obras" ignora a visão por obra** — mostra todas as obras mesmo com uma
+   obra selecionada no dashboard (`app.js:4800`; os dados vêm sempre completos do endpoint).
+3. **Ordem dos blocos:** os alertas (contas vencidas, cronograma atrasado, documentos de RH) só
+   aparecem **depois** do painel Lucro × Caixa e de 18 a 27 cartões — a informação mais acionável
+   exige rolagem. Correção seria reordenar strings de template.
+4. **Recontagem O(n²):** `dashboardCostCenterRows()` e `resultByProjectRows()` refiltram a coleção
+   inteira dentro do laço, e cada uma roda **duas vezes por render**.
+5. **`kpi()` colore contagens neutras de verde** ("Fornecedores vinculados", "Notas fiscais
+   vinculadas" etc.) — ter 1 ou 40 não é bom nem ruim. Mesma raiz da cor invertida corrigida na
+   v1.39.1, mas sem gravidade.
+
+### Ciclo de compras — **rebaixado** para risco latente
+
+Medição em produção de 2026-07-29 provou que **o ciclo de compras nunca rodou**: das 62 contas a
+pagar (R$ 167.616), 61 são `(sem referencia)` e 1 é `CAIXA_MANUAL` — **zero** de
+`COTACAO_MATERIAL` ou `PEDIDO_COMPRA`. Nenhum dado corrompido, nenhuma dupla contagem. Detalhes e
+consultas em `docs/revisao/2026-07-kanban-integracao-atual.md` §6.
+
+**O que a medição revelou de mais útil** (§6.6 do mesmo relatório): **98,4% das contas a pagar são
+lançadas à mão**, e a obra 7 (Asilo) não tem nenhuma conta vinculada. Por isso o card "Custo
+realizado da obra" dessa obra exibe **R$ 0,00** — não é erro de cálculo, é ausência de `projectId`
+no lançamento. Vale saber ao começar a usar, para não ler o zero como defeito do sistema.
+
+### Outras, de sessões anteriores
+
+- Campo `ordem` do Kanban: solução estrutural (sequencial `MAX+1` ou coluna → `BIGINT`); o teste
+  avisa quando o limite do `INT` se aproximar, em 2038.
+- Acessibilidade: hierarquia de cabeçalhos no drawer de NFS-e e no plugin de seletividade.
+- IA nas cotações: Fase 1 (atributos por tipo) aguarda só o aval no spec; Fase 2 depende dela.
+- Documentação da obra como módulo próprio (molde do RH F1).
+
+---
+
 ## 1. Resumo executivo
 
 ObraSync é um ERP web de gestão integrada de obras, financeiro, comercial e
