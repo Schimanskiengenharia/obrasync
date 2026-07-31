@@ -91,5 +91,19 @@ showToast("dentro do modal", { severity: "warning" });
 t_assert("com modal aberto, host é o ÚLTIMO modal", appended.at(-1).host === "modal");
 modais = [];
 
+// ── Guardas de regressão (E3 Fase 1) ────────────────────────────────────────
+// saveForm nunca mais usa alert(): validação = warning, falha de gravação = error.
+const sfIni = src.indexOf("async function saveForm");
+const sfFim = src.indexOf("function validateCurrentForm");
+t_assert("saveForm encontrado", sfIni >= 0 && sfFim > sfIni);
+const saveFormCorpo = src.slice(sfIni, sfFim);
+t_assert("saveForm não usa alert()", !/\balert\(/.test(saveFormCorpo));
+t_assert("saveForm usa severidade warning", saveFormCorpo.includes('severity: "warning"'));
+t_assert("saveForm usa severidade error na falha de gravar", saveFormCorpo.includes('severity: "error"'));
+// O aviso de erro global (E1) usa a severidade error.
+const rgIni = src.indexOf("function reportGlobalError");
+const rgFim = src.indexOf("window.addEventListener", rgIni);
+t_assert("reportGlobalError com severity error", src.slice(rgIni, rgFim).includes('severity: "error"'));
+
 console.log(`test_toast_severity: ${ok}/${ok + falhas} ok`);
 process.exit(falhas ? 1 : 0);

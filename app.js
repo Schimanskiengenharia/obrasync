@@ -52,7 +52,7 @@ function reportGlobalError(kind, message, detail) {
     if (agora - lastErrorToastAt < ERROR_TOAST_COOLDOWN_MS) return;
     if (!document.body) return; // erro antes do body existir: só console
     lastErrorToastAt = agora;
-    showToast("Ocorreu um erro inesperado nesta tela. Se algo não carregou, recarregue a página (Ctrl+Shift+R).", 6000);
+    showToast("Ocorreu um erro inesperado nesta tela. Se algo não carregou, recarregue a página (Ctrl+Shift+R).", { severity: "error" });
   } catch (_) {
     // Falhar ao reportar não pode escalar — engolir é o comportamento correto aqui.
   } finally {
@@ -8965,7 +8965,7 @@ async function saveForm(event) {
   event.preventDefault();
   if (!canEditModule(editing.key)) return;
   const validation = validateCurrentForm(event.target);
-  if (!validation.ok) return alert(validation.message);
+  if (!validation.ok) return showToast(validation.message, { severity: "warning" });
   const data = formDataToRecord(event.target, editing.key);
   let selfPasswordChanged = false;
   if (editing.key === "workBudgetItems") normalizeWorkBudgetItem(data);
@@ -8975,15 +8975,15 @@ async function saveForm(event) {
   if (editing.key === "agendaEvents") normalizeAgendaEvent(data);
   if (editing.key === "kanbanCards") {
     const kanbanError = normalizeKanbanCard(data);
-    if (kanbanError) return alert(kanbanError);
+    if (kanbanError) return showToast(kanbanError, { severity: "warning" });
   }
   if (editing.key === "viabilityAnalyses") {
     const viabilityError = normalizeViabilityAnalysis(data);
-    if (viabilityError) return alert(viabilityError);
+    if (viabilityError) return showToast(viabilityError, { severity: "warning" });
   }
   if (editing.key === "plugins") {
     const url = String(data.url || "").trim();
-    if (!isValidPluginUrl(url)) return alert("Informe uma URL válida: https://... ou caminho interno iniciando com / ou ./");
+    if (!isValidPluginUrl(url)) return showToast("Informe uma URL válida: https://... ou caminho interno iniciando com / ou ./", { severity: "warning" });
     data.url = url;
     data.sortOrder = Number(data.sortOrder || 0) || (sortedPlugins().length + (editing.id ? 0 : 1));
   }
@@ -9009,10 +9009,10 @@ async function saveForm(event) {
       [validateCelular(data.celular), "Celular inválido — use (DDD) 9XXXX-XXXX."],
     ];
     const firstError = userChecks.find(([ok]) => !ok);
-    if (firstError) return alert(firstError[1]);
+    if (firstError) return showToast(firstError[1], { severity: "warning" });
     const cpfDigits = onlyDigits(data.cpf);
     if (db.users.some((user) => onlyDigits(user.cpf || "") === cpfDigits && !sameId(user.id, editing.id))) {
-      return alert("CPF já cadastrado para outro usuário.");
+      return showToast("CPF já cadastrado para outro usuário.", { severity: "warning" });
     }
     // Banco recebe apenas dígitos (cpf/celular) e data ISO (AAAA-MM-DD).
     data.cpf = cpfDigits;
@@ -9020,17 +9020,17 @@ async function saveForm(event) {
     data.data_nascimento = dataBrToIso(data.data_nascimento);
     if (data.password) {
       const pwdCheck = validatePassword(data.password);
-      if (!pwdCheck.valid) return alert("Senha não atende aos critérios:\n• " + pwdCheck.errors.join("\n• "));
+      if (!pwdCheck.valid) return showToast("Senha não atende aos critérios:\n• " + pwdCheck.errors.join("\n• "), { severity: "warning" });
     }
     // sameId em todas as comparações: o id do banco é numérico e o editing.id
     // vem do dataset do botão (string) — !== estrito nunca excluía o próprio
     // registro e o usuário "colidia" consigo mesmo ("já existe um usuário...").
     const duplicate = db.users.some((user) => user.username.toLowerCase() === String(data.username || "").toLowerCase() && !sameId(user.id, editing.id));
-    if (duplicate) return alert("Já existe um usuário com esse login.");
-    if (sameId(editing.id, currentUser.id) && data.role !== "admin") return alert("O administrador logado não pode remover o próprio perfil de administrador.");
+    if (duplicate) return showToast("Já existe um usuário com esse login.", { severity: "warning" });
+    if (sameId(editing.id, currentUser.id) && data.role !== "admin") return showToast("O administrador logado não pode remover o próprio perfil de administrador.", { severity: "warning" });
     const usersAfterSave = db.users.map((user) => sameId(user.id, editing.id) ? { ...user, ...data } : user);
     if (!usersAfterSave.some((user) => user.role === "admin" && user.status === "Ativo")) {
-      return alert("Mantenha ao menos um administrador ativo no sistema.");
+      return showToast("Mantenha ao menos um administrador ativo no sistema.", { severity: "warning" });
     }
     // Troca da própria senha: pergunta se as outras sessões devem ser encerradas.
     if (sameId(editing.id, currentUser.id) && data.password) {
@@ -9097,7 +9097,7 @@ async function saveForm(event) {
       saveDb();
     }
   } catch (error) {
-    alert(`Não foi possível salvar: ${error.message}`);
+    showToast(`Não foi possível salvar: ${error.message}`, { severity: "error" });
     return;
   }
   if (editing.key === "workBudgetItems" && data.workBudgetId) {
