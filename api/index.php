@@ -1033,6 +1033,7 @@ function handle_agenda_module(PDO $pdo, string $method, array $query): never
 
 function agenda_respond(bool $success, mixed $data = [], string $message = '', int $status = 200): never
 {
+    $message = apply_error_ref($message, $status); // E4: 500 sai com código
     http_response_code($status);
     echo json_encode([
         'success' => $success,
@@ -1075,6 +1076,7 @@ function handle_clients_module(PDO $pdo, string $method, array $query): never
 
 function clients_module_respond(bool $success, mixed $data = [], string $message = '', int $status = 200): never
 {
+    $message = apply_error_ref($message, $status); // E4: 500 sai com código
     http_response_code($status);
     echo json_encode([
         'success' => $success,
@@ -1133,6 +1135,7 @@ function handle_payable_module(PDO $pdo, string $method, array $query, array $au
 
 function payable_respond(bool $success, mixed $data = [], string $message = '', int $status = 200): never
 {
+    $message = apply_error_ref($message, $status); // E4: 500 sai com código
     http_response_code($status);
     echo json_encode([
         'success' => $success,
@@ -1861,8 +1864,15 @@ function respond(array $payload, int $status = 200): never
 
 function fail(string $message, int $status): never
 {
+    // E4: erro de servidor sai com o código de correlação na mensagem e no
+    // campo errorRef (disponível para o front; hoje só a mensagem é exibida).
+    $message = apply_error_ref($message, $status);
+    $payload = ['ok' => false, 'error' => $message];
+    if ($status >= 500) {
+        $payload['errorRef'] = obra_error_ref();
+    }
     http_response_code($status);
-    echo json_encode(['ok' => false, 'error' => $message], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit;
 }
 
@@ -3482,6 +3492,7 @@ function handle_contrato_download(PDO $pdo, int $contratoId, string $tipo): neve
 
 function cotacao_respond(bool $success, mixed $data = [], string $message = '', int $status = 200): never
 {
+    $message = apply_error_ref($message, $status); // E4: 500 sai com código
     http_response_code($status);
     echo json_encode(['success' => $success, 'data' => $data, 'message' => $message], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit;
@@ -5304,6 +5315,7 @@ function handle_cost_centers_module(PDO $pdo, string $method, array $query, arra
 
 function cost_centers_respond(bool $success, mixed $data = [], string $message = '', int $status = 200): never
 {
+    $message = apply_error_ref($message, $status); // E4: 500 sai com código
     http_response_code($status);
     echo json_encode([
         'success' => $success,
@@ -5650,6 +5662,7 @@ function viabilidade_get_full(PDO $pdo, int $analiseId): ?array
 
 function viabilidade_respond(bool $success, mixed $data = [], string $message = '', int $status = 200): never
 {
+    $message = apply_error_ref($message, $status); // E4: 500 sai com código
     http_response_code($status);
     echo json_encode([
         'success' => $success,
@@ -6063,6 +6076,7 @@ function handle_cash_moves_module(PDO $pdo, string $method, array $query, array 
 
 function cash_moves_respond(bool $success, mixed $data = [], string $message = '', int $status = 200): never
 {
+    $message = apply_error_ref($message, $status); // E4: 500 sai com código
     http_response_code($status);
     echo json_encode([
         'success' => $success,
@@ -6176,6 +6190,7 @@ function cash_move_link(PDO $pdo, array $payload, array $authUser): array
 // ─── Logo / identidade visual da empresa ────────────────────────────────────
 function company_settings_respond(bool $success, mixed $data = [], string $message = '', int $status = 200): never
 {
+    $message = apply_error_ref($message, $status); // E4: 500 sai com código
     http_response_code($status);
     echo json_encode(['success' => $success, 'data' => $data, 'message' => $message], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit;
@@ -6368,6 +6383,7 @@ function handle_purchase_order_items_module(PDO $pdo, string $method, array $que
 
 function poi_respond(bool $success, mixed $data = [], string $message = '', int $status = 200): never
 {
+    $message = apply_error_ref($message, $status); // E4: 500 sai com código
     http_response_code($status);
     echo json_encode(['success' => $success, 'data' => $data, 'message' => $message], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit;
@@ -6588,6 +6604,7 @@ function handle_work_budget_execution_module(PDO $pdo, string $method, array $qu
 
 function wbe_respond(bool $success, mixed $data = [], string $message = '', int $status = 200): never
 {
+    $message = apply_error_ref($message, $status); // E4: 500 sai com código
     http_response_code($status);
     echo json_encode(['success' => $success, 'data' => $data, 'message' => $message], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit;
@@ -12861,6 +12878,7 @@ function handle_sinapi_module(PDO $pdo, string $method, array $query, array $con
 
 function sinapi_module_respond(bool $success, mixed $data = [], string $message = '', int $status = 200): never
 {
+    $message = apply_error_ref($message, $status); // E4: 500 sai com código
     http_response_code($status);
     echo json_encode(['success' => $success, 'data' => $data, 'message' => $message], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit;
