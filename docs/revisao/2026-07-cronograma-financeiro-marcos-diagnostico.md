@@ -9,6 +9,10 @@
 > **Aviso de contexto:** frentes novas estão CONGELADAS por decisão do dono (2026-07-29). Este
 > diagnóstico é insumo de avaliação, não abertura de frente. O item **G8** da Onda B (backlog
 > aprovado) toca o mesmo terreno dos marcos — ver §11 e §13.
+>
+> **ADENDO 2026-07-31:** as consultas da Parte D **foram rodadas em produção** — resultados e
+> ordem FINAL no adendo ao fim do documento. Pela medição, **nenhuma das três frentes entra
+> agora**; a "Ordem sugerida" original ficou mantida como registro pré-medição.
 
 ---
 
@@ -372,7 +376,7 @@ vermelha — o atraso grita sem dobrar símbolos.
 
 ---
 
-## Ordem sugerida e o que fica de fora
+## Ordem sugerida e o que fica de fora (pré-medição — SUPERADA pelo adendo abaixo)
 
 1. **Rodar D-2/D-3/D-4 no servidor** (5 min) — decide tudo: se a curva do Asilo é plana e os
    marcos têm zero registros, ambas as ideias esperam o USO gerar dado (coerente com o
@@ -390,3 +394,36 @@ derivados início+fim por etapa (terceiro conceito de marco, ruído 2×N); popup
 novo — usar legenda inline); segmentação verde/vermelho do path no cruzamento do zero (custo
 desproporcional); qualquer mudança em `obra_marcos_padrao` (semi-órfã — decidir seu destino é
 outra conversa).
+
+---
+
+## ADENDO — Medição de produção (2026-07-31) e ordem FINAL
+
+O dono aceitou o diagnóstico integralmente (inclusive o contraponto §13: cor de atraso vale mais
+que marcos; marcos início+fim por etapa está FORA; sem gráfico novo; sem popup; sem segmentar o
+path) e rodou as consultas da Parte D em produção.
+
+### Resultados medidos
+
+| Consulta | Resultado |
+|---|---|
+| (1) Curva da obra 7 | Não rodou na 1ª tentativa: a versão one-liner colada no terminal tinha um `GROUP BY mes` sobrando no ramo do caixa (erro de transcrição; o SQL da D-2 acima sempre esteve correto). A resposta ficou derivável da (3): **só entradas realizadas → curva monotônica crescente, que nunca cruza o zero**. |
+| (2) Etapas | **Só a obra 7 tem cronograma**: 3 etapas, 3 com datas, 1 `isMilestone`, **atrasadas_hoje = 0**. |
+| (3) Financeiro da obra 7 | receber = **4 registros, 4 realizados** · pagar = **0** · caixa = **0**. |
+| (4) Marcos | `obra_cronograma_marcos` = **3 registros, 3 com data, 1 concluído** · `obra_marcos_padrao` = **0** (semi-órfã confirmada) · etapas `isMilestone` = 1. |
+
+### O que os dados decidem — a ordem pré-medição INVERTEU
+
+1. **Cor de atraso na barra: NÃO entra agora.** 0 etapas atrasadas — não haveria nada a pintar.
+   *Gatilho de retomada:* a consulta (2) acusar `atrasadas_hoje > 0`.
+2. **Polimento do Lucro×Caixa acumulado: NÃO entra agora.** A obra só tem entradas; a curva sobe
+   e nunca cruza o zero — linha do zero e tom verde/vermelho não teriam o que destacar.
+   *Gatilho:* (3) mostrar saídas realizadas vinculadas à obra (`pagar`/`caixa` > 0).
+3. **G8 é a ÚNICA frente com conteúdo real** (3 marcos datados, 1 concluído — o Gantt já nasceria
+   com losango verde e pendentes azuis/vermelhos conforme a data). **Mesmo assim não fura a
+   fila:** fica na vez dele dentro da Onda B, como aprovado.
+
+**Decisão registrada: nenhuma das três entra agora.** A pendência que os números continuam
+apontando é de USO, não de tela: a obra em execução tem `pagar = 0` e `caixa = 0` vinculados —
+vincular lançamentos à obra (`projectId`) segue sendo a ação de maior retorno e custo zero de
+código.
