@@ -1,6 +1,6 @@
 # ObraSync
 
-> Versão `v1.39.1` · 2026-07-29
+> Versão `v1.40.0` · 2026-07-31
 
 ObraSync é uma aplicação web em HTML, CSS, JavaScript puro, PHP e MariaDB/MySQL para gestão integrada de obras, financeiro, comercial e contabilidade gerencial. O frontend fica em `/var/www/financeiro`, a URL pública é `https://schimanskiengenharia.com.br/financeiro`, os dados persistentes ficam no banco e os arquivos de dados ficam fora da pasta pública.
 
@@ -12,8 +12,8 @@ Antes de atualizar em produção, faça backup do banco e de `/var/lib/financeir
 
 Esta seção orienta qualquer pessoa — ou outra IA — que precise continuar o trabalho sem se perder.
 
-- **Versão atual:** `v1.39.1` (2026-07-29). A versão fica em **dois lugares que devem andar juntos**: a constante `APP_VERSION`/`APP_VERSION_DATE` no topo de `app.js` (com `APP_CHANGELOG`) e o cabeçalho deste README. O painel "Versão" em Configurações lê de `APP_VERSION`.
-- **Cache busting:** sempre que `app.js` ou `styles.css` mudarem, **incremente o `?v=NNNN`** das tags correspondentes em `index.html` (hoje `app.js?v=1809`, `styles.css?v=1809`). Sem isso o navegador serve a versão velha.
+- **Versão atual:** `v1.40.0` (2026-07-31). A versão fica em **dois lugares que devem andar juntos**: a constante `APP_VERSION`/`APP_VERSION_DATE` no topo de `app.js` (com `APP_CHANGELOG`) e o cabeçalho deste README. O painel "Versão" em Configurações lê de `APP_VERSION`.
+- **Cache busting:** sempre que `app.js` ou `styles.css` mudarem, **incremente o `?v=NNNN`** das tags correspondentes em `index.html` (hoje `app.js?v=1810`, `styles.css?v=1810`). Sem isso o navegador serve a versão velha.
 - **Estado de saúde (2026-06-28):** em produção e estável. A leva **v1.15→v1.18** entregou o fluxo **Orçamento → Proposta com base SINAPI** (múltiplos orçamentos, BDI flexível, licitação, hierarquia por disciplina, modelos), **SINAPI no PDF + export Excel**, **contrato a partir da proposta** (template 13 cláusulas + anexos assinados), **CEP autofill universal** (corrigindo a regressão do CSP), **endereço próprio da obra** e a **exclusão de análise de viabilidade**; além do **fix do asDate** (Viabilidade travando). Ver o changelog abaixo e `STATUS.md` para o que está FEITO vs PENDENTE.
 - **Arquitetura:** SPA sem build. Todo o frontend está em `app.js` (arquivo único, ~15 mil linhas) + `index.html` (shell) + `styles.css`. Todo o backend está em `api/index.php` (arquivo único, ~8,7 mil linhas). O banco é MariaDB/MySQL (`financeiro`).
 - **Convenções do backend (siga-as):** respostas via `respond(['ok' => true, 'data' => ...])` e erros via `fail($msg, $status)`; INSERT/UPDATE genéricos via `insert_dynamic()`/`update_dynamic()` (descartam colunas inexistentes — toleram diferenças de schema); auditoria via `server_audit()`. Muitas tabelas novas são criadas sob demanda por funções `ensure_*` no próprio `index.php` (além das migrations).
@@ -26,6 +26,16 @@ Esta seção orienta qualquer pessoa — ou outra IA — que precise continuar o
 ## Histórico de Versões
 
 Mapa de cada marco do produto, do mais novo ao mais antigo, com as features e as tabelas/arquivos envolvidos. Use-o para entender *o que existe e por quê* antes de mexer.
+
+### v1.40.0 — 2026-07-31 · Mensagens de erro mais úteis (Onda B, lote 1: E3 toast com severidade + E4 código de correlação)
+
+Ao salvar um cadastro, os avisos deixaram de usar o pop-up do navegador e passaram a aparecer como aviso do próprio sistema — visível mesmo com o formulário aberto e fechável com um clique.
+
+- **E3 — toast com severidade:** `showToast(message, opts)` aceita número (duração, compatibilidade) ou `{severity: info|success|warning|error, duration}`, com mapa em `toastConfig()` (função pura, testada) — âmbar para dado faltando ou inválido, vermelho para falha de gravação. O toast passa a ser pendurado no **último `dialog:modal` aberto** (senão `body`): sendo filho do modal no *top layer*, pinta **acima** dele — antes ficava invisível atrás do `showModal()`. `saveForm` deixou de usar `alert()`: as 10 validações viram aviso âmbar e o catch de gravação vira aviso vermelho (guarda em `test_toast_severity.js` impede regressão); `reportGlobalError` também usa severidade de erro.
+- **E4 — código de correlação nos erros 500:** quando ocorre um erro interno do servidor, a mensagem passa a trazer um código de suporte — `obra_error_ref()` (UUID v4 único por requisição) anexado pela função pura `apply_error_ref()` só em respostas **>= 500**, aplicado em `fail()` e nas 11 respostas `*_respond`. O mesmo código fica gravado no log do servidor (`error_log` dos catches de 500), então basta informar esse código para localizar a linha exata do problema, sem depender de horário ou de descrição do ocorrido. Erros 4xx não mudam.
+- **Testes:** `test_error_ref.php` e `test_toast_severity.js` (novos). Suíte: **14/14 blocos**.
+
+Sem migration, sem mudança de schema ou de API.
 
 ### v1.39.1 — 2026-07-29 · Dashboard: polimento (impeccable) — semântica de cor, estado vazio e robustez
 

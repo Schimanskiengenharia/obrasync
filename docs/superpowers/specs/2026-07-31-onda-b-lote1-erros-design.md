@@ -99,7 +99,7 @@ error_log: [ObraSync API][ref 550e8400-e29b-41d4-a716-446655440000] SQLSTATE[42S
 ## Versão e validação da etapa
 
 - Sem migration, sem mudança de schema, sem endpoint novo.
-- `APP_VERSION` → `v1.40.0`; `?v=` 1802→1803 em `index.html`; changelog em
+- `APP_VERSION` → `v1.40.0`; `?v=` 1809→1810 em `index.html`; changelog em
   `README.md`/`CLAUDE.md`/`STATUS.md`.
 - **Validação em produção (roteiro do dono):** abrir um cadastro, salvar com campo
   inválido → toast âmbar **acima do modal**; salvar válido → gravação normal.
