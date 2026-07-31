@@ -680,6 +680,17 @@ button:disabled {
   animation: toast-in 0.25s ease-out;
 }
 
+/* Severidade do toast (E3). A base verde é o visual histórico (info/success).
+   Fundos sólidos fixos (não tokens): o texto é branco e o --red do tema dark
+   (#f87171) é claro demais para fundo — o tom médio funciona nos dois temas. */
+.app-toast.toast-warning {
+  background: #b45309;
+}
+
+.app-toast.toast-error {
+  background: #b42318;
+}
+
 @keyframes toast-in {
   from { opacity: 0; transform: translate(-50%, -12px); }
   to   { opacity: 1; transform: translate(-50%, 0); }

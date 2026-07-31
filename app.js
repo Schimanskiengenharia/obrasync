@@ -19708,18 +19708,39 @@ async function handleResetPassword(event) {
   }
 }
 
-// Toast de confirmação exibido dentro do próprio site (sem abrir abas/janelas).
-function showToast(message, duration = 2000) {
+// Severidade → classe/role/duração. Função PURA de propósito: é o contrato do
+// toast e o teste (test_toast_severity) valida o mapa sem precisar de DOM real.
+function toastConfig(severity) {
+  const mapa = {
+    info:    { classe: "",              role: "status", duracao: 2000 },
+    success: { classe: "toast-success", role: "status", duracao: 2000 },
+    warning: { classe: "toast-warning", role: "alert",  duracao: 4000 },
+    error:   { classe: "toast-error",   role: "alert",  duracao: 6000 },
+  };
+  return mapa[severity] || mapa.info;
+}
+
+function showToast(message, opts = {}) {
+  // 2º argumento numérico = duração (assinatura antiga; dezenas de chamadas).
+  const o = typeof opts === "number" ? { duration: opts } : (opts || {});
+  const cfg = toastConfig(o.severity);
   document.getElementById("appToast")?.remove();
   const toast = document.createElement("div");
   toast.id = "appToast";
-  toast.className = "app-toast";
-  toast.setAttribute("role", "status");
+  toast.className = cfg.classe ? `app-toast ${cfg.classe}` : "app-toast";
+  toast.setAttribute("role", cfg.role);
   // Texto puro: o CSS de privacidade não alcança um pedaço do textContent, então
   // o montante é substituído por "R$ •••" antes de chegar à tela.
   toast.textContent = maskMoneyText(message);
-  document.body.appendChild(toast);
-  setTimeout(() => toast.remove(), duration);
+  // Aviso de 4-6s não pode virar estorvo: clicar fecha na hora.
+  toast.addEventListener("click", () => toast.remove());
+  // Dentro de showModal() o body fica ATRÁS do dialog no top layer — o toast é
+  // pendurado no próprio modal aberto (o último, se houver pilha) para pintar
+  // acima dele; position:fixed mantém o lugar na tela. Se o modal fechar antes
+  // da duração, o toast morre junto — aceito.
+  const host = [...document.querySelectorAll("dialog:modal")].at(-1) || document.body;
+  host.appendChild(toast);
+  setTimeout(() => toast.remove(), o.duration ?? cfg.duracao);
 }
 
 async function handleChangePassword(event) {
