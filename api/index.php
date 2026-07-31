@@ -901,7 +901,7 @@ try {
                      VALUES (?, ?, ?, ?, ?)'
                 )->execute(['PROPOSTA_APROVADA', 'commercial_proposals', (int) $id, 'ERRO', $e->getMessage()]);
             } catch (Throwable $_) {}
-            error_log('[ObraSync API] Aprovação de proposta falhou: ' . $e->getMessage() . ' em ' . $e->getFile() . ':' . $e->getLine());
+            error_log('[ObraSync API][ref ' . obra_error_ref() . '] Aprovação de proposta falhou: ' . $e->getMessage() . ' em ' . $e->getFile() . ':' . $e->getLine());
             fail('Erro ao aprovar a proposta. As alterações foram desfeitas — tente novamente ou contate o administrador.', 500);
         }
     }
@@ -953,7 +953,7 @@ try {
 } catch (Throwable $error) {
     // Erros inesperados (PDO etc.) carregam SQL, nomes de tabela e caminhos:
     // o detalhe vai para o error_log; o cliente recebe mensagem genérica.
-    error_log('[ObraSync API] ' . $error->getMessage() . ' em ' . $error->getFile() . ':' . $error->getLine());
+    error_log('[ObraSync API][ref ' . obra_error_ref() . '] ' . $error->getMessage() . ' em ' . $error->getFile() . ':' . $error->getLine());
     fail('Erro interno no servidor. Tente novamente ou contate o administrador.', 500);
 }
 } // fim do if (PHP_SAPI !== 'cli') — roteamento web
@@ -1026,7 +1026,7 @@ function handle_agenda_module(PDO $pdo, string $method, array $query): never
 
         agenda_respond(false, [], 'Ação da agenda inválida.', 400);
     } catch (Throwable $e) {
-        error_log('[ObraSync agenda] ' . $e->getMessage() . ' em ' . $e->getFile() . ':' . $e->getLine());
+        error_log('[ObraSync agenda][ref ' . obra_error_ref() . '] ' . $e->getMessage() . ' em ' . $e->getFile() . ':' . $e->getLine());
         agenda_respond(false, [], 'Erro interno ao processar a agenda. Tente novamente ou contate o administrador.', 500);
     }
 }
@@ -1069,7 +1069,7 @@ function handle_clients_module(PDO $pdo, string $method, array $query): never
 
         clients_module_respond(false, [], 'Ação de clientes inválida.', 400);
     } catch (Throwable $e) {
-        error_log('[ObraSync clients] ' . $e->getMessage() . ' em ' . $e->getFile() . ':' . $e->getLine());
+        error_log('[ObraSync clients][ref ' . obra_error_ref() . '] ' . $e->getMessage() . ' em ' . $e->getFile() . ':' . $e->getLine());
         clients_module_respond(false, [], 'Erro interno ao buscar o cliente.', 500);
     }
 }
@@ -1128,7 +1128,7 @@ function handle_payable_module(PDO $pdo, string $method, array $query, array $au
         }
         payable_respond(false, [], 'Ação de contas a pagar inválida.', 400);
     } catch (Throwable $e) {
-        error_log('[ObraSync payable] ' . $e->getMessage() . ' em ' . $e->getFile() . ':' . $e->getLine());
+        error_log('[ObraSync payable][ref ' . obra_error_ref() . '] ' . $e->getMessage() . ' em ' . $e->getFile() . ':' . $e->getLine());
         payable_respond(false, [], 'Erro interno ao processar contas a pagar. Nada foi gravado.', 500);
     }
 }
@@ -4894,7 +4894,7 @@ function handle_cotacoes_module(PDO $pdo, string $method, array $query, array $c
         if ($pdo->inTransaction()) {
             $pdo->rollBack();
         }
-        error_log('[ObraSync cotacoes] ' . $e->getMessage() . ' em ' . $e->getFile() . ':' . $e->getLine());
+        error_log('[ObraSync cotacoes][ref ' . obra_error_ref() . '] ' . $e->getMessage() . ' em ' . $e->getFile() . ':' . $e->getLine());
         cotacao_respond(false, [], 'Erro ao processar a cotação.', 500);
     }
 }
@@ -5308,7 +5308,7 @@ function handle_cost_centers_module(PDO $pdo, string $method, array $query, arra
 
         cost_centers_respond(false, [], 'Ação de centro de custo inválida.', 400);
     } catch (Throwable $e) {
-        error_log('[ObraSync costCenters] ' . $e->getMessage() . ' em ' . $e->getFile() . ':' . $e->getLine());
+        error_log('[ObraSync costCenters][ref ' . obra_error_ref() . '] ' . $e->getMessage() . ' em ' . $e->getFile() . ':' . $e->getLine());
         cost_centers_respond(false, [], 'Erro interno ao processar o centro de custo.', 500);
     }
 }
@@ -6026,7 +6026,7 @@ function handle_viabilidade_module(PDO $pdo, string $method, array $query, array
 
         viabilidade_respond(false, [], 'Ação de viabilidade inválida.', 400);
     } catch (Throwable $e) {
-        error_log('[ObraSync viabilidade] ' . $e->getMessage() . ' em ' . $e->getFile() . ':' . $e->getLine());
+        error_log('[ObraSync viabilidade][ref ' . obra_error_ref() . '] ' . $e->getMessage() . ' em ' . $e->getFile() . ':' . $e->getLine());
         viabilidade_respond(false, [], 'Erro interno ao processar a viabilidade.', 500);
     }
 }
@@ -6069,7 +6069,7 @@ function handle_cash_moves_module(PDO $pdo, string $method, array $query, array 
         }
         cash_moves_respond(false, [], 'Ação de caixa inválida.', 400);
     } catch (Throwable $e) {
-        error_log('[ObraSync cashMoves] ' . $e->getMessage() . ' em ' . $e->getFile() . ':' . $e->getLine());
+        error_log('[ObraSync cashMoves][ref ' . obra_error_ref() . '] ' . $e->getMessage() . ' em ' . $e->getFile() . ':' . $e->getLine());
         cash_moves_respond(false, [], 'Erro interno ao processar o movimento de caixa. Nada foi gravado.', 500);
     }
 }
@@ -6215,7 +6215,7 @@ function handle_company_settings_module(PDO $pdo, string $method, array $query, 
         }
         company_settings_respond(false, [], 'Ação de dados da empresa inválida.', 400);
     } catch (Throwable $e) {
-        error_log('[ObraSync companySettings] ' . $e->getMessage() . ' em ' . $e->getFile() . ':' . $e->getLine());
+        error_log('[ObraSync companySettings][ref ' . obra_error_ref() . '] ' . $e->getMessage() . ' em ' . $e->getFile() . ':' . $e->getLine());
         company_settings_respond(false, [], 'Erro ao processar a logo da empresa.', 500);
     }
 }
@@ -6376,7 +6376,7 @@ function handle_purchase_order_items_module(PDO $pdo, string $method, array $que
         }
         poi_respond(false, [], 'Ação de itens do pedido inválida.', 400);
     } catch (Throwable $e) {
-        error_log('[ObraSync purchaseOrderItems] ' . $e->getMessage() . ' em ' . $e->getFile() . ':' . $e->getLine());
+        error_log('[ObraSync purchaseOrderItems][ref ' . obra_error_ref() . '] ' . $e->getMessage() . ' em ' . $e->getFile() . ':' . $e->getLine());
         poi_respond(false, [], 'Erro ao processar itens do pedido. Nada foi gravado.', 500);
     }
 }
@@ -6597,7 +6597,7 @@ function handle_work_budget_execution_module(PDO $pdo, string $method, array $qu
         }
         wbe_respond(false, [], 'Ação de execução inválida.', 400);
     } catch (Throwable $e) {
-        error_log('[ObraSync execucao] ' . $e->getMessage() . ' em ' . $e->getFile() . ':' . $e->getLine());
+        error_log('[ObraSync execucao][ref ' . obra_error_ref() . '] ' . $e->getMessage() . ' em ' . $e->getFile() . ':' . $e->getLine());
         wbe_respond(false, [], 'Erro ao atualizar a execução do orçamento.', 500);
     }
 }
@@ -6681,7 +6681,7 @@ function handle_dashboard_execution_module(PDO $pdo, string $method, array $quer
             ],
         ]);
     } catch (Throwable $e) {
-        error_log('[ObraSync dashboardExecution] ' . $e->getMessage());
+        error_log('[ObraSync dashboardExecution][ref ' . obra_error_ref() . '] ' . $e->getMessage());
         wbe_respond(false, [], 'Erro ao calcular a execução das obras.', 500);
     }
 }
@@ -7600,7 +7600,7 @@ function handle_ofx_conciliar(PDO $pdo, array $authUser, array $payload): never
         if ($pdo->inTransaction()) {
             $pdo->rollBack();
         }
-        error_log('[ObraSync OFX] Conciliação falhou: ' . $error->getMessage());
+        error_log('[ObraSync OFX][ref ' . obra_error_ref() . '] Conciliação falhou: ' . $error->getMessage());
         fail('Erro ao conciliar. Nada foi gravado — tente novamente.', 500);
     }
 
@@ -7904,7 +7904,7 @@ function handle_ofx_import(PDO $pdo, array $authUser, array $payload): never
         if ($pdo->inTransaction()) {
             $pdo->rollBack();
         }
-        error_log('[ObraSync OFX] Importação falhou: ' . $error->getMessage());
+        error_log('[ObraSync OFX][ref ' . obra_error_ref() . '] Importação falhou: ' . $error->getMessage());
         fail('Erro ao importar o extrato. Nada foi gravado — tente novamente.', 500);
     }
 
@@ -8112,7 +8112,7 @@ function handle_nfse_create_entity_quick(PDO $pdo, array $authUser, array $paylo
     try {
         $newId = insert_dynamic($pdo, $table, $fields);
     } catch (Throwable $error) {
-        error_log('[ObraSync NFS-e] Cadastro rápido falhou em ' . $table . ': ' . $error->getMessage());
+        error_log('[ObraSync NFS-e][ref ' . obra_error_ref() . '] Cadastro rápido falhou em ' . $table . ': ' . $error->getMessage());
         fail('Erro ao cadastrar. Nada foi gravado — tente novamente.', 500);
     }
 
@@ -8588,7 +8588,7 @@ function handle_rdo_save(PDO $pdo, array $authUser, array $payload): never
         if ($pdo->inTransaction()) {
             $pdo->rollBack();
         }
-        error_log('[ObraSync RDO] save: ' . $e->getMessage());
+        error_log('[ObraSync RDO][ref ' . obra_error_ref() . '] save: ' . $e->getMessage());
         fail('Erro ao salvar o RDO.', 500);
     }
     server_audit($pdo, $authUser, $current ? 'update' : 'create', 'obra_rdo', $id, 'RDO ' . $data);
@@ -8682,7 +8682,7 @@ function handle_rdo_assinar(PDO $pdo, array $authUser, array $payload): never
         if ($pdo->inTransaction()) {
             $pdo->rollBack();
         }
-        error_log('[ObraSync RDO] assinar: ' . $e->getMessage());
+        error_log('[ObraSync RDO][ref ' . obra_error_ref() . '] assinar: ' . $e->getMessage());
         fail('Erro ao registrar assinatura.', 500);
     }
     server_audit($pdo, $authUser, 'update', 'obra_rdo', $id, 'Assinatura RDO: ' . implode(', ', $assinou));
@@ -9095,7 +9095,7 @@ function handle_nfse_import(PDO $pdo, array $config, array $authUser, array $pay
         if ($pdo->inTransaction()) {
             $pdo->rollBack();
         }
-        error_log('[ObraSync NFS-e] Importação falhou: ' . $error->getMessage());
+        error_log('[ObraSync NFS-e][ref ' . obra_error_ref() . '] Importação falhou: ' . $error->getMessage());
         fail('Erro ao importar as NFS-e. Nada foi gravado — tente novamente.', 500);
     }
 
@@ -9519,7 +9519,7 @@ function handle_user_permissions_save(PDO $pdo, array $authUser, array $payload)
         if ($pdo->inTransaction()) {
             $pdo->rollBack();
         }
-        error_log('[ObraSync] user_permissions save: ' . $error->getMessage());
+        error_log('[ObraSync][ref ' . obra_error_ref() . '] user_permissions save: ' . $error->getMessage());
         fail('Erro ao salvar permissões.', 500);
     }
     server_audit($pdo, $authUser, 'update', 'user_permissions', $userId, 'Permissões por usuário atualizadas');
@@ -9669,14 +9669,14 @@ function handle_login(PDO $pdo, array $payload): never
         $pdo->prepare('INSERT INTO api_sessions (userId, tokenHash, createdAt, lastActivity) VALUES (?, ?, NOW(), NOW())')
             ->execute([$user['id'], $tokenHash]);
     } catch (PDOException $error) {
-        error_log('[ObraSync] Falha no INSERT da sessão de login: ' . $error->getMessage());
+        error_log('[ObraSync][ref ' . obra_error_ref() . '] Falha no INSERT da sessão de login: ' . $error->getMessage());
         fail('Não foi possível criar a sessão de acesso. Contate o administrador.', 500);
     }
     // Confirma que a sessão foi gravada antes de devolver o token ao navegador.
     $check = $pdo->prepare('SELECT id FROM api_sessions WHERE tokenHash = ? LIMIT 1');
     $check->execute([$tokenHash]);
     if (!$check->fetchColumn()) {
-        error_log('[ObraSync] INSERT da sessão de login não deu erro, mas a linha não foi encontrada.');
+        error_log('[ObraSync][ref ' . obra_error_ref() . '] INSERT da sessão de login não deu erro, mas a linha não foi encontrada.');
         fail('Não foi possível registrar a sessão de acesso. Contate o administrador.', 500);
     }
 
