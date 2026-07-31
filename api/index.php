@@ -78,6 +78,32 @@ const IA_COMPARA_COMMIT_EVERY = 25;
 const IA_COMPARA_DIFPERCENT_MAX = 9999999999.99;   // DECIMAL(12,2)
 const IA_COMPARA_DIFVALOR_MAX = 99999999999.9999;  // DECIMAL(15,4)
 
+// E4 — código de correlação de erro. UM UUID v4 por request (static): a mensagem
+// genérica do 500 e as linhas do error_log carregam o mesmo código, permitindo
+// ligar a reclamação do usuário à linha exata do log. NUNCA aproveita id vindo
+// do cliente (seria forjável e quebraria a correlação).
+function obra_error_ref(): string
+{
+    static $ref = null;
+    if ($ref === null) {
+        $b = random_bytes(16);
+        $b[6] = chr((ord($b[6]) & 0x0f) | 0x40); // versão 4
+        $b[8] = chr((ord($b[8]) & 0x3f) | 0x80); // variant RFC 4122
+        $ref = vsprintf('%s%s-%s-%s-%s-%s%s%s', str_split(bin2hex($b), 4));
+    }
+    return $ref;
+}
+
+// Pura: anexa o código de correlação SÓ em erro de servidor (>= 500). 4xx é erro
+// do usuário, acionável pela própria mensagem — código ali seria ruído.
+function apply_error_ref(string $message, int $status): string
+{
+    if ($status < 500) {
+        return $message;
+    }
+    return $message . ' (código: ' . obra_error_ref() . ')';
+}
+
 $config = load_config();
 // Gate de teste (NOVO-3): com OBRASYNC_TESTE_SEM_DB definido, a suíte local
 // carrega as funções REAIS sem conectar em banco NENHUM. Web/workers nunca
