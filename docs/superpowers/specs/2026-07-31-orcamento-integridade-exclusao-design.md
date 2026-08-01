@@ -100,9 +100,9 @@ if (key === "workBudgets") {
 
 ## 6. Versão, deploy e validação
 
-- `APP_VERSION` → `v1.42.0` (a v1.41.0 foi tomada pela baixa com acréscimos); `?v=` incrementa
-  a partir do vigente (app.js muda); changelog em README/CLAUDE.md/STATUS.md. Migration nova
-  documentada.
+- `APP_VERSION` → a próxima versão livre no momento do release (v1.43.0+) (a v1.42.0 foi tomada
+  pela Conciliação Etapa 1 — motor de vínculo tardio); `?v=` incrementa a partir do vigente
+  (app.js muda); changelog em README/CLAUDE.md/STATUS.md. Migration nova documentada.
 - **Ordem de deploy (regra do dono):** limpeza (Etapas 1-3) confirmada → push → rodar a migration
   no servidor. Se o deploy chegar antes da migration manual, o `ensure_*` tenta e, no pior caso,
   loga sem derrubar.

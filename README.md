@@ -12,8 +12,8 @@ Antes de atualizar em produção, faça backup do banco e de `/var/lib/financeir
 
 Esta seção orienta qualquer pessoa — ou outra IA — que precise continuar o trabalho sem se perder.
 
-- **Versão atual:** `v1.41.0` (2026-08-01). A versão fica em **dois lugares que devem andar juntos**: a constante `APP_VERSION`/`APP_VERSION_DATE` no topo de `app.js` (com `APP_CHANGELOG`) e o cabeçalho deste README. O painel "Versão" em Configurações lê de `APP_VERSION`.
-- **Cache busting:** sempre que `app.js` ou `styles.css` mudarem, **incremente o `?v=NNNN`** das tags correspondentes em `index.html` (hoje `app.js?v=1811`, `styles.css?v=1811`). Sem isso o navegador serve a versão velha.
+- **Versão atual:** `v1.42.0` (2026-08-01). A versão fica em **dois lugares que devem andar juntos**: a constante `APP_VERSION`/`APP_VERSION_DATE` no topo de `app.js` (com `APP_CHANGELOG`) e o cabeçalho deste README. O painel "Versão" em Configurações lê de `APP_VERSION`.
+- **Cache busting:** sempre que `app.js` ou `styles.css` mudarem, **incremente o `?v=NNNN`** das tags correspondentes em `index.html` (hoje `app.js?v=1812`, `styles.css?v=1812`). Sem isso o navegador serve a versão velha.
 - **Estado de saúde (2026-06-28):** em produção e estável. A leva **v1.15→v1.18** entregou o fluxo **Orçamento → Proposta com base SINAPI** (múltiplos orçamentos, BDI flexível, licitação, hierarquia por disciplina, modelos), **SINAPI no PDF + export Excel**, **contrato a partir da proposta** (template 13 cláusulas + anexos assinados), **CEP autofill universal** (corrigindo a regressão do CSP), **endereço próprio da obra** e a **exclusão de análise de viabilidade**; além do **fix do asDate** (Viabilidade travando). Ver o changelog abaixo e `STATUS.md` para o que está FEITO vs PENDENTE.
 - **Arquitetura:** SPA sem build. Todo o frontend está em `app.js` (arquivo único, ~15 mil linhas) + `index.html` (shell) + `styles.css`. Todo o backend está em `api/index.php` (arquivo único, ~8,7 mil linhas). O banco é MariaDB/MySQL (`financeiro`).
 - **Convenções do backend (siga-as):** respostas via `respond(['ok' => true, 'data' => ...])` e erros via `fail($msg, $status)`; INSERT/UPDATE genéricos via `insert_dynamic()`/`update_dynamic()` (descartam colunas inexistentes — toleram diferenças de schema); auditoria via `server_audit()`. Muitas tabelas novas são criadas sob demanda por funções `ensure_*` no próprio `index.php` (além das migrations).
@@ -26,6 +26,17 @@ Esta seção orienta qualquer pessoa — ou outra IA — que precise continuar o
 ## Histórico de Versões
 
 Mapa de cada marco do produto, do mais novo ao mais antigo, com as features e as tabelas/arquivos envolvidos. Use-o para entender *o que existe e por quê* antes de mexer.
+
+### v1.42.0 — 2026-08-01 · Conciliação bancária — motor de vínculo tardio (Etapa 1 de 4)
+
+Agora existe caminho de volta para o extrato importado: uma transação já importada no OFX pode baixar uma conta a pagar/receber existente, sem duplicar nada.
+
+- **Vínculo tardio (`POST ofx-vincular`)** — uma transação já importada baixa um título já existente: a data da baixa vem da própria transação; se o título já estava baixado, a transação apenas é vinculada, sem duplicar nada. O movimento herda obra/categoria/centro de custo do título.
+- **Desfazer com escolha explícita (`POST ofx-desvincular`)** — ao desfazer o vínculo, o dono decide se o título volta a Aberto ou não; o movimento do extrato nunca é apagado, e o FITID continua bloqueando reimportação.
+- **Correção da dupla contagem no custo realizado da obra** — quando uma conta já paga tinha um movimento de caixa do extrato vinculado a ela, o custo realizado somava a mesma saída duas vezes; agora o cálculo ignora a saída de caixa que já está representada pela conta.
+- **Conciliação feita na prévia da importação** também passou a gravar a referência e a herdar obra/categoria/centro de custo do título baixado.
+
+A tela de pendências (Etapa 2 de 4) vem a seguir; por ora o motor está pronto e testado. Sem migration.
 
 ### v1.41.0 — 2026-08-01 · Baixa de contas com data editável e acréscimos (juros+multa), com auditoria
 
