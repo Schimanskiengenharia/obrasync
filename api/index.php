@@ -183,6 +183,51 @@ function ensure_receivable_acrescimos_columns(PDO $pdo): void
     }
 }
 
+// ── Conciliação E1: vínculo TARDIO de transação OFX já importada ────────────
+// Decisão PURA (testável sem banco): recebe título, movimento e payload e
+// devolve o plano — baixar, só vincular (título já baixado) ou recusar com
+// motivo amigável. O handler apenas executa o que o plano mandar. Obra/
+// categoria/centro são OPCIONAIS: payload > título > vazio (fica vazio mesmo).
+function ofx_vinculo_plano(array $titulo, array $movimento, array $payload): array
+{
+    $isPayable = ($payload['table'] ?? '') === 'accounts_payable';
+    $settledStatus = $isPayable ? 'Pago' : 'Recebido';
+    $recusa = static fn (string $motivo): array => ['acao' => 'recusar', 'motivo' => $motivo, 'status' => null, 'dateField' => null, 'herda' => []];
+
+    if (($movimento['type'] ?? '') !== ($isPayable ? 'Saída' : 'Entrada')) {
+        return $recusa($isPayable
+            ? 'Transação de ENTRADA não pode baixar conta a pagar — use o lado a receber.'
+            : 'Transação de SAÍDA não pode baixar conta a receber — use o lado a pagar.');
+    }
+    if (($titulo['status'] ?? '') === 'Cancelado') {
+        return $recusa('Título cancelado não pode ser vinculado ao extrato.');
+    }
+    if (!empty($titulo['ofxFitid'])) {
+        return $recusa('Este título já está vinculado a outra transação do extrato.');
+    }
+    if (($titulo['referencia_tipo'] ?? '') === 'CAIXA_MANUAL' && !empty($titulo['referencia_id'])) {
+        return $recusa('Este título já tem um movimento de caixa manual vinculado — vincular o extrato registraria a mesma saída duas vezes. Desfaça o vínculo manual antes.');
+    }
+    if (round((float) ($titulo['amount'] ?? 0), 2) !== round((float) ($movimento['amount'] ?? 0), 2)) {
+        return $recusa('O valor do título difere do valor da transação — o vínculo com diferença (juros/multa) chega numa próxima etapa.');
+    }
+    $herda = [];
+    foreach (['projectId', 'categoryId', 'costCenterId'] as $campo) {
+        $valor = $payload[$campo] ?? null;
+        if ($valor === null || $valor === '') {
+            $valor = $titulo[$campo] ?? null;
+        }
+        $herda[$campo] = ($valor === '' || $valor === null) ? null : $valor;
+    }
+    return [
+        'acao' => ($titulo['status'] ?? '') === $settledStatus ? 'vincular' : 'baixar',
+        'motivo' => null,
+        'status' => $settledStatus,
+        'dateField' => $isPayable ? 'paidDate' : 'receivedDate',
+        'herda' => $herda,
+    ];
+}
+
 $config = load_config();
 // Gate de teste (NOVO-3): com OBRASYNC_TESTE_SEM_DB definido, a suíte local
 // carrega as funções REAIS sem conectar em banco NENHUM. Web/workers nunca
