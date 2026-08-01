@@ -703,6 +703,46 @@ button:disabled {
   padding-top: 10px;
 }
 
+/* Conciliação E2 — aba Pendências */
+.recon-tabs {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.ofx-pend-head {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.ofx-pend-filtros {
+  display: flex;
+  gap: 10px;
+  align-items: end;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.ofx-pend-table td {
+  vertical-align: top;
+}
+
+.ofx-pend-ok td {
+  opacity: 0.65;
+}
+
+.ofx-pend-dialog {
+  min-width: min(480px, 92vw);
+}
+
+.ofx-pend-dialog label {
+  display: block;
+  margin: 10px 0;
+}
+
 @keyframes toast-in {
   from { opacity: 0; transform: translate(-50%, -12px); }
   to   { opacity: 1; transform: translate(-50%, 0); }

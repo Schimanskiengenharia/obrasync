@@ -18050,6 +18050,12 @@ function renderReconciliation() {
       ${canImportOfx ? '<button class="primary" id="btnOfxOpen" type="button">📥 Importar Extrato OFX</button>' : ""}
     </section>
 
+    <div class="recon-tabs">
+      <button type="button" class="${reconTab === "pendencias" ? "secondary" : "primary"}" id="reconTabResumo">Resumo & Importação</button>
+      <button type="button" class="${reconTab === "pendencias" ? "primary" : "secondary"}" id="reconTabPend">Pendências${ofxPend.total ? ` (${ofxPend.total})` : ""}</button>
+    </div>
+
+    <div id="reconResumoWrap" class="${reconTab === "pendencias" ? "hidden" : ""}">
     <div id="ofxPanel" class="ofx-panel hidden">
       <div class="ofx-panel-head">
         <h3>📥 Importar Extrato OFX</h3>
@@ -18112,6 +18118,9 @@ function renderReconciliation() {
     </div>` : ""}
 
     ${rows.length ? table("Resumo por conta", rows, ["name", "bank", "entradasRealizadas", "saidasRealizadas", "saldoFinal", "status"]) : '<div class="empty">Nenhuma conta bancária cadastrada.<br>Acesse Cadastros → Contas bancárias para adicionar — só nome e banco são obrigatórios.</div>'}
+    </div>
+    <div id="reconPendWrap" class="${reconTab === "pendencias" ? "" : "hidden"}">${renderOfxPendencias()}</div>
+    <dialog id="ofxPendDialog" class="ofx-pend-dialog"></dialog>
   `;
 
   // CSP sem script inline: todos os eventos via addEventListener.
@@ -18152,7 +18161,248 @@ function renderReconciliation() {
     if (avulso) importarAvulso(Number(avulso.dataset.idx));
   });
 
+  qs("reconTabResumo")?.addEventListener("click", () => { reconTab = "resumo"; render(); });
+  qs("reconTabPend")?.addEventListener("click", () => {
+    reconTab = "pendencias";
+    render();
+    if (!ofxPend.rows.length && !ofxPend.carregando) carregarOfxPendencias(true);
+  });
+  bindOfxPendencias();
+
   if (canImportOfx) carregarHistoricoOFX();
+}
+
+// ── Conciliação E2: aba Pendências ──────────────────────────────────────────
+// Fila de trabalho ORDENADA POR RELEVÂNCIA (alta → média → sem match) — decisão
+// do dono: "a fila precisa me ajudar a trabalhar, não me fazer percorrer o
+// extrato". Endpoint paginado próprio (nunca no bootstrap). Obra é OPCIONAL no
+// vínculo; o lote é herança pura (obra diferente do título = modal individual).
+let reconTab = "resumo";
+let ofxPend = { rows: [], total: 0, buckets: { alta: 0, media: 0, sem: 0 }, offset: 0, limit: 20, filtros: { conta: "", de: "", ate: "", lado: "" }, carregando: false, selecionadas: new Set() };
+
+async function carregarOfxPendencias(reset) {
+  if (ofxPend.carregando) return;
+  ofxPend.carregando = true;
+  if (reset) { ofxPend.rows = []; ofxPend.offset = 0; ofxPend.selecionadas.clear(); }
+  try {
+    const f = ofxPend.filtros;
+    const query = new URLSearchParams({ limit: String(ofxPend.limit), offset: String(ofxPend.offset) });
+    if (f.conta) query.set("bankAccountId", f.conta);
+    if (f.de) query.set("de", f.de);
+    if (f.ate) query.set("ate", f.ate);
+    if (f.lado) query.set("lado", f.lado);
+    const payload = await apiRequest(`ofx-pendencias?${query.toString()}`);
+    const data = payload.data || {};
+    ofxPend.rows = ofxPend.offset ? ofxPend.rows.concat(data.rows || []) : (data.rows || []);
+    ofxPend.total = Number(data.total || 0);
+    ofxPend.buckets = data.buckets || { alta: 0, media: 0, sem: 0 };
+  } catch (error) {
+    showToast(`Não foi possível carregar as pendências: ${error.message}`, { severity: "error" });
+  } finally {
+    ofxPend.carregando = false;
+    if (currentModule === "reconciliation") render();
+  }
+}
+
+function ofxPendBadgeConf(confidence) {
+  const cls = confidence >= 85 ? "ofx-badge-green" : confidence >= 60 ? "ofx-badge-yellow" : "ofx-badge-gray";
+  return `<span class="ofx-badge ${cls}">${confidence}%</span>`;
+}
+
+function ofxPendLinhaHtml(row, index) {
+  const melhor = row.matches?.[0];
+  const sugestao = melhor
+    ? `${svgText(melhor.document)} · venc. ${asDate(melhor.dueDate)} ${ofxPendBadgeConf(melhor.confidence)}${row.matches.length > 1 ? ` <small class="muted">+${row.matches.length - 1} alternativa(s)</small>` : ""}`
+    : '<span class="muted">Sem título compatível — criar conta chega na Etapa 3</span>';
+  const check = row.bucket === "alta"
+    ? `<input type="checkbox" class="ofx-pend-check" data-idx="${index}" ${ofxPend.selecionadas.has(index) ? "checked" : ""}>`
+    : "";
+  const acoes = row.vinculada
+    ? `<span class="ofx-badge ofx-badge-green">✔ vinculada</span> <button type="button" class="secondary ofx-pend-desfazer" data-idx="${index}">Desfazer</button>`
+    : `<button type="button" class="primary ofx-pend-vincular" data-idx="${index}" ${row.matches?.length ? "" : "disabled title=\"Sem título compatível\""}>Vincular</button>`;
+  return `<tr class="${row.vinculada ? "ofx-pend-ok" : ""}">
+    <td>${check}</td>
+    <td>${asDate(row.date)}</td>
+    <td>${svgText(row.history || "")}<br><small class="muted">${svgText(row.bankAccountName || "")}</small></td>
+    <td>${svgText(row.type)}</td>
+    <td>${moneySpan(row.amount)}</td>
+    <td>${sugestao}</td>
+    <td>${acoes}</td>
+  </tr>`;
+}
+
+function renderOfxPendencias() {
+  const b = ofxPend.buckets;
+  const contas = (db.bankAccounts || []).map((c) => `<option value="${Number(c.id) || svgText(c.id)}" ${sameId(c.id, ofxPend.filtros.conta) ? "selected" : ""}>${svgText(c.name)}</option>`).join("");
+  const linhas = ofxPend.rows.map((row, i) => ofxPendLinhaHtml(row, i)).join("");
+  const podeMais = ofxPend.rows.length < ofxPend.total;
+  const selecionadas = ofxPend.selecionadas.size;
+  return `
+    <section class="ofx-pend-panel">
+      <div class="ofx-pend-head">
+        <span class="ofx-badge ofx-badge-green">⚡ ${b.alta} um clique</span>
+        <span class="ofx-badge ofx-badge-yellow">🔍 ${b.media} para conferir</span>
+        <span class="ofx-badge ofx-badge-gray">✍ ${b.sem} sem título</span>
+        <span class="muted">${ofxPend.total} pendente(s) no filtro</span>
+      </div>
+      <div class="ofx-pend-filtros">
+        <label>Conta<select id="ofxPendConta"><option value="">Todas</option>${contas}</select></label>
+        <label>De<input type="date" id="ofxPendDe" value="${svgText(ofxPend.filtros.de)}"></label>
+        <label>Até<input type="date" id="ofxPendAte" value="${svgText(ofxPend.filtros.ate)}"></label>
+        <label>Lado<select id="ofxPendLado"><option value="">Ambos</option><option ${ofxPend.filtros.lado === "Entrada" ? "selected" : ""}>Entrada</option><option ${ofxPend.filtros.lado === "Saída" ? "selected" : ""}>Saída</option></select></label>
+        <button type="button" class="secondary" id="ofxPendFiltrar">Filtrar</button>
+        <button type="button" class="primary" id="ofxPendLote" ${selecionadas ? "" : "disabled"}>Vincular selecionadas (${selecionadas})</button>
+      </div>
+      ${ofxPend.carregando && !ofxPend.rows.length ? '<div class="empty">Carregando pendências…</div>' : ""}
+      ${!ofxPend.carregando && !ofxPend.rows.length ? '<div class="empty">Nenhuma pendência no filtro — extrato conciliado. 🎉</div>' : ""}
+      ${ofxPend.rows.length ? `<div class="table-wrap"><table class="ofx-pend-table">
+        <thead><tr><th scope="col"></th><th scope="col">Data</th><th scope="col">Histórico</th><th scope="col">Tipo</th><th scope="col">Valor</th><th scope="col">Sugestão</th><th scope="col">Ações</th></tr></thead>
+        <tbody>${linhas}</tbody></table></div>` : ""}
+      ${podeMais ? `<button type="button" class="secondary" id="ofxPendMais">Carregar mais (${ofxPend.rows.length} de ${ofxPend.total})</button>` : ""}
+    </section>`;
+}
+
+function bindOfxPendencias() {
+  const wrap = qs("reconPendWrap");
+  if (!wrap) return;
+  qs("ofxPendFiltrar")?.addEventListener("click", () => {
+    ofxPend.filtros = { conta: qs("ofxPendConta")?.value || "", de: qs("ofxPendDe")?.value || "", ate: qs("ofxPendAte")?.value || "", lado: qs("ofxPendLado")?.value || "" };
+    carregarOfxPendencias(true);
+  });
+  qs("ofxPendMais")?.addEventListener("click", () => { ofxPend.offset = ofxPend.rows.length; carregarOfxPendencias(false); });
+  qs("ofxPendLote")?.addEventListener("click", ofxVincularLoteSelecionadas);
+  wrap.querySelectorAll(".ofx-pend-check").forEach((chk) => chk.addEventListener("change", () => {
+    const idx = Number(chk.dataset.idx);
+    if (chk.checked) ofxPend.selecionadas.add(idx); else ofxPend.selecionadas.delete(idx);
+    render();
+  }));
+  wrap.querySelectorAll(".ofx-pend-vincular").forEach((btn) => btn.addEventListener("click", () => abrirOfxVincular(Number(btn.dataset.idx))));
+  wrap.querySelectorAll(".ofx-pend-desfazer").forEach((btn) => btn.addEventListener("click", () => abrirOfxDesfazer(Number(btn.dataset.idx))));
+}
+
+function abrirOfxVincular(index) {
+  const row = ofxPend.rows[index];
+  if (!row) return;
+  const dialog = qs("ofxPendDialog");
+  const isSaida = row.type === "Saída";
+  // Candidatos: matches do servidor + títulos ABERTOS do mesmo valor (mesmo lado).
+  const colecao = isSaida ? (db.payable || []) : (db.receivable || []);
+  const abertoStatus = isSaida ? "Pago" : "Recebido";
+  const extras = colecao.filter((t) => Math.abs(Number(t.amount || 0) - Number(row.amount || 0)) < 0.005
+    && t.status !== "Cancelado" && t.status !== abertoStatus && !t.ofxFitid
+    && !(row.matches || []).some((m) => sameId(m.id, t.id)));
+  const options = [
+    ...(row.matches || []).map((m) => `<option value="${m.id}">${escapeHtml(`${m.document} · venc. ${asDate(m.dueDate)} · ${m.confidence}%${m.alreadyPaid ? " (já baixado)" : ""}`)}</option>`),
+    ...extras.slice(0, 30).map((t) => `<option value="${t.id}">${escapeHtml(`${t.document || t.id} · venc. ${asDate(t.dueDate)} (mesmo valor)`)}</option>`),
+  ].join("");
+  const selects = (lista, id, rotulo) => `<label>${rotulo} <small class="muted">(opcional — herda do título se vazio)</small>
+    <select id="${id}"><option value="">—</option>${(lista || []).map((r) => `<option value="${Number(r.id) || svgText(r.id)}">${svgText(r.name)}</option>`).join("")}</select></label>`;
+  dialog.innerHTML = `
+    <h3>Vincular transação ao título</h3>
+    <p>${asDate(row.date)} · ${svgText(row.type)} · ${moneySpan(row.amount)}<br><small class="muted">${svgText(row.history || "")}</small></p>
+    <label>Título ${isSaida ? "(contas a pagar)" : "(contas a receber)"}<select id="ofxVincTitulo">${options}</select></label>
+    ${selects(db.projects, "ofxVincObra", "Obra/Projeto")}
+    ${selects(db.categories, "ofxVincCategoria", "Categoria")}
+    ${selects(db.costCenters, "ofxVincCentro", "Centro de custo")}
+    <div class="row-actions">
+      <button type="button" class="primary" id="ofxVincOk">Vincular</button>
+      <button type="button" class="secondary" id="ofxVincCancelar">Cancelar</button>
+    </div>`;
+  dialog.querySelector("#ofxVincCancelar").addEventListener("click", () => dialog.close());
+  dialog.querySelector("#ofxVincOk").addEventListener("click", () => confirmarOfxVincular(index));
+  dialog.showModal();
+}
+
+async function confirmarOfxVincular(index) {
+  const row = ofxPend.rows[index];
+  const dialog = qs("ofxPendDialog");
+  const tituloId = dialog.querySelector("#ofxVincTitulo")?.value;
+  if (!tituloId) return showToast("Escolha o título a vincular.", { severity: "warning" });
+  const body = {
+    fitid: row.fitid,
+    bankAccountId: Number(row.bankAccountId),
+    table: row.type === "Saída" ? "accounts_payable" : "accounts_receivable",
+    recordId: Number(tituloId),
+  };
+  const obra = dialog.querySelector("#ofxVincObra")?.value;
+  const categoria = dialog.querySelector("#ofxVincCategoria")?.value;
+  const centro = dialog.querySelector("#ofxVincCentro")?.value;
+  if (obra) body.projectId = Number(obra);
+  if (categoria) body.categoryId = Number(categoria);
+  if (centro) body.costCenterId = Number(centro);
+  try {
+    const payload = await apiRequest("ofx-vincular", { method: "POST", body: JSON.stringify(body) });
+    dialog.close();
+    row.vinculada = true;
+    row.vinculadaTable = body.table;
+    row.vinculadaRecordId = body.recordId;
+    ofxPend.selecionadas.delete(index);
+    showToast(payload.message || "Vinculada.", { severity: "success" });
+    if (serverMode) await refreshAndRender(); else render();
+  } catch (error) {
+    showToast(error.message, { severity: "warning" });
+  }
+}
+
+async function ofxVincularLoteSelecionadas() {
+  const indices = [...ofxPend.selecionadas];
+  if (!indices.length) return;
+  const itens = indices.map((i) => ofxPend.rows[i]).filter((r) => r && !r.vinculada && r.autoMatch).map((r) => ({
+    fitid: r.fitid,
+    bankAccountId: Number(r.bankAccountId),
+    table: r.type === "Saída" ? "accounts_payable" : "accounts_receivable",
+    recordId: Number(r.autoMatch.id),
+  }));
+  if (!itens.length) return showToast("Nenhuma selecionada com match de alta confiança.", { severity: "warning" });
+  const btn = qs("ofxPendLote");
+  if (btn) { btn.disabled = true; btn.textContent = "Vinculando…"; }
+  try {
+    // Fatia de 50 (limite do endpoint); os 244 de hoje cabem em 5 chamadas.
+    let vinculadas = 0;
+    const falhas = [];
+    for (let i = 0; i < itens.length; i += 50) {
+      const payload = await apiRequest("ofx-vincular-lote", { method: "POST", body: JSON.stringify({ itens: itens.slice(i, i + 50) }) });
+      vinculadas += Number(payload.data?.vinculadas || 0);
+      falhas.push(...(payload.data?.falhas || []));
+    }
+    showToast(`${vinculadas} vinculada(s)${falhas.length ? ` — ${falhas.length} com aviso` : ""}.`, { severity: falhas.length ? "warning" : "success" });
+    if (falhas.length) console.warn("[OFX lote] avisos:", falhas);
+    ofxPend.selecionadas.clear();
+    await carregarOfxPendencias(true);
+    if (serverMode) await refreshAndRender();
+  } catch (error) {
+    showToast(`Falha no lote: ${error.message}`, { severity: "error" });
+  }
+}
+
+function abrirOfxDesfazer(index) {
+  const row = ofxPend.rows[index];
+  if (!row || !row.vinculada) return;
+  const dialog = qs("ofxPendDialog");
+  dialog.innerHTML = `
+    <h3>Desfazer o vínculo</h3>
+    <p>${asDate(row.date)} · ${moneySpan(row.amount)} — o movimento do extrato permanece; escolha o destino do título:</p>
+    <div class="row-actions">
+      <button type="button" class="primary" id="ofxDesfReabrir">Desfazer e REABRIR o título</button>
+      <button type="button" class="secondary" id="ofxDesfManter">Desfazer e manter baixado</button>
+      <button type="button" class="secondary" id="ofxDesfCancelar">Cancelar</button>
+    </div>`;
+  const executar = async (reabrir) => {
+    try {
+      const payload = await apiRequest("ofx-desvincular", { method: "POST", body: JSON.stringify({ table: row.vinculadaTable, recordId: row.vinculadaRecordId, reabrirTitulo: reabrir }) });
+      dialog.close();
+      row.vinculada = false;
+      showToast(payload.message || "Vínculo desfeito.", { severity: "success" });
+      await carregarOfxPendencias(true);
+      if (serverMode) await refreshAndRender();
+    } catch (error) {
+      showToast(error.message, { severity: "warning" });
+    }
+  };
+  dialog.querySelector("#ofxDesfReabrir").addEventListener("click", () => executar(true));
+  dialog.querySelector("#ofxDesfManter").addEventListener("click", () => executar(false));
+  dialog.querySelector("#ofxDesfCancelar").addEventListener("click", () => dialog.close());
+  dialog.showModal();
 }
 
 // ── Importação OFX ───────────────────────────────────────────────────────────
