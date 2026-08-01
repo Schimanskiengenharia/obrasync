@@ -572,6 +572,16 @@ try {
         authorize_request($pdo, $authUser, 'reconciliation', 'edit');
         handle_ofx_conciliar($pdo, $authUser, read_json());
     }
+    if ($resource === 'ofx-vincular') {
+        require_method($method, ['POST']);
+        authorize_request($pdo, $authUser, 'reconciliation', 'edit');
+        handle_ofx_vincular($pdo, $authUser, read_json());
+    }
+    if ($resource === 'ofx-desvincular') {
+        require_method($method, ['POST']);
+        authorize_request($pdo, $authUser, 'reconciliation', 'edit');
+        handle_ofx_desvincular($pdo, $authUser, read_json());
+    }
     if ($resource === 'ofx-history') {
         require_method($method, ['GET']);
         authorize_request($pdo, $authUser, 'reconciliation', 'view');
@@ -7760,6 +7770,163 @@ function handle_ofx_conciliar(PDO $pdo, array $authUser, array $payload): never
         'linkedOnly' => $alreadySettled,
         'cashMoveId' => $cashMoveId,
     ], 'message' => $alreadySettled ? 'Extrato vinculado ao título já baixado.' : "Conciliado com sucesso — {$settledStatus}."]);
+}
+
+// E1: vínculo TARDIO — a transação JÁ é movimento de caixa (ofx_fitids.cashMoveId);
+// NUNCA cria outro. Título aberto é baixado com a DATA do movimento; já baixado é
+// apenas vinculado. O movimento ganha a referência (dedup do custo realizado) e
+// herda obra/categoria/centro do título quando o payload não informar.
+// Collation: todas as comparações são coluna × parâmetro (imunes ao ERROR 1267).
+function handle_ofx_vincular(PDO $pdo, array $authUser, array $payload): never
+{
+    ensure_ofx_tables($pdo);
+    $fitid = mb_substr(trim((string) ($payload['fitid'] ?? '')), 0, 100);
+    $bankAccountId = (int) ($payload['bankAccountId'] ?? 0);
+    $table = (string) ($payload['table'] ?? '');
+    $recordId = (int) ($payload['recordId'] ?? 0);
+    if ($fitid === '' || !$bankAccountId || !$recordId) {
+        fail('Dados incompletos para o vínculo.', 400);
+    }
+    if (!in_array($table, ['accounts_payable', 'accounts_receivable'], true)) {
+        fail('Tabela inválida.', 400);
+    }
+    $stmt = $pdo->prepare('SELECT cashMoveId FROM ofx_fitids WHERE fitid = ? AND bankAccountId = ? LIMIT 1');
+    $stmt->execute([$fitid, $bankAccountId]);
+    $cashMoveId = (int) ($stmt->fetchColumn() ?: 0);
+    if (!$cashMoveId) {
+        fail('Transação não encontrada entre as importadas desta conta.', 404);
+    }
+    foreach (['accounts_payable', 'accounts_receivable'] as $t) {
+        $stmt = $pdo->prepare("SELECT id FROM {$t} WHERE ofxFitid = ? LIMIT 1");
+        $stmt->execute([$fitid]);
+        if ($stmt->fetchColumn()) {
+            fail('Esta transação do extrato já está vinculada a um título.', 409);
+        }
+    }
+    $stmt = $pdo->prepare('SELECT * FROM cash_bank_movements WHERE id = ? LIMIT 1');
+    $stmt->execute([$cashMoveId]);
+    $movimento = $stmt->fetch();
+    if (!$movimento) {
+        fail('Movimento da transação não encontrado.', 404);
+    }
+    $stmt = $pdo->prepare("SELECT * FROM {$table} WHERE id = ? LIMIT 1");
+    $stmt->execute([$recordId]);
+    $titulo = $stmt->fetch();
+    if (!$titulo) {
+        fail('Título não encontrado.', 404);
+    }
+    $plano = ofx_vinculo_plano($titulo, $movimento, $payload);
+    if ($plano['acao'] === 'recusar') {
+        fail($plano['motivo'], 409);
+    }
+    $isPayable = $table === 'accounts_payable';
+    $pdo->beginTransaction();
+    try {
+        if ($plano['acao'] === 'baixar') {
+            $pdo->prepare("UPDATE {$table} SET status = ?, {$plano['dateField']} = ?, ofxFitid = ? WHERE id = ?")
+                ->execute([$plano['status'], (string) $movimento['date'], $fitid, $recordId]);
+        } else {
+            $pdo->prepare("UPDATE {$table} SET ofxFitid = ? WHERE id = ?")
+                ->execute([$fitid, $recordId]);
+        }
+        $pdo->prepare('UPDATE cash_bank_movements
+                SET referencia_tipo = ?, referencia_id = ?,
+                    projectId = COALESCE(?, projectId),
+                    categoryId = COALESCE(?, categoryId),
+                    costCenterId = COALESCE(?, costCenterId)
+              WHERE id = ?')
+            ->execute([
+                $isPayable ? 'CONTA_PAGAR' : 'CONTA_RECEBER', $recordId,
+                $plano['herda']['projectId'], $plano['herda']['categoryId'], $plano['herda']['costCenterId'],
+                $cashMoveId,
+            ]);
+        $pdo->commit();
+    } catch (Throwable $error) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        error_log('[ObraSync OFX][ref ' . obra_error_ref() . '] Vínculo tardio falhou: ' . $error->getMessage());
+        fail('Erro ao vincular. Nada foi gravado — tente novamente.', 500);
+    }
+    $stmt = $pdo->prepare("SELECT * FROM {$table} WHERE id = ? LIMIT 1");
+    $stmt->execute([$recordId]);
+    $depois = $stmt->fetch() ?: [];
+    $details = financeiro_baixa_audit_details($titulo, $depois, $isPayable ? 'paidDate' : 'receivedDate');
+    server_audit($pdo, $authUser, 'update', $isPayable ? 'payable' : 'receivable', $recordId,
+        trim(($details !== '' ? $details . ' · ' : '') . 'vínculo OFX FITID ' . $fitid . ' → movimento #' . $cashMoveId));
+    respond(['ok' => true, 'data' => [
+        'recordId' => $recordId,
+        'table' => $table,
+        'status' => (string) ($depois['status'] ?? ''),
+        'linkedOnly' => $plano['acao'] === 'vincular',
+        'cashMoveId' => $cashMoveId,
+    ], 'message' => $plano['acao'] === 'vincular'
+        ? 'Extrato vinculado ao título já baixado.'
+        : 'Título baixado e vinculado à transação do extrato.']);
+}
+
+// E1: desfazer vínculo. O movimento NUNCA é apagado (a linha do extrato é fato
+// bancário) e o FITID segue registrado (a transação não pode ser reimportada).
+// Reabrir o título é decisão EXPLÍCITA do chamador — sem heurística no backend.
+function handle_ofx_desvincular(PDO $pdo, array $authUser, array $payload): never
+{
+    ensure_ofx_tables($pdo);
+    $table = (string) ($payload['table'] ?? '');
+    $recordId = (int) ($payload['recordId'] ?? 0);
+    $reabrir = !empty($payload['reabrirTitulo']);
+    if (!in_array($table, ['accounts_payable', 'accounts_receivable'], true) || !$recordId) {
+        fail('Dados incompletos para desvincular.', 400);
+    }
+    $stmt = $pdo->prepare("SELECT * FROM {$table} WHERE id = ? LIMIT 1");
+    $stmt->execute([$recordId]);
+    $titulo = $stmt->fetch();
+    if (!$titulo) {
+        fail('Título não encontrado.', 404);
+    }
+    $fitid = (string) ($titulo['ofxFitid'] ?? '');
+    if ($fitid === '') {
+        fail('Este título não tem vínculo com o extrato.', 422);
+    }
+    $stmt = $pdo->prepare('SELECT cashMoveId FROM ofx_fitids WHERE fitid = ? LIMIT 1');
+    $stmt->execute([$fitid]);
+    $cashMoveId = (int) ($stmt->fetchColumn() ?: 0);
+    $isPayable = $table === 'accounts_payable';
+    $settledStatus = $isPayable ? 'Pago' : 'Recebido';
+    $dateField = $isPayable ? 'paidDate' : 'receivedDate';
+    $pdo->beginTransaction();
+    try {
+        if ($reabrir && ($titulo['status'] ?? '') === $settledStatus) {
+            $pdo->prepare("UPDATE {$table} SET ofxFitid = NULL, ofxImportId = NULL, status = 'Aberto', {$dateField} = NULL WHERE id = ?")
+                ->execute([$recordId]);
+        } else {
+            $pdo->prepare("UPDATE {$table} SET ofxFitid = NULL, ofxImportId = NULL WHERE id = ?")
+                ->execute([$recordId]);
+        }
+        if ($cashMoveId) {
+            $pdo->prepare("UPDATE cash_bank_movements SET referencia_tipo = NULL, referencia_id = NULL
+                            WHERE id = ? AND referencia_tipo IN ('CONTA_PAGAR', 'CONTA_RECEBER')")
+                ->execute([$cashMoveId]);
+        }
+        $pdo->commit();
+    } catch (Throwable $error) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        error_log('[ObraSync OFX][ref ' . obra_error_ref() . '] Desvincular falhou: ' . $error->getMessage());
+        fail('Erro ao desvincular. Nada foi gravado — tente novamente.', 500);
+    }
+    $stmt = $pdo->prepare("SELECT * FROM {$table} WHERE id = ? LIMIT 1");
+    $stmt->execute([$recordId]);
+    $depois = $stmt->fetch() ?: [];
+    $details = financeiro_baixa_audit_details($titulo, $depois, $dateField);
+    server_audit($pdo, $authUser, 'update', $isPayable ? 'payable' : 'receivable', $recordId,
+        trim(($details !== '' ? $details . ' · ' : '') . 'desvínculo OFX FITID ' . $fitid . ($cashMoveId ? ' (movimento #' . $cashMoveId . ' liberado)' : '')));
+    respond(['ok' => true, 'data' => [
+        'recordId' => $recordId,
+        'table' => $table,
+        'status' => (string) ($depois['status'] ?? ''),
+        'cashMoveId' => $cashMoveId,
+    ], 'message' => $reabrir ? 'Vínculo desfeito e título reaberto.' : 'Vínculo desfeito — título mantido como está.']);
 }
 
 // OFX é um híbrido SGML/XML sem biblioteca nativa no PHP: detecta o dialeto e
