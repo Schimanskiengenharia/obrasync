@@ -7887,15 +7887,19 @@ function handle_ofx_desvincular(PDO $pdo, array $authUser, array $payload): neve
     if ($fitid === '') {
         fail('Este título não tem vínculo com o extrato.', 422);
     }
-    $stmt = $pdo->prepare('SELECT cashMoveId FROM ofx_fitids WHERE fitid = ? LIMIT 1');
-    $stmt->execute([$fitid]);
-    $cashMoveId = (int) ($stmt->fetchColumn() ?: 0);
     $isPayable = $table === 'accounts_payable';
     $settledStatus = $isPayable ? 'Pago' : 'Recebido';
     $dateField = $isPayable ? 'paidDate' : 'receivedDate';
+    // Resolve o movimento pela REFERÊNCIA (inequívoca — é o que vincular/conciliar
+    // gravam). FITID não serve aqui: só é único POR CONTA BANCÁRIA, e o título não
+    // guarda a conta. Sem referência gravada (vínculo antigo), só o título é solto.
+    $stmt = $pdo->prepare('SELECT id FROM cash_bank_movements WHERE referencia_tipo = ? AND referencia_id = ? LIMIT 1');
+    $stmt->execute([$isPayable ? 'CONTA_PAGAR' : 'CONTA_RECEBER', $recordId]);
+    $cashMoveId = (int) ($stmt->fetchColumn() ?: 0);
+    $reabriu = $reabrir && ($titulo['status'] ?? '') === $settledStatus;
     $pdo->beginTransaction();
     try {
-        if ($reabrir && ($titulo['status'] ?? '') === $settledStatus) {
+        if ($reabriu) {
             $pdo->prepare("UPDATE {$table} SET ofxFitid = NULL, ofxImportId = NULL, status = 'Aberto', {$dateField} = NULL WHERE id = ?")
                 ->execute([$recordId]);
         } else {
@@ -7926,7 +7930,7 @@ function handle_ofx_desvincular(PDO $pdo, array $authUser, array $payload): neve
         'table' => $table,
         'status' => (string) ($depois['status'] ?? ''),
         'cashMoveId' => $cashMoveId,
-    ], 'message' => $reabrir ? 'Vínculo desfeito e título reaberto.' : 'Vínculo desfeito — título mantido como está.']);
+    ], 'message' => $reabriu ? 'Vínculo desfeito e título reaberto.' : 'Vínculo desfeito — título mantido como está.']);
 }
 
 // OFX é um híbrido SGML/XML sem biblioteca nativa no PHP: detecta o dialeto e
