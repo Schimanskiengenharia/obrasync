@@ -8553,7 +8553,10 @@ function setupBaixaFields(key) {
   // Título de extrato: o total é fato bancário — travado; o acréscimo DECOMPÕE
   // (original + juros), nunca soma por cima. Fora disso, segue a regra de sempre.
   const travadoExtrato = Boolean(row.ofxFitid);
-  if (travadoExtrato) amountInput.readOnly = true;
+  if (travadoExtrato) {
+    amountInput.readOnly = true;
+    dateInput.readOnly = true;
+  }
   // Base do cálculo: título travado usa o total do banco; senão o histórico
   // do banco quando existe, senão o valor do título.
   let base = travadoExtrato ? Number(row.amount || 0) : (Number(row.valor_original || 0) || Number(row.amount || 0));

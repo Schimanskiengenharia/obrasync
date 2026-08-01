@@ -1217,6 +1217,9 @@ try {
         if ($key === 'users') {
             $payload = sanitize_user_profile_fields($pdo, $payload, (int) $id, false);
         }
+        // Propagação de classificação (cashMoves↔título) só quando o payload de
+        // fato tocou categoria/centro/obra — senão sobrescreve dims mais ricas com NULL.
+        $tocouClassificacao = (bool) array_intersect(['categoryId', 'costCenterId', 'projectId'], array_keys($payload));
         // Baixa com acréscimos: captura o ANTES (invariante anticascata + diff de
         // auditoria) e reimpõe a regra no servidor, seja qual for o cliente.
         $beforeBaixa = null;
@@ -1234,15 +1237,19 @@ try {
             if (!empty($beforeBaixa['ofxFitid'])) {
                 $dfCampo = $key === 'payable' ? 'paidDate' : 'receivedDate';
                 foreach (['amount' => 'o valor', $dfCampo => 'a data da baixa'] as $campo => $rotulo) {
-                    if (array_key_exists($campo, $payload) && !array_key_exists('juros_aplicado', $payload)) {
-                        $novo = $payload[$campo];
-                        $antigo = $beforeBaixa[$campo] ?? null;
-                        $mudou = is_numeric($novo) && is_numeric($antigo)
-                            ? round((float) $novo, 2) !== round((float) $antigo, 2)
-                            : (string) $novo !== (string) $antigo;
-                        if ($mudou) {
-                            fail('Este título está vinculado ao extrato — ' . $rotulo . ' vem do banco. Acréscimo (juros/multa) pode ser informado e será DECOMPOSTO do total.', 422);
-                        }
+                    if (!array_key_exists($campo, $payload)) {
+                        continue;
+                    }
+                    if ($campo === 'amount' && array_key_exists('juros_aplicado', $payload)) {
+                        continue; // decomposição da baixa restaura o amount — só ele pode pular
+                    }
+                    $novo = $payload[$campo];
+                    $antigo = $beforeBaixa[$campo] ?? null;
+                    $mudou = is_numeric($novo) && is_numeric($antigo)
+                        ? round((float) $novo, 2) !== round((float) $antigo, 2)
+                        : (string) $novo !== (string) $antigo;
+                    if ($mudou) {
+                        fail('Este título está vinculado ao extrato — ' . $rotulo . ' vem do banco. Acréscimo (juros/multa) pode ser informado e será DECOMPOSTO do total.', 422);
                     }
                 }
             }
@@ -1298,13 +1305,13 @@ try {
         if ($key === 'kanbanCards' && kanban_card_is_done($pdo, $record)) {
             $record['completionPrompt'] = 'Card movido para Concluído. Deseja atualizar o status do item vinculado?';
         }
-        if ($key === 'cashMoves' && $movTemTitulo) {
+        if ($key === 'cashMoves' && $movTemTitulo && $tocouClassificacao) {
             // Classificação é do PAR: espelha no título vinculado (SQL direto — sem loop).
             $tabelaTit = ($beforeMov['referencia_tipo'] === 'CONTA_PAGAR') ? 'accounts_payable' : 'accounts_receivable';
             $pdo->prepare("UPDATE {$tabelaTit} SET categoryId = ?, costCenterId = ?, projectId = ? WHERE id = ?")
                 ->execute([$record['categoryId'] ?? null, $record['costCenterId'] ?? null, $record['projectId'] ?? null, (int) $beforeMov['referencia_id']]);
         }
-        if (($key === 'payable' || $key === 'receivable') && !empty($beforeBaixa)) {
+        if (($key === 'payable' || $key === 'receivable') && !empty($beforeBaixa) && $tocouClassificacao) {
             // §2-B: espelha a classificação no movimento vinculado (determinístico como o desvincular).
             $refTipoTit = $key === 'payable' ? 'CONTA_PAGAR' : 'CONTA_RECEBER';
             $stmt = $pdo->prepare("SELECT id FROM cash_bank_movements WHERE referencia_tipo = ? AND referencia_id = ?
