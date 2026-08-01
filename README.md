@@ -1,6 +1,6 @@
 # ObraSync
 
-> Versão `v1.43.0` · 2026-08-01
+> Versão `v1.44.0` · 2026-08-02
 
 ObraSync é uma aplicação web em HTML, CSS, JavaScript puro, PHP e MariaDB/MySQL para gestão integrada de obras, financeiro, comercial e contabilidade gerencial. O frontend fica em `/var/www/financeiro`, a URL pública é `https://schimanskiengenharia.com.br/financeiro`, os dados persistentes ficam no banco e os arquivos de dados ficam fora da pasta pública.
 
@@ -12,8 +12,8 @@ Antes de atualizar em produção, faça backup do banco e de `/var/lib/financeir
 
 Esta seção orienta qualquer pessoa — ou outra IA — que precise continuar o trabalho sem se perder.
 
-- **Versão atual:** `v1.43.0` (2026-08-01). A versão fica em **dois lugares que devem andar juntos**: a constante `APP_VERSION`/`APP_VERSION_DATE` no topo de `app.js` (com `APP_CHANGELOG`) e o cabeçalho deste README. O painel "Versão" em Configurações lê de `APP_VERSION`.
-- **Cache busting:** sempre que `app.js` ou `styles.css` mudarem, **incremente o `?v=NNNN`** das tags correspondentes em `index.html` (hoje `app.js?v=1813`, `styles.css?v=1813`). Sem isso o navegador serve a versão velha.
+- **Versão atual:** `v1.44.0` (2026-08-02). A versão fica em **dois lugares que devem andar juntos**: a constante `APP_VERSION`/`APP_VERSION_DATE` no topo de `app.js` (com `APP_CHANGELOG`) e o cabeçalho deste README. O painel "Versão" em Configurações lê de `APP_VERSION`.
+- **Cache busting:** sempre que `app.js` ou `styles.css` mudarem, **incremente o `?v=NNNN`** das tags correspondentes em `index.html` (hoje `app.js?v=1814`, `styles.css?v=1814`). Sem isso o navegador serve a versão velha.
 - **Estado de saúde (2026-06-28):** em produção e estável. A leva **v1.15→v1.18** entregou o fluxo **Orçamento → Proposta com base SINAPI** (múltiplos orçamentos, BDI flexível, licitação, hierarquia por disciplina, modelos), **SINAPI no PDF + export Excel**, **contrato a partir da proposta** (template 13 cláusulas + anexos assinados), **CEP autofill universal** (corrigindo a regressão do CSP), **endereço próprio da obra** e a **exclusão de análise de viabilidade**; além do **fix do asDate** (Viabilidade travando). Ver o changelog abaixo e `STATUS.md` para o que está FEITO vs PENDENTE.
 - **Arquitetura:** SPA sem build. Todo o frontend está em `app.js` (arquivo único, ~15 mil linhas) + `index.html` (shell) + `styles.css`. Todo o backend está em `api/index.php` (arquivo único, ~8,7 mil linhas). O banco é MariaDB/MySQL (`financeiro`).
 - **Convenções do backend (siga-as):** respostas via `respond(['ok' => true, 'data' => ...])` e erros via `fail($msg, $status)`; INSERT/UPDATE genéricos via `insert_dynamic()`/`update_dynamic()` (descartam colunas inexistentes — toleram diferenças de schema); auditoria via `server_audit()`. Muitas tabelas novas são criadas sob demanda por funções `ensure_*` no próprio `index.php` (além das migrations).
@@ -26,6 +26,17 @@ Esta seção orienta qualquer pessoa — ou outra IA — que precise continuar o
 ## Histórico de Versões
 
 Mapa de cada marco do produto, do mais novo ao mais antigo, com as features e as tabelas/arquivos envolvidos. Use-o para entender *o que existe e por quê* antes de mexer.
+
+### v1.44.0 — 2026-08-02 · Caixa — aprovação de movimentos pendentes (Conciliação, etapa 3 de 4)
+
+Os movimentos importados do extrato agora nascem PENDENTES de classificação, com fila própria de trabalho na tela de Movimentações do Caixa.
+
+- **Aprovar** — abre a classificação (categoria e centro de custo obrigatórios; obra, fornecedor/cliente opcionais) e cria a conta a pagar/receber já liquidada, com vínculo completo ao movimento — o custo realizado conta uma vez só.
+- **Painel de lote** — marque vários movimentos do mesmo lado, preencha os dados comuns uma vez e aprove todos juntos: dez tarifas do mês viram dez contas com um clique.
+- **Detector de títulos parecidos** — antes de criar, o sistema procura títulos com o mesmo valor e vencimento próximo e oferece vincular ao existente, criar mesmo assim ou cancelar; no lote, as suspeitas são separadas para tratamento individual.
+- **Dispensar** — tira da fila o que não vira conta (transferências entre contas próprias) sem mexer no saldo, e é reversível — Reativar devolve o movimento à fila.
+
+O saldo de caixa NÃO muda: pendente é sobre classificação, não sobre existência do dinheiro. Migration retroativa **opcional**: `2026-08-01-caixa-pendente-retroativo.sql` **muda dado** (coloca os ~243 movimentos históricos na fila) — rodar **só com backup**.
 
 ### v1.43.0 — 2026-08-01 · Conciliação bancária — tela de Pendências (Etapa 2 de 4)
 
