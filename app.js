@@ -7336,6 +7336,14 @@ function renderCrud(key) {
   if (key === "fiscalDocuments" && fiscalSoSemObra) {
     rows = rows.filter((row) => !row.projectId);
   }
+  // E3: chips valem para a TABELA — o painel de pendentes continua sobre as rows completas.
+  const cashChips = key === "cashMoves" ? (() => {
+    const conta = (st) => (db.cashMoves || []).filter((m) => m.status === st).length;
+    const chip = (valor, rotulo) => `<button type="button" class="${cashStatusFiltro === valor ? "primary" : "secondary"}" data-cash-chip="${valor}">${rotulo}</button>`;
+    return `<div class="cash-chips">${chip("", "Todos")}${chip("Pendente", `Pendentes (${conta("Pendente")})`)}${chip("Aprovado", `Aprovados (${conta("Aprovado")})`)}${chip("Dispensado", `Dispensados (${conta("Dispensado")})`)}</div>`;
+  })() : "";
+  const pendentesRows = rows;
+  if (key === "cashMoves") rows = rows.filter((r) => !cashStatusFiltro || r.status === cashStatusFiltro);
   const editable = canEditModule(key);
   const tableFields = config.fields
     .filter((field) => !String(field[2]).startsWith("file"))
@@ -7355,11 +7363,14 @@ function renderCrud(key) {
     </section>
     ${key === "fiscalDocuments" ? fiscalStatusLegend() : ""}
     ${key === "payable" ? payableGroupsPanelHtml(rows) : ""}
+    ${cashChips}
+    ${key === "cashMoves" ? cashPendentesPanelHtml(pendentesRows) : ""}
     ${table(config.title, rows, tableFields, editable, key)}
     ${key === "projects" ? archivedProjectsPanelHtml() : ""}
     ${docTitle ? generateDocumentFooter() : ""}
   `;
   if (key === "payable") setupPayableGroupActions();
+  if (key === "cashMoves") setupCashAprovacao();
   qs("newRecord")?.addEventListener("click", () => openForm(key));
   qs("content").querySelectorAll("[data-edit]").forEach((button) => button.addEventListener("click", () => openForm(key, button.dataset.edit)));
   qs("content").querySelectorAll("[data-delete]").forEach((button) => button.addEventListener("click", () => removeRecord(key, button.dataset.delete)));
@@ -7385,6 +7396,21 @@ function renderCrud(key) {
   qs("content").querySelectorAll("[data-add-budget-item]").forEach((button) => button.addEventListener("click", () => {
     const [sourceKey, id] = button.dataset.addBudgetItem.split(":");
     addBudgetItemFromSource(sourceKey, id);
+  }));
+  qs("content").querySelectorAll("[data-cash-chip]").forEach((b) => b.addEventListener("click", () => { cashStatusFiltro = b.dataset.cashChip; render(); }));
+  qs("content").querySelectorAll("[data-cash-ver-conta]").forEach((b) => b.addEventListener("click", () => {
+    const [chave, id] = b.dataset.cashVerConta.split(":");
+    openForm(chave, id); // dialog é global — abre a conta de qualquer tela
+  }));
+  qs("content").querySelectorAll("[data-cash-desaprovar]").forEach((b) => b.addEventListener("click", async () => {
+    if (!confirm("Desfazer a aprovação? A conta gerada será apagada e o movimento volta à fila.")) return;
+    try {
+      const payload = await apiRequest("cash-move-desaprovar", { method: "POST", body: JSON.stringify({ cashMoveId: Number(b.dataset.cashDesaprovar) }) });
+      showToast(payload.message || "Aprovação desfeita.", { severity: "success" });
+      if (serverMode) await refreshAndRender(); else render();
+    } catch (error) {
+      showToast(error.message, { severity: "warning" });
+    }
   }));
   if (key === "fiscalDocuments") setupNfseImport();
   if (key === "fiscalDocuments") setupFiscalSemObraFilter();
@@ -7639,6 +7665,15 @@ function extraRowActions(actionKey, row) {
   }
   if (actionKey === "purchaseOrders") {
     return `<button class="secondary" type="button" data-print-po="${row.id}">Imprimir / Gerar PDF</button><button class="secondary" type="button" data-po-fvm="${row.id}">Registrar recebimento (FVM)</button>`;
+  }
+  if (actionKey === "cashMoves") {
+    if (row.status === "Pendente") return `<button class="primary" type="button" data-cash-aprovar="${row.id}">Aprovar</button><button class="secondary" type="button" data-cash-dispensar="${row.id}">Dispensar</button>`;
+    if (row.status === "Dispensado") return `<button class="secondary" type="button" data-cash-reativar="${row.id}">Reativar</button>`;
+    if (row.status === "Aprovado" && row.referencia_id && ["CONTA_PAGAR", "CONTA_RECEBER"].includes(row.referencia_tipo)) {
+      const chave = row.referencia_tipo === "CONTA_PAGAR" ? "payable" : "receivable";
+      return `<button class="secondary" type="button" data-cash-ver-conta="${chave}:${row.referencia_id}">Ver conta</button><button class="secondary" type="button" data-cash-desaprovar="${row.id}">Desaprovar</button>`;
+    }
+    return "";
   }
   if (actionKey === "suppliers") {
     return `<button class="secondary" type="button" data-supplier-qual="${row.id}">Qualificação PBQP-H</button>`;
@@ -8510,8 +8545,13 @@ function setupBaixaFields(key) {
   if (!statusSel || !dateInput || !amountInput) return;
   const baixaStatus = key === "payable" ? "Pago" : "Recebido";
   const row = editing?.id ? (byId(key, editing.id) || {}) : {};
-  // Base do cálculo: o histórico do banco quando existe; senão o valor do título.
-  let base = Number(row.valor_original || 0) || Number(row.amount || 0);
+  // Título de extrato: o total é fato bancário — travado; o acréscimo DECOMPÕE
+  // (original + juros), nunca soma por cima. Fora disso, segue a regra de sempre.
+  const travadoExtrato = Boolean(row.ofxFitid);
+  if (travadoExtrato) amountInput.readOnly = true;
+  // Base do cálculo: título travado usa o total do banco; senão o histórico
+  // do banco quando existe, senão o valor do título.
+  let base = travadoExtrato ? Number(row.amount || 0) : (Number(row.valor_original || 0) || Number(row.amount || 0));
   const box = document.createElement("div");
   box.id = "baixaAcrescimoBox";
   box.className = "full baixa-acrescimo-box hidden";
@@ -8531,13 +8571,22 @@ function setupBaixaFields(key) {
     if (emBaixa && !dateInput.value) dateInput.value = hojeLocal();
     const juros = Math.round(parseMoneyInput(jurosInput.value) * 100) / 100;
     // Título novo: enquanto não há acréscimo, a base acompanha o valor digitado.
-    if (!editing?.id && juros <= 0) base = Number(amountInput.value || 0);
+    // (Extrato travado nunca entra aqui — não há "título novo" com ofxFitid.)
+    if (!travadoExtrato && !editing?.id && juros <= 0) base = Number(amountInput.value || 0);
     const vencida = emBaixa && dueInput?.value && dateInput.value && dateInput.value > dueInput.value;
     const mostrar = Boolean(vencida || (emBaixa && (juros > 0 || Number(row.juros_aplicado || 0) > 0)));
     box.classList.toggle("hidden", !mostrar);
     if (!mostrar) return;
-    if (juros > 0 || Number(row.juros_aplicado || 0) > 0) {
+    // Extrato travado: o total é fato bancário — NÃO recalcula amountInput (o backend decompõe).
+    if (!travadoExtrato && (juros > 0 || Number(row.juros_aplicado || 0) > 0)) {
       amountInput.value = String(Math.round((base + juros) * 100) / 100);
+    }
+    if (travadoExtrato) {
+      // Título de extrato: total travado (fato bancário); juros DECOMPÕE.
+      resumo.textContent = juros > 0
+        ? `Total do extrato: ${maskMoneyText(asMoney(base))} — original ${maskMoneyText(asMoney(Math.max(0, base - juros)))} + acréscimos ${maskMoneyText(asMoney(Math.min(juros, base)))}`
+        : `Título vinculado ao extrato: o total de ${maskMoneyText(asMoney(base))} vem do banco. Informe o acréscimo para DECOMPOR (original + juros).`;
+      return;
     }
     resumo.textContent = juros > 0
       ? `Total da baixa: ${maskMoneyText(asMoney(base + juros))} — original ${maskMoneyText(asMoney(base))} + acréscimos ${maskMoneyText(asMoney(juros))}`
@@ -18173,6 +18222,191 @@ function renderReconciliation() {
   if (canImportOfx) carregarHistoricoOFX();
 }
 
+// ── Conciliação E3: aprovação de movimentos pendentes (tela de Caixa) ────────
+// Movimento de extrato nasce Pendente; aprovar (categoria+centro obrigatórios,
+// obra OPCIONAL) cria a conta JÁ LIQUIDADA com o vínculo/dedup da E1. Lote de um
+// lado só (fornecedor×cliente não se misturam). Detector de similares antes de
+// criar — nunca bloqueia: vincular ao encontrado / criar mesmo assim / cancelar.
+let cashStatusFiltro = "";
+
+function cashPendentesPanelHtml(rows) {
+  const pendentes = rows.filter((r) => r.status === "Pendente");
+  if (!pendentes.length) return "";
+  const opt = (lista) => (lista || []).map((r) => `<option value="${Number(r.id) || svgText(r.id)}">${svgText(r.name)}</option>`).join("");
+  return `
+    <section class="cash-pend-panel">
+      <header><h3>Pendentes de classificação (${pendentes.length})</h3>
+        <p>Marque os movimentos, preencha os dados comuns UMA vez e aprove — cada conta nasce com seu próprio valor e data. Lote de um lado só (Entradas OU Saídas).</p></header>
+      <div class="cash-pend-lista">
+        ${pendentes.map((m) => `
+          <label class="cash-pend-item">
+            <input type="checkbox" class="cash-pend-check" data-id="${m.id}" data-tipo="${svgText(m.type)}">
+            <span>${asDate(m.date)} · ${svgText(m.type)} · ${moneySpan(m.amount)} — ${svgText(m.history || m.originDocument || "")}</span>
+          </label>`).join("")}
+      </div>
+      <div class="cash-pend-form">
+        <label>Categoria *<select id="cashLoteCategoria"><option value="">—</option>${opt(db.categories)}</select></label>
+        <label>Centro de custo *<select id="cashLoteCentro"><option value="">—</option>${opt(db.costCenters)}</select></label>
+        <label>Fornecedor (Saídas)<select id="cashLoteFornecedor"><option value="">—</option>${opt(db.suppliers)}</select></label>
+        <label>Cliente (Entradas)<select id="cashLoteCliente"><option value="">—</option>${opt(db.clients)}</select></label>
+        <label>Obra <small class="muted">(opcional)</small><select id="cashLoteObra"><option value="">—</option>${opt(db.projects)}</select></label>
+        <button type="button" class="primary" id="cashLoteAprovar">Aprovar selecionados</button>
+      </div>
+      <dialog id="cashAprovarDialog" class="cash-aprovar-dialog"></dialog>
+    </section>`;
+}
+
+function setupCashAprovacao() {
+  qs("content").querySelectorAll("[data-cash-aprovar]").forEach((b) => b.addEventListener("click", () => abrirCashAprovar(b.dataset.cashAprovar)));
+  qs("content").querySelectorAll("[data-cash-dispensar]").forEach((b) => b.addEventListener("click", () => cashDispensar(b.dataset.cashDispensar, false)));
+  qs("content").querySelectorAll("[data-cash-reativar]").forEach((b) => b.addEventListener("click", () => cashDispensar(b.dataset.cashReativar, true)));
+  qs("cashLoteAprovar")?.addEventListener("click", cashAprovarLote);
+}
+
+function abrirCashAprovar(id) {
+  const m = byId("cashMoves", id);
+  const dialog = qs("cashAprovarDialog");
+  if (!m || !dialog) return;
+  const isSaida = m.type === "Saída";
+  const opt = (lista) => (lista || []).map((r) => `<option value="${Number(r.id) || svgText(r.id)}">${svgText(r.name)}</option>`).join("");
+  dialog.innerHTML = `
+    <h3>Aprovar movimento — criar a conta</h3>
+    <p>${asDate(m.date)} · ${svgText(m.type)} · ${moneySpan(m.amount)}<br><small class="muted">${svgText(m.history || "")}</small></p>
+    <label>Categoria financeira *<select id="cashApCategoria"><option value="">—</option>${opt(db.categories)}</select></label>
+    <label>Centro de custo *<select id="cashApCentro"><option value="">—</option>${opt(db.costCenters)}</select></label>
+    <label>${isSaida ? "Fornecedor" : "Cliente"} <small class="muted">(opcional)</small><select id="cashApParte"><option value="">—</option>${opt(isSaida ? db.suppliers : db.clients)}</select></label>
+    <label>Obra/Projeto <small class="muted">(opcional — despesa geral fica sem obra)</small><select id="cashApObra"><option value="">—</option>${opt(db.projects)}</select></label>
+    <div class="row-actions">
+      <button type="button" class="primary" id="cashApOk">Aprovar e criar a conta</button>
+      <button type="button" class="secondary" id="cashApCancelar">Cancelar</button>
+    </div>`;
+  dialog.querySelector("#cashApCancelar").addEventListener("click", () => dialog.close());
+  dialog.querySelector("#cashApOk").addEventListener("click", () => confirmarCashAprovar(id, false));
+  dialog.showModal();
+}
+
+async function confirmarCashAprovar(id, forcar) {
+  const dialog = qs("cashAprovarDialog");
+  const body = {
+    cashMoveId: Number(id),
+    categoryId: Number(dialog.querySelector("#cashApCategoria")?.value || 0),
+    costCenterId: Number(dialog.querySelector("#cashApCentro")?.value || 0),
+    forcar: Boolean(forcar),
+  };
+  if (!body.categoryId || !body.costCenterId) return showToast("Categoria e centro de custo são obrigatórios.", { severity: "warning" });
+  const parte = dialog.querySelector("#cashApParte")?.value;
+  const obra = dialog.querySelector("#cashApObra")?.value;
+  if (parte) body.parteId = Number(parte);
+  if (obra) body.projectId = Number(obra);
+  try {
+    const payload = await apiRequest("cash-move-aprovar", { method: "POST", body: JSON.stringify(body) });
+    if (payload.data?.criada) {
+      dialog.close();
+      showToast(payload.message || "Conta criada.", { severity: "success" });
+      if (serverMode) await refreshAndRender(); else render();
+      return;
+    }
+    cashAprovarSimilares(id, body, payload.data || {});
+  } catch (error) {
+    showToast(error.message, { severity: "warning" });
+  }
+}
+
+function cashAprovarSimilares(id, body, data) {
+  const dialog = qs("cashAprovarDialog");
+  const similares = data.similares || [];
+  const linhas = similares.map((s) => `<li>${s.suspeita === "alta" ? "🔴" : "🟡"} ${svgText(s.document)} · venc. ${asDate(s.dueDate)} · ${moneySpan(s.amount)} <small class="muted">(${svgText(s.status)})</small></li>`).join("");
+  const podeVincular = Boolean(data.fitid) && similares.length;
+  dialog.innerHTML = `
+    <h3>Já existe título parecido</h3>
+    <p>Mesmo valor e vencimento próximo — pode ser a MESMA conta lançada à mão:</p>
+    <ul class="cash-similares">${linhas}</ul>
+    <div class="row-actions">
+      ${podeVincular ? '<button type="button" class="primary" id="cashSimVincular">Vincular ao primeiro da lista</button>' : ""}
+      <button type="button" class="secondary" id="cashSimCriar">Criar mesmo assim</button>
+      <button type="button" class="secondary" id="cashSimCancelar">Cancelar</button>
+    </div>`;
+  dialog.querySelector("#cashSimCancelar").addEventListener("click", () => dialog.close());
+  dialog.querySelector("#cashSimCriar").addEventListener("click", () => { abrirCashAprovarComForcar(id, body); });
+  if (podeVincular) {
+    dialog.querySelector("#cashSimVincular").addEventListener("click", async () => {
+      try {
+        const payload = await apiRequest("ofx-vincular", { method: "POST", body: JSON.stringify({
+          fitid: data.fitid, bankAccountId: Number(data.bankAccountId), table: data.table, recordId: Number(similares[0].id),
+        }) });
+        dialog.close();
+        showToast(payload.message || "Vinculado ao título existente.", { severity: "success" });
+        if (serverMode) await refreshAndRender(); else render();
+      } catch (error) {
+        showToast(error.message, { severity: "warning" });
+      }
+    });
+  }
+}
+
+async function abrirCashAprovarComForcar(id, body) {
+  const dialog = qs("cashAprovarDialog");
+  try {
+    const payload = await apiRequest("cash-move-aprovar", { method: "POST", body: JSON.stringify({ ...body, forcar: true }) });
+    dialog.close();
+    showToast(payload.message || "Conta criada.", { severity: "success" });
+    if (serverMode) await refreshAndRender(); else render();
+  } catch (error) {
+    showToast(error.message, { severity: "warning" });
+  }
+}
+
+async function cashAprovarLote() {
+  const checks = [...qs("content").querySelectorAll(".cash-pend-check:checked")];
+  if (!checks.length) return showToast("Marque ao menos um movimento pendente.", { severity: "warning" });
+  const tipos = new Set(checks.map((c) => c.dataset.tipo));
+  if (tipos.size > 1) return showToast("O lote deve ser de UM lado só — apenas Entradas ou apenas Saídas.", { severity: "warning" });
+  const isSaida = tipos.has("Saída");
+  const dados = {
+    categoryId: Number(qs("cashLoteCategoria")?.value || 0),
+    costCenterId: Number(qs("cashLoteCentro")?.value || 0),
+  };
+  if (!dados.categoryId || !dados.costCenterId) return showToast("Categoria e centro de custo são obrigatórios.", { severity: "warning" });
+  const parte = isSaida ? qs("cashLoteFornecedor")?.value : qs("cashLoteCliente")?.value;
+  const obra = qs("cashLoteObra")?.value;
+  if (parte) dados.parteId = Number(parte);
+  if (obra) dados.projectId = Number(obra);
+  const ids = checks.map((c) => Number(c.dataset.id));
+  const btn = qs("cashLoteAprovar");
+  if (btn) { btn.disabled = true; btn.textContent = "Aprovando…"; }
+  try {
+    let criadas = 0;
+    const suspeitas = [];
+    const falhas = [];
+    for (let i = 0; i < ids.length; i += 50) {
+      const payload = await apiRequest("cash-move-aprovar-lote", { method: "POST", body: JSON.stringify({ itens: ids.slice(i, i + 50), dados }) });
+      criadas += Number(payload.data?.criadas || 0);
+      suspeitas.push(...(payload.data?.suspeitas || []));
+      falhas.push(...(payload.data?.falhas || []));
+    }
+    const partes = [`${criadas} conta(s) criada(s)`];
+    if (suspeitas.length) partes.push(`${suspeitas.length} com suspeita de duplicidade — trate uma a uma pelo botão Aprovar`);
+    if (falhas.length) partes.push(`${falhas.length} com aviso`);
+    showToast(partes.join(" · "), { severity: suspeitas.length || falhas.length ? "warning" : "success" });
+    if (falhas.length) console.warn("[Caixa lote] avisos:", falhas);
+    if (serverMode) await refreshAndRender(); else render();
+  } catch (error) {
+    showToast(`Falha no lote: ${error.message}`, { severity: "error" });
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "Aprovar selecionados"; }
+  }
+}
+
+async function cashDispensar(id, reativar) {
+  try {
+    const payload = await apiRequest("cash-move-dispensar", { method: "POST", body: JSON.stringify({ cashMoveId: Number(id), reativar: Boolean(reativar) }) });
+    showToast(payload.message || "Ok.", { severity: "success" });
+    if (serverMode) await refreshAndRender(); else render();
+  } catch (error) {
+    showToast(error.message, { severity: "warning" });
+  }
+}
+
 // ── Conciliação E2: aba Pendências ──────────────────────────────────────────
 // Fila de trabalho ORDENADA POR RELEVÂNCIA (alta → média → sem match) — decisão
 // do dono: "a fila precisa me ajudar a trabalhar, não me fazer percorrer o
@@ -18214,7 +18448,7 @@ function ofxPendLinhaHtml(row, index, podeEditar) {
   const melhor = row.matches?.[0];
   const sugestao = melhor
     ? `${svgText(melhor.document)} · venc. ${asDate(melhor.dueDate)} ${ofxPendBadgeConf(melhor.confidence)}${row.matches.length > 1 ? ` <small class="muted">+${row.matches.length - 1} alternativa(s)</small>` : ""}`
-    : '<span class="muted">Sem título compatível — criar conta chega na Etapa 3</span>';
+    : '<span class="muted">Sem título compatível — classifique e crie em Movimentações de caixa (Aprovar)</span>';
   const check = podeEditar && row.bucket === "alta"
     ? `<input type="checkbox" class="ofx-pend-check" data-idx="${index}" ${ofxPend.selecionadas.has(index) ? "checked" : ""}>`
     : "";

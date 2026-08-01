@@ -743,6 +743,49 @@ button:disabled {
   margin: 10px 0;
 }
 
+/* Conciliação E3 — painel de pendentes no Caixa */
+.cash-pend-panel {
+  border: 1px dashed rgba(148, 108, 32, 0.5);
+  border-radius: 10px;
+  padding: 14px;
+  margin-bottom: 14px;
+}
+
+.cash-pend-lista {
+  max-height: 260px;
+  overflow-y: auto;
+  display: grid;
+  gap: 4px;
+  margin: 10px 0;
+}
+
+.cash-pend-item {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 13px;
+}
+
+.cash-pend-form {
+  display: flex;
+  gap: 10px;
+  align-items: end;
+  flex-wrap: wrap;
+}
+
+.cash-similares {
+  margin: 8px 0 12px 18px;
+}
+
+.cash-aprovar-dialog {
+  min-width: min(480px, 92vw);
+}
+
+.cash-aprovar-dialog label {
+  display: block;
+  margin: 10px 0;
+}
+
 @keyframes toast-in {
   from { opacity: 0; transform: translate(-50%, -12px); }
   to   { opacity: 1; transform: translate(-50%, 0); }
