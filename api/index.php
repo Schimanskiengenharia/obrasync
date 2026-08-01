@@ -249,6 +249,40 @@ function ofx_movimento_livre(array $movimento, ?array $tituloDaReferencia, int $
         . ' — desfaça aquele vínculo antes de vincular outro.';
 }
 
+// E2 — confiança do match (compartilhada entre a prévia e a fila de pendências):
+// 100, −5/dia além do 1º, −20 título já baixado, −15 conta bancária divergente.
+function ofx_match_confianca(int $daysDiff, bool $jaBaixado, bool $contaDiverge): int
+{
+    $confianca = 100;
+    if ($daysDiff > 1) $confianca -= $daysDiff * 5;
+    if ($jaBaixado) $confianca -= 20;
+    if ($contaDiverge) $confianca -= 15;
+    return max(0, $confianca);
+}
+
+// E2 — bucket de relevância da fila: alta (≥85, um clique — mesma régua do
+// autoMatch da prévia), média (tem match abaixo), sem (exige criar título, E3).
+function ofx_pendencia_bucket(array $matches): string
+{
+    if (!$matches) return 'sem';
+    return ((int) ($matches[0]['confidence'] ?? 0)) >= 85 ? 'alta' : 'media';
+}
+
+// E2 — ordenação global da fila: a tela é FILA DE TRABALHO, não extrato
+// cronológico (decisão do dono). Dentro do bucket: confiança desc, data desc.
+function ofx_pendencias_ordenar(array $rows): array
+{
+    $peso = ['alta' => 0, 'media' => 1, 'sem' => 2];
+    usort($rows, static function (array $a, array $b) use ($peso): int {
+        $cmp = ($peso[$a['bucket']] ?? 9) <=> ($peso[$b['bucket']] ?? 9);
+        if ($cmp !== 0) return $cmp;
+        $cmp = ((int) ($b['matches'][0]['confidence'] ?? 0)) <=> ((int) ($a['matches'][0]['confidence'] ?? 0));
+        if ($cmp !== 0) return $cmp;
+        return strcmp((string) ($b['date'] ?? ''), (string) ($a['date'] ?? ''));
+    });
+    return $rows;
+}
+
 $config = load_config();
 // Gate de teste (NOVO-3): com OBRASYNC_TESTE_SEM_DB definido, a suíte local
 // carrega as funções REAIS sem conectar em banco NENHUM. Web/workers nunca
@@ -602,6 +636,16 @@ try {
         require_method($method, ['POST']);
         authorize_request($pdo, $authUser, 'reconciliation', 'edit');
         handle_ofx_desvincular($pdo, $authUser, read_json());
+    }
+    if ($resource === 'ofx-vincular-lote') {
+        require_method($method, ['POST']);
+        authorize_request($pdo, $authUser, 'reconciliation', 'edit');
+        handle_ofx_vincular_lote($pdo, $authUser, read_json());
+    }
+    if ($resource === 'ofx-pendencias') {
+        require_method($method, ['GET']);
+        authorize_request($pdo, $authUser, 'reconciliation', 'view');
+        handle_ofx_pendencias($pdo);
     }
     if ($resource === 'ofx-history') {
         require_method($method, ['GET']);
@@ -7680,10 +7724,8 @@ function ofx_find_matches(PDO $pdo, array $transaction, string $bankName): array
     foreach ($rows as $row) {
         $daysDiff = (int) abs((strtotime($date) - strtotime((string) $row['dueDate'])) / 86400);
         $alreadyPaid = $row['status'] === $settledStatus;
-        $confidence = 100;
-        if ($daysDiff > 1) $confidence -= $daysDiff * 5;
-        if ($alreadyPaid) $confidence -= 20;
-        if ($bankName !== '' && !empty($row['bankAccount']) && $row['bankAccount'] !== $bankName) $confidence -= 15;
+        $confidence = ofx_match_confianca($daysDiff, $alreadyPaid,
+            $bankName !== '' && !empty($row['bankAccount']) && $row['bankAccount'] !== $bankName);
         $matches[] = [
             'table' => $table,
             'id' => (int) $row['id'],
@@ -7693,7 +7735,7 @@ function ofx_find_matches(PDO $pdo, array $transaction, string $bankName): array
             'status' => (string) $row['status'],
             'alreadyPaid' => $alreadyPaid,
             'bankAccount' => (string) ($row['bankAccount'] ?? ''),
-            'confidence' => max(0, $confidence),
+            'confidence' => $confidence,
             'daysDiff' => $daysDiff,
         ];
     }
@@ -7820,37 +7862,39 @@ function handle_ofx_conciliar(PDO $pdo, array $authUser, array $payload): never
 // apenas vinculado. O movimento ganha a referência (dedup do custo realizado) e
 // herda obra/categoria/centro do título quando o payload não informar.
 // Collation: todas as comparações são coluna × parâmetro (imunes ao ERROR 1267).
-function handle_ofx_vincular(PDO $pdo, array $authUser, array $payload): never
+// E2 — núcleo do vínculo, reusado pelo individual e pelo lote. NUNCA chama
+// fail()/respond(): devolve ['ok'=>true, ...] ou ['ok'=>false,'status','motivo'].
+function ofx_vincular_executar(PDO $pdo, array $authUser, array $args): array
 {
     ensure_ofx_tables($pdo);
-    $fitid = mb_substr(trim((string) ($payload['fitid'] ?? '')), 0, 100);
-    $bankAccountId = (int) ($payload['bankAccountId'] ?? 0);
-    $table = (string) ($payload['table'] ?? '');
-    $recordId = (int) ($payload['recordId'] ?? 0);
+    $fitid = mb_substr(trim((string) ($args['fitid'] ?? '')), 0, 100);
+    $bankAccountId = (int) ($args['bankAccountId'] ?? 0);
+    $table = (string) ($args['table'] ?? '');
+    $recordId = (int) ($args['recordId'] ?? 0);
     if ($fitid === '' || !$bankAccountId || !$recordId) {
-        fail('Dados incompletos para o vínculo.', 400);
+        return ['ok' => false, 'status' => 400, 'motivo' => 'Dados incompletos para o vínculo.'];
     }
     if (!in_array($table, ['accounts_payable', 'accounts_receivable'], true)) {
-        fail('Tabela inválida.', 400);
+        return ['ok' => false, 'status' => 400, 'motivo' => 'Tabela inválida.'];
     }
     $stmt = $pdo->prepare('SELECT cashMoveId FROM ofx_fitids WHERE fitid = ? AND bankAccountId = ? LIMIT 1');
     $stmt->execute([$fitid, $bankAccountId]);
     $cashMoveId = (int) ($stmt->fetchColumn() ?: 0);
     if (!$cashMoveId) {
-        fail('Transação não encontrada entre as importadas desta conta.', 404);
+        return ['ok' => false, 'status' => 404, 'motivo' => 'Transação não encontrada entre as importadas desta conta.'];
     }
     foreach (['accounts_payable', 'accounts_receivable'] as $t) {
         $stmt = $pdo->prepare("SELECT id FROM {$t} WHERE ofxFitid = ? LIMIT 1");
         $stmt->execute([$fitid]);
         if ($stmt->fetchColumn()) {
-            fail('Esta transação do extrato já está vinculada a um título.', 409);
+            return ['ok' => false, 'status' => 409, 'motivo' => 'Esta transação do extrato já está vinculada a um título.'];
         }
     }
     $stmt = $pdo->prepare('SELECT * FROM cash_bank_movements WHERE id = ? LIMIT 1');
     $stmt->execute([$cashMoveId]);
     $movimento = $stmt->fetch();
     if (!$movimento) {
-        fail('Movimento da transação não encontrado.', 404);
+        return ['ok' => false, 'status' => 404, 'motivo' => 'Movimento da transação não encontrado.'];
     }
     // Guarda E2: movimento já reivindicado por outro título vivo (fluxo manual legado).
     $refTipoMov = (string) ($movimento['referencia_tipo'] ?? '');
@@ -7863,17 +7907,17 @@ function handle_ofx_vincular(PDO $pdo, array $authUser, array $payload): never
     }
     $motivoOcupado = ofx_movimento_livre($movimento, $tituloRef, $recordId, $table === 'accounts_payable');
     if ($motivoOcupado !== null) {
-        fail($motivoOcupado, 409);
+        return ['ok' => false, 'status' => 409, 'motivo' => $motivoOcupado];
     }
     $stmt = $pdo->prepare("SELECT * FROM {$table} WHERE id = ? LIMIT 1");
     $stmt->execute([$recordId]);
     $titulo = $stmt->fetch();
     if (!$titulo) {
-        fail('Título não encontrado.', 404);
+        return ['ok' => false, 'status' => 404, 'motivo' => 'Título não encontrado.'];
     }
-    $plano = ofx_vinculo_plano($titulo, $movimento, $payload);
+    $plano = ofx_vinculo_plano($titulo, $movimento, $args);
     if ($plano['acao'] === 'recusar') {
-        fail($plano['motivo'], 409);
+        return ['ok' => false, 'status' => 409, 'motivo' => $plano['motivo']];
     }
     $isPayable = $table === 'accounts_payable';
     $pdo->beginTransaction();
@@ -7902,7 +7946,7 @@ function handle_ofx_vincular(PDO $pdo, array $authUser, array $payload): never
             $pdo->rollBack();
         }
         error_log('[ObraSync OFX][ref ' . obra_error_ref() . '] Vínculo tardio falhou: ' . $error->getMessage());
-        fail('Erro ao vincular. Nada foi gravado — tente novamente.', 500);
+        return ['ok' => false, 'status' => 500, 'motivo' => 'Erro ao vincular. Nada foi gravado — tente novamente.'];
     }
     $stmt = $pdo->prepare("SELECT * FROM {$table} WHERE id = ? LIMIT 1");
     $stmt->execute([$recordId]);
@@ -7910,15 +7954,169 @@ function handle_ofx_vincular(PDO $pdo, array $authUser, array $payload): never
     $details = financeiro_baixa_audit_details($titulo, $depois, $isPayable ? 'paidDate' : 'receivedDate');
     server_audit($pdo, $authUser, 'update', $isPayable ? 'payable' : 'receivable', $recordId,
         trim(($details !== '' ? $details . ' · ' : '') . 'vínculo OFX FITID ' . $fitid . ' → movimento #' . $cashMoveId));
-    respond(['ok' => true, 'data' => [
+    return [
+        'ok' => true,
         'recordId' => $recordId,
         'table' => $table,
         'status' => (string) ($depois['status'] ?? ''),
         'linkedOnly' => $plano['acao'] === 'vincular',
         'cashMoveId' => $cashMoveId,
-    ], 'message' => $plano['acao'] === 'vincular'
+    ];
+}
+
+function handle_ofx_vincular(PDO $pdo, array $authUser, array $payload): never
+{
+    $r = ofx_vincular_executar($pdo, $authUser, $payload);
+    if (empty($r['ok'])) {
+        fail((string) $r['motivo'], (int) $r['status']);
+    }
+    $linkedOnly = !empty($r['linkedOnly']);
+    unset($r['ok']);
+    respond(['ok' => true, 'data' => $r, 'message' => $linkedOnly
         ? 'Extrato vinculado ao título já baixado.'
         : 'Título baixado e vinculado à transação do extrato.']);
+}
+
+// E2 — vínculo em LOTE das altas: cada item na SUA transação (falha individual
+// não derruba o lote — molde do envio de fotos do RDO). Lote é herança pura:
+// obra/categoria/centro vêm SEMPRE do título; obra diferente = modal individual.
+function handle_ofx_vincular_lote(PDO $pdo, array $authUser, array $payload): never
+{
+    $itens = is_array($payload['itens'] ?? null) ? $payload['itens'] : [];
+    if (!$itens) {
+        fail('Informe as transações a vincular.', 400);
+    }
+    if (count($itens) > 50) {
+        fail('Máximo de 50 vínculos por chamada — divida o restante na próxima.', 422);
+    }
+    $vinculadas = 0;
+    $falhas = [];
+    foreach ($itens as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+        $r = ofx_vincular_executar($pdo, $authUser, [
+            'fitid' => $item['fitid'] ?? '',
+            'bankAccountId' => $item['bankAccountId'] ?? 0,
+            'table' => $item['table'] ?? '',
+            'recordId' => $item['recordId'] ?? 0,
+        ]);
+        if (!empty($r['ok'])) {
+            $vinculadas++;
+        } else {
+            $falhas[] = ['fitid' => (string) ($item['fitid'] ?? ''), 'motivo' => (string) ($r['motivo'] ?? 'Falha desconhecida.')];
+        }
+    }
+    respond(['ok' => true, 'data' => ['vinculadas' => $vinculadas, 'falhas' => $falhas],
+        'message' => $vinculadas . ' vinculada(s)' . ($falhas ? ', ' . count($falhas) . ' com aviso' : '') . '.']);
+}
+
+// E2 — a fila de trabalho: transações importadas SEM título e SEM referência viva
+// no movimento (aprendido com o movimento #4: referência viva = já representada).
+// Match SET-BASED (JOIN numérico por valor) + confiança em PHP; ordenação global
+// por relevância ANTES da paginação. Nunca entra no bootstrap.
+function handle_ofx_pendencias(PDO $pdo): never
+{
+    ensure_ofx_tables($pdo);
+    $bankAccountId = (int) ($_GET['bankAccountId'] ?? 0);
+    $de = trim((string) ($_GET['de'] ?? ''));
+    $ate = trim((string) ($_GET['ate'] ?? ''));
+    $lado = (string) ($_GET['lado'] ?? '');
+    $limit = min(50, max(1, (int) ($_GET['limit'] ?? 20)));
+    $offset = max(0, (int) ($_GET['offset'] ?? 0));
+
+    $filtros = '';
+    $params = [];
+    if ($bankAccountId) { $filtros .= ' AND f.bankAccountId = ?'; $params[] = $bankAccountId; }
+    if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $de)) { $filtros .= ' AND m.`date` >= ?'; $params[] = $de; }
+    if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $ate)) { $filtros .= ' AND m.`date` <= ?'; $params[] = $ate; }
+    if (in_array($lado, ['Entrada', 'Saída'], true)) { $filtros .= ' AND m.`type` = ?'; $params[] = $lado; }
+
+    // Único JOIN texto×texto da frente — COLLATE explícito (regra E1 §5-B; o lado
+    // f.fitid é uca1400, os títulos são unicode_ci; vira no-op após a padronização).
+    $stmt = $pdo->prepare(
+        "SELECT f.fitid, f.bankAccountId, m.id AS cashMoveId, m.`date`, m.`type`, m.amount,
+                m.history, b.name AS bankAccountName
+           FROM ofx_fitids f
+           JOIN cash_bank_movements m ON m.id = f.cashMoveId
+           JOIN bank_accounts b ON b.id = f.bankAccountId
+          WHERE NOT EXISTS (SELECT 1 FROM accounts_payable p WHERE p.ofxFitid = f.fitid COLLATE utf8mb4_unicode_ci)
+            AND NOT EXISTS (SELECT 1 FROM accounts_receivable r WHERE r.ofxFitid = f.fitid COLLATE utf8mb4_unicode_ci)
+            AND NOT (m.referencia_tipo = 'CONTA_PAGAR' AND EXISTS (SELECT 1 FROM accounts_payable p2 WHERE p2.id = m.referencia_id))
+            AND NOT (m.referencia_tipo = 'CONTA_RECEBER' AND EXISTS (SELECT 1 FROM accounts_receivable r2 WHERE r2.id = m.referencia_id))
+            {$filtros}
+          ORDER BY m.`date` DESC, m.id DESC
+          LIMIT 2000"
+    );
+    $stmt->execute($params);
+    $rows = $stmt->fetchAll();
+    if (count($rows) === 2000) {
+        error_log('[ObraSync OFX] pendencias no teto de 2000 linhas — refine os filtros ou aumente a paginacao.');
+    }
+
+    // Match set-based: uma consulta por lado, JOIN numérico por valor (sem collation).
+    $matchesPorMove = [];
+    foreach ([['Saída', 'accounts_payable', 'Pago'], ['Entrada', 'accounts_receivable', 'Recebido']] as [$tipo, $tabela, $settled]) {
+        $ids = [];
+        foreach ($rows as $row) {
+            if ($row['type'] === $tipo) $ids[] = (int) $row['cashMoveId'];
+        }
+        if (!$ids) continue;
+        foreach (array_chunk($ids, 500) as $chunk) {
+            $ph = implode(',', array_fill(0, count($chunk), '?'));
+            $q = $pdo->prepare(
+                "SELECT m.id AS moveId, t.id, t.document, t.dueDate, t.amount, t.status, t.bankAccount,
+                        ABS(DATEDIFF(t.dueDate, m.`date`)) AS daysDiff
+                   FROM cash_bank_movements m
+                   JOIN {$tabela} t ON t.amount = m.amount
+                  WHERE m.id IN ({$ph})
+                    AND t.status <> 'Cancelado'
+                    AND t.ofxFitid IS NULL
+                    AND ABS(DATEDIFF(t.dueDate, m.`date`)) <= 5"
+            );
+            $q->execute($chunk);
+            foreach ($q->fetchAll() as $c) {
+                $matchesPorMove[(int) $c['moveId']][] = ['table' => $tabela, 'settled' => $settled] + $c;
+            }
+        }
+    }
+
+    $buckets = ['alta' => 0, 'media' => 0, 'sem' => 0];
+    foreach ($rows as $i => $row) {
+        $candidatos = $matchesPorMove[(int) $row['cashMoveId']] ?? [];
+        $matches = [];
+        foreach ($candidatos as $c) {
+            $jaBaixado = $c['status'] === $c['settled'];
+            $matches[] = [
+                'table' => $c['table'],
+                'id' => (int) $c['id'],
+                'document' => (string) $c['document'],
+                'dueDate' => (string) $c['dueDate'],
+                'amount' => (float) $c['amount'],
+                'status' => (string) $c['status'],
+                'alreadyPaid' => $jaBaixado,
+                'bankAccount' => (string) ($c['bankAccount'] ?? ''),
+                'confidence' => ofx_match_confianca((int) $c['daysDiff'], $jaBaixado,
+                    !empty($c['bankAccount']) && $c['bankAccount'] !== $row['bankAccountName']),
+                'daysDiff' => (int) $c['daysDiff'],
+            ];
+        }
+        usort($matches, static fn ($a, $b) => $b['confidence'] <=> $a['confidence']);
+        $matches = array_slice($matches, 0, 5);
+        $rows[$i]['amount'] = (float) $row['amount'];
+        $rows[$i]['matches'] = $matches;
+        $rows[$i]['autoMatch'] = ($matches && $matches[0]['confidence'] >= 85) ? $matches[0] : null;
+        $rows[$i]['bucket'] = ofx_pendencia_bucket($matches);
+        $buckets[$rows[$i]['bucket']]++;
+    }
+    $rows = ofx_pendencias_ordenar($rows);
+    respond(['ok' => true, 'data' => [
+        'rows' => array_slice($rows, $offset, $limit),
+        'total' => count($rows),
+        'buckets' => $buckets,
+        'offset' => $offset,
+        'limit' => $limit,
+    ]]);
 }
 
 // E1: desfazer vínculo. O movimento NUNCA é apagado (a linha do extrato é fato
