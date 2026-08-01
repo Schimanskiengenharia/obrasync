@@ -301,3 +301,19 @@ mysql -u financeiro_app -h 127.0.0.1 financeiro -e "SELECT TABLE_NAME, COLUMN_NA
 tudo por parâmetro bound — imune por construção. A regra entra na spec: nenhum JOIN texto×texto
 sem COLLATE explícito até a base ser padronizada. A Etapa 2 (tela) nasce com o paliativo e
 herda o definitivo de graça.
+
+---
+
+## ADENDO 2 (2026-08-01) — E3 SUBSTITUÍDA por decisão do dono
+
+A Etapa 3 originalmente planejada ("criar conta a partir da transação **na aba Pendências da
+Conciliação**") foi **CANCELADA e substituída** pelo **fluxo de aprovação em Movimentações de
+caixa** — mesmo problema, resolvido no lugar onde o dono trabalha: movimento importado nasce
+PENDENTE; aprovar (categoria+centro obrigatórios, obra opcional) cria a conta já liquidada com o
+vínculo completo da E1; aprovação em LOTE com dados comuns; detector de similares embutido;
+retroativo para os ~243 pendentes atuais (fora #4 e #150, já resolvidos).
+
+**Numeração vigente:** E1 motor (v1.42.0 ✓) · E2 tela de pendências (v1.43.0 ✓) · **E3 (nova)
+aprovação em Movimentações** (spec: `docs/superpowers/specs/2026-08-01-caixa-aprovacao-pendentes-design.md`)
+· E4 detector nos demais pontos de criação (lançamento manual, NFS-e). O bucket "sem título" da
+E2 passa a apontar para o fluxo do Caixa em vez de ganhar criação própria.
