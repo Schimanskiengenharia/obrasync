@@ -697,6 +697,8 @@ CREATE TABLE IF NOT EXISTS accounts_receivable (
   bankAccount VARCHAR(140),
   amount DECIMAL(15,2) NOT NULL DEFAULT 0,
   status VARCHAR(30) NOT NULL DEFAULT 'Aberto',
+  juros_aplicado DECIMAL(10,2) NULL COMMENT 'Acréscimo (juros+multa) aplicado na baixa',
+  valor_original DECIMAL(10,2) NULL COMMENT 'Valor original do título antes do acréscimo',
   ofxFitid VARCHAR(100) NULL COMMENT 'FITID do OFX vinculado — evita dupla contagem',
   ofxImportId BIGINT UNSIGNED NULL COMMENT 'ID em ofx_imports',
   referencia_tipo VARCHAR(30) NULL,

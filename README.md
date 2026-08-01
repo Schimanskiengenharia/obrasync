@@ -12,8 +12,8 @@ Antes de atualizar em produção, faça backup do banco e de `/var/lib/financeir
 
 Esta seção orienta qualquer pessoa — ou outra IA — que precise continuar o trabalho sem se perder.
 
-- **Versão atual:** `v1.40.0` (2026-07-31). A versão fica em **dois lugares que devem andar juntos**: a constante `APP_VERSION`/`APP_VERSION_DATE` no topo de `app.js` (com `APP_CHANGELOG`) e o cabeçalho deste README. O painel "Versão" em Configurações lê de `APP_VERSION`.
-- **Cache busting:** sempre que `app.js` ou `styles.css` mudarem, **incremente o `?v=NNNN`** das tags correspondentes em `index.html` (hoje `app.js?v=1810`, `styles.css?v=1810`). Sem isso o navegador serve a versão velha.
+- **Versão atual:** `v1.41.0` (2026-08-01). A versão fica em **dois lugares que devem andar juntos**: a constante `APP_VERSION`/`APP_VERSION_DATE` no topo de `app.js` (com `APP_CHANGELOG`) e o cabeçalho deste README. O painel "Versão" em Configurações lê de `APP_VERSION`.
+- **Cache busting:** sempre que `app.js` ou `styles.css` mudarem, **incremente o `?v=NNNN`** das tags correspondentes em `index.html` (hoje `app.js?v=1811`, `styles.css?v=1811`). Sem isso o navegador serve a versão velha.
 - **Estado de saúde (2026-06-28):** em produção e estável. A leva **v1.15→v1.18** entregou o fluxo **Orçamento → Proposta com base SINAPI** (múltiplos orçamentos, BDI flexível, licitação, hierarquia por disciplina, modelos), **SINAPI no PDF + export Excel**, **contrato a partir da proposta** (template 13 cláusulas + anexos assinados), **CEP autofill universal** (corrigindo a regressão do CSP), **endereço próprio da obra** e a **exclusão de análise de viabilidade**; além do **fix do asDate** (Viabilidade travando). Ver o changelog abaixo e `STATUS.md` para o que está FEITO vs PENDENTE.
 - **Arquitetura:** SPA sem build. Todo o frontend está em `app.js` (arquivo único, ~15 mil linhas) + `index.html` (shell) + `styles.css`. Todo o backend está em `api/index.php` (arquivo único, ~8,7 mil linhas). O banco é MariaDB/MySQL (`financeiro`).
 - **Convenções do backend (siga-as):** respostas via `respond(['ok' => true, 'data' => ...])` e erros via `fail($msg, $status)`; INSERT/UPDATE genéricos via `insert_dynamic()`/`update_dynamic()` (descartam colunas inexistentes — toleram diferenças de schema); auditoria via `server_audit()`. Muitas tabelas novas são criadas sob demanda por funções `ensure_*` no próprio `index.php` (além das migrations).
@@ -26,6 +26,17 @@ Esta seção orienta qualquer pessoa — ou outra IA — que precise continuar o
 ## Histórico de Versões
 
 Mapa de cada marco do produto, do mais novo ao mais antigo, com as features e as tabelas/arquivos envolvidos. Use-o para entender *o que existe e por quê* antes de mexer.
+
+### v1.41.0 — 2026-08-01 · Baixa de contas com data editável e acréscimos (juros+multa), com auditoria
+
+Baixar uma conta ficou honesto com a vida real, nos dois lados do financeiro:
+
+- **Data da baixa automática e editável** — ao marcar Pago (a pagar) ou Recebido (a receber), a data recebe o dia de hoje; dá para corrigir para a data real (pagou na sexta, lançou na segunda).
+- **Acréscimos (juros/multa) num campo só, em reais** — aparece apenas quando a baixa acontece depois do vencimento (o boleto já vem com o valor atualizado; antes do vencimento nada é perguntado).
+- **O valor original do título nunca se perde** — o total vira original + acréscimo, com o desdobramento visível na lista; corrigir o acréscimo depois recalcula a partir do original, nunca soma juros sobre juros (regra imposta no servidor, com teste automático travando a regressão).
+- **Auditoria completa** — toda mudança de status, data da baixa, valor e acréscimo registra quem alterou, quando, e o antes→depois de cada campo.
+
+Migration nova: `2026-07-31-receivable-acrescimos.sql` (colunas de acréscimo no contas a receber; o contas a pagar já as tinha e passou a usá-las). Valores novos respeitam o modo privacidade.
 
 ### v1.40.0 — 2026-07-31 · Mensagens de erro mais úteis (Onda B, lote 1: E3 toast com severidade + E4 código de correlação)
 

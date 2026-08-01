@@ -1,6 +1,6 @@
 # STATUS — ObraSync
 
-> **Versão:** `v1.40.0` · 2026-07-31 · **Varredura:** 2026-07-28 · **Ambiente:** produção em `https://schimanskiengenharia.com.br/financeiro`
+> **Versão:** `v1.41.0` · 2026-08-01 · **Varredura:** 2026-07-28 · **Ambiente:** produção em `https://schimanskiengenharia.com.br/financeiro`
 
 > ⚠️ **Leia com atenção à data.** O corpo deste documento (seções 1 a 7) foi escrito na época da
 > **v1.12–v1.19** e não foi reescrito a cada release. Ele descreve corretamente a base do sistema,

@@ -93,9 +93,10 @@ function avisarFalha(contexto, mensagem) {
     showToast(mensagem, 5000);
   };
 }
-const APP_VERSION = "v1.40.0";
-const APP_VERSION_DATE = "2026-07-31";
+const APP_VERSION = "v1.41.0";
+const APP_VERSION_DATE = "2026-08-01";
 const APP_CHANGELOG = [
+  "Baixa de contas com data e acréscimos (juros+multa) — nos dois lados do financeiro: ao marcar uma conta como Paga (a pagar) ou Recebida (a receber), a data do pagamento/recebimento é preenchida com o dia de hoje e continua editável — é comum pagar na sexta e lançar na segunda. Se a baixa acontecer depois do vencimento, o formulário abre um campo único de \"Acréscimos (juros/multa)\" em reais (o boleto já vem com o valor atualizado; antes do vencimento nada é perguntado). O sistema guarda o valor ORIGINAL do título separado do acréscimo e mostra o total desdobrado na lista (ex.: original R$ 2.204,46 + acréscimos R$ 75,94); corrigir o acréscimo depois recalcula o total a partir do valor original — nunca soma juros sobre juros, e há teste automático travando essa regra no servidor. Toda mudança de status, data da baixa, valor e acréscimo fica na auditoria com quem alterou, quando, e o valor anterior e o novo. Contas a receber ganharam os campos de acréscimo (migration 2026-07-31-receivable-acrescimos.sql); no contas a pagar os campos já existiam e passaram a ser usados. Todos os valores novos respeitam o modo privacidade (v1.41.0).",
   "Mensagens de erro mais úteis (Onda B, lote 1): ao salvar um cadastro, os avisos deixaram de usar o pop-up do navegador e aparecem como aviso do próprio sistema — âmbar para dado faltando ou inválido, vermelho para falha de gravação — visível mesmo com o formulário aberto e fechável com um clique. E quando ocorrer um erro interno do servidor, a mensagem passa a trazer um código de suporte; o mesmo código fica gravado no log do servidor, então basta informar esse código para localizar a linha exata do problema, sem depender de horário ou de descrição do ocorrido (v1.40.0).",
   "Dashboard — acabamento e robustez: o cartao \"Etapas atrasadas\" ficava VERDE quanto mais etapas atrasadas houvesse (e neutro quando nao havia nenhuma) — agora fica vermelho, coerente com o alerta que a mesma informacao ja gerava. Margem prevista, margem realizada e percentual financeiro executado passam a ter cor: margem negativa aparece como prejuizo e execucao acima de 100% como estouro, o que antes ficava com o mesmo tom neutro de um resultado positivo. O painel Lucro x Caixa deixa de mostrar nove valores zerados quando a obra ainda nao tem lancamento nenhum e passa a explicar que nao ha dado. Se algo falhar ao montar a tela, aparece uma mensagem com o motivo em vez da tela em branco — por ser a primeira tela apos o login, o branco era lido como sistema fora do ar. Acessibilidade: cada grafico passa a se anunciar pelo proprio titulo para leitores de tela (havia dois \"Grafico de linha\" indistinguiveis na mesma tela) e os cabecalhos de tabela ganharam marcacao de coluna (v1.39.1).",
   "Kanban: visao \"Todos os boards\" e identificacao por obra. O seletor de quadros passa a agrupar os boards POR OBRA, com o nome da obra visivel — antes os dez quadros apareciam numa lista unica e era facil abrir o da obra errada. Nova opcao \"Todos os boards\" mostra os cards de todas as obras juntos, agrupados pelo nome da coluna (A fazer, Fazendo, Concluido), com etiqueta de obra e de quadro em cada card, e filtros por obra, responsavel e prioridade. Nessa visao arrastar fica desativado de proposito: como a mesma coluna existe em varios quadros, soltar o card nao definiria para qual quadro ele iria — para mover, abra o quadro especifico (v1.39.0).",
@@ -7384,6 +7385,12 @@ const HTML_CELL_FIELDS = new Set(["generatedLink", "hasPdf", "hasXml", "status",
 function tableCell(field, row, moduleKey = "") {
   const content = formatCell(field, row[field], row, moduleKey);
   const cell = HTML_CELL_FIELDS.has(field) ? content : escapeHtml(content);
+  // Baixa com acréscimo: o total exibe o desdobramento (original + juros/multa),
+  // cada montante com seu próprio borrão do modo privacidade (moneySpan).
+  if (field === "amount" && (moduleKey === "payable" || moduleKey === "receivable") && Number(row.juros_aplicado || 0) > 0) {
+    const original = Number(row.valor_original || 0) || (Number(row.amount || 0) - Number(row.juros_aplicado || 0));
+    return `<span class="money-blur">${cell}</span><small class="muted baixa-desdobramento">original ${moneySpan(original)} + acréscimos ${moneySpan(row.juros_aplicado)}</small>`;
+  }
   // Modo privacidade: colunas de dinheiro borráveis. O embrulho vem DEPOIS do
   // escape (asMoney não gera HTML — seguro; exportExcel ignora o span).
   return isMoneyField(field) ? `<span class="money-blur">${cell}</span>` : cell;
@@ -7979,6 +7986,7 @@ function applyFormEnhancements() {
   if (editing?.key === "companySettings") setupCompanyLogoUpload();
   if (editing?.key === "payable" && !editing.id) setupPayableRecurrence();
   if (editing?.key === "payable" && editing.id) setupPayableCashLink();
+  if (editing?.key === "payable" || editing?.key === "receivable") setupBaixaFields(editing.key);
   if (editing?.key === "cashMoves" && !editing.id) setupCashPayableLink();
   if (editing?.key === "purchaseOrders") setupPurchaseOrderForm();
 }
@@ -8474,6 +8482,63 @@ function addMonthsClamped(iso, months) {
 }
 
 // Injeta no formulário de nova conta a pagar a opção de recorrência/parcelamento.
+// ── Baixa com data e acréscimos (payable/receivable) ────────────────────────
+// Ao marcar Pago/Recebido, a data da baixa recebe HOJE local (regra M10) e fica
+// editável (pagou na sexta, lançou na segunda). Baixa DEPOIS do vencimento
+// revela o campo "Acréscimos (juros/multa)" em R$ — o boleto já vem com o valor
+// atualizado, por isso valor e não percentual. O amount exibido deriva SEMPRE
+// de original + acréscimo; o backend reimpõe a regra (aplicar_acrescimo_baixa)
+// contra o acúmulo em cascata de edições sucessivas.
+function setupBaixaFields(key) {
+  const formFields = qs("formFields");
+  if (!formFields || formFields.querySelector("#baixaAcrescimoBox")) return;
+  const statusSel = formFields.querySelector('[name="status"]');
+  const dateInput = formFields.querySelector(`[name="${key === "payable" ? "paidDate" : "receivedDate"}"]`);
+  const dueInput = formFields.querySelector('[name="dueDate"]');
+  const amountInput = formFields.querySelector('[name="amount"]');
+  if (!statusSel || !dateInput || !amountInput) return;
+  const baixaStatus = key === "payable" ? "Pago" : "Recebido";
+  const row = editing?.id ? (byId(key, editing.id) || {}) : {};
+  // Base do cálculo: o histórico do banco quando existe; senão o valor do título.
+  let base = Number(row.valor_original || 0) || Number(row.amount || 0);
+  const box = document.createElement("div");
+  box.id = "baixaAcrescimoBox";
+  box.className = "full baixa-acrescimo-box hidden";
+  box.innerHTML = `
+    <label>Acréscimos (juros/multa) — R$
+      <input type="text" inputmode="decimal" id="baixaJuros" class="money-private" placeholder="0,00">
+    </label>
+    <p id="baixaResumo" class="field-hint"></p>`;
+  formFields.appendChild(box);
+  const jurosInput = box.querySelector("#baixaJuros");
+  const resumo = box.querySelector("#baixaResumo");
+  if (Number(row.juros_aplicado || 0) > 0) {
+    jurosInput.value = Number(row.juros_aplicado).toFixed(2).replace(".", ",");
+  }
+  const atualizar = () => {
+    const emBaixa = statusSel.value === baixaStatus;
+    if (emBaixa && !dateInput.value) dateInput.value = hojeLocal();
+    const juros = Math.round(parseMoneyInput(jurosInput.value) * 100) / 100;
+    // Título novo: enquanto não há acréscimo, a base acompanha o valor digitado.
+    if (!editing?.id && juros <= 0) base = Number(amountInput.value || 0);
+    const vencida = emBaixa && dueInput?.value && dateInput.value && dateInput.value > dueInput.value;
+    const mostrar = Boolean(vencida || (emBaixa && (juros > 0 || Number(row.juros_aplicado || 0) > 0)));
+    box.classList.toggle("hidden", !mostrar);
+    if (!mostrar) return;
+    if (juros > 0 || Number(row.juros_aplicado || 0) > 0) {
+      amountInput.value = String(Math.round((base + juros) * 100) / 100);
+    }
+    resumo.textContent = juros > 0
+      ? `Total da baixa: ${maskMoneyText(asMoney(base + juros))} — original ${maskMoneyText(asMoney(base))} + acréscimos ${maskMoneyText(asMoney(juros))}`
+      : `Baixa após o vencimento: houve juros/multa? Informe o ACRÉSCIMO em R$ — o total é recalculado a partir do valor original de ${maskMoneyText(asMoney(base))}.`;
+  };
+  statusSel.addEventListener("change", atualizar);
+  dateInput.addEventListener("change", atualizar);
+  amountInput.addEventListener("input", atualizar);
+  jurosInput.addEventListener("input", atualizar);
+  atualizar();
+}
+
 function setupPayableRecurrence() {
   const formFields = qs("formFields");
   if (!formFields || formFields.querySelector("#payableRecurrenceBox")) return;
@@ -9039,6 +9104,20 @@ async function saveForm(event) {
       if (choice === null) return; // cancelou: não salva nada
       selfPasswordChanged = true;
       if (choice === "logout") data.logoutOtherSessions = true;
+    }
+  }
+  // Baixa com acréscimos (payable/receivable): o campo só entra no payload quando
+  // o bloco está visível; o backend reimpõe a regra anticascata de todo jeito.
+  if (["payable", "receivable"].includes(editing.key)) {
+    const boxBaixa = qs("baixaAcrescimoBox");
+    if (boxBaixa && !boxBaixa.classList.contains("hidden")) {
+      data.juros_aplicado = Math.round(parseMoneyInput(qs("baixaJuros")?.value) * 100) / 100;
+      // Criação já baixada com acréscimo: fixa o histórico no nascimento (na
+      // edição quem manda é o valor do banco — aplicar_acrescimo_baixa ignora
+      // valor_original vindo do cliente).
+      if (!editing.id && data.juros_aplicado > 0) {
+        data.valor_original = Math.round((Number(data.amount || 0) - data.juros_aplicado) * 100) / 100;
+      }
     }
   }
   // Conta a pagar recorrente: gera todas as parcelas em vez de um único registro.

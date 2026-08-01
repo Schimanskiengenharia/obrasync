@@ -104,6 +104,85 @@ function apply_error_ref(string $message, int $status): string
     return $message . ' (código: ' . obra_error_ref() . ')';
 }
 
+// ── Baixa com acréscimos (juros+multa) — payable E receivable ───────────────
+// REGRA ANTICASCATA: amount SEMPRE deriva de valor_original + juros_aplicado.
+// valor_original é HISTÓRICO — fixado na primeira baixa com acréscimo (recebe o
+// amount anterior do título) e nunca sobrescrito; editar o acréscimo depois
+// recalcula amount a partir do original, senão o juros acumularia a cada edição.
+// Pura de propósito: é o contrato do fluxo e o teste (test_acrescimo_baixa) roda
+// sem banco. O payload NUNCA decide valor_original quando o banco já tem um.
+function aplicar_acrescimo_baixa(array $before, array $payload): array
+{
+    if (!array_key_exists('juros_aplicado', $payload)) {
+        return $payload; // fluxo que não fala de acréscimo: intacto
+    }
+    $juros = round(max(0.0, (float) ($payload['juros_aplicado'] ?? 0)), 2);
+    $originalAntes = $before['valor_original'] ?? null;
+    $temOriginal = $originalAntes !== null && $originalAntes !== '' && (float) $originalAntes > 0;
+    if (!$temOriginal && $juros <= 0.0) {
+        // Sem acréscimo e sem histórico: não é baixa com juros — não interfere.
+        unset($payload['valor_original']);
+        $payload['juros_aplicado'] = 0.0;
+        return $payload;
+    }
+    $original = $temOriginal
+        ? round((float) $originalAntes, 2)
+        : round((float) ($before['amount'] ?? 0), 2);
+    $payload['valor_original'] = $original;
+    $payload['juros_aplicado'] = $juros;
+    $payload['amount'] = round($original + $juros, 2);
+    return $payload;
+}
+
+// Diff legível dos campos da baixa para o `details` do audit_log. Quem/quando/IP
+// o server_audit já registra; aqui entra o ANTES→DEPOIS que faltava ("caso
+// aconteça algo depois, ver quem mudou"). Pura; devolve '' sem mudança.
+function financeiro_baixa_audit_details(array $before, array $after, string $dateField): string
+{
+    $fmt = static function ($v): string {
+        if ($v === null || $v === '') {
+            return '—';
+        }
+        return is_numeric($v) ? number_format((float) $v, 2, ',', '.') : (string) $v;
+    };
+    $mudou = static function ($a, $b): bool {
+        if (is_numeric($a) && is_numeric($b)) {
+            return round((float) $a, 2) !== round((float) $b, 2);
+        }
+        return (string) ($a ?? '') !== (string) ($b ?? '');
+    };
+    $partes = [];
+    foreach (['status', $dateField, 'amount', 'juros_aplicado', 'valor_original'] as $campo) {
+        $a = $before[$campo] ?? null;
+        $b = $after[$campo] ?? null;
+        if ($mudou($a, $b)) {
+            $partes[] = $campo . ': ' . $fmt($a) . '→' . $fmt($b);
+        }
+    }
+    return implode(' · ', $partes);
+}
+
+// Colunas de acréscimo no CONTAS A RECEBER — espelho das que o payable ganhou na
+// recorrência. Migration oficial: 2026-07-31-receivable-acrescimos.sql.
+function ensure_receivable_acrescimos_columns(PDO $pdo): void
+{
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    try {
+        $cols = table_columns($pdo, 'accounts_receivable');
+        if (!in_array('juros_aplicado', $cols, true) || !in_array('valor_original', $cols, true)) {
+            $pdo->exec("ALTER TABLE accounts_receivable
+                ADD COLUMN IF NOT EXISTS juros_aplicado DECIMAL(10,2) NULL,
+                ADD COLUMN IF NOT EXISTS valor_original DECIMAL(10,2) NULL");
+        }
+        $done = true;
+    } catch (Throwable $error) {
+        error_log('[ObraSync] ensure_receivable_acrescimos_columns: ' . $error->getMessage());
+    }
+}
+
 $config = load_config();
 // Gate de teste (NOVO-3): com OBRASYNC_TESTE_SEM_DB definido, a suíte local
 // carrega as funções REAIS sem conectar em banco NENHUM. Web/workers nunca
@@ -911,6 +990,20 @@ try {
         if ($key === 'users') {
             $payload = sanitize_user_profile_fields($pdo, $payload, (int) $id, false);
         }
+        // Baixa com acréscimos: captura o ANTES (invariante anticascata + diff de
+        // auditoria) e reimpõe a regra no servidor, seja qual for o cliente.
+        $beforeBaixa = null;
+        if ($key === 'payable' || $key === 'receivable') {
+            if ($key === 'receivable') {
+                ensure_receivable_acrescimos_columns($pdo);
+            } else {
+                ensure_payable_recurrence_columns($pdo);
+            }
+            $beforeBaixa = get_record($pdo, $resources[$key], (int) $id) ?: null;
+            if ($beforeBaixa) {
+                $payload = aplicar_acrescimo_baixa($beforeBaixa, $payload);
+            }
+        }
         try {
             $record = update_record($pdo, $resources[$key], (int) $id, $payload);
         } catch (PDOException $e) {
@@ -935,7 +1028,16 @@ try {
         if ($key === 'kanbanCards' && kanban_card_is_done($pdo, $record)) {
             $record['completionPrompt'] = 'Card movido para Concluído. Deseja atualizar o status do item vinculado?';
         }
-        server_audit($pdo, $authUser, 'update', $key, $id);
+        // Trilha da baixa: antes→depois legível no details (quem/quando já vão).
+        $auditDetails = '';
+        if ($beforeBaixa !== null) {
+            $auditDetails = financeiro_baixa_audit_details(
+                $beforeBaixa,
+                $record,
+                $key === 'payable' ? 'paidDate' : 'receivedDate'
+            );
+        }
+        server_audit($pdo, $authUser, 'update', $key, $id, $auditDetails);
         respond(['ok' => true, 'record' => $record]);
     }
 
@@ -1943,7 +2045,7 @@ function resource_map(): array
         'sales' => r('sales_contracts', ['vendas','contratos','vendas-contratos'], ['number','date','competenceDate','clientId','projectId','proposalId','costCenterId','description','amount','cost','status','numero_contrato','data_contrato','valor_contrato','objeto','status_contrato','proposta_assinada_path','contrato_gerado_path','contrato_assinado_path','cliente_nome','cpf_cnpj','email','telefone','endereco','cidade','estado','cep'], ['number']),
         'viabilityAnalyses' => r('viability_analyses', ['analises-viabilidade','análises-viabilidade'], ['projectId','proposalId','contractValue','estimatedCost','executionMonths','tmaPercent','grossMargin','marginPercent','estimatedProfit','paybackMonths','npv','irrPercent','autoVerdict','verdict','finalVerdict','verdictJustification','verdictHistory','risks','notes','analysisDate','responsibleUserId','status'], []),
         'plugins' => r('system_plugins', ['plugins'], ['name','url','icon','description','roles','sortOrder','status'], ['name']),
-        'receivable' => r('accounts_receivable', ['contas-receber','contas_a_receber'], ['document','issueDate','dueDate','receivedDate','clientId','projectId','proposalId','categoryId','costCenterId','bankAccount','amount','status'], ['document']),
+        'receivable' => r('accounts_receivable', ['contas-receber','contas_a_receber'], ['document','issueDate','dueDate','receivedDate','clientId','projectId','proposalId','categoryId','costCenterId','bankAccount','amount','status','juros_aplicado','valor_original'], ['document']),
         'payable' => r('accounts_payable', ['contas-pagar','contas_a_pagar'], ['document','issueDate','dueDate','paidDate','supplierId','projectId','categoryId','costCenterId','bankAccount','amount','status','recorrencia_id','parcela_numero','parcela_total','recorrencia_tipo','juros_aplicado','valor_original','referencia_tipo','referencia_id'], ['document']),
         'cashMoves' => r('cash_bank_movements', ['movimentacoes-caixa','movimentacoes','movimentações'], ['date','bankAccount','type','categoryId','projectId','costCenterId','history','amount','originDocument','status','referencia_tipo','referencia_id'], ['originDocument']),
         'chartAccounts' => r('chart_accounts', ['plano-contas'], ['code','name','type','parentId','acceptsEntries','status'], ['code']),
