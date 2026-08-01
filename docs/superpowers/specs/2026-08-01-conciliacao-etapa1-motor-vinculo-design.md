@@ -95,6 +95,19 @@ O código desta etapa corrige o COMPORTAMENTO. O único registro histórico (1 r
 detalhe: por ser do lado RECEBER, ele NÃO distorce o `realizedCost` hoje — o conserto é de
 consistência, não de número errado).
 
+## 5-B. Collation (achado de 2026-08-01 — adendo do diagnóstico)
+
+Produção tem fronteira `utf8mb4_unicode_ci` (tabelas antigas: accounts_*, cash_bank_movements…)
+× `utf8mb4_uca1400_ai_ci` (novas: ofx_*, …), e o servidor REMAPEIA COLLATE declarado no CREATE.
+Regras para esta etapa:
+
+- O motor compara **sempre coluna × parâmetro bound** (imune ao erro 1267 por construção) —
+  nenhum JOIN `fitid = ofxFitid` em SQL. A resolução transação→movimento usa
+  `ofx_fitids.cashMoveId` (numérico).
+- **PROIBIDO** JOIN texto×texto sem `COLLATE utf8mb4_unicode_ci` explícito enquanto a base não
+  for padronizada (a padronização é frente à parte, com autorização/backup/janela próprios).
+- A Etapa 1 NÃO espera a padronização.
+
 ## 6. Testes
 
 - `scripts/tests/php/test_ofx_vinculo.php` (harness, sem banco): funções puras extraídas do

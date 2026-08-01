@@ -236,3 +236,68 @@ algo usável, no padrão da casa.
 trabalho com sugestão pronta — e cada vínculo/criação passa a preencher o `projectId` que hoje
 está ZERADO nos 245, destravando o dashboard por obra (o mesmo buraco apontado nos diagnósticos
 do Kanban e da integração financeiro↔cronograma).
+
+---
+
+## ADENDO (2026-08-01) — Medições confirmadas + achado de COLLATION
+
+### Medições do dono
+
+- **Pendentes: 244** (confirmado com COLLATE explícito no JOIN — ver abaixo o porquê).
+- **Par histórico:** fitid `20260707025699145` ↔ movimento **#150** (2026-07-07, R$ 256.991,45,
+  Entrada) ↔ **receber #9**; `referencia_tipo` NULL. Lado RECEBER → não distorce o
+  `realizedCost` (que soma só saídas). **UPDATE de 1 linha AUTORIZADO** (variante
+  CONTA_RECEBER), executável por chave primária, sem JOIN de texto.
+
+### Achado: divergência de collation nova×antiga (ERROR 1267)
+
+As consultas de medição falharam com `Illegal mix of collations (utf8mb4_unicode_ci) ×
+(utf8mb4_uca1400_ai_ci)` no JOIN `ofx_fitids.fitid = accounts_*.ofxFitid`. Mapa medido pelo
+dono: tabelas ANTIGAS (accounts_*, cash_bank_movements, clients, audit_log, cotacoes…) em
+`utf8mb4_unicode_ci`; tabelas NOVAS (ofx_*, cotacao_*, kanban_*, viabilidade_*,
+orcamento_etapas, orcamento_item_execucao_log, purchase_order_items, proposta_grupos/modelos,
+agenda_eventos, sinapi_import_*) em `utf8mb4_uca1400_ai_ci` (default do MariaDB 11.x);
+`obra_rdo.efetivo` em `utf8mb4_bin` (à parte — NÃO tocar em conversões).
+
+**1. O código de produção quebra nesse JOIN? NÃO.** Varredura completa: os **30 JOINs** do
+`api/index.php` (e os dos workers) são todos por **ID numérico** — zero JOIN texto×texto. Todas
+as comparações de `fitid`/`ofxFitid` são coluna × parâmetro bound (`WHERE fitid = ?`,
+`WHERE ofxFitid IS NULL`, `UPDATE ... SET ofxFitid = ?`), que **não** disparam o erro 1267
+(parâmetro é COERCIBLE e adota a collation da coluna). **O "1 de 245" continua explicado pelo
+fluxo** (conciliar só existe na prévia + 409 pós-import) — a única conciliação feita FUNCIONOU,
+o que prova o mecanismo. A collation quebrou apenas as consultas ad-hoc de medição — e quebraria
+o JOIN da tela de pendências (Etapa 2) se escrito ingenuamente.
+
+**2. Achado dentro do achado — o servidor REMAPEIA o COLLATE declarado.** O CREATE de
+`ofx_fitids`/`ofx_imports` declara `COLLATE=utf8mb4_unicode_ci` **desde o primeiro commit**
+(`6ebc9c8`) — e produção está uca1400. Ou seja: não é só "CREATE sem COLLATE herdando default";
+o MariaDB 11.x com `character_set_collations` mapeado para `utf8mb4=uca1400_ai_ci` remapeia até
+declaração explícita. **Antes de escolher a direção da padronização, medir no servidor:**
+
+```bash
+mysql -u financeiro_app -h 127.0.0.1 -e "SHOW VARIABLES LIKE 'character_set_collations'; SELECT @@version"
+mysql -u financeiro_app -h 127.0.0.1 financeiro -e "SELECT TABLE_NAME, COLUMN_NAME, COLLATION_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='financeiro' AND COLUMN_NAME IN ('fitid','ofxFitid')"
+```
+
+**3. Correção proposta — dois níveis:**
+
+- **(a) Paliativo no código (custo ~zero, sem risco de dado):** todo JOIN texto×texto novo que
+  cruze a fronteira leva `COLLATE utf8mb4_unicode_ci` explícito num dos lados (funciona nos dois
+  sentidos; vira no-op após a padronização). Único custo: a comparação não usa índice do lado
+  convertido — irrelevante no volume atual. HOJE nenhum código precisa do paliativo (não há
+  JOIN texto×texto); ele vale para o código NOVO (Etapa 2+) e para consultas manuais.
+- **(b) Definitivo (ALTER em massa — SÓ com autorização, backup validado e janela):** padronizar
+  a base numa collation única. A DIREÇÃO depende da medição do item 2: se o servidor remapeia
+  unicode_ci→uca1400, converter as ANTIGAS para `uca1400_ai_ci` (ou ajustar a variável do
+  servidor e converter as novas para `unicode_ci` — menos tabelas, mas mexe em config de
+  servidor). Riscos do CONVERT: reescreve a tabela e reconstrói índices (lock proporcional ao
+  tamanho — medir antes; `ia_embeddings` com ~25k LONGTEXT é o caso pesado e NÃO precisa ser
+  convertida: nunca participa de JOIN de texto); chaves ÚNICAS de texto podem colidir na troca
+  (uca1400_ai_ci é accent-insensitive — rodar varredura de duplicatas por acento antes);
+  `utf8mb4_bin` do `obra_rdo.efetivo` preservada (fora do lote). Regra de casa pós-fix: todo
+  CREATE novo declara COLLATE e o deploy confere (`information_schema`) — declarar não bastou.
+
+**4. Etapa 1 NÃO espera a padronização.** O motor (`ofx-vincular`/`ofx-desvincular`) compara
+tudo por parâmetro bound — imune por construção. A regra entra na spec: nenhum JOIN texto×texto
+sem COLLATE explícito até a base ser padronizada. A Etapa 2 (tela) nasce com o paliativo e
+herda o definitivo de graça.
