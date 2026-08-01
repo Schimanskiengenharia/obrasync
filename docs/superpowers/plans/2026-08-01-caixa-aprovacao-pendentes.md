@@ -65,7 +65,7 @@ t_assert($r['titulo']['document'] === 'MOV-42' && $r['titulo']['amount'] === 188
 t_assert($r['titulo']['bankAccount'] === 'Sicoob' && $r['titulo']['dueDate'] === '2026-07-07', 'banco e vencimento herdados');
 t_assert($r['titulo']['valor_original'] === null && $r['titulo']['juros_aplicado'] === null, 'sem juros inventado (v1.41.0 fica para edicao)');
 t_assert($r['titulo']['projectId'] === null && $r['titulo']['supplierId'] === null, 'obra e fornecedor OPCIONAIS nascem vazios');
-t_assert($r['movimentoUpdate']['status'] === 'Confirmado' && $r['movimentoUpdate']['categoryId'] === 3, 'movimento confirma com a mesma classificacao');
+t_assert($r['movimentoUpdate']['status'] === 'Aprovado' && $r['movimentoUpdate']['categoryId'] === 3, 'movimento vira Aprovado com a mesma classificacao');
 
 $r = cash_move_aprovar_plano(array_merge($mov, ['type' => 'Entrada']), array_merge($ok, ['projectId' => 7, 'parteId' => 9]));
 t_assert($r['table'] === 'accounts_receivable' && $r['refTipo'] === 'CONTA_RECEBER', 'entrada cria no receber');
@@ -170,7 +170,8 @@ function cash_move_aprovar_plano(array $movimento, array $payload): array
         'table' => $isSaida ? 'accounts_payable' : 'accounts_receivable',
         'refTipo' => $isSaida ? 'CONTA_PAGAR' : 'CONTA_RECEBER',
         'titulo' => $titulo,
-        'movimentoUpdate' => ['categoryId' => $categoryId, 'costCenterId' => $costCenterId, 'projectId' => $projectId, 'status' => 'Confirmado'],
+        // §2-C: 'Aprovado' é o estado visível de "resolvido com título" (badge/filtro).
+        'movimentoUpdate' => ['categoryId' => $categoryId, 'costCenterId' => $costCenterId, 'projectId' => $projectId, 'status' => 'Aprovado'],
     ];
 }
 
@@ -193,13 +194,48 @@ function titulos_similares_classificar(array $candidatos, $parteId): array
 }
 ```
 
-- [ ] **Step 4: GREEN** — `php -l api/index.php`; `test_cash_aprovar_plano: 19/19 ok`; `test_titulos_similares: 6/6 ok`; suíte `21/21`.
+- [ ] **Step 4 (§2-B): decomposição de juros em título de extrato** — em `aplicar_acrescimo_baixa`
+(v1.41.0), inserir o ramo TRAVADO logo após o cálculo de `$juros` (antes do bloco `!$temOriginal`):
 
-- [ ] **Step 5: Commit**
+```php
+    // §2-B (E3): título vinculado a EXTRATO tem amount = total que saiu do banco —
+    // FATO travado. Juros aqui DECOMPÕE (valor_original = total − juros), nunca
+    // soma; payload de amount/valor_original é ignorado (o fato vence).
+    if (!empty($before['ofxFitid'])) {
+        $total = round((float) ($before['amount'] ?? 0), 2);
+        $juros = min($juros, $total); // decomposição nunca gera original negativo
+        $payload['amount'] = $total;
+        $payload['juros_aplicado'] = $juros;
+        $payload['valor_original'] = $juros > 0 ? round($total - $juros, 2) : null;
+        return $payload;
+    }
+```
+
+E acrescentar ao FIM de `scripts/tests/php/test_acrescimo_baixa.php` (antes do `t_resumo`):
+
+```php
+// ── §2-B (E3): título de EXTRATO decompõe, não soma ─────────────────────────
+$travado = ['amount' => 1880.09, 'valor_original' => null, 'juros_aplicado' => null, 'ofxFitid' => 'F1'];
+$r = aplicar_acrescimo_baixa($travado, ['amount' => 1880.09, 'juros_aplicado' => 80.09]);
+t_assert($r['amount'] === 1880.09, 'extrato: amount NAO muda (total e fato bancario)');
+t_assert($r['valor_original'] === 1800.00, 'extrato: juros decompoe (original = total - juros)');
+$r = aplicar_acrescimo_baixa(array_merge($travado, ['valor_original' => 1800.00, 'juros_aplicado' => 80.09]), ['amount' => 1880.09, 'juros_aplicado' => 50.0]);
+t_assert($r['amount'] === 1880.09 && $r['valor_original'] === 1830.09, 'extrato: editar juros re-decompoe, nao acumula');
+$r = aplicar_acrescimo_baixa($travado, ['amount' => 9999.0, 'valor_original' => 5.0, 'juros_aplicado' => 80.09]);
+t_assert($r['amount'] === 1880.09 && $r['valor_original'] === 1800.00, 'extrato: payload forjado nao vence o fato');
+$r = aplicar_acrescimo_baixa($travado, ['amount' => 1880.09, 'juros_aplicado' => 99999.0]);
+t_assert($r['valor_original'] === 0.0, 'extrato: juros maior que o total e travado no total');
+$r = aplicar_acrescimo_baixa(array_merge($travado, ['valor_original' => 1800.00, 'juros_aplicado' => 80.09]), ['amount' => 1880.09, 'juros_aplicado' => 0]);
+t_assert($r['amount'] === 1880.09 && $r['valor_original'] === null, 'extrato: zerar juros limpa a decomposicao');
+```
+
+- [ ] **Step 5: GREEN** — `php -l api/index.php`; `test_cash_aprovar_plano: 19/19 ok`; `test_titulos_similares: 6/6 ok`; `test_acrescimo_baixa: 27/27 ok`; suíte `21/21`.
+
+- [ ] **Step 6: Commit**
 
 ```bash
-git add api/index.php scripts/tests/php/test_cash_aprovar_plano.php scripts/tests/php/test_titulos_similares.php
-git commit -m "feat(api): decisao pura da aprovacao de movimento pendente e grau de similares (E3)
+git add api/index.php scripts/tests/php/test_cash_aprovar_plano.php scripts/tests/php/test_titulos_similares.php scripts/tests/php/test_acrescimo_baixa.php
+git commit -m "feat(api): decisao pura da aprovacao, grau de similares e decomposicao de juros em titulo de extrato (E3)
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ```
@@ -427,8 +463,173 @@ function handle_cash_move_dispensar(PDO $pdo, array $authUser, array $payload): 
 
 - [ ] **Step 3: Caronas (3 edições de 1 linha):**
   1. `handle_ofx_import` — o INSERT muda `'Confirmado'` → `'Pendente'` (comente: "E3: importado nasce pendente de classificação").
-  2. `ofx_vincular_executar` — o UPDATE do movimento ganha `status = 'Confirmado'` no SET (vinculou → sai da fila do Caixa).
+  2. `ofx_vincular_executar` — o UPDATE do movimento ganha `status = 'Aprovado'` no SET (§2-C: vinculou = resolvido com título — mesmo estado do aprovar; sai da fila do Caixa).
   3. `handle_ofx_pendencias` — o WHERE ganha `AND m.status <> 'Dispensado'` (dispensado sai das duas filas).
+
+- [ ] **Step 3-B (§2-B): fato travado + classificação propagada (hook no PUT genérico).**
+No branch PUT do roteamento (onde já vive o hook da baixa v1.41.0), acrescentar:
+
+(a) ANTES do `update_record`, para `$key === 'cashMoves'`:
+
+```php
+        // E3 §2-B: o FATO (valor/data/tipo) do extrato é do banco; o de movimento
+        // aprovado é do par movimento↔título. Corrigir = desfazer a aprovação.
+        $beforeMov = null;
+        $movTemTitulo = false;
+        if ($key === 'cashMoves') {
+            $beforeMov = get_record($pdo, $resources[$key], (int) $id) ?: [];
+            $ehExtrato = str_starts_with((string) ($beforeMov['originDocument'] ?? ''), 'OFX');
+            $movTemTitulo = in_array((string) ($beforeMov['referencia_tipo'] ?? ''), ['CONTA_PAGAR', 'CONTA_RECEBER'], true)
+                && !empty($beforeMov['referencia_id']);
+            if ($ehExtrato || $movTemTitulo) {
+                foreach (['amount', 'date', 'type'] as $campoFato) {
+                    if (!array_key_exists($campoFato, $payload)) {
+                        continue;
+                    }
+                    $novo = $payload[$campoFato];
+                    $antigo = $beforeMov[$campoFato] ?? null;
+                    $mudou = is_numeric($novo) && is_numeric($antigo)
+                        ? round((float) $novo, 2) !== round((float) $antigo, 2)
+                        : (string) $novo !== (string) $antigo;
+                    if ($mudou) {
+                        fail($ehExtrato
+                            ? 'Valor, data e tipo desta linha vêm do EXTRATO bancário e não podem ser editados.'
+                            : 'Movimento aprovado: desfaça a aprovação para corrigir valor, data ou tipo.', 422);
+                    }
+                }
+            }
+        }
+```
+
+(b) DEPOIS do `update_record` (com `$record` em mãos) — propagação movimento→título:
+
+```php
+        if ($key === 'cashMoves' && $movTemTitulo) {
+            // Classificação é do PAR: espelha no título vinculado (SQL direto — sem loop).
+            $tabelaTit = ($beforeMov['referencia_tipo'] === 'CONTA_PAGAR') ? 'accounts_payable' : 'accounts_receivable';
+            $pdo->prepare("UPDATE {$tabelaTit} SET categoryId = ?, costCenterId = ?, projectId = ? WHERE id = ?")
+                ->execute([$record['categoryId'] ?? null, $record['costCenterId'] ?? null, $record['projectId'] ?? null, (int) $beforeMov['referencia_id']]);
+        }
+```
+
+(c) No hook EXISTENTE de payable/receivable (onde `$beforeBaixa` é capturado): fato travado do
+título de extrato + propagação título→movimento:
+
+```php
+            // §2-B: título de extrato tem amount e data da baixa TRAVADOS (fato bancário).
+            if (!empty($beforeBaixa['ofxFitid'])) {
+                $dfCampo = $key === 'payable' ? 'paidDate' : 'receivedDate';
+                foreach (['amount' => 'o valor', $dfCampo => 'a data da baixa'] as $campo => $rotulo) {
+                    if (array_key_exists($campo, $payload) && !array_key_exists('juros_aplicado', $payload)) {
+                        $novo = $payload[$campo];
+                        $antigo = $beforeBaixa[$campo] ?? null;
+                        $mudou = is_numeric($novo) && is_numeric($antigo)
+                            ? round((float) $novo, 2) !== round((float) $antigo, 2)
+                            : (string) $novo !== (string) $antigo;
+                        if ($mudou) {
+                            fail('Este título está vinculado ao extrato — ' . $rotulo . ' vem do banco. Acréscimo (juros/multa) pode ser informado e será DECOMPOSTO do total.', 422);
+                        }
+                    }
+                }
+            }
+```
+
+E, DEPOIS do `update_record` desse mesmo hook (junto do audit), propagação título→movimento:
+
+```php
+        if (($key === 'payable' || $key === 'receivable') && !empty($beforeBaixa)) {
+            // §2-B: espelha a classificação no movimento vinculado (determinístico como o desvincular).
+            $refTipoTit = $key === 'payable' ? 'CONTA_PAGAR' : 'CONTA_RECEBER';
+            $stmt = $pdo->prepare("SELECT id FROM cash_bank_movements WHERE referencia_tipo = ? AND referencia_id = ?
+                                    ORDER BY (originDocument LIKE 'OFX%') DESC, id DESC LIMIT 1");
+            $stmt->execute([$refTipoTit, (int) $id]);
+            $movEspelho = (int) ($stmt->fetchColumn() ?: 0);
+            if ($movEspelho) {
+                $pdo->prepare('UPDATE cash_bank_movements SET categoryId = ?, costCenterId = ?, projectId = ? WHERE id = ?')
+                    ->execute([$record['categoryId'] ?? null, $record['costCenterId'] ?? null, $record['projectId'] ?? null, $movEspelho]);
+            }
+        }
+```
+
+(Nota: com `juros_aplicado` presente, o amount é recalculado pela `aplicar_acrescimo_baixa` — o
+ramo travado da Task 1 já força o total do banco; por isso a checagem (c) pula quando o payload
+traz `juros_aplicado`.)
+
+- [ ] **Step 3-C (§2-B): endpoint `cash-move-desaprovar`.** Handler após `handle_cash_move_dispensar`:
+
+```php
+// E3 §2-B — desfazer a aprovação: APAGA o título MOV-<id> (dado derivado do
+// movimento) e devolve o movimento à fila. RECUSA se o título ganhou vida
+// própria (NF vinculada ou acréscimo lançado) — apagar dado enriquecido não.
+function handle_cash_move_desaprovar(PDO $pdo, array $authUser, array $payload): never
+{
+    $cashMoveId = (int) ($payload['cashMoveId'] ?? 0);
+    if (!$cashMoveId) {
+        fail('Informe o movimento.', 400);
+    }
+    $stmt = $pdo->prepare('SELECT * FROM cash_bank_movements WHERE id = ? LIMIT 1');
+    $stmt->execute([$cashMoveId]);
+    $movimento = $stmt->fetch();
+    if (!$movimento) {
+        fail('Movimento não encontrado.', 404);
+    }
+    $refTipo = (string) ($movimento['referencia_tipo'] ?? '');
+    $refId = (int) ($movimento['referencia_id'] ?? 0);
+    if (($movimento['status'] ?? '') !== 'Aprovado' || !in_array($refTipo, ['CONTA_PAGAR', 'CONTA_RECEBER'], true) || !$refId) {
+        fail('Só movimento APROVADO (com conta gerada) pode ser desaprovado.', 422);
+    }
+    $isPayable = $refTipo === 'CONTA_PAGAR';
+    $tabelaTit = $isPayable ? 'accounts_payable' : 'accounts_receivable';
+    $stmt = $pdo->prepare("SELECT * FROM {$tabelaTit} WHERE id = ? LIMIT 1");
+    $stmt->execute([$refId]);
+    $titulo = $stmt->fetch();
+    if (!$titulo) {
+        // Referência órfã: só limpa o movimento e devolve à fila.
+        $pdo->prepare("UPDATE cash_bank_movements SET referencia_tipo = NULL, referencia_id = NULL, status = 'Pendente' WHERE id = ?")
+            ->execute([$cashMoveId]);
+        server_audit($pdo, $authUser, 'update', 'cashMoves', $cashMoveId, 'Desaprovação: referência órfã limpa, movimento de volta à fila.');
+        respond(['ok' => true, 'data' => ['cashMoveId' => $cashMoveId], 'message' => 'Movimento de volta à fila (a conta já não existia).']);
+    }
+    if ($titulo['document'] !== 'MOV-' . $cashMoveId) {
+        fail('Esta conta não nasceu desta aprovação — use Desvincular na Conciliação para soltá-la.', 422);
+    }
+    $colNf = $isPayable ? 'payableId' : 'receivableId';
+    $stmt = $pdo->prepare("SELECT COUNT(*) FROM fiscal_documents WHERE {$colNf} = ?");
+    $stmt->execute([$refId]);
+    if ((int) $stmt->fetchColumn() > 0) {
+        fail('A conta gerada tem nota fiscal vinculada — trate a NF antes de desaprovar.', 409);
+    }
+    if ((float) ($titulo['juros_aplicado'] ?? 0) > 0) {
+        fail('A conta gerada tem acréscimo lançado — zere o acréscimo antes de desaprovar.', 409);
+    }
+    $pdo->beginTransaction();
+    try {
+        $pdo->prepare("DELETE FROM {$tabelaTit} WHERE id = ?")->execute([$refId]);
+        $pdo->prepare("UPDATE cash_bank_movements SET referencia_tipo = NULL, referencia_id = NULL, status = 'Pendente' WHERE id = ?")
+            ->execute([$cashMoveId]);
+        $pdo->commit();
+    } catch (Throwable $error) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        error_log('[ObraSync OFX][ref ' . obra_error_ref() . '] Desaprovação falhou: ' . $error->getMessage());
+        fail('Erro ao desaprovar. Nada foi gravado — tente novamente.', 500);
+    }
+    server_audit($pdo, $authUser, 'update', 'cashMoves', $cashMoveId,
+        'Desaprovação: conta ' . $titulo['document'] . ' (' . $titulo['status'] . ', ' . number_format((float) $titulo['amount'], 2, ',', '.') . ') apagada; movimento de volta à fila.');
+    respond(['ok' => true, 'data' => ['cashMoveId' => $cashMoveId], 'message' => 'Aprovação desfeita — conta apagada e movimento de volta à fila.']);
+}
+```
+
+E a rota (junto das demais):
+
+```php
+    if ($resource === 'cash-move-desaprovar') {
+        require_method($method, ['POST']);
+        authorize_request($pdo, $authUser, 'cashMoves', 'edit');
+        handle_cash_move_desaprovar($pdo, $authUser, read_json());
+    }
+```
 
 - [ ] **Step 4: Migration retroativa** — criar `migrations/2026-08-01-caixa-pendente-retroativo.sql` com o SQL da spec §5 (comentário incluído). **Não** adicionar em nenhum `ensure_*`.
 
@@ -461,9 +662,64 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
   if (actionKey === "cashMoves") {
     if (row.status === "Pendente") return `<button class="primary" type="button" data-cash-aprovar="${row.id}">Aprovar</button><button class="secondary" type="button" data-cash-dispensar="${row.id}">Dispensar</button>`;
     if (row.status === "Dispensado") return `<button class="secondary" type="button" data-cash-reativar="${row.id}">Reativar</button>`;
+    if (row.status === "Aprovado" && row.referencia_id && ["CONTA_PAGAR", "CONTA_RECEBER"].includes(row.referencia_tipo)) {
+      const chave = row.referencia_tipo === "CONTA_PAGAR" ? "payable" : "receivable";
+      return `<button class="secondary" type="button" data-cash-ver-conta="${chave}:${row.referencia_id}">Ver conta</button><button class="secondary" type="button" data-cash-desaprovar="${row.id}">Desaprovar</button>`;
+    }
     return "";
   }
 ```
+
+E em `formatCell`, a lista de status de sucesso (`["Pago", "Recebido", "Aprovado", ...]`) já
+contém `"Aprovado"` — conferir; `"Pendente"` cai no neutro e `"Dispensado"` idem (ok).
+
+- [ ] **Step 1-B (§2-C): chips de filtro no painel/tabela do Caixa.** Estado módulo-escopo
+`let cashStatusFiltro = "";` e, no `cashPendentesPanelHtml`… os chips valem para a TABELA toda,
+então vivem no `renderCrud` (só cashMoves), logo acima da tabela:
+
+```js
+  const cashChips = key === "cashMoves" ? (() => {
+    const conta = (st) => (db.cashMoves || []).filter((m) => m.status === st).length;
+    const chip = (valor, rotulo) => `<button type="button" class="${cashStatusFiltro === valor ? "primary" : "secondary"}" data-cash-chip="${valor}">${rotulo}</button>`;
+    return `<div class="cash-chips">${chip("", "Todos")}${chip("Pendente", `Pendentes (${conta("Pendente")})`)}${chip("Aprovado", `Aprovados (${conta("Aprovado")})`)}${chip("Dispensado", `Dispensados (${conta("Dispensado")})`)}</div>`;
+  })() : "";
+```
+
+No template do `renderCrud`, `${cashChips}` antes do painel de pendentes; nas linhas: para
+cashMoves, `rows` vira `rows.filter((r) => !cashStatusFiltro || r.status === cashStatusFiltro)`
+ANTES da tabela (o painel de pendentes continua sobre as rows completas). Binder:
+
+```js
+  qs("content").querySelectorAll("[data-cash-chip]").forEach((b) => b.addEventListener("click", () => { cashStatusFiltro = b.dataset.cashChip; render(); }));
+  qs("content").querySelectorAll("[data-cash-ver-conta]").forEach((b) => b.addEventListener("click", () => {
+    const [chave, id] = b.dataset.cashVerConta.split(":");
+    openForm(chave, id); // dialog é global — abre a conta de qualquer tela
+  }));
+  qs("content").querySelectorAll("[data-cash-desaprovar]").forEach((b) => b.addEventListener("click", async () => {
+    if (!confirm("Desfazer a aprovação? A conta gerada será apagada e o movimento volta à fila.")) return;
+    try {
+      const payload = await apiRequest("cash-move-desaprovar", { method: "POST", body: JSON.stringify({ cashMoveId: Number(b.dataset.cashDesaprovar) }) });
+      showToast(payload.message || "Aprovação desfeita.", { severity: "success" });
+      if (serverMode) await refreshAndRender(); else render();
+    } catch (error) {
+      showToast(error.message, { severity: "warning" });
+    }
+  }));
+```
+
+- [ ] **Step 1-C (§2-B): modo DECOMPOSIÇÃO no formulário da baixa** (`setupBaixaFields`,
+v1.41.0): quando `row.ofxFitid` está preenchido, o total é fato — `amountInput.readOnly = true`,
+e o `atualizar()` NÃO recalcula `amountInput.value` (o backend decompõe); o resumo muda para:
+
+```js
+    // Título de extrato: total travado (fato bancário); juros DECOMPÕE.
+    resumo.textContent = juros > 0
+      ? `Total do extrato: ${maskMoneyText(asMoney(base))} — original ${maskMoneyText(asMoney(Math.max(0, base - juros)))} + acréscimos ${maskMoneyText(asMoney(Math.min(juros, base)))}`
+      : `Título vinculado ao extrato: o total de ${maskMoneyText(asMoney(base))} vem do banco. Informe o acréscimo para DECOMPOR (original + juros).`;
+```
+
+(Implementação: no início de `setupBaixaFields`, `const travadoExtrato = Boolean(row.ofxFitid);`
+e ramificar o `atualizar()`; `base` no modo travado é `Number(row.amount || 0)`.)
 
 - [ ] **Step 2: `renderCrud`** — no template: `${key === "cashMoves" ? cashPendentesPanelHtml(rows) : ""}` (na linha seguinte ao painel do payable); no fim: `if (key === "cashMoves") setupCashAprovacao();`.
 
@@ -731,7 +987,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - [ ] **Step 2: bloco do CLAUDE.md** (acima do v1.43.0):
 
 ```markdown
-> **v1.44.0 — Conciliação E3 (aprovação de pendentes no Caixa — substitui a E3 original):** movimento OFX nasce **`status='Pendente'`** (VARCHAR, zero ALTER; `handle_ofx_import` mudou o literal); NADA no sistema filtra movimento por status — pendente CONTA no saldo (classificação ≠ existência). **`cash_move_aprovar_plano()`** (pura: Pendente+categoria*+centro* → plano do título `MOV-<id>` já liquidado, `valor_original`/`juros` NULOS, obra/parte OPCIONAIS; Transferência → orienta Dispensar) + **`cash_move_aprovar_executar()`** (guarda `ofx_movimento_livre` com recordId 0, detector ANTES de criar — similares sem `forcar` devolvem lista SEM criar —, transação única: `insert_dynamic` + UPDATE do movimento com referência/classificação/`Confirmado`; 23000→409). **`titulos_similares()`** (SQL: valor exato + `DATEDIFF<=5`, sem fitid) + **`titulos_similares_classificar()`** (pura: mesma parte=alta). Endpoints **`cash-move-aprovar`**, **`-aprovar-lote`** (máx 50, UM lado só, suspeitas separadas, item na própria transação) e **`-dispensar`** (Pendente↔Dispensado, reversível, auditado). Caronas: `ofx_vincular_executar` confirma o movimento (sai da fila); fila E2 exclui `Dispensado`; bucket "sem título" da E2 aponta para o Caixa. Front no `renderCrud` (molde payableGroupsPanel): `extraRowActions` cashMoves (Aprovar/Dispensar/Reativar), `cashPendentesPanelHtml` (lote), modal com 3 saídas (vincular usa `ofx-vincular` da E1). **Migration retroativa `2026-08-01-caixa-pendente-retroativo.sql` = MUDANÇA DE DADO — rodar SÓ com backup, esperado ≈243; NÃO entra em ensure_***. Testes `test_cash_aprovar_plano.php` (19) e `test_titulos_similares.php` (6); suíte 21/21. Cache `?v=1814`.
+> **v1.44.0 — Conciliação E3 (aprovação de pendentes no Caixa — substitui a E3 original):** movimento OFX nasce **`status='Pendente'`** (VARCHAR, zero ALTER; `handle_ofx_import` mudou o literal); NADA no sistema filtra movimento por status — pendente CONTA no saldo (classificação ≠ existência). **`cash_move_aprovar_plano()`** (pura: Pendente+categoria*+centro* → plano do título `MOV-<id>` já liquidado, `valor_original`/`juros` NULOS, obra/parte OPCIONAIS; Transferência → orienta Dispensar) + **`cash_move_aprovar_executar()`** (guarda `ofx_movimento_livre` com recordId 0, detector ANTES de criar — similares sem `forcar` devolvem lista SEM criar —, transação única: `insert_dynamic` + UPDATE do movimento com referência/classificação/`Confirmado`; 23000→409). **`titulos_similares()`** (SQL: valor exato + `DATEDIFF<=5`, sem fitid) + **`titulos_similares_classificar()`** (pura: mesma parte=alta). Endpoints **`cash-move-aprovar`**, **`-aprovar-lote`** (máx 50, UM lado só, suspeitas separadas, item na própria transação) e **`-dispensar`** (Pendente↔Dispensado, reversível, auditado). Caronas: `ofx_vincular_executar` confirma o movimento (sai da fila); fila E2 exclui `Dispensado`; bucket "sem título" da E2 aponta para o Caixa. Front no `renderCrud` (molde payableGroupsPanel): `extraRowActions` cashMoves (Aprovar/Dispensar/Reativar), `cashPendentesPanelHtml` (lote), modal com 3 saídas (vincular usa `ofx-vincular` da E1). **Migration retroativa `2026-08-01-caixa-pendente-retroativo.sql` = MUDANÇA DE DADO — rodar SÓ com backup, esperado ≈243; NÃO entra em ensure_***. Testes `test_cash_aprovar_plano.php` (19), `test_titulos_similares.php` (6) e +6 no `test_acrescimo_baixa.php` (27 — decomposição §2-B); suíte 21/21. §2-B/§2-C: fato travado (extrato sempre; aprovado até desfazer), classificação propaga nos DOIS sentidos, juros DECOMPÕE em título de extrato, status `Aprovado` (aprovar E vincular), chips de filtro, "Ver conta" (openForm cross-tela) e `cash-move-desaprovar` (apaga MOV-<id> se sem NF/juros; senão 409). Cache `?v=1814`.
 ```
 
 - [ ] **Step 3:** README (header + entrada no molde + bullet versão + cache), STATUS.md linha 3.

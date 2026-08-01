@@ -62,6 +62,45 @@ existente + um painel).
      entra no `paidExpenses` e a saída sai do `saidasCaixaSemTitulo` — custo realizado conta 1x.
   4. Auditoria com details (antes→depois do movimento + "conta MOV-x criada").
 
+## 2-B. Edição depois de aprovado (revisão do dono, 2026-08-02)
+
+**Princípio: o FATO é do banco; a CLASSIFICAÇÃO é do par.**
+
+- **Fato travado (valor, data, tipo):** com o movimento aprovado/vinculado, o PUT genérico
+  RECUSA mudança nesses campos com 422 amigável ("valor/data/tipo vêm do extrato — desfaça a
+  aprovação para corrigir"). **Refino além do pedido:** movimento de EXTRATO (`originDocument`
+  OFX) tem fato imutável SEMPRE, até pendente — a linha do banco não é editável por natureza;
+  editá-la hoje é porta de divergência silenciosa com o extrato. Movimento MANUAL segue editável
+  enquanto não vinculado.
+- **Classificação propaga NOS DOIS SENTIDOS:** categoria/centro/obra editados no MOVIMENTO
+  aprovado propagam para o título; editados no TÍTULO vinculado propagam para o movimento
+  (espelho por SQL direto no hook do PUT — sem loop). Um par, uma classificação.
+- **Juros no título vinculado = DECOMPOSIÇÃO, não soma.** O `amount` de título com `ofxFitid` é
+  o TOTAL que saiu/entrou no banco — fato travado. Informar acréscimo nesse título NÃO soma
+  (somaria e divergiria do extrato): decompõe — `valor_original = amount − juros_aplicado`,
+  `amount` intacto. É um ramo novo na `aplicar_acrescimo_baixa` (v1.41.0), detectado por
+  `ofxFitid` preenchido, com teste próprio. **Resposta à pergunta "o movimento precisa saber?":
+  NÃO** — o total não muda; o juros explica a composição; a auditoria registra.
+- **Desfazer aprovação (`cash-move-desaprovar`):** apaga o título `MOV-<id>` criado (dado
+  derivado do movimento), movimento volta a Pendente sem referência. **Guardas:** só título
+  nascido da aprovação (referência casada), e RECUSA se o título ganhou vida própria — NF
+  vinculada (`fiscal_documents.payableId/receivableId`) ou acréscimo lançado → 409 orientando
+  tratar no título primeiro. Auditoria com o estado apagado nos details.
+
+## 2-C. Visibilidade do aprovado (revisão do dono, 2026-08-02)
+
+- **Status `'Aprovado'`** no movimento — nos DOIS caminhos que ligam movimento a título
+  (aprovar do Caixa E vincular tardio da E2): um único estado "resolvido com título". Badge
+  verde na linha (o `formatCell` de status ganha 'Aprovado' na lista de sucesso). `Confirmado`
+  fica para manuais/automações/legado.
+- **Filtro na tela do Caixa:** chips `Todos · Pendentes (N) · Aprovados (N) · Dispensados (N)`
+  (filtro client-side sobre as linhas já carregadas).
+- **Link para o título:** linha aprovada ganha **"Ver conta"** (`extraRowActions`) — abre o
+  formulário do título direto (`openForm(payable|receivable, referencia_id)` — o dialog é
+  global, funciona de qualquer tela). E o botão **Desaprovar** (com as guardas do §2-B).
+- **Dispensado:** badge visível, entra no chip de filtro, e o **Reativar é pela tela** (botão na
+  linha — já estava no desenho; confirmado).
+
 ## 3. Aprovação em LOTE
 
 - **Painel** `cashPendentesPanelHtml(rows)` acima da tabela do Caixa (precedente:
@@ -163,3 +202,13 @@ EXISTE** (fila por match); **Caixa = classificar e CRIAR o que não existe**. An
 6. **O que NÃO vale fazer agora:** aprovação multi-nível/perfis (o dono é o aprovador);
    detector no lançamento manual e NFS-e (é a E4, e o molde sai pronto daqui); qualquer coluna
    nova (o VARCHAR de status + campos existentes cobrem tudo — zero ALTER de schema).
+7. **(Rev. 2026-08-02) Fato do EXTRATO imutável sempre, não só quando aprovado** — fui além do
+   proposto: a linha do banco não deveria ser editável nem pendente (é a fonte da conciliação).
+   Se você discordar, o travamento volta a valer só para aprovados — 1 condição a menos.
+8. **(Rev. 2026-08-02) Juros em título vinculado DECOMPÕE em vez de somar** — o total é fato
+   bancário; somar (regra v1.41.0 padrão) divergiria do extrato. Título sem vínculo de extrato
+   continua no fluxo v1.41.0 normal.
+9. **(Rev. 2026-08-02) `'Aprovado'` também no vincular da E2** — um estado só para "resolvido
+   com título"; dois nomes para a mesma coisa seria confusão de filtro.
+10. **(Rev. 2026-08-02) Desaprovar APAGA o título MOV-<id>** (dado derivado), mas RECUSA se ele
+    ganhou vida própria (NF/juros) — apagar dado enriquecido seria destrutivo demais.
