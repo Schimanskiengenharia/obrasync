@@ -743,6 +743,14 @@ button:disabled {
   margin: 10px 0;
 }
 
+/* Conciliação E3 — chips de filtro por status do movimento */
+.cash-chips {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 10px 0;
+}
+
 /* Conciliação E3 — painel de pendentes no Caixa */
 .cash-pend-panel {
   border: 1px dashed rgba(148, 108, 32, 0.5);

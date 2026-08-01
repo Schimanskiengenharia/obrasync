@@ -7400,6 +7400,10 @@ function renderCrud(key) {
   qs("content").querySelectorAll("[data-cash-chip]").forEach((b) => b.addEventListener("click", () => { cashStatusFiltro = b.dataset.cashChip; render(); }));
   qs("content").querySelectorAll("[data-cash-ver-conta]").forEach((b) => b.addEventListener("click", () => {
     const [chave, id] = b.dataset.cashVerConta.split(":");
+    if (!byId(chave, id)) {
+      showToast("Conta não encontrada — ela pode ter sido excluída. Use Desaprovar para devolver o movimento à fila.", { severity: "warning" });
+      return;
+    }
     openForm(chave, id); // dialog é global — abre a conta de qualquer tela
   }));
   qs("content").querySelectorAll("[data-cash-desaprovar]").forEach((b) => b.addEventListener("click", async () => {
