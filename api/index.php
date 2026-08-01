@@ -734,6 +734,26 @@ try {
         authorize_request($pdo, $authUser, 'reconciliation', 'view');
         handle_ofx_pendencias($pdo);
     }
+    if ($resource === 'cash-move-aprovar') {
+        require_method($method, ['POST']);
+        authorize_request($pdo, $authUser, 'cashMoves', 'edit');
+        handle_cash_move_aprovar($pdo, $authUser, read_json());
+    }
+    if ($resource === 'cash-move-aprovar-lote') {
+        require_method($method, ['POST']);
+        authorize_request($pdo, $authUser, 'cashMoves', 'edit');
+        handle_cash_move_aprovar_lote($pdo, $authUser, read_json());
+    }
+    if ($resource === 'cash-move-dispensar') {
+        require_method($method, ['POST']);
+        authorize_request($pdo, $authUser, 'cashMoves', 'edit');
+        handle_cash_move_dispensar($pdo, $authUser, read_json());
+    }
+    if ($resource === 'cash-move-desaprovar') {
+        require_method($method, ['POST']);
+        authorize_request($pdo, $authUser, 'cashMoves', 'edit');
+        handle_cash_move_desaprovar($pdo, $authUser, read_json());
+    }
     if ($resource === 'ofx-history') {
         require_method($method, ['GET']);
         authorize_request($pdo, $authUser, 'reconciliation', 'view');
@@ -1210,6 +1230,49 @@ try {
             if ($beforeBaixa) {
                 $payload = aplicar_acrescimo_baixa($beforeBaixa, $payload);
             }
+            // §2-B: título de extrato tem amount e data da baixa TRAVADOS (fato bancário).
+            if (!empty($beforeBaixa['ofxFitid'])) {
+                $dfCampo = $key === 'payable' ? 'paidDate' : 'receivedDate';
+                foreach (['amount' => 'o valor', $dfCampo => 'a data da baixa'] as $campo => $rotulo) {
+                    if (array_key_exists($campo, $payload) && !array_key_exists('juros_aplicado', $payload)) {
+                        $novo = $payload[$campo];
+                        $antigo = $beforeBaixa[$campo] ?? null;
+                        $mudou = is_numeric($novo) && is_numeric($antigo)
+                            ? round((float) $novo, 2) !== round((float) $antigo, 2)
+                            : (string) $novo !== (string) $antigo;
+                        if ($mudou) {
+                            fail('Este título está vinculado ao extrato — ' . $rotulo . ' vem do banco. Acréscimo (juros/multa) pode ser informado e será DECOMPOSTO do total.', 422);
+                        }
+                    }
+                }
+            }
+        }
+        // E3 §2-B: o FATO (valor/data/tipo) do extrato é do banco; o de movimento
+        // aprovado é do par movimento↔título. Corrigir = desfazer a aprovação.
+        $beforeMov = null;
+        $movTemTitulo = false;
+        if ($key === 'cashMoves') {
+            $beforeMov = get_record($pdo, $resources[$key], (int) $id) ?: [];
+            $ehExtrato = str_starts_with((string) ($beforeMov['originDocument'] ?? ''), 'OFX');
+            $movTemTitulo = in_array((string) ($beforeMov['referencia_tipo'] ?? ''), ['CONTA_PAGAR', 'CONTA_RECEBER'], true)
+                && !empty($beforeMov['referencia_id']);
+            if ($ehExtrato || $movTemTitulo) {
+                foreach (['amount', 'date', 'type'] as $campoFato) {
+                    if (!array_key_exists($campoFato, $payload)) {
+                        continue;
+                    }
+                    $novo = $payload[$campoFato];
+                    $antigo = $beforeMov[$campoFato] ?? null;
+                    $mudou = is_numeric($novo) && is_numeric($antigo)
+                        ? round((float) $novo, 2) !== round((float) $antigo, 2)
+                        : (string) $novo !== (string) $antigo;
+                    if ($mudou) {
+                        fail($ehExtrato
+                            ? 'Valor, data e tipo desta linha vêm do EXTRATO bancário e não podem ser editados.'
+                            : 'Movimento aprovado: desfaça a aprovação para corrigir valor, data ou tipo.', 422);
+                    }
+                }
+            }
         }
         try {
             $record = update_record($pdo, $resources[$key], (int) $id, $payload);
@@ -1234,6 +1297,24 @@ try {
         }
         if ($key === 'kanbanCards' && kanban_card_is_done($pdo, $record)) {
             $record['completionPrompt'] = 'Card movido para Concluído. Deseja atualizar o status do item vinculado?';
+        }
+        if ($key === 'cashMoves' && $movTemTitulo) {
+            // Classificação é do PAR: espelha no título vinculado (SQL direto — sem loop).
+            $tabelaTit = ($beforeMov['referencia_tipo'] === 'CONTA_PAGAR') ? 'accounts_payable' : 'accounts_receivable';
+            $pdo->prepare("UPDATE {$tabelaTit} SET categoryId = ?, costCenterId = ?, projectId = ? WHERE id = ?")
+                ->execute([$record['categoryId'] ?? null, $record['costCenterId'] ?? null, $record['projectId'] ?? null, (int) $beforeMov['referencia_id']]);
+        }
+        if (($key === 'payable' || $key === 'receivable') && !empty($beforeBaixa)) {
+            // §2-B: espelha a classificação no movimento vinculado (determinístico como o desvincular).
+            $refTipoTit = $key === 'payable' ? 'CONTA_PAGAR' : 'CONTA_RECEBER';
+            $stmt = $pdo->prepare("SELECT id FROM cash_bank_movements WHERE referencia_tipo = ? AND referencia_id = ?
+                                    ORDER BY (originDocument LIKE 'OFX%') DESC, id DESC LIMIT 1");
+            $stmt->execute([$refTipoTit, (int) $id]);
+            $movEspelho = (int) ($stmt->fetchColumn() ?: 0);
+            if ($movEspelho) {
+                $pdo->prepare('UPDATE cash_bank_movements SET categoryId = ?, costCenterId = ?, projectId = ? WHERE id = ?')
+                    ->execute([$record['categoryId'] ?? null, $record['costCenterId'] ?? null, $record['projectId'] ?? null, $movEspelho]);
+            }
         }
         // Trilha da baixa: antes→depois legível no details (quem/quando já vão).
         $auditDetails = '';
@@ -8016,11 +8097,13 @@ function ofx_vincular_executar(PDO $pdo, array $authUser, array $args): array
             $pdo->prepare("UPDATE {$table} SET ofxFitid = ? WHERE id = ?")
                 ->execute([$fitid, $recordId]);
         }
+        // §2-C: vinculou = resolvido com título — mesmo estado do aprovar; sai da fila do Caixa.
         $pdo->prepare('UPDATE cash_bank_movements
                 SET referencia_tipo = ?, referencia_id = ?,
                     projectId = COALESCE(?, projectId),
                     categoryId = COALESCE(?, categoryId),
-                    costCenterId = COALESCE(?, costCenterId)
+                    costCenterId = COALESCE(?, costCenterId),
+                    status = \'Aprovado\'
               WHERE id = ?')
             ->execute([
                 $isPayable ? 'CONTA_PAGAR' : 'CONTA_RECEBER', $recordId,
@@ -8141,6 +8224,7 @@ function handle_ofx_pendencias(PDO $pdo): never
             AND NOT EXISTS (SELECT 1 FROM accounts_receivable r WHERE r.ofxFitid = f.fitid COLLATE utf8mb4_unicode_ci)
             AND NOT (m.referencia_tipo = 'CONTA_PAGAR' AND EXISTS (SELECT 1 FROM accounts_payable p2 WHERE p2.id = m.referencia_id))
             AND NOT (m.referencia_tipo = 'CONTA_RECEBER' AND EXISTS (SELECT 1 FROM accounts_receivable r2 WHERE r2.id = m.referencia_id))
+            AND m.status <> 'Dispensado'
             {$filtros}
           ORDER BY m.`date` DESC, m.id DESC
           LIMIT 2000"
@@ -8214,6 +8298,253 @@ function handle_ofx_pendencias(PDO $pdo): never
         'offset' => $offset,
         'limit' => $limit,
     ]]);
+}
+
+// E3 — candidatos a duplicata: valor EXATO + vencimento ±5 dias, sem extrato
+// vinculado. O grau (alta/média) sai da pura titulos_similares_classificar.
+function titulos_similares(PDO $pdo, string $table, float $valor, string $data): array
+{
+    $parteCol = $table === 'accounts_payable' ? 'supplierId' : 'clientId';
+    $stmt = $pdo->prepare(
+        "SELECT id, document, dueDate, status, amount, {$parteCol}
+           FROM {$table}
+          WHERE amount = ? AND status <> 'Cancelado' AND ofxFitid IS NULL
+            AND ABS(DATEDIFF(dueDate, ?)) <= 5
+          ORDER BY ABS(DATEDIFF(dueDate, ?)) ASC
+          LIMIT 5"
+    );
+    $stmt->execute([number_format($valor, 2, '.', ''), $data, $data]);
+    return $stmt->fetchAll() ?: [];
+}
+
+// E3 — núcleo da aprovação (reusado pelo individual e pelo lote): decide pela
+// pura, roda o detector (a menos de forcar), cria o título JÁ LIQUIDADO e
+// confirma o movimento com a referência — o dedup da E1 no nascimento.
+function cash_move_aprovar_executar(PDO $pdo, array $authUser, array $payload): array
+{
+    $cashMoveId = (int) ($payload['cashMoveId'] ?? 0);
+    if (!$cashMoveId) {
+        return ['ok' => false, 'status' => 400, 'motivo' => 'Informe o movimento.'];
+    }
+    $stmt = $pdo->prepare('SELECT * FROM cash_bank_movements WHERE id = ? LIMIT 1');
+    $stmt->execute([$cashMoveId]);
+    $movimento = $stmt->fetch();
+    if (!$movimento) {
+        return ['ok' => false, 'status' => 404, 'motivo' => 'Movimento não encontrado.'];
+    }
+    // Referência viva de título = já representado (guarda da E1; recordId 0 nunca é "o próprio").
+    $refTipoMov = (string) ($movimento['referencia_tipo'] ?? '');
+    $tituloRef = null;
+    if (in_array($refTipoMov, ['CONTA_PAGAR', 'CONTA_RECEBER'], true) && !empty($movimento['referencia_id'])) {
+        $tabelaRef = $refTipoMov === 'CONTA_PAGAR' ? 'accounts_payable' : 'accounts_receivable';
+        $stmt = $pdo->prepare("SELECT id, document FROM {$tabelaRef} WHERE id = ? LIMIT 1");
+        $stmt->execute([(int) $movimento['referencia_id']]);
+        $tituloRef = $stmt->fetch() ?: null;
+    }
+    $ocupado = ofx_movimento_livre($movimento, $tituloRef, 0, true);
+    if ($ocupado !== null) {
+        return ['ok' => false, 'status' => 409, 'motivo' => $ocupado];
+    }
+    $plano = cash_move_aprovar_plano($movimento, $payload);
+    if ($plano['acao'] === 'recusar') {
+        return ['ok' => false, 'status' => 422, 'motivo' => $plano['motivo']];
+    }
+    // FITID do movimento (quando veio de OFX) — lookup numérico, collation-imune.
+    $stmt = $pdo->prepare('SELECT fitid, bankAccountId FROM ofx_fitids WHERE cashMoveId = ? LIMIT 1');
+    $stmt->execute([$cashMoveId]);
+    $fitidRow = $stmt->fetch() ?: null;
+    // Detector: similares e sem forcar -> devolve a lista SEM criar (nunca bloqueia).
+    if (empty($payload['forcar'])) {
+        $candidatos = titulos_similares($pdo, $plano['table'], (float) $plano['titulo']['amount'], (string) $movimento['date']);
+        if ($candidatos) {
+            $parteId = $payload['parteId'] ?? null;
+            return ['ok' => true, 'criada' => false,
+                'similares' => titulos_similares_classificar($candidatos, $parteId),
+                'fitid' => $fitidRow['fitid'] ?? null,
+                'bankAccountId' => isset($fitidRow['bankAccountId']) ? (int) $fitidRow['bankAccountId'] : null,
+                'table' => $plano['table']];
+        }
+    }
+    $pdo->beginTransaction();
+    try {
+        $titulo = $plano['titulo'];
+        if (!empty($fitidRow['fitid'])) {
+            $titulo['ofxFitid'] = $fitidRow['fitid'];
+        }
+        $tituloId = (int) insert_dynamic($pdo, $plano['table'], $titulo);
+        $up = $plano['movimentoUpdate'];
+        $pdo->prepare('UPDATE cash_bank_movements
+                SET referencia_tipo = ?, referencia_id = ?, categoryId = ?, costCenterId = ?, projectId = ?, status = ?
+              WHERE id = ?')
+            ->execute([$plano['refTipo'], $tituloId, $up['categoryId'], $up['costCenterId'], $up['projectId'], $up['status'], $cashMoveId]);
+        $pdo->commit();
+    } catch (Throwable $error) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        if ($error instanceof PDOException && (string) $error->getCode() === '23000') {
+            return ['ok' => false, 'status' => 409, 'motivo' => 'Esta transação do extrato já está vinculada a um título.'];
+        }
+        error_log('[ObraSync OFX][ref ' . obra_error_ref() . '] Aprovação de movimento falhou: ' . $error->getMessage());
+        return ['ok' => false, 'status' => 500, 'motivo' => 'Erro ao aprovar. Nada foi gravado — tente novamente.'];
+    }
+    server_audit($pdo, $authUser, 'update', 'cashMoves', $cashMoveId,
+        'Aprovação: movimento #' . $cashMoveId . ' → conta ' . $titulo['document'] . ' (' . $plano['titulo']['status'] . ') · categoria ' . $up['categoryId'] . ' · centro ' . $up['costCenterId'] . ($up['projectId'] ? ' · obra ' . $up['projectId'] : ''));
+    return ['ok' => true, 'criada' => true, 'tituloId' => $tituloId, 'table' => $plano['table'], 'document' => $titulo['document']];
+}
+
+function handle_cash_move_aprovar(PDO $pdo, array $authUser, array $payload): never
+{
+    ensure_ofx_tables($pdo);
+    $r = cash_move_aprovar_executar($pdo, $authUser, $payload);
+    if (empty($r['ok'])) {
+        fail((string) $r['motivo'], (int) $r['status']);
+    }
+    unset($r['ok']);
+    respond(['ok' => true, 'data' => $r, 'message' => !empty($r['criada'])
+        ? 'Conta ' . $r['document'] . ' criada e movimento classificado.'
+        : 'Há título(s) parecido(s) — escolha vincular, criar mesmo assim ou cancelar.']);
+}
+
+// E3 — lote: dados comuns + um lado só; suspeita NÃO cria (volta para tratamento
+// individual); cada item na própria transação (falha não derruba o lote).
+function handle_cash_move_aprovar_lote(PDO $pdo, array $authUser, array $payload): never
+{
+    ensure_ofx_tables($pdo);
+    $itens = is_array($payload['itens'] ?? null) ? array_values(array_filter(array_map('intval', $payload['itens']))) : [];
+    $dados = is_array($payload['dados'] ?? null) ? $payload['dados'] : [];
+    if (!$itens) {
+        fail('Selecione os movimentos a aprovar.', 400);
+    }
+    if (count($itens) > 50) {
+        fail('Máximo de 50 aprovações por chamada — divida o restante na próxima.', 422);
+    }
+    // Um lado só: fornecedor e cliente não se misturam no mesmo lote.
+    $ph = implode(',', array_fill(0, count($itens), '?'));
+    $tipos = $pdo->prepare("SELECT DISTINCT `type` FROM cash_bank_movements WHERE id IN ({$ph})");
+    $tipos->execute($itens);
+    $lados = $tipos->fetchAll(PDO::FETCH_COLUMN);
+    if (count($lados) !== 1 || !in_array($lados[0], ['Entrada', 'Saída'], true)) {
+        fail('O lote deve conter movimentos de UM lado só (apenas Entradas ou apenas Saídas).', 422);
+    }
+    $criadas = 0;
+    $suspeitas = [];
+    $falhas = [];
+    foreach ($itens as $id) {
+        try {
+            $r = cash_move_aprovar_executar($pdo, $authUser, [
+                'cashMoveId' => $id,
+                'categoryId' => $dados['categoryId'] ?? 0,
+                'costCenterId' => $dados['costCenterId'] ?? 0,
+                'projectId' => $dados['projectId'] ?? null,
+                'parteId' => $dados['parteId'] ?? null,
+            ]);
+        } catch (Throwable $error) {
+            if ($pdo->inTransaction()) { $pdo->rollBack(); }
+            error_log('[ObraSync OFX][ref ' . obra_error_ref() . '] Lote de aprovação falhou num item: ' . $error->getMessage());
+            $r = ['ok' => false, 'motivo' => 'Erro inesperado neste item — os demais seguiram.'];
+        }
+        if (!empty($r['ok']) && !empty($r['criada'])) {
+            $criadas++;
+        } elseif (!empty($r['ok']) && isset($r['similares'])) {
+            $suspeitas[] = ['cashMoveId' => $id, 'similares' => $r['similares']];
+        } else {
+            $falhas[] = ['cashMoveId' => $id, 'motivo' => (string) ($r['motivo'] ?? 'Falha desconhecida.')];
+        }
+    }
+    respond(['ok' => true, 'data' => ['criadas' => $criadas, 'suspeitas' => $suspeitas, 'falhas' => $falhas],
+        'message' => $criadas . ' conta(s) criada(s)' . ($suspeitas ? ', ' . count($suspeitas) . ' com suspeita de duplicidade (trate individualmente)' : '') . ($falhas ? ', ' . count($falhas) . ' com aviso' : '') . '.']);
+}
+
+// E3 — dispensar/reativar: tira/devolve da fila SEM criar título. O movimento
+// continua existindo e contando no saldo (o dinheiro se moveu de fato).
+function handle_cash_move_dispensar(PDO $pdo, array $authUser, array $payload): never
+{
+    $cashMoveId = (int) ($payload['cashMoveId'] ?? 0);
+    $reativar = !empty($payload['reativar']);
+    if (!$cashMoveId) {
+        fail('Informe o movimento.', 400);
+    }
+    $stmt = $pdo->prepare('SELECT id, status FROM cash_bank_movements WHERE id = ? LIMIT 1');
+    $stmt->execute([$cashMoveId]);
+    $movimento = $stmt->fetch();
+    if (!$movimento) {
+        fail('Movimento não encontrado.', 404);
+    }
+    $de = (string) $movimento['status'];
+    $para = $reativar ? 'Pendente' : 'Dispensado';
+    if ($reativar && $de !== 'Dispensado') {
+        fail('Só movimento DISPENSADO pode ser reativado.', 422);
+    }
+    if (!$reativar && $de !== 'Pendente') {
+        fail('Só movimento PENDENTE pode ser dispensado.', 422);
+    }
+    $pdo->prepare('UPDATE cash_bank_movements SET status = ? WHERE id = ?')->execute([$para, $cashMoveId]);
+    server_audit($pdo, $authUser, 'update', 'cashMoves', $cashMoveId, 'status: ' . $de . '→' . $para . ' (fila de classificação)');
+    respond(['ok' => true, 'data' => ['cashMoveId' => $cashMoveId, 'status' => $para],
+        'message' => $reativar ? 'Movimento de volta à fila de pendentes.' : 'Movimento dispensado — fora da fila, segue no caixa.']);
+}
+
+// E3 §2-B — desfazer a aprovação: APAGA o título MOV-<id> (dado derivado do
+// movimento) e devolve o movimento à fila. RECUSA se o título ganhou vida
+// própria (NF vinculada ou acréscimo lançado) — apagar dado enriquecido não.
+function handle_cash_move_desaprovar(PDO $pdo, array $authUser, array $payload): never
+{
+    $cashMoveId = (int) ($payload['cashMoveId'] ?? 0);
+    if (!$cashMoveId) {
+        fail('Informe o movimento.', 400);
+    }
+    $stmt = $pdo->prepare('SELECT * FROM cash_bank_movements WHERE id = ? LIMIT 1');
+    $stmt->execute([$cashMoveId]);
+    $movimento = $stmt->fetch();
+    if (!$movimento) {
+        fail('Movimento não encontrado.', 404);
+    }
+    $refTipo = (string) ($movimento['referencia_tipo'] ?? '');
+    $refId = (int) ($movimento['referencia_id'] ?? 0);
+    if (($movimento['status'] ?? '') !== 'Aprovado' || !in_array($refTipo, ['CONTA_PAGAR', 'CONTA_RECEBER'], true) || !$refId) {
+        fail('Só movimento APROVADO (com conta gerada) pode ser desaprovado.', 422);
+    }
+    $isPayable = $refTipo === 'CONTA_PAGAR';
+    $tabelaTit = $isPayable ? 'accounts_payable' : 'accounts_receivable';
+    $stmt = $pdo->prepare("SELECT * FROM {$tabelaTit} WHERE id = ? LIMIT 1");
+    $stmt->execute([$refId]);
+    $titulo = $stmt->fetch();
+    if (!$titulo) {
+        // Referência órfã: só limpa o movimento e devolve à fila.
+        $pdo->prepare("UPDATE cash_bank_movements SET referencia_tipo = NULL, referencia_id = NULL, status = 'Pendente' WHERE id = ?")
+            ->execute([$cashMoveId]);
+        server_audit($pdo, $authUser, 'update', 'cashMoves', $cashMoveId, 'Desaprovação: referência órfã limpa, movimento de volta à fila.');
+        respond(['ok' => true, 'data' => ['cashMoveId' => $cashMoveId], 'message' => 'Movimento de volta à fila (a conta já não existia).']);
+    }
+    if ($titulo['document'] !== 'MOV-' . $cashMoveId) {
+        fail('Esta conta não nasceu desta aprovação — use Desvincular na Conciliação para soltá-la.', 422);
+    }
+    $colNf = $isPayable ? 'payableId' : 'receivableId';
+    $stmt = $pdo->prepare("SELECT COUNT(*) FROM fiscal_documents WHERE {$colNf} = ?");
+    $stmt->execute([$refId]);
+    if ((int) $stmt->fetchColumn() > 0) {
+        fail('A conta gerada tem nota fiscal vinculada — trate a NF antes de desaprovar.', 409);
+    }
+    if ((float) ($titulo['juros_aplicado'] ?? 0) > 0) {
+        fail('A conta gerada tem acréscimo lançado — zere o acréscimo antes de desaprovar.', 409);
+    }
+    $pdo->beginTransaction();
+    try {
+        $pdo->prepare("DELETE FROM {$tabelaTit} WHERE id = ?")->execute([$refId]);
+        $pdo->prepare("UPDATE cash_bank_movements SET referencia_tipo = NULL, referencia_id = NULL, status = 'Pendente' WHERE id = ?")
+            ->execute([$cashMoveId]);
+        $pdo->commit();
+    } catch (Throwable $error) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        error_log('[ObraSync OFX][ref ' . obra_error_ref() . '] Desaprovação falhou: ' . $error->getMessage());
+        fail('Erro ao desaprovar. Nada foi gravado — tente novamente.', 500);
+    }
+    server_audit($pdo, $authUser, 'update', 'cashMoves', $cashMoveId,
+        'Desaprovação: conta ' . $titulo['document'] . ' (' . $titulo['status'] . ', ' . number_format((float) $titulo['amount'], 2, ',', '.') . ') apagada; movimento de volta à fila.');
+    respond(['ok' => true, 'data' => ['cashMoveId' => $cashMoveId], 'message' => 'Aprovação desfeita — conta apagada e movimento de volta à fila.']);
 }
 
 // E1: desfazer vínculo. O movimento NUNCA é apagado (a linha do extrato é fato
@@ -8528,8 +8859,9 @@ function handle_ofx_import(PDO $pdo, array $authUser, array $payload): never
     try {
         $dupCheck = $pdo->prepare('SELECT id FROM ofx_fitids WHERE fitid = ? AND bankAccountId = ? LIMIT 1');
         $insertMove = $pdo->prepare(
+            // E3: importado nasce pendente de classificação.
             "INSERT INTO cash_bank_movements (`date`, bankAccount, `type`, history, amount, originDocument, status)
-             VALUES (?, ?, ?, ?, ?, 'OFX', 'Confirmado')"
+             VALUES (?, ?, ?, ?, ?, 'OFX', 'Pendente')"
         );
         $insertFitid = $pdo->prepare('INSERT IGNORE INTO ofx_fitids (fitid, bankAccountId, cashMoveId) VALUES (?, ?, ?)');
 
