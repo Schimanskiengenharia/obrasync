@@ -49,10 +49,22 @@ título por `NOT EXISTS (... WHERE p.ofxFitid = f.fitid COLLATE utf8mb4_unicode_
 JOIN texto×texto da frente, com COLLATE explícito obrigatório** (regra da spec E1 §5-B; vira
 no-op após a padronização) + exclusão de referência viva via `LEFT JOIN` pelos ids.
 
-Resposta por linha: `fitid`, `cashMoveId`, `date`, `type`, `amount`, `history`, `bankAccountId`,
-`bankAccountName`, e **`matches`** (reuso direto de `ofx_find_matches` por linha da página — máx
-50 consultas leves por request, indexadas) com `autoMatch` quando confiança ≥85 (mesma régua da
-prévia). Total de pendentes no payload (`total`) para o badge da aba.
+**Match em LOTE, set-based (acréscimo do dono: ordenação por relevância).** Como a fila é
+ordenada por confiança GLOBAL, o match roda para o conjunto inteiro antes de paginar — não por
+linha: 2 consultas set-based (Saídas × `accounts_payable`, Entradas × `accounts_receivable`) com
+JOIN **numérico** por valor (`p.amount = m.amount` — DECIMAL, sem collation) + `ABS(DATEDIFF
+(dueDate, date)) <= 5` + `status <> 'Cancelado'` + `ofxFitid IS NULL`; a CONFIANÇA é calculada em
+PHP pela função **pura compartilhada `ofx_match_confianca(int $daysDiff, bool $jaBaixado, bool
+$contaDiverge): int`** (extraída de `ofx_find_matches`, que passa a usá-la — prévia idêntica),
+top 5 por transação, `autoMatch` ≥85 (mesma régua).
+
+**Ordenação por relevância (funções puras testáveis):** `ofx_pendencia_bucket(matches)` →
+`'alta'` (melhor match ≥85, um clique) | `'media'` (tem match <85) | `'sem'` (exige criar
+título, E3); `ofx_pendencias_ordenar(rows)` → alta → média → sem; dentro do bucket, confiança
+desc e data desc. `offset`/`limit` aplicados DEPOIS da ordenação. Resposta: linhas (`fitid`,
+`cashMoveId`, `date`, `type`, `amount`, `history`, `bankAccountId`, `bankAccountName`,
+`matches`, `autoMatch`, `bucket`) + `total` + contagem por bucket (para o cabeçalho da aba).
+Teto de segurança: 2000 pendentes por request (logado se estourar).
 
 ## 2. A tela — aba "Pendências" no módulo Conciliação
 
@@ -74,6 +86,20 @@ prévia). Total de pendentes no payload (`total`) para o badge da aba.
 - **Privacidade:** todo R$ de tela via `moneySpan`; textos dinâmicos escapados (`escapeHtml`);
   nenhum `alert()` novo (toast com severidade, regra E3).
 
+## 2-B. Vínculo em LOTE (acréscimo do dono — "244 modais é abandonar a tela na 3ª sessão")
+
+- **Refactor no motor:** o corpo do `handle_ofx_vincular` vira **`ofx_vincular_executar(PDO,
+  array $authUser, array $args): array`** (devolve `['ok'=>true, ...dados]` ou `['ok'=>false,
+  'status'=>4xx, 'motivo'=>...]` em vez de `fail()`/`respond()`); o handler individual só embrulha.
+- **`POST ofx-vincular-lote`**: payload `{ itens: [{fitid, bankAccountId, table, recordId}] }`
+  (máx **50** por chamada — o front fatia). Executa `ofx_vincular_executar` POR ITEM, cada um na
+  SUA transação — falha individual não derruba o lote (molde do envio de fotos do RDO). Resposta:
+  `{ vinculadas: N, falhas: [{fitid, motivo}] }`. Auditoria por item (a do executar).
+- **Regra de simplificação:** o lote NÃO envia obra/categoria/centro — **herança pura do título**.
+  Obra diferente do título = modal individual.
+- **Na tela:** checkbox só nas linhas de bucket ALTA + "Vincular selecionadas (N)" + resumo do
+  resultado (toast success + lista das falhas com motivo, se houver).
+
 ## 3. Testes
 
 - `scripts/tests/php/test_ofx_movimento_livre.php`: a função pura da guarda — movimento sem
@@ -81,8 +107,12 @@ prévia). Total de pendentes no payload (`total`) para o badge da aba.
   mesma referência do próprio recordId → livre (revincular idempotente é inofensivo);
   referência órfã (título null) → livre; CAIXA_MANUAL no movimento → livre (não é reivindicação
   de baixa); mensagens sem SQL/tabela.
-- `scripts/tests/js/test_ofx_pendencias.js` (vm): helpers puros da tela (montagem de linha/badge
-  de confiança/estado vinculada) — extração por âncora, no molde dos testes existentes.
+- `scripts/tests/php/test_ofx_pendencias.php`: as puras da fila — `ofx_match_confianca` (mesma
+  tabela de descontos da prévia: −5/dia além do 1º, −20 já baixado, −15 conta divergente, piso
+  0), `ofx_pendencia_bucket` (≥85 alta; <85 média; vazio sem) e `ofx_pendencias_ordenar`
+  (alta→média→sem; confiança desc e data desc dentro do bucket; estável para empates).
+- A LÓGICA testável vive toda no PHP; a tela (render/eventos) é validada em produção pelo
+  roteiro — sem teste JS novo nesta etapa.
 - Suíte completa verde.
 
 ## 4. Versão, deploy e validação (inclui a validação pendente da E1)
@@ -92,9 +122,12 @@ prévia). Total de pendentes no payload (`total`) para o badge da aba.
 - **Validação em produção, pela tela (E1+E2 juntas, roteiro do dono):**
   1. Aba Pendências mostra ~244 (ou 243, se o #4 for de extrato — conferir que o **#4 NÃO
      aparece**);
-  2. Vincular uma transação com match: título baixado com a data do movimento, obra escolhida
+  2. A fila chega ORDENADA: alta confiança no topo (um clique), sem match no fim;
+  2b. Vincular uma transação com match: título baixado com a data do movimento, obra escolhida
      no modal gravada no movimento; conferir no Custo da Obra/dashboard por obra que o valor
      apareceu classificado;
+  2c. Marcar 3-5 linhas de alta confiança → "Vincular selecionadas" → resumo com N vinculadas
+     (e motivo em eventual falha);
   3. Vincular uma SEM match escolhendo título de mesmo valor;
   4. Desfazer com "reabrir": título Aberto de novo, transação volta à lista de pendências;
   5. Tentar vincular a transação do movimento #4 (se de extrato, via id direto na API) → 409
