@@ -7723,6 +7723,10 @@ function handle_ofx_conciliar(PDO $pdo, array $authUser, array $payload): never
         fail('Este título já está vinculado a outra transação do extrato.', 409);
     }
 
+    if (($record['referencia_tipo'] ?? '') === 'CAIXA_MANUAL' && !empty($record['referencia_id'])) {
+        fail('Este título já tem um movimento de caixa manual vinculado — conciliar criaria a mesma saída duas vezes no caixa. Desfaça o vínculo manual antes.', 409);
+    }
+
     $isPayable = $table === 'accounts_payable';
     $settledStatus = $isPayable ? 'Pago' : 'Recebido';
     $dateField = $isPayable ? 'paidDate' : 'receivedDate';
@@ -7740,13 +7744,19 @@ function handle_ofx_conciliar(PDO $pdo, array $authUser, array $payload): never
         }
 
         $pdo->prepare(
-            "INSERT INTO cash_bank_movements (`date`, bankAccount, `type`, history, amount, originDocument, status)
-             VALUES (?, ?, ?, ?, ?, ?, 'Confirmado')"
+            "INSERT INTO cash_bank_movements (`date`, bankAccount, `type`, history, amount, originDocument, status,
+                                              referencia_tipo, referencia_id, projectId, categoryId, costCenterId)
+             VALUES (?, ?, ?, ?, ?, ?, 'Confirmado', ?, ?, ?, ?, ?)"
         )->execute([
             $date, $bankName, $type,
             $memo !== '' ? $memo : ('Conciliação OFX — ' . $record['document']),
             $amount,
             mb_substr('OFX:' . $fitid, 0, 100),
+            $isPayable ? 'CONTA_PAGAR' : 'CONTA_RECEBER',
+            $recordId,
+            $record['projectId'] ?? null,
+            $record['categoryId'] ?? null,
+            $record['costCenterId'] ?? null,
         ]);
         $cashMoveId = (int) $pdo->lastInsertId();
 

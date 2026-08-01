@@ -4068,7 +4068,7 @@ function dashboardMetrics() {
   const grossProfit = sales.reduce((total, row) => total + Number(row.amount || 0) - Number(row.cost || 0), 0);
   const netProfit = revenueTotal - expensesTotal;
   const paidExpenses = payable.filter((row) => isPago(row.status)).reduce((total, row) => total + Number(row.amount || 0), 0);
-  const realizedCost = paidExpenses + Math.abs(moves.filter((row) => signedCashAmount(row) < 0).reduce((total, row) => total + signedCashAmount(row), 0));
+  const realizedCost = paidExpenses + saidasCaixaSemTitulo(moves);
   const servicesSold = sales.filter((row) => normalizedText(row.description).includes("servic")).reduce((total, row) => total + Number(row.amount || 0), 0);
   const productsSold = sales.filter((row) => normalizedText(row.description).includes("produto") || normalizedText(row.description).includes("software")).reduce((total, row) => total + Number(row.amount || 0), 0);
   const activeProjects = applyFilters(db.projects, { ignoreProject: dashboardViewMode === "general" }).filter((row) => ["Planejamento", "Proposta enviada", "Contratada", "Em andamento", "Pausada"].includes(row.status)).length;
@@ -4201,6 +4201,15 @@ function signedCashAmount(row) {
   if (type.startsWith("entrada")) return Number(row.amount || 0);
   if (type.startsWith("transfer")) return 0;
   return -Number(row.amount || 0);
+}
+
+// Saídas de caixa SEM título vinculado (Conciliação E1): movimento com
+// referencia CONTA_PAGAR é a MESMA saída da conta paga que o realizedCost já
+// somou — contar os dois dobraria o custo realizado da obra.
+function saidasCaixaSemTitulo(moves) {
+  return Math.abs((moves || [])
+    .filter((m) => signedCashAmount(m) < 0 && !(m.referencia_tipo === "CONTA_PAGAR" && m.referencia_id))
+    .reduce((total, m) => total + signedCashAmount(m), 0));
 }
 
 // Janela do fluxo de caixa: RELATIVA ao mês atual (mês corrente ± N meses), para que
