@@ -79,4 +79,18 @@ t_assert($d === '', 'numero igual em formato diferente nao gera diff');
 // audit_log (tela de auditoria), não em toast — mas não pode vazar SQL/técnica.
 t_assert(!preg_match('/SELECT|UPDATE|INSERT|accounts_/i', $d ?: 'x'), 'details nao vaza SQL nem nome de tabela');
 
+// ── §2-B (E3): título de EXTRATO decompõe, não soma ─────────────────────────
+$travado = ['amount' => 1880.09, 'valor_original' => null, 'juros_aplicado' => null, 'ofxFitid' => 'F1'];
+$r = aplicar_acrescimo_baixa($travado, ['amount' => 1880.09, 'juros_aplicado' => 80.09]);
+t_assert($r['amount'] === 1880.09, 'extrato: amount NAO muda (total e fato bancario)');
+t_assert($r['valor_original'] === 1800.00, 'extrato: juros decompoe (original = total - juros)');
+$r = aplicar_acrescimo_baixa(array_merge($travado, ['valor_original' => 1800.00, 'juros_aplicado' => 80.09]), ['amount' => 1880.09, 'juros_aplicado' => 50.0]);
+t_assert($r['amount'] === 1880.09 && $r['valor_original'] === 1830.09, 'extrato: editar juros re-decompoe, nao acumula');
+$r = aplicar_acrescimo_baixa($travado, ['amount' => 9999.0, 'valor_original' => 5.0, 'juros_aplicado' => 80.09]);
+t_assert($r['amount'] === 1880.09 && $r['valor_original'] === 1800.00, 'extrato: payload forjado nao vence o fato');
+$r = aplicar_acrescimo_baixa($travado, ['amount' => 1880.09, 'juros_aplicado' => 99999.0]);
+t_assert($r['valor_original'] === 0.0, 'extrato: juros maior que o total e travado no total');
+$r = aplicar_acrescimo_baixa(array_merge($travado, ['valor_original' => 1800.00, 'juros_aplicado' => 80.09]), ['amount' => 1880.09, 'juros_aplicado' => 0]);
+t_assert($r['amount'] === 1880.09 && $r['valor_original'] === null, 'extrato: zerar juros limpa a decomposicao');
+
 t_resumo('test_acrescimo_baixa');

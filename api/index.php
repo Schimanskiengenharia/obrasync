@@ -117,6 +117,17 @@ function aplicar_acrescimo_baixa(array $before, array $payload): array
         return $payload; // fluxo que não fala de acréscimo: intacto
     }
     $juros = round(max(0.0, (float) ($payload['juros_aplicado'] ?? 0)), 2);
+    // §2-B (E3): título vinculado a EXTRATO tem amount = total que saiu do banco —
+    // FATO travado. Juros aqui DECOMPÕE (valor_original = total − juros), nunca
+    // soma; payload de amount/valor_original é ignorado (o fato vence).
+    if (!empty($before['ofxFitid'])) {
+        $total = round((float) ($before['amount'] ?? 0), 2);
+        $juros = min($juros, $total); // decomposição nunca gera original negativo
+        $payload['amount'] = $total;
+        $payload['juros_aplicado'] = $juros;
+        $payload['valor_original'] = $juros > 0 ? round($total - $juros, 2) : null;
+        return $payload;
+    }
     $originalAntes = $before['valor_original'] ?? null;
     $temOriginal = $originalAntes !== null && $originalAntes !== '' && (float) $originalAntes > 0;
     if (!$temOriginal && $juros <= 0.0) {
@@ -281,6 +292,82 @@ function ofx_pendencias_ordenar(array $rows): array
         return strcmp((string) ($b['date'] ?? ''), (string) ($a['date'] ?? ''));
     });
     return $rows;
+}
+
+// ── Conciliação E3: aprovação de movimento pendente ─────────────────────────
+// Decisão PURA: valida movimento/payload e monta o plano (título JÁ LIQUIDADO +
+// update do movimento). Obra é OPCIONAL (decisão do dono — despesa geral não tem
+// obra); categoria e centro de custo são OBRIGATÓRIOS; Transferência não vira
+// título (o caminho dela é Dispensar). valor_original/juros nascem NULOS — o
+// banco não separa juros; editar depois ativa o fluxo da v1.41.0.
+function cash_move_aprovar_plano(array $movimento, array $payload): array
+{
+    $recusa = static fn (string $motivo): array => ['acao' => 'recusar', 'motivo' => $motivo];
+    if (($movimento['status'] ?? '') !== 'Pendente') {
+        return $recusa('Só movimento PENDENTE pode ser aprovado — este já foi tratado.');
+    }
+    $tipo = (string) ($movimento['type'] ?? '');
+    if ($tipo === 'Transferência') {
+        return $recusa('Transferência entre contas não vira título — use Dispensar para tirá-la da fila.');
+    }
+    if ($tipo !== 'Entrada' && $tipo !== 'Saída') {
+        return $recusa('Tipo de movimento desconhecido.');
+    }
+    $categoryId = (int) ($payload['categoryId'] ?? 0);
+    $costCenterId = (int) ($payload['costCenterId'] ?? 0);
+    if (!$categoryId || !$costCenterId) {
+        return $recusa('Categoria financeira e centro de custo são obrigatórios para aprovar.');
+    }
+    $data = (string) ($movimento['date'] ?? '');
+    $valor = round((float) ($movimento['amount'] ?? 0), 2);
+    if ($valor <= 0 || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $data)) {
+        return $recusa('Movimento sem data ou valor válidos.');
+    }
+    $isSaida = $tipo === 'Saída';
+    $projectId = ($payload['projectId'] ?? '') !== '' && ($payload['projectId'] ?? null) !== null ? (int) $payload['projectId'] : null;
+    $parteId = ($payload['parteId'] ?? '') !== '' && ($payload['parteId'] ?? null) !== null ? (int) $payload['parteId'] : null;
+    $titulo = [
+        'document' => 'MOV-' . (int) ($movimento['id'] ?? 0),
+        'issueDate' => $data,
+        'dueDate' => $data,
+        ($isSaida ? 'paidDate' : 'receivedDate') => $data,
+        'amount' => $valor,
+        'status' => $isSaida ? 'Pago' : 'Recebido',
+        'bankAccount' => (string) ($movimento['bankAccount'] ?? ''),
+        'categoryId' => $categoryId,
+        'costCenterId' => $costCenterId,
+        'projectId' => $projectId,
+        ($isSaida ? 'supplierId' : 'clientId') => $parteId,
+        'valor_original' => null,
+        'juros_aplicado' => null,
+    ];
+    return [
+        'acao' => 'criar',
+        'motivo' => null,
+        'table' => $isSaida ? 'accounts_payable' : 'accounts_receivable',
+        'refTipo' => $isSaida ? 'CONTA_PAGAR' : 'CONTA_RECEBER',
+        'titulo' => $titulo,
+        // §2-C: 'Aprovado' é o estado visível de "resolvido com título" (badge/filtro).
+        'movimentoUpdate' => ['categoryId' => $categoryId, 'costCenterId' => $costCenterId, 'projectId' => $projectId, 'status' => 'Aprovado'],
+    ];
+}
+
+// E3/E4 — grau de suspeita de duplicidade (candidatos já filtrados no SQL por
+// valor EXATO + vencimento ±5d): mesma parte = ALTA; senão MÉDIA; alta primeiro.
+function titulos_similares_classificar(array $candidatos, $parteId): array
+{
+    $parte = ($parteId !== null && $parteId !== '' && (int) $parteId > 0) ? (int) $parteId : 0;
+    $out = [];
+    foreach ($candidatos as $c) {
+        $mesmaParte = $parte > 0
+            && ((int) ($c['supplierId'] ?? 0) === $parte || (int) ($c['clientId'] ?? 0) === $parte);
+        $out[] = ['suspeita' => $mesmaParte ? 'alta' : 'media'] + $c;
+    }
+    usort($out, static function (array $a, array $b): int {
+        if ($a['suspeita'] === $b['suspeita']) return 0;
+        return $a['suspeita'] === 'alta' ? -1 : 1;
+    });
+    return $out;
 }
 
 $config = load_config();
