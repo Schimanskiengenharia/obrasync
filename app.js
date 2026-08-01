@@ -18222,7 +18222,7 @@ function ofxPendLinhaHtml(row, index, podeEditar) {
     ? '<span class="muted">Somente leitura</span>'
     : row.vinculada
       ? `<span class="ofx-badge ofx-badge-green">✔ vinculada</span> <button type="button" class="secondary ofx-pend-desfazer" data-idx="${index}">Desfazer</button>`
-      : `<button type="button" class="primary ofx-pend-vincular" data-idx="${index}" ${row.matches?.length ? "" : "disabled title=\"Sem título compatível\""}>Vincular</button>`;
+      : `<button type="button" class="primary ofx-pend-vincular" data-idx="${index}">Vincular</button>`;
   return `<tr class="${row.vinculada ? "ofx-pend-ok" : ""}">
     <td>${check}</td>
     <td>${asDate(row.date)}</td>
@@ -18299,17 +18299,21 @@ function abrirOfxVincular(index) {
     ...(row.matches || []).map((m) => `<option value="${m.id}">${escapeHtml(`${m.document} · venc. ${asDate(m.dueDate)} · ${m.confidence}%${m.alreadyPaid ? " (já baixado)" : ""}`)}</option>`),
     ...extras.slice(0, 30).map((t) => `<option value="${t.id}">${escapeHtml(`${t.document || t.id} · venc. ${asDate(t.dueDate)} (mesmo valor)`)}</option>`),
   ].join("");
+  const semOpcoes = options === "";
+  const tituloField = semOpcoes
+    ? '<p class="muted">Nenhum título aberto com este mesmo valor — o caminho "criar conta a partir da transação" chega na Etapa 3.</p>'
+    : `<label>Título ${isSaida ? "(contas a pagar)" : "(contas a receber)"}<select id="ofxVincTitulo">${options}</select></label>`;
   const selects = (lista, id, rotulo) => `<label>${rotulo} <small class="muted">(opcional — herda do título se vazio)</small>
     <select id="${id}"><option value="">—</option>${(lista || []).map((r) => `<option value="${Number(r.id) || svgText(r.id)}">${svgText(r.name)}</option>`).join("")}</select></label>`;
   dialog.innerHTML = `
     <h3>Vincular transação ao título</h3>
     <p>${asDate(row.date)} · ${svgText(row.type)} · ${moneySpan(row.amount)}<br><small class="muted">${svgText(row.history || "")}</small></p>
-    <label>Título ${isSaida ? "(contas a pagar)" : "(contas a receber)"}<select id="ofxVincTitulo">${options}</select></label>
+    ${tituloField}
     ${selects(db.projects, "ofxVincObra", "Obra/Projeto")}
     ${selects(db.categories, "ofxVincCategoria", "Categoria")}
     ${selects(db.costCenters, "ofxVincCentro", "Centro de custo")}
     <div class="row-actions">
-      <button type="button" class="primary" id="ofxVincOk">Vincular</button>
+      <button type="button" class="primary" id="ofxVincOk" ${semOpcoes ? "disabled" : ""}>Vincular</button>
       <button type="button" class="secondary" id="ofxVincCancelar">Cancelar</button>
     </div>`;
   dialog.querySelector("#ofxVincCancelar").addEventListener("click", () => dialog.close());

@@ -7945,6 +7945,10 @@ function ofx_vincular_executar(PDO $pdo, array $authUser, array $args): array
         if ($pdo->inTransaction()) {
             $pdo->rollBack();
         }
+        if ($error instanceof PDOException && (string) $error->getCode() === '23000') {
+            // Corrida no UNIQUE do fitid: outro clique venceu — mesmo 409 do pré-check.
+            return ['ok' => false, 'status' => 409, 'motivo' => 'Esta transação do extrato já está vinculada a um título.'];
+        }
         error_log('[ObraSync OFX][ref ' . obra_error_ref() . '] Vínculo tardio falhou: ' . $error->getMessage());
         return ['ok' => false, 'status' => 500, 'motivo' => 'Erro ao vincular. Nada foi gravado — tente novamente.'];
     }
@@ -7995,12 +7999,18 @@ function handle_ofx_vincular_lote(PDO $pdo, array $authUser, array $payload): ne
         if (!is_array($item)) {
             continue;
         }
-        $r = ofx_vincular_executar($pdo, $authUser, [
-            'fitid' => $item['fitid'] ?? '',
-            'bankAccountId' => $item['bankAccountId'] ?? 0,
-            'table' => $item['table'] ?? '',
-            'recordId' => $item['recordId'] ?? 0,
-        ]);
+        try {
+            $r = ofx_vincular_executar($pdo, $authUser, [
+                'fitid' => $item['fitid'] ?? '',
+                'bankAccountId' => $item['bankAccountId'] ?? 0,
+                'table' => $item['table'] ?? '',
+                'recordId' => $item['recordId'] ?? 0,
+            ]);
+        } catch (Throwable $error) {
+            if ($pdo->inTransaction()) { $pdo->rollBack(); }
+            error_log('[ObraSync OFX][ref ' . obra_error_ref() . '] Lote de vinculo falhou num item: ' . $error->getMessage());
+            $r = ['ok' => false, 'motivo' => 'Erro inesperado neste item — os demais seguiram.'];
+        }
         if (!empty($r['ok'])) {
             $vinculadas++;
         } else {
