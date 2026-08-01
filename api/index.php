@@ -228,6 +228,27 @@ function ofx_vinculo_plano(array $titulo, array $movimento, array $payload): arr
     ];
 }
 
+// E2 — guarda do movimento: um movimento cuja referência aponta para OUTRO título
+// vivo já representa uma baixa (fluxo manual legado gravava referência sem fitid).
+// Pura: o handler busca o título da referência e ela decide. null = livre.
+function ofx_movimento_livre(array $movimento, ?array $tituloDaReferencia, int $recordId, bool $isPayable): ?string
+{
+    $refTipo = (string) ($movimento['referencia_tipo'] ?? '');
+    if (!in_array($refTipo, ['CONTA_PAGAR', 'CONTA_RECEBER'], true)) {
+        return null; // sem referência de baixa (null/CAIXA_MANUAL): livre
+    }
+    $refId = (int) ($movimento['referencia_id'] ?? 0);
+    if (!$refId || $tituloDaReferencia === null) {
+        return null; // referência órfã: pode ser sobrescrita
+    }
+    if ($refId === $recordId && (($refTipo === 'CONTA_PAGAR') === $isPayable)) {
+        return null; // o próprio título: revincular é inofensivo
+    }
+    $doc = trim((string) ($tituloDaReferencia['document'] ?? ''));
+    return 'Esta transação já representa a baixa do título ' . ($doc !== '' ? $doc : ('#' . $refId))
+        . ' — desfaça aquele vínculo antes de vincular outro.';
+}
+
 $config = load_config();
 // Gate de teste (NOVO-3): com OBRASYNC_TESTE_SEM_DB definido, a suíte local
 // carrega as funções REAIS sem conectar em banco NENHUM. Web/workers nunca
@@ -7609,6 +7630,18 @@ function ensure_ofx_tables(PDO $pdo): void
     } catch (Throwable $error) {
         error_log('[ObraSync NFS-e] ensure projectId nullable: ' . $error->getMessage());
     }
+    // UNIQUE no vínculo (E2) — checagem leve p/ não rodar DDL a cada request.
+    try {
+        $temUk = $pdo->query("SELECT 1 FROM information_schema.STATISTICS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'accounts_payable'
+              AND INDEX_NAME = 'uk_pay_fitid' LIMIT 1")->fetchColumn();
+        if (!$temUk) {
+            $pdo->exec('ALTER TABLE accounts_payable ADD UNIQUE INDEX IF NOT EXISTS uk_pay_fitid (ofxFitid)');
+            $pdo->exec('ALTER TABLE accounts_receivable ADD UNIQUE INDEX IF NOT EXISTS uk_rec_fitid (ofxFitid)');
+        }
+    } catch (Throwable $error) {
+        error_log('[ObraSync OFX] ensure UNIQUE ofxFitid: ' . $error->getMessage());
+    }
     $done = true;
 }
 
@@ -7819,6 +7852,19 @@ function handle_ofx_vincular(PDO $pdo, array $authUser, array $payload): never
     if (!$movimento) {
         fail('Movimento da transação não encontrado.', 404);
     }
+    // Guarda E2: movimento já reivindicado por outro título vivo (fluxo manual legado).
+    $refTipoMov = (string) ($movimento['referencia_tipo'] ?? '');
+    $tituloRef = null;
+    if (in_array($refTipoMov, ['CONTA_PAGAR', 'CONTA_RECEBER'], true) && !empty($movimento['referencia_id'])) {
+        $tabelaRef = $refTipoMov === 'CONTA_PAGAR' ? 'accounts_payable' : 'accounts_receivable';
+        $stmt = $pdo->prepare("SELECT id, document FROM {$tabelaRef} WHERE id = ? LIMIT 1");
+        $stmt->execute([(int) $movimento['referencia_id']]);
+        $tituloRef = $stmt->fetch() ?: null;
+    }
+    $motivoOcupado = ofx_movimento_livre($movimento, $tituloRef, $recordId, $table === 'accounts_payable');
+    if ($motivoOcupado !== null) {
+        fail($motivoOcupado, 409);
+    }
     $stmt = $pdo->prepare("SELECT * FROM {$table} WHERE id = ? LIMIT 1");
     $stmt->execute([$recordId]);
     $titulo = $stmt->fetch();
@@ -7903,7 +7949,9 @@ function handle_ofx_desvincular(PDO $pdo, array $authUser, array $payload): neve
     // Resolve o movimento pela REFERÊNCIA (inequívoca — é o que vincular/conciliar
     // gravam). FITID não serve aqui: só é único POR CONTA BANCÁRIA, e o título não
     // guarda a conta. Sem referência gravada (vínculo antigo), só o título é solto.
-    $stmt = $pdo->prepare('SELECT id FROM cash_bank_movements WHERE referencia_tipo = ? AND referencia_id = ? LIMIT 1');
+    // (prefere o movimento do EXTRATO quando um manual e um OFX carregam a mesma referência)
+    $stmt = $pdo->prepare("SELECT id FROM cash_bank_movements WHERE referencia_tipo = ? AND referencia_id = ?
+                        ORDER BY (originDocument LIKE 'OFX%') DESC, id DESC LIMIT 1");
     $stmt->execute([$isPayable ? 'CONTA_PAGAR' : 'CONTA_RECEBER', $recordId]);
     $cashMoveId = (int) ($stmt->fetchColumn() ?: 0);
     $reabriu = $reabrir && ($titulo['status'] ?? '') === $settledStatus;
