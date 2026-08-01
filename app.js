@@ -18209,17 +18209,19 @@ function ofxPendBadgeConf(confidence) {
   return `<span class="ofx-badge ${cls}">${confidence}%</span>`;
 }
 
-function ofxPendLinhaHtml(row, index) {
+function ofxPendLinhaHtml(row, index, podeEditar) {
   const melhor = row.matches?.[0];
   const sugestao = melhor
     ? `${svgText(melhor.document)} · venc. ${asDate(melhor.dueDate)} ${ofxPendBadgeConf(melhor.confidence)}${row.matches.length > 1 ? ` <small class="muted">+${row.matches.length - 1} alternativa(s)</small>` : ""}`
     : '<span class="muted">Sem título compatível — criar conta chega na Etapa 3</span>';
-  const check = row.bucket === "alta"
+  const check = podeEditar && row.bucket === "alta"
     ? `<input type="checkbox" class="ofx-pend-check" data-idx="${index}" ${ofxPend.selecionadas.has(index) ? "checked" : ""}>`
     : "";
-  const acoes = row.vinculada
-    ? `<span class="ofx-badge ofx-badge-green">✔ vinculada</span> <button type="button" class="secondary ofx-pend-desfazer" data-idx="${index}">Desfazer</button>`
-    : `<button type="button" class="primary ofx-pend-vincular" data-idx="${index}" ${row.matches?.length ? "" : "disabled title=\"Sem título compatível\""}>Vincular</button>`;
+  const acoes = !podeEditar
+    ? '<span class="muted">Somente leitura</span>'
+    : row.vinculada
+      ? `<span class="ofx-badge ofx-badge-green">✔ vinculada</span> <button type="button" class="secondary ofx-pend-desfazer" data-idx="${index}">Desfazer</button>`
+      : `<button type="button" class="primary ofx-pend-vincular" data-idx="${index}" ${row.matches?.length ? "" : "disabled title=\"Sem título compatível\""}>Vincular</button>`;
   return `<tr class="${row.vinculada ? "ofx-pend-ok" : ""}">
     <td>${check}</td>
     <td>${asDate(row.date)}</td>
@@ -18233,8 +18235,9 @@ function ofxPendLinhaHtml(row, index) {
 
 function renderOfxPendencias() {
   const b = ofxPend.buckets;
+  const podeEditar = canEditModule("reconciliation");
   const contas = (db.bankAccounts || []).map((c) => `<option value="${Number(c.id) || svgText(c.id)}" ${sameId(c.id, ofxPend.filtros.conta) ? "selected" : ""}>${svgText(c.name)}</option>`).join("");
-  const linhas = ofxPend.rows.map((row, i) => ofxPendLinhaHtml(row, i)).join("");
+  const linhas = ofxPend.rows.map((row, i) => ofxPendLinhaHtml(row, i, podeEditar)).join("");
   const podeMais = ofxPend.rows.length < ofxPend.total;
   const selecionadas = ofxPend.selecionadas.size;
   return `
@@ -18251,7 +18254,7 @@ function renderOfxPendencias() {
         <label>Até<input type="date" id="ofxPendAte" value="${svgText(ofxPend.filtros.ate)}"></label>
         <label>Lado<select id="ofxPendLado"><option value="">Ambos</option><option ${ofxPend.filtros.lado === "Entrada" ? "selected" : ""}>Entrada</option><option ${ofxPend.filtros.lado === "Saída" ? "selected" : ""}>Saída</option></select></label>
         <button type="button" class="secondary" id="ofxPendFiltrar">Filtrar</button>
-        <button type="button" class="primary" id="ofxPendLote" ${selecionadas ? "" : "disabled"}>Vincular selecionadas (${selecionadas})</button>
+        ${podeEditar ? `<button type="button" class="primary" id="ofxPendLote" ${selecionadas ? "" : "disabled"}>Vincular selecionadas (${selecionadas})</button>` : ""}
       </div>
       ${ofxPend.carregando && !ofxPend.rows.length ? '<div class="empty">Carregando pendências…</div>' : ""}
       ${!ofxPend.carregando && !ofxPend.rows.length ? '<div class="empty">Nenhuma pendência no filtro — extrato conciliado. 🎉</div>' : ""}
@@ -18372,6 +18375,9 @@ async function ofxVincularLoteSelecionadas() {
     if (serverMode) await refreshAndRender();
   } catch (error) {
     showToast(`Falha no lote: ${error.message}`, { severity: "error" });
+  } finally {
+    if (btn) { btn.disabled = ofxPend.selecionadas.size === 0; btn.textContent = `Vincular selecionadas (${ofxPend.selecionadas.size})`; }
+    render();
   }
 }
 
