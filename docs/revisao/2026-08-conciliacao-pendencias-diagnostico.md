@@ -317,3 +317,34 @@ retroativo para os ~243 pendentes atuais (fora #4 e #150, já resolvidos).
 aprovação em Movimentações** (spec: `docs/superpowers/specs/2026-08-01-caixa-aprovacao-pendentes-design.md`)
 · E4 detector nos demais pontos de criação (lançamento manual, NFS-e). O bucket "sem título" da
 E2 passa a apontar para o fluxo do Caixa em vez de ganhar criação própria.
+
+---
+
+## ADENDO 3 (2026-08-02) — E4 cresceu e virou a frente própria "DUPLICADAS" (aprovada, na fila)
+
+**Motivo do dono:** outra pessoa vai operar o sistema — aviso momentâneo não basta; a suspeita
+precisa ficar REGISTRADA e visível até alguém resolver. E o caso real é ENTRE ORIGENS: pagamento
+entra pelo OFX (conta `MOV-x`), o XML da NF chega depois por e-mail (NF órfã, `payableId` NULL).
+
+**Desenho aprovado (2026-08-02):**
+- **Fila COMPUTADA, sem estado** (molde da fila de pendências da E2): pares suspeitos calculados
+  ao abrir a aba — valor exato + data ±5 + fornecedor — nos cruzamentos **título×título** e
+  **título×`fiscal_documents`** (NF órfã tem `supplierId`/`amount`/`issueDate`). Resolver muda o
+  dado real e o par some sozinho.
+- **UMA tabela mínima só de descartes** (`duplicidade_descartes`: par normalizado
+  tipo_a/id_a/tipo_b/id_b + quem/quando, UNIQUE do par, ~7 colunas aditivas + `ensure_*`) —
+  falso positivo é estado de PAR, não de registro; `referencia_tipo` carrega ORIGEM e colidiria;
+  `fiscal_documents.status` é fluxo do documento; gambiarra em notas trairia a auditabilidade
+  que é o motivo da frente.
+- **Aba "Duplicadas"** com filtro e contador; ações: **vincular** (título×NF reusa
+  `save_fiscal_document`/`payableId` — fluxo da v1.34.0), **"não é duplicata"** (grava o
+  descarte), **excluir uma**, e **mesclar** títulos (ação delicada — etapa própria, com guardas).
+- **A 4ª saída** no detector dos pontos de criação: *"deixar para a aba resolver depois"* — quem
+  não tem certeza empurra para a fila em vez de decidir no escuro (a peça-chave para operador
+  terceiro).
+
+**3 etapas:** (1) fila computada + aba + descartes + vincular/não-é/excluir · (2) mesclar
+títulos com guardas · (3) detector nos pontos de criação com as 4 saídas (a E4 original).
+
+**Gate de retomada:** o dono vai classificar os 243 movimentos primeiro — o uso dirá quantas
+duplicatas reais aparecem e como se parecem. **Não iniciar sem ele voltar com esse dado.**
