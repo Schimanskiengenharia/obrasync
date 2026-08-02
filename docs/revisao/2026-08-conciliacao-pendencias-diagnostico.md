@@ -348,3 +348,46 @@ títulos com guardas · (3) detector nos pontos de criação com as 4 saídas (a
 
 **Gate de retomada:** o dono vai classificar os 243 movimentos primeiro — o uso dirá quantas
 duplicatas reais aparecem e como se parecem. **Não iniciar sem ele voltar com esse dado.**
+
+---
+
+## ADENDO 4 (2026-08-02) — E3-B: DIVISÃO DE LANÇAMENTO na aprovação (etapa própria, registrada)
+
+**Caso real do dono:** a mesma nota mistura disciplinas (elétrico + hidráulico) num débito só —
+a conta inteira cai num centro de custo e **distorce o KPI de resultado por disciplina** (o
+objetivo final). Desenho decidido: dividir a aprovação em N lançamentos (cada um com VALOR,
+categoria, centro/disciplina e obra — valores digitados, percentuais CALCULADOS, soma fecha
+exata com o movimento), N contas ligadas ao MESMO movimento sem duplicar caixa, NF ligada às N,
+desaprovar desfaz as N.
+
+**Veredito da investigação: NÃO é ajuste — é etapa própria (E3-B), porque quebra o vínculo 1:1
+da E1 em três pontos estruturais:**
+1. `movimento.referencia_id` aponta UM título (com N, aponta só a primária — o dedup sobrevive:
+   realizedCost = Σ N contas + movimento excluído 1×, correto);
+2. **`ofxFitid` é UNIQUE** (migration E2) — só UMA das N pode carregá-lo; as outras ficariam sem
+   o marcador de trava/decomposição/propagação;
+3. `fiscal_documents.payableId` é UM título — "NF liga às N" não cabe no campo atual.
+
+**Desenho proposto para a spec da E3-B:**
+- **Inverter o sentido nas filhas:** cada conta da divisão nasce com
+  `referencia_tipo='CAIXA_MOVIMENTO'` + `referencia_id=<movimento>` (campos LIVRES nas contas
+  MOV — verificado); trava de fato/propagação/resolução título→movimento passam a detectar por
+  essa referência; o movimento segue apontando a primária.
+- `document = 'MOV-<id>-1..N'` (sem UNIQUE em document — verificado, não 409); desaprovar
+  reconhece o prefixo e desfaz as N em UMA transação, cada uma com as guardas NF/juros —
+  qualquer uma travada trava o conjunto.
+- **NF↔N:** recomendação = coluna aditiva `cashMoveId` em `fiscal_documents` (NF liga ao
+  MOVIMENTO e, via ele, às N) — decisão para a spec; alternativa: NF na primária + nota.
+- **Juros em conta dividida: BLOQUEAR** (contraponto) — o total do extrato é a soma; juros numa
+  fatia não tem sentido bancário. Acréscimo vira LINHA da divisão, se preciso.
+- Validação pura da soma (round 2; diferença de centavo exibida e impede aprovar).
+
+**Lote: divisão em lote NÃO faz sentido (confirmado)** — lote é para o repetitivo idêntico;
+divisão é trabalho por nota. Movimento misto não se marca no lote; aprova individual com
+divisão. Zero mudança no lote.
+
+**Prioridade — consideração devolvida ao dono:** diferente da frente Duplicadas, esta BLOQUEIA a
+qualidade do próprio trabalho dos 243 (nota mista = classificação errada ou pulada). Sugestão
+pragmática: classificar as limpas agora e DEIXAR AS MISTAS PENDENTES (a fila serve para isso);
+se acumularem, a E3-B fura a pausa por decisão do dono — e a contagem de mistas é o dado que
+dimensiona a urgência. Porte estimado: M.
