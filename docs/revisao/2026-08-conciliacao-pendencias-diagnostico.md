@@ -386,6 +386,13 @@ da E1 em três pontos estruturais:**
 divisão é trabalho por nota. Movimento misto não se marca no lote; aprova individual com
 divisão. Zero mudança no lote.
 
+**Esclarecimento do dono (2026-08-02) — eixos ORTOGONAIS:** cada linha da divisão tem sua
+combinação COMPLETA e independente — valor, categoria financeira, centro de custo e obra —
+**sem cascata nem hierarquia** (categoria e centro são eixos ortogonais). Casos reais a cobrir:
+mesma categoria com dois centros; duas categorias com um centro; duas categorias com dois
+centros; obras diferentes na mesma nota. UI: **uma linha por combinação**, valor próprio, total
+conferindo — a spec da E3-B NÃO deve modelar "categoria → centros" nem qualquer agrupamento.
+
 **Prioridade — consideração devolvida ao dono:** diferente da frente Duplicadas, esta BLOQUEIA a
 qualidade do próprio trabalho dos 243 (nota mista = classificação errada ou pulada). Sugestão
 pragmática: classificar as limpas agora e DEIXAR AS MISTAS PENDENTES (a fila serve para isso);
