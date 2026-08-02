@@ -9,6 +9,15 @@
 > disciplinas com Modelo de texto → versões v1/v2/v3 → contrato da versão aceita → obra do
 > contrato. **Premissa aceita:** o detalhe do Excel NÃO entra no sistema — só o valor por frente,
 > com a planilha como guarda.
+>
+> **STATUS (2026-08-02): ACEITO INTEGRALMENTE pelo dono, com os contrapontos** — obra segue
+> nascendo da proposta aprovada (contrato ENRIQUECE); sem espelhar budgets; sem tabela de
+> versões. **Decisão nova: coluna de CUSTO opcional em `budgets`** (o dono já tem o custo no
+> Excel; habilita margem prevista [venda − custo do budget] × margem realizada [venda − contas
+> por centro de custo] — o ciclo "onde errei o preço" que motivou a frente; custo vazio = grupo
+> de valor fechado, BDI/margem escondidos). **Ordem aprovada:** (1) vínculo aceita budgets →
+> (2) nova versão + vigência → (3) modelo de contrato com semente das 13 → (4) anexo da planilha
+> → (5) contrato enriquece a obra. **NA FILA DO USO** — não iniciar sem a lista medida do dono.
 
 ---
 
