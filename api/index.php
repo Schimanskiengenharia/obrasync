@@ -9761,6 +9761,32 @@ function handle_rdo_delete(PDO $pdo, array $authUser, int $id, array $config): n
     respond(['ok' => true]);
 }
 
+// ── RDO fotos HEIC: helpers puros ───────────────────────────────────────────
+// A assinatura substitui a lista de MIME do store_upload no ramo HEIC: magic
+// database antiga devolve application/octet-stream para HEIC legítimo e
+// rejeitaria injustamente. Brands = família HEIF estática (array local de
+// propósito — const no meio do arquivo fica indefinida em runtime, v1.14.0).
+function rdo_heic_magic_ok(string $bytes): bool
+{
+    if (strlen($bytes) < 12 || substr($bytes, 4, 4) !== 'ftyp') {
+        return false;
+    }
+    $brand = strtolower(substr($bytes, 8, 4));
+    return in_array($brand, ['heic', 'heix', 'hevc', 'hevx', 'heim', 'heis', 'hevm', 'hevs', 'mif1', 'msf1'], true);
+}
+
+function rdo_heif_convert_cmd(string $bin, string $in, string $out): string
+{
+    return escapeshellarg($bin) . ' -q 85 ' . escapeshellarg($in) . ' ' . escapeshellarg($out) . ' 2>&1';
+}
+
+// heif-convert grava nome-1.jpg (e -2, -3...) quando o HEIC tem várias imagens
+// (burst/Live Photo): o resultado é o nome pedido OU o primeiro da série.
+function rdo_heic_jpg_candidatos(string $out): array
+{
+    return [$out, dirname($out) . '/' . pathinfo($out, PATHINFO_FILENAME) . '-1.jpg'];
+}
+
 function handle_rdo_upload_foto(PDO $pdo, array $config, array $authUser): never
 {
     ensure_rdo_tables($pdo);
