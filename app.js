@@ -93,9 +93,10 @@ function avisarFalha(contexto, mensagem) {
     showToast(mensagem, 5000);
   };
 }
-const APP_VERSION = "v1.44.0";
-const APP_VERSION_DATE = "2026-08-02";
+const APP_VERSION = "v1.45.0";
+const APP_VERSION_DATE = "2026-08-11";
 const APP_CHANGELOG = [
+  "Diário de Obra — fotos HEIC do iPhone: o RDO passa a aceitar fotos .heic/.heif enviadas direto do iPhone ou transferidas para o computador. O servidor converte para JPEG no envio — na tela, no PDF e no relatório semanal a foto aparece como sempre. Como o navegador não exibe HEIC, a foto pendente mostra um quadro \"Prévia indisponível\" até o envio; legenda e remoção funcionam igual. Se o conversor não estiver instalado no servidor, o envio avisa exatamente o que instalar, sem afetar as fotos JPG/PNG/WEBP. Vídeos (MP4) seguem não aceitos — o diário registra imagens (v1.45.0).",
   "Caixa — aprovação de movimentos pendentes (Conciliação, etapa 3 de 4): os movimentos importados do extrato agora nascem PENDENTES de classificação e ganham botões próprios na tela de Movimentações: APROVAR abre a classificação (categoria e centro de custo obrigatórios; obra, fornecedor/cliente opcionais) e cria a conta a pagar/receber JÁ LIQUIDADA, com vínculo completo ao movimento — o custo realizado conta uma vez só. Painel de LOTE: marque vários movimentos do mesmo lado, preencha os dados comuns uma vez e aprove todos (dez tarifas do mês viram dez contas com um clique). Antes de criar, o sistema procura títulos parecidos (mesmo valor, vencimento próximo) e oferece: vincular ao existente, criar mesmo assim ou cancelar — no lote, as suspeitas são separadas para tratamento individual. DISPENSAR tira da fila o que não vira conta (transferências entre contas próprias) sem mexer no saldo — e é reversível. Migration retroativa opcional coloca os ~243 movimentos históricos na fila (2026-08-01-caixa-pendente-retroativo.sql, rodar com backup). O saldo de caixa NÃO muda: pendente é sobre classificação, não sobre existência do dinheiro (v1.44.0).",
   "Conciliação bancária — tela de Pendências (Etapa 2 de 4): a aba nova \"Pendências\" na Conciliação lista as transações do extrato que ainda não têm título vinculado, ORDENADAS POR RELEVÂNCIA — primeiro as de match exato (um clique), depois as de conferência, por último as sem título. Dá para vincular uma a uma (com escolha OPCIONAL de obra, categoria e centro de custo — é o que transforma o extrato em custo classificado por obra), vincular VÁRIAS de uma vez (as de alta confiança, com caixinha de seleção) e desfazer um vínculo errado escolhendo se o título reabre ou não. O motor ganhou proteções: transação cujo movimento já representa a baixa de outro título é recusada com aviso claro, e um índice único impede duas baixas no mesmo extrato até em cliques simultâneos (migration 2026-08-01-ofx-fitid-unique.sql). Filtros por conta, período e lado; paginação leve; tudo respeitando o modo privacidade (v1.43.0).",
   "Conciliação bancária — motor de vínculo tardio (Etapa 1 de 4): agora existe caminho de volta para o extrato importado. A API ganhou o vínculo tardio: uma transação já importada pode baixar uma conta a pagar/receber existente (a data da baixa vem da transação; título já baixado é apenas vinculado, sem duplicar nada) e o desfazer com escolha explícita de reabrir ou não o título — o movimento do extrato nunca é apagado. Correção importante junto: o custo realizado da obra somava DUAS vezes a mesma saída quando uma conta paga tinha movimento de caixa do extrato vinculado — agora o cálculo ignora a saída de caixa que já está representada pela conta. A conciliação feita na prévia da importação também passou a gravar a referência e a herdar obra/categoria/centro de custo do título. A tela de pendências (Etapa 2) vem a seguir; por ora o motor está pronto e testado (v1.42.0).",
@@ -3272,7 +3273,7 @@ function rdoFotosHtml(d) {
   const podeEditar = rdoCanEdit() && d.status !== "Finalizado";
   return `
     ${podeEditar ? `<div class="rdo-foto-upload">
-      <input type="file" id="rdoFotoFile" accept="image/jpeg,image/png,image/webp" multiple>
+      <input type="file" id="rdoFotoFile" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif" multiple>
       <button class="secondary" type="button" id="rdoFotoEnviar">Enviar fotos</button>
     </div>
     <div class="rdo-fotos-preview" id="rdoFotosPreview"></div>` : ""}
@@ -3498,6 +3499,12 @@ function rdoFotosPendentesLimpar() {
   rdoFotosPendentes = [];
 }
 
+// Chrome/Edge não renderizam HEIC — o preview pendente mostra um quadro no
+// lugar da <img>; a conversão para JPEG acontece no servidor, no envio.
+function rdoEhHeic(nome) {
+  return /\.(heic|heif)$/i.test(nome || "");
+}
+
 function rdoRenderFotosPreview() {
   const wrap = qs("rdoFotosPreview");
   if (!wrap) return;
@@ -3509,7 +3516,9 @@ function rdoRenderFotosPreview() {
     <p class="field-hint">${rdoFotosPendentes.length} foto(s) aguardando envio — escreva a legenda de cada uma e clique em "Enviar fotos".</p>
     <div class="rdo-fotos-grid">
       ${rdoFotosPendentes.map((p, i) => `<figure class="rdo-foto rdo-foto-pendente">
-        <img src="${p.url}" alt="${svgText(p.file.name)}">
+        ${rdoEhHeic(p.file.name)
+          ? `<div class="rdo-foto-sem-previa"><span>Prévia indisponível</span><small>${svgText(p.file.name)} — será convertida para JPEG no envio</small></div>`
+          : `<img src="${p.url}" alt="${svgText(p.file.name)}">`}
         <input type="text" class="rdo-foto-legenda" data-foto-idx="${i}" placeholder="Legenda desta foto" maxlength="200" value="${svgText(p.legenda || "")}">
         <button class="danger" type="button" data-foto-rem="${i}">Remover</button>
       </figure>`).join("")}

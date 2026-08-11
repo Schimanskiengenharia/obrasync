@@ -6014,6 +6014,8 @@ input.cep-loading {
 .rdo-fotos-preview { margin-bottom: 10px; }
 .rdo-foto-pendente { border-style: dashed; }
 .rdo-foto-pendente .rdo-foto-legenda { width: 100%; margin: 4px 0; font-size: 12px; box-sizing: border-box; }
+.rdo-foto-sem-previa { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; height: 120px; padding: 8px; box-sizing: border-box; text-align: center; border-radius: 6px; background: var(--surface-hover, #f1f5f9); color: var(--muted, #667085); }
+.rdo-foto-sem-previa small { font-size: 11px; word-break: break-word; }
 .rdo-assinaturas { list-style: none; padding: 0; margin: 0 0 10px; }
 .rdo-assinaturas li { padding: 3px 0; font-size: 13px; }
 .rdo-assinaturas-panel { border-left: 4px solid var(--accent, #0f766e); }
