@@ -9787,6 +9787,55 @@ function rdo_heic_jpg_candidatos(string $out): array
     return [$out, dirname($out) . '/' . pathinfo($out, PATHINFO_FILENAME) . '-1.jpg'];
 }
 
+function rdo_heif_convert_bin(): ?string
+{
+    $which = trim((string) @shell_exec('command -v heif-convert 2>/dev/null'));
+    if ($which !== '' && @is_executable($which)) {
+        return $which;
+    }
+    foreach (['/usr/bin/heif-convert', '/usr/local/bin/heif-convert'] as $cand) {
+        if (@is_executable($cand)) {
+            return $cand;
+        }
+    }
+    return null;
+}
+
+// Converte o .heic armazenado em .jpg definitivo. A conversão é o validador
+// final: falhou = arquivo inválido, nada entra no banco. O original é apagado
+// sempre — o registro da obra é o JPEG (decisão da spec, não guardar os dois).
+function rdo_heic_para_jpeg(string $path): string
+{
+    $bin = rdo_heif_convert_bin();
+    if ($bin === null) {
+        @unlink($path);
+        fail('Conversão HEIC indisponível no servidor — instale com: sudo apt install libheif-examples', 422);
+    }
+    $out = preg_replace('/\.(heic|heif)$/i', '', $path) . '.jpg';
+    @shell_exec(rdo_heif_convert_cmd($bin, $path, $out));
+    $final = null;
+    foreach (rdo_heic_jpg_candidatos($out) as $cand) {
+        if (is_file($cand) && filesize($cand) > 0) {
+            $final = $cand;
+            break;
+        }
+    }
+    foreach (glob(dirname($out) . '/' . pathinfo($out, PATHINFO_FILENAME) . '-*.jpg') ?: [] as $extra) {
+        if ($extra !== $final) {
+            @unlink($extra);
+        }
+    }
+    @unlink($path);
+    if ($final === null) {
+        fail('Arquivo HEIC inválido ou corrompido.', 400);
+    }
+    if ($final !== $out && @rename($final, $out)) {
+        $final = $out;
+    }
+    @chmod($final, 0640);
+    return $final;
+}
+
 function handle_rdo_upload_foto(PDO $pdo, array $config, array $authUser): never
 {
     ensure_rdo_tables($pdo);
@@ -9807,7 +9856,20 @@ function handle_rdo_upload_foto(PDO $pdo, array $config, array $authUser): never
     if (!is_dir($dir)) {
         mkdir($dir, 0750, true);
     }
-    $path = store_upload($_FILES['file'] ?? [], $dir, ['jpg', 'jpeg', 'png', 'webp'], ['image/jpeg', 'image/png', 'image/webp']);
+    $ext = strtolower(pathinfo((string) ($_FILES['file']['name'] ?? ''), PATHINFO_EXTENSION));
+    if (in_array($ext, ['heic', 'heif'], true)) {
+        // Foto de iPhone: valida pela assinatura (não pelo MIME — ver
+        // rdo_heic_magic_ok), armazena e converte para JPEG definitivo.
+        $tmp = (string) ($_FILES['file']['tmp_name'] ?? '');
+        $cabeca = ($tmp !== '' && is_readable($tmp)) ? (string) file_get_contents($tmp, false, null, 0, 32) : '';
+        if (!rdo_heic_magic_ok($cabeca)) {
+            fail('Conteúdo do arquivo não corresponde ao tipo permitido.', 400);
+        }
+        $path = store_upload($_FILES['file'] ?? [], $dir, ['heic', 'heif'], []);
+        $path = rdo_heic_para_jpeg($path);
+    } else {
+        $path = store_upload($_FILES['file'] ?? [], $dir, ['jpg', 'jpeg', 'png', 'webp'], ['image/jpeg', 'image/png', 'image/webp']);
+    }
     $legenda = trim((string) ($_POST['legenda'] ?? '')) ?: null;
     $fotoId = insert_dynamic($pdo, 'obra_rdo_fotos', [
         'rdoId' => $rdoId,
