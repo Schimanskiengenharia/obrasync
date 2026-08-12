@@ -3385,7 +3385,11 @@ function rdoWireForm(d, locked) {
   qs("rdoBtnAssinar")?.addEventListener("click", rdoAssinar);
   qs("rdoBtnReabrir")?.addEventListener("click", rdoReabrir);
   qs("rdoFotoFile")?.addEventListener("change", (e) => {
-    [...(e.target.files || [])].forEach((file) => rdoFotosPendentes.push({ file, url: URL.createObjectURL(file), legenda: "" }));
+    [...(e.target.files || [])].forEach((file) => {
+      const p = { file, url: URL.createObjectURL(file), legenda: "", previa: rdoEhHeic(file.name) ? "gerando" : "ok" };
+      rdoFotosPendentes.push(p);
+      if (p.previa === "gerando") rdoGerarPreviaHeic(p);
+    });
     e.target.value = ""; // permite selecionar o mesmo arquivo de novo
     rdoRenderFotosPreview();
   });
@@ -3499,6 +3503,33 @@ function rdoFotosPendentesLimpar() {
   rdoFotosPendentes = [];
 }
 
+// Prévia real de HEIC: o servidor converte e devolve um JPEG efêmero (nada é
+// gravado até "Enviar fotos"). Falha degrada para o quadro "Prévia
+// indisponível" — o envio segue normal de qualquer jeito.
+async function rdoGerarPreviaHeic(p) {
+  let novaUrl = null;
+  try {
+    const form = new FormData();
+    form.append("file", p.file);
+    const resp = await fetch(`${API_BASE}/rdo-foto-previa`, { method: "POST", headers: authHeaders(), body: form });
+    if (resp.ok) novaUrl = URL.createObjectURL(await resp.blob());
+  } catch (e) {
+    console.warn("Prévia HEIC indisponível (o envio segue normal):", e);
+  }
+  if (!rdoFotosPendentes.includes(p)) {
+    if (novaUrl) URL.revokeObjectURL(novaUrl);
+    return;
+  }
+  if (novaUrl) {
+    URL.revokeObjectURL(p.url);
+    p.url = novaUrl;
+    p.previa = "ok";
+  } else {
+    p.previa = "falhou";
+  }
+  rdoRenderFotosPreview();
+}
+
 // Chrome/Edge não renderizam HEIC — o preview pendente mostra um quadro no
 // lugar da <img>; a conversão para JPEG acontece no servidor, no envio.
 function rdoEhHeic(nome) {
@@ -3516,8 +3547,8 @@ function rdoRenderFotosPreview() {
     <p class="field-hint">${rdoFotosPendentes.length} foto(s) aguardando envio — escreva a legenda de cada uma e clique em "Enviar fotos".</p>
     <div class="rdo-fotos-grid">
       ${rdoFotosPendentes.map((p, i) => `<figure class="rdo-foto rdo-foto-pendente">
-        ${rdoEhHeic(p.file.name)
-          ? `<div class="rdo-foto-sem-previa"><span>Prévia indisponível</span><small>${svgText(p.file.name)} — será convertida para JPEG no envio</small></div>`
+        ${p.previa !== "ok"
+          ? `<div class="rdo-foto-sem-previa"><span>${p.previa === "gerando" ? "Gerando prévia..." : "Prévia indisponível"}</span><small>${svgText(p.file.name)}${p.previa === "gerando" ? "" : " — será convertida para JPEG no envio"}</small></div>`
           : `<img src="${p.url}" alt="${svgText(p.file.name)}">`}
         <input type="text" class="rdo-foto-legenda" data-foto-idx="${i}" placeholder="Legenda desta foto" maxlength="200" value="${svgText(p.legenda || "")}">
         <button class="danger" type="button" data-foto-rem="${i}">Remover</button>
