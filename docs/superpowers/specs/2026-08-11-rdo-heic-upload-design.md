@@ -88,20 +88,27 @@ Sem o passo 1, fotos JPG/PNG/WEBP continuam funcionando; só o `.heic` retorna o
 ## Adendo 2026-08-11 — prévia real no navegador (aprovado após a v1.45.0)
 
 Pedido do usuário: ver a **imagem de verdade** na fila de pendentes (junto do campo de legenda),
-no lugar do quadro "Prévia indisponível". Decisão (opção A, aprovada): **decodificar o HEIC no
-navegador só para a prévia** — o envio continua mandando o HEIC original e o servidor converte
-(nada da v1.45.0 muda).
+no lugar do quadro "Prévia indisponível".
 
-- Biblioteca **heic2any 0.0.4** (MIT, ~1,3 MB) vendorizada em `assets/vendor/heic2any.min.js`
-  (molde dos ícones Tabler). Build **asm.js** — compatível com o CSP atual (`script-src 'self'`,
-  sem `unsafe-eval`); `img-src` já permite `blob:`.
-- **Carregamento sob demanda**: o script só é injetado na primeira foto HEIC escolhida
-  (`rdoCarregarHeic2any()`, promise única com retry se o load falhar). Nunca pesa no login.
-- Estado novo `previa` na fila `rdoFotosPendentes`: `"ok"` (mostra `<img>`), `"gerando"`
-  (quadro "Gerando prévia..."), `"falhou"` (quadro "Prévia indisponível" — envio segue normal).
-- `rdoGerarPreviaHeic(p)`: decodifica para JPEG (quality 0.7, só prévia; multi-imagem usa o
-  primeiro blob), troca `p.url` pela objectURL do JPEG (revogando a antiga) e re-renderiza.
-  Foto removida da fila durante a decodificação → objectURL nova revogada, nada renderizado.
-- Falha de decodificação/carregamento **degrada** para o quadro atual — nunca bloqueia o envio.
-- Release v1.45.1, cache `?v=1816`. Rejeitada a alternativa B (upload imediato + prévia do
-  servidor): mudaria a semântica da fila (foto entraria no RDO antes do "Enviar fotos").
+**Histórico da decisão:** a opção A original (decodificar no navegador com `heic2any`) foi
+aprovada e depois **bloqueada na verificação técnica**: a lib usa `new Function(...)` (cola
+Emscripten/embind) e o CSP do sistema (`script-src 'self'`, endurecido na v1.12) bloqueia —
+a prévia falharia sempre em produção. Afrouxar com `'unsafe-eval'` foi rejeitado (enfraquece a
+proteção anti-XSS global); decodificador WASM + `'wasm-unsafe-eval'` foi oferecido e recusado.
+**Decisão final do usuário: PRÉVIA PELO SERVIDOR.**
+
+- **Endpoint novo `POST rdo-foto-previa`** (auth + `authorize_request('rdo','edit')`, molde do
+  `rdo-foto-upload`): recebe o HEIC, valida assinatura (`rdo_heic_magic_ok`), converte com os
+  MESMOS helpers da v1.45.0 (`rdo_heif_convert_bin`/`rdo_heif_convert_cmd`/
+  `rdo_heic_jpg_candidatos`) em arquivo temporário do sistema e **devolve o JPEG no corpo da
+  resposta SEM gravar nada** (nem uploads/, nem banco); temporários apagados sempre.
+  Binário ausente → 422 (mesma mensagem); HEIC inválido → 400.
+- **Front**: estado novo `previa` na fila `rdoFotosPendentes` — `"ok"` (mostra `<img>`),
+  `"gerando"` (quadro "Gerando prévia..."), `"falhou"` (quadro "Prévia indisponível" — envio
+  segue normal). `rdoGerarPreviaHeic(p)` faz `fetch` autenticado do endpoint (molde de
+  `rdoCarregarFoto`), troca `p.url` pela objectURL do JPEG (revogando a antiga) e re-renderiza;
+  foto removida da fila durante a geração → objectURL revogada, nada renderizado.
+- Falha de rede/conversão **degrada** para o quadro atual — nunca bloqueia o envio.
+- Custo aceito: a foto HEIC trafega 2× (prévia + envio real); prévia leva ~2-4 s.
+- O envio real NÃO muda (v1.45.0 intocada); CSP intocado; sem biblioteca vendorizada; sem
+  migration. Release v1.45.1, cache `?v=1816`.
