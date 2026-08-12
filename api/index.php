@@ -9484,7 +9484,10 @@ function handle_rdo_list(PDO $pdo): never
     respond(['ok' => true, 'data' => $stmt->fetchAll()]);
 }
 
-function handle_rdo_get(PDO $pdo, int $id): never
+// Carrega o RDO completo (efetivo/equipamentos, disciplinas com CPF,
+// assinaturas, fotos id+legenda) — compartilhado pelo rdo-get (JSON) e pelo
+// rdo-pdf (documento). Fotos ficam SEM o caminho de disco de propósito.
+function rdo_get_dados(PDO $pdo, int $id): array
 {
     ensure_rdo_tables($pdo);
     if (!$id) {
@@ -9516,7 +9519,12 @@ function handle_rdo_get(PDO $pdo, int $id): never
     $f = $pdo->prepare('SELECT id, legenda FROM obra_rdo_fotos WHERE rdoId = ? ORDER BY id');
     $f->execute([$id]);
     $rdo['fotos'] = $f->fetchAll();
-    respond(['ok' => true, 'data' => $rdo]);
+    return $rdo;
+}
+
+function handle_rdo_get(PDO $pdo, int $id): never
+{
+    respond(['ok' => true, 'data' => rdo_get_dados($pdo, $id)]);
 }
 
 function handle_rdo_save(PDO $pdo, array $authUser, array $payload): never
@@ -9764,6 +9772,153 @@ function handle_rdo_delete(PDO $pdo, array $authUser, int $id, array $config): n
     }
     server_audit($pdo, $authUser, 'delete', 'obra_rdo', $id, 'RDO excluído');
     respond(['ok' => true]);
+}
+
+// ── RDO PDF por download: helpers puros do documento ────────────────────────
+function rdo_pdf_esc($v): string
+{
+    return htmlspecialchars((string) ($v ?? ''), ENT_QUOTES, 'UTF-8');
+}
+
+// Máscara 000.000.000-00 (espelho do rdoCpfFmt do front): vazio → "não
+// informado"; fora do padrão sai como veio (não quebra o documento).
+function rdo_pdf_cpf_fmt($cpf): string
+{
+    $dig = preg_replace('/\D/', '', (string) ($cpf ?? ''));
+    if ($dig === '') {
+        return 'não informado';
+    }
+    if (strlen($dig) !== 11) {
+        return (string) $cpf;
+    }
+    return substr($dig, 0, 3) . '.' . substr($dig, 3, 3) . '.' . substr($dig, 6, 3) . '-' . substr($dig, 9);
+}
+
+// "YYYY-MM-DD" → "DD/MM/AAAA"; timestamp MySQL → "DD/MM/AAAA HH:MM" — pela
+// PRÓPRIA STRING, sem Date/UTC (regra M10). Fora do padrão sai como veio.
+function rdo_pdf_data_br($v): string
+{
+    $s = trim((string) ($v ?? ''));
+    if (preg_match('/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/', $s, $m)) {
+        return "{$m[3]}/{$m[2]}/{$m[1]} {$m[4]}:{$m[5]}";
+    }
+    if (preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $s, $m)) {
+        return "{$m[3]}/{$m[2]}/{$m[1]}";
+    }
+    return $s;
+}
+
+// HTML completo do documento (CSS inline, fonte DejaVu Sans p/ acentos no
+// dompdf). $fotos = [['src' => dataURI, 'legenda' => ...]]. Espelha os blocos
+// do PDF de impressão do front (rdoDiaCorpoHtml + rdoAssinaturasBlocosHtml).
+function rdo_pdf_documento_html(array $rdo, array $empresa, string $obraNome, array $fotos, ?string $logoDataUri): string
+{
+    $tabela = function (string $titulo, array $head, array $linhas): string {
+        if (!$linhas) {
+            return '';
+        }
+        $ths = implode('', array_map(fn ($h) => '<th>' . rdo_pdf_esc($h) . '</th>', $head));
+        return '<h3>' . rdo_pdf_esc($titulo) . '</h3><table class="tab"><thead><tr>' . $ths . '</tr></thead><tbody>' . implode('', $linhas) . '</tbody></table>';
+    };
+    $bloco = function (string $titulo, $txt): string {
+        $t = trim((string) ($txt ?? ''));
+        if ($t === '') {
+            return '';
+        }
+        return '<h3>' . rdo_pdf_esc($titulo) . '</h3><p class="texto">' . str_replace("\n", '<br>', rdo_pdf_esc($t)) . '</p>';
+    };
+    $efetivo = $tabela('Efetivo', ['Função', 'Qtd'], array_map(fn ($x) => '<tr><td>' . rdo_pdf_esc($x['funcao'] ?? '') . '</td><td>' . rdo_pdf_esc((string) ($x['quantidade'] ?? '')) . '</td></tr>', is_array($rdo['efetivo'] ?? null) ? $rdo['efetivo'] : []));
+    $equip = $tabela('Equipamentos', ['Equipamento', 'Qtd', 'Situação'], array_map(fn ($x) => '<tr><td>' . rdo_pdf_esc($x['nome'] ?? '') . '</td><td>' . rdo_pdf_esc((string) ($x['quantidade'] ?? '')) . '</td><td>' . rdo_pdf_esc($x['situacao'] ?? '') . '</td></tr>', is_array($rdo['equipamentos'] ?? null) ? $rdo['equipamentos'] : []));
+    $atuou = array_values(array_filter($rdo['disciplinas'] ?? [], fn ($x) => (int) ($x['atuouNoDia'] ?? 0) === 1));
+    $discTab = $tabela('Disciplinas que atuaram', ['Disciplina', 'Responsável'], array_map(fn ($x) => '<tr><td>' . rdo_pdf_esc($x['disciplinaNome'] ?? '') . '</td><td>' . rdo_pdf_esc(($x['responsavelNome'] ?? '') ?: '—') . '</td></tr>', $atuou));
+    $fotosHtml = '';
+    if ($fotos) {
+        $figs = implode('', array_map(fn ($f) => '<div class="foto"><img src="' . $f['src'] . '"><p class="foto-leg">' . rdo_pdf_esc($f['legenda'] ?? '') . '</p></div>', $fotos));
+        $fotosHtml = '<h3>Registro fotográfico</h3><div class="fotos">' . $figs . '</div>';
+    }
+    $assGeral = null;
+    foreach (($rdo['assinaturas'] ?? []) as $a) {
+        if (($a['tipo'] ?? '') === 'Geral' && ($a['evento'] ?? '') === 'Assinatura') {
+            $assGeral = $a;
+        }
+    }
+    $blocoAssina = function (array $b): string {
+        $linhas = ['<strong>' . rdo_pdf_esc(($b['nome'] ?? '') ?: '—') . '</strong>'];
+        if (!empty($b['papel'])) {
+            $linhas[] = '<span>' . rdo_pdf_esc($b['papel']) . '</span>';
+        }
+        $linhas[] = '<span>CPF: ' . rdo_pdf_esc(rdo_pdf_cpf_fmt($b['cpf'] ?? null)) . '</span>';
+        if (!empty($b['disciplina'])) {
+            $linhas[] = '<span>Disciplina: ' . rdo_pdf_esc($b['disciplina']) . '</span>';
+        }
+        if (!empty($b['criadoEm'])) {
+            $linhas[] = '<span>Criado em: ' . rdo_pdf_esc(rdo_pdf_data_br($b['criadoEm'])) . '</span>';
+        }
+        $linhas[] = '<span>Assinado em: ' . (!empty($b['assinadoEm']) ? rdo_pdf_esc(rdo_pdf_data_br($b['assinadoEm'])) : '<em>pendente</em>') . '</span>';
+        return '<div class="assina">' . implode('<br>', $linhas) . '</div>';
+    };
+    $blocos = [$blocoAssina([
+        'nome' => ($assGeral['assinanteNome'] ?? null) ?: ($rdo['responsavelGeralNome'] ?? ''),
+        'cpf' => ($assGeral['assinanteCpf'] ?? null) ?: ($rdo['responsavelGeralCpf'] ?? null),
+        'papel' => 'Responsável pelo RDO (criador)',
+        'criadoEm' => $rdo['createdAt'] ?? null,
+        'assinadoEm' => $assGeral['assinadoEm'] ?? null,
+    ])];
+    foreach ($atuou as $x) {
+        if (empty($x['responsavelUserId']) && empty($x['responsavelNome'])) {
+            continue;
+        }
+        $blocos[] = $blocoAssina([
+            'nome' => $x['responsavelNome'] ?? '',
+            'cpf' => $x['responsavelCpf'] ?? null,
+            'disciplina' => $x['disciplinaNome'] ?? '',
+            'assinadoEm' => !empty($x['assinado']) ? ($x['assinadoEm'] ?? null) : null,
+        ]);
+    }
+    $assinaturas = '<h3>Assinaturas</h3><div class="assinas">' . implode('', $blocos) . '</div>';
+    $contatos = implode(' · ', array_filter([
+        !empty($empresa['whatsapp']) ? (string) $empresa['whatsapp'] : (string) ($empresa['phone'] ?? ''),
+        (string) ($empresa['email'] ?? ''),
+        (string) ($empresa['website'] ?? ''),
+    ], fn ($x) => $x !== ''));
+    $endereco = implode(' · ', array_filter([
+        trim((string) ($empresa['address'] ?? '') . (!empty($empresa['numero']) ? ', ' . $empresa['numero'] : '')),
+        implode(' - ', array_filter([(string) ($empresa['city'] ?? ''), (string) ($empresa['estado'] ?? '')], fn ($x) => $x !== '')),
+        !empty($empresa['zipCode']) ? 'CEP ' . $empresa['zipCode'] : '',
+    ], fn ($x) => $x !== ''));
+    $head = '<div class="doc-head">'
+        . ($logoDataUri ? '<img class="doc-logo" src="' . $logoDataUri . '">' : '')
+        . '<div class="doc-emp"><strong>' . rdo_pdf_esc(($empresa['name'] ?? '') ?: 'Empresa') . '</strong>'
+        . (!empty($empresa['document']) ? '<br>CNPJ: ' . rdo_pdf_esc($empresa['document']) : '')
+        . ($endereco !== '' ? '<br>' . rdo_pdf_esc($endereco) : '')
+        . ($contatos !== '' ? '<br>' . rdo_pdf_esc($contatos) : '')
+        . '</div><div class="doc-titulo"><strong>Relatório Diário de Obra (RDO)</strong><br>'
+        . rdo_pdf_esc(implode(' · ', array_filter([$obraNome, rdo_pdf_data_br($rdo['data'] ?? '')], fn ($x) => $x !== '')))
+        . '</div></div>';
+    $css = 'body { font-family: "DejaVu Sans", sans-serif; font-size: 10pt; color: #111; }'
+        . ' h3 { font-size: 11pt; margin: 12pt 0 4pt; border-bottom: 1pt solid #999; padding-bottom: 2pt; }'
+        . ' .doc-head { border-bottom: 2pt solid #333; padding-bottom: 6pt; margin-bottom: 8pt; }'
+        . ' .doc-logo { max-height: 50pt; max-width: 140pt; float: left; margin-right: 10pt; }'
+        . ' .doc-emp { font-size: 8pt; }'
+        . ' .doc-titulo { text-align: right; font-size: 11pt; margin-top: 4pt; }'
+        . ' .tab { width: 100%; border-collapse: collapse; margin: 2pt 0 6pt; }'
+        . ' .tab th, .tab td { border: 0.5pt solid #888; padding: 3pt 5pt; font-size: 9pt; text-align: left; }'
+        . ' .tab th { background: #eee; }'
+        . ' .texto { margin: 2pt 0 6pt; }'
+        . ' .foto { display: inline-block; width: 46%; margin: 4pt 1%; vertical-align: top; page-break-inside: avoid; }'
+        . ' .foto img { max-width: 100%; max-height: 200pt; }'
+        . ' .foto-leg { font-size: 8pt; color: #444; margin: 2pt 0 0; }'
+        . ' .assina { display: inline-block; width: 44%; margin: 6pt 2%; padding: 6pt; border: 0.5pt solid #999; vertical-align: top; font-size: 9pt; page-break-inside: avoid; }';
+    return '<!DOCTYPE html><html><head><meta charset="utf-8"><style>' . $css . '</style></head><body>'
+        . $head
+        . '<p class="rdo-info"><strong>RDO Nº ' . rdo_pdf_esc((string) ($rdo['numeroSequencial'] ?? '')) . '</strong> · Condição: ' . rdo_pdf_esc(($rdo['condicaoTrabalho'] ?? '') ?: '—') . '<br>'
+        . 'Clima: manhã ' . rdo_pdf_esc(($rdo['climaManha'] ?? '') ?: '—') . ' · tarde ' . rdo_pdf_esc(($rdo['climaTarde'] ?? '') ?: '—') . ' · noite ' . rdo_pdf_esc(($rdo['climaNoite'] ?? '') ?: '—') . '</p>'
+        . $efetivo . $equip
+        . $bloco('Atividades executadas', $rdo['atividades'] ?? '')
+        . $bloco('Ocorrências / paralisações', $rdo['ocorrencias'] ?? '')
+        . $bloco('Observações', $rdo['observacoes'] ?? '')
+        . $discTab . $fotosHtml . $assinaturas
+        . '</body></html>';
 }
 
 // ── RDO fotos HEIC: helpers puros ───────────────────────────────────────────
