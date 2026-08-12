@@ -93,9 +93,10 @@ function avisarFalha(contexto, mensagem) {
     showToast(mensagem, 5000);
   };
 }
-const APP_VERSION = "v1.45.1";
+const APP_VERSION = "v1.45.2";
 const APP_VERSION_DATE = "2026-08-11";
 const APP_CHANGELOG = [
+  "Correção: fotos saíam em branco no PDF do Diário de Obra. A tela de impressão era aberta no mesmo instante em que o documento era montado, sem esperar as fotos terminarem de carregar — fotos grandes (as de celular moderno, 12 megapixels) nunca chegavam a tempo e o PDF saía sem nenhuma imagem. Agora o sistema espera cada imagem estar pronta antes de abrir a impressão. A mesma proteção vale para o relatório semanal do RDO e para os demais documentos imprimíveis (contrato, pedido de compra, proposta) (v1.45.2).",
   "Diário de Obra — prévia real das fotos HEIC antes do envio: ao escolher fotos .heic/.heif, o quadro \"Prévia indisponível\" dá lugar à imagem de verdade — aparece \"Gerando prévia...\" por alguns segundos (o servidor converte a foto) e ela é exibida junto do campo de legenda, como as JPG. Nada é gravado no diário até você clicar em \"Enviar fotos\"; se a prévia falhar (sem rede, conversor ausente), o quadro antigo volta e o envio continua funcionando normalmente (v1.45.1).",
   "Diário de Obra — fotos HEIC do iPhone: o RDO passa a aceitar fotos .heic/.heif enviadas direto do iPhone ou transferidas para o computador. O servidor converte para JPEG no envio — na tela, no PDF e no relatório semanal a foto aparece como sempre. Como o navegador não exibe HEIC, a foto pendente mostra um quadro \"Prévia indisponível\" até o envio; legenda e remoção funcionam igual. Se o conversor não estiver instalado no servidor, o envio avisa exatamente o que instalar, sem afetar as fotos JPG/PNG/WEBP. Vídeos (MP4) seguem não aceitos — o diário registra imagens (v1.45.0).",
   "Caixa — aprovação de movimentos pendentes (Conciliação, etapa 3 de 4): os movimentos importados do extrato agora nascem PENDENTES de classificação e ganham botões próprios na tela de Movimentações: APROVAR abre a classificação (categoria e centro de custo obrigatórios; obra, fornecedor/cliente opcionais) e cria a conta a pagar/receber JÁ LIQUIDADA, com vínculo completo ao movimento — o custo realizado conta uma vez só. Painel de LOTE: marque vários movimentos do mesmo lado, preencha os dados comuns uma vez e aprove todos (dez tarifas do mês viram dez contas com um clique). Antes de criar, o sistema procura títulos parecidos (mesmo valor, vencimento próximo) e oferece: vincular ao existente, criar mesmo assim ou cancelar — no lote, as suspeitas são separadas para tratamento individual. DISPENSAR tira da fila o que não vira conta (transferências entre contas próprias) sem mexer no saldo — e é reversível. Migration retroativa opcional coloca os ~243 movimentos históricos na fila (2026-08-01-caixa-pendente-retroativo.sql, rodar com backup). O saldo de caixa NÃO muda: pendente é sobre classificação, não sobre existência do dinheiro (v1.44.0).",
@@ -3703,6 +3704,17 @@ async function rdoExcluirDisciplina(id) {
 }
 
 // ── PDF do RDO (window.print + container dedicado) ───────────────────────────
+// Espera as imagens do contêiner terminarem de carregar/decodificar ANTES do
+// window.print(): o preview de impressão fotografa a página como está — foto
+// grande (12 MP) inserida no mesmo tick sairia em branco no PDF.
+async function aguardarImagensDoc(box) {
+  await Promise.all([...box.querySelectorAll("img")].map((img) => {
+    if (typeof img.decode === "function") return img.decode().catch(ignorarFalha("decodificar imagem do documento"));
+    if (img.complete) return Promise.resolve();
+    return new Promise((res) => { img.onload = img.onerror = res; });
+  }));
+}
+
 async function rdoGerarPdf(id) {
   let d = rdoUI.atual && sameId(rdoUI.atual.id, id) ? rdoUI.atual : null;
   try {
@@ -3729,6 +3741,7 @@ async function rdoGerarPdf(id) {
     document.body.appendChild(box);
   }
   box.innerHTML = rdoPdfHtml(d, fotos);
+  await aguardarImagensDoc(box);
   document.body.classList.add("rdo-printing");
   const cleanup = () => {
     document.body.classList.remove("rdo-printing");
@@ -17459,7 +17472,7 @@ function generateDocumentFooter() {
 
 // Imprime um documento isolado (container dedicado #docPrint, padrão do RDO):
 // abre o preview/PDF do navegador mostrando só o documento.
-function printStandaloneDocument(innerHtml) {
+async function printStandaloneDocument(innerHtml) {
   let box = qs("docPrint");
   if (!box) {
     box = document.createElement("div");
@@ -17467,6 +17480,7 @@ function printStandaloneDocument(innerHtml) {
     document.body.appendChild(box);
   }
   box.innerHTML = innerHtml;
+  await aguardarImagensDoc(box);
   document.body.classList.add("doc-printing");
   const cleanup = () => {
     document.body.classList.remove("doc-printing");

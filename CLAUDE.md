@@ -6,7 +6,9 @@
 >
 > **Mapa de arquitetura (estado atual 04/07/2026)** — módulos e conexões: eixo central já ligado (SINAPI→comparador IA→orçamento→proposta→contrato→financeiro), pontas soltas (cotações/comparador de fornecedores/pedido de compra) e pendências para retomar: [`docs/arquitetura/mapa-modulos-conexoes.md`](docs/arquitetura/mapa-modulos-conexoes.md).
 >
-> **Versão atual:** `v1.45.1` · 2026-08-11
+> **Versão atual:** `v1.45.2` · 2026-08-11
+>
+> **v1.45.2 — Fix: fotos em branco no PDF do RDO (corrida do print):** `rdoGerarPdf` e `printStandaloneDocument` chamavam `window.print()` no MESMO tick em que o `innerHTML` era inserido — o preview de impressão fotografa a página sem esperar `<img>` pendente, e foto de 12 MP (blob) perdia a corrida SEMPRE (todas em branco). Helper novo **`aguardarImagensDoc(box)`** (`img.decode()` com fallback `complete`/onload-onerror) aguardado ANTES do print nos dois fluxos; `printStandaloneDocument` virou async (callers não aguardam — inofensivo). Alcança RDO individual, relatório semanal, contrato, pedido, proposta e comparativos. Sem migration/endpoint. Cache `?v=1817`.
 >
 > **v1.45.1 — RDO HEIC: prévia real pelo servidor:** endpoint novo **`POST rdo-foto-previa`** (auth `rdo/edit`, molde do rdo-foto-upload) converte o HEIC com os helpers da v1.45.0 em temporário do sistema e devolve o **JPEG efêmero** no corpo — NADA gravado (uploads/banco); temporários sempre apagados; binário ausente = 422 (mesma mensagem), inválido = 400. Front: estado `previa` (`ok`/`gerando`/`falhou`) por item de `rdoFotosPendentes`; `rdoGerarPreviaHeic` (fetch autenticado, molde rdoCarregarFoto) troca `p.url` pelo JPEG e re-renderiza; falha degrada para o quadro "Prévia indisponível" sem bloquear o envio. Decisão registrada no adendo da spec: heic2any (client-side) foi DESCARTADA — usa `new Function` e o CSP `script-src 'self'` bloqueia; `'unsafe-eval'`/wasm recusados. CSP e fluxo de envio intocados; sem migration. Cache `?v=1816`.
 >
