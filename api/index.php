@@ -838,6 +838,11 @@ try {
         authorize_request($pdo, $authUser, 'rdo', 'view');
         handle_rdo_foto_download($pdo, (int) ($_GET['id'] ?? 0));
     }
+    if ($resource === 'rdo-pdf') {
+        require_method($method, ['GET']);
+        authorize_request($pdo, $authUser, 'rdo', 'view');
+        handle_rdo_pdf_download($pdo, $config, (int) ($_GET['id'] ?? 0));
+    }
     if ($resource === 'obra-disciplinas-list') {
         require_method($method, ['GET']);
         authorize_request($pdo, $authUser, 'rdo', 'view');
@@ -9919,6 +9924,86 @@ function rdo_pdf_documento_html(array $rdo, array $empresa, string $obraNome, ar
         . $bloco('Observações', $rdo['observacoes'] ?? '')
         . $discTab . $fotosHtml . $assinaturas
         . '</body></html>';
+}
+
+// Gera o PDF real do RDO no servidor (dompdf) e devolve para DOWNLOAD —
+// substitui a tela de impressão no RDO individual. Logo e fotos embutidas
+// como data URI (nada de acesso remoto: isRemoteEnabled=false).
+function handle_rdo_pdf_download(PDO $pdo, array $config, int $id): never
+{
+    $rdo = rdo_get_dados($pdo, $id);
+    foreach (['/vendor/autoload.php', '/../vendor/autoload.php'] as $rel) {
+        $autoload = __DIR__ . $rel;
+        if (is_file($autoload)) {
+            require_once $autoload;
+            break;
+        }
+    }
+    if (!class_exists('Dompdf\\Dompdf')) {
+        fail('Gerar PDF requer a biblioteca dompdf (composer require dompdf/dompdf). Veja CLAUDE.md.', 422);
+    }
+    ini_set('memory_limit', '1024M');
+    set_time_limit(120);
+    $obraNome = '';
+    try {
+        $o = $pdo->prepare('SELECT name FROM projects WHERE id = ?');
+        $o->execute([(int) ($rdo['projectId'] ?? 0)]);
+        $obraNome = (string) ($o->fetchColumn() ?: '');
+    } catch (Throwable $e) {
+        $obraNome = '';
+    }
+    $empresa = [];
+    try {
+        $empresa = $pdo->query('SELECT * FROM company_settings LIMIT 1')->fetch(PDO::FETCH_ASSOC) ?: [];
+    } catch (Throwable $e) {
+        $empresa = [];
+    }
+    $logoDataUri = null;
+    $logoFile = !empty($empresa['logo_url']) ? company_logo_dir($config) . '/' . basename((string) $empresa['logo_url']) : '';
+    $logoExt = strtolower(pathinfo($logoFile, PATHINFO_EXTENSION));
+    if ($logoFile !== '' && is_file($logoFile) && in_array($logoExt, ['png', 'jpg', 'jpeg'], true)) {
+        $logoDataUri = 'data:image/' . ($logoExt === 'png' ? 'png' : 'jpeg') . ';base64,' . base64_encode((string) file_get_contents($logoFile));
+    }
+    $fotos = [];
+    $f = $pdo->prepare('SELECT caminho, legenda FROM obra_rdo_fotos WHERE rdoId = ? ORDER BY id');
+    $f->execute([$id]);
+    foreach ($f->fetchAll() as $foto) {
+        $caminho = (string) ($foto['caminho'] ?? '');
+        if ($caminho === '' || !is_file($caminho)) {
+            continue;
+        }
+        $ext = strtolower(pathinfo($caminho, PATHINFO_EXTENSION));
+        $mime = ['jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'png' => 'image/png', 'webp' => 'image/webp'][$ext] ?? null;
+        if ($mime === null) {
+            continue;
+        }
+        $bytes = (string) file_get_contents($caminho);
+        // dompdf não decodifica webp de forma confiável — converte via GD quando dá.
+        if ($ext === 'webp' && function_exists('imagecreatefromwebp')) {
+            $img = @imagecreatefromwebp($caminho);
+            if ($img) {
+                ob_start();
+                imagejpeg($img, null, 85);
+                $bytes = (string) ob_get_clean();
+                imagedestroy($img);
+                $mime = 'image/jpeg';
+            }
+        }
+        $fotos[] = ['src' => 'data:' . $mime . ';base64,' . base64_encode($bytes), 'legenda' => $foto['legenda'] ?? ''];
+    }
+    $html = rdo_pdf_documento_html($rdo, $empresa, $obraNome, $fotos, $logoDataUri);
+    $dompdf = new \Dompdf\Dompdf(['isRemoteEnabled' => false]);
+    $dompdf->loadHtml($html, 'UTF-8');
+    $dompdf->setPaper('A4');
+    $dompdf->render();
+    $bytes = (string) $dompdf->output();
+    $nome = preg_replace('/[^A-Za-z0-9_-]+/', '-', 'RDO-' . (int) ($rdo['numeroSequencial'] ?? 0) . '-' . (string) ($rdo['data'] ?? '')) . '.pdf';
+    header_remove('Content-Type');
+    header('Content-Type: application/pdf');
+    header('Content-Disposition: attachment; filename="' . $nome . '"');
+    header('Content-Length: ' . strlen($bytes));
+    echo $bytes;
+    exit;
 }
 
 // ── RDO fotos HEIC: helpers puros ───────────────────────────────────────────
