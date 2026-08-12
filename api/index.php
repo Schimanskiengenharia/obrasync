@@ -823,6 +823,11 @@ try {
         authorize_request($pdo, $authUser, 'rdo', 'edit');
         handle_rdo_upload_foto($pdo, $config, $authUser);
     }
+    if ($resource === 'rdo-foto-previa') {
+        require_method($method, ['POST']);
+        authorize_request($pdo, $authUser, 'rdo', 'edit');
+        handle_rdo_previa_foto();
+    }
     if ($resource === 'rdo-foto-delete') {
         require_method($method, ['POST']);
         authorize_request($pdo, $authUser, 'rdo', 'edit');
@@ -9834,6 +9839,51 @@ function rdo_heic_para_jpeg(string $path): string
     }
     @chmod($final, 0640);
     return $final;
+}
+
+// Prévia efêmera de HEIC: converte e DEVOLVE o JPEG sem gravar nada (nem
+// arquivo definitivo, nem banco) — a fila de pendentes usa isso para mostrar
+// a imagem antes do "Enviar fotos". O envio real segue pelo rdo-foto-upload.
+function handle_rdo_previa_foto(): never
+{
+    $file = $_FILES['file'] ?? [];
+    if (($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+        fail('Falha ao receber arquivo.', 400);
+    }
+    $ext = strtolower(pathinfo((string) ($file['name'] ?? ''), PATHINFO_EXTENSION));
+    if (!in_array($ext, ['heic', 'heif'], true)) {
+        fail('Tipo de arquivo não permitido.', 400);
+    }
+    $tmp = (string) ($file['tmp_name'] ?? '');
+    $cabeca = ($tmp !== '' && is_readable($tmp)) ? (string) file_get_contents($tmp, false, null, 0, 32) : '';
+    if (!rdo_heic_magic_ok($cabeca)) {
+        fail('Conteúdo do arquivo não corresponde ao tipo permitido.', 400);
+    }
+    $bin = rdo_heif_convert_bin();
+    if ($bin === null) {
+        fail('Conversão HEIC indisponível no servidor — instale com: sudo apt install libheif-examples', 422);
+    }
+    $out = rtrim(sys_get_temp_dir(), '/') . '/rdo-previa-' . bin2hex(random_bytes(8)) . '.jpg';
+    @shell_exec(rdo_heif_convert_cmd($bin, $tmp, $out));
+    $conteudo = '';
+    foreach (rdo_heic_jpg_candidatos($out) as $cand) {
+        if (is_file($cand) && filesize($cand) > 0) {
+            $conteudo = (string) file_get_contents($cand);
+            break;
+        }
+    }
+    foreach (glob(dirname($out) . '/' . pathinfo($out, PATHINFO_FILENAME) . '-*.jpg') ?: [] as $extra) {
+        @unlink($extra);
+    }
+    @unlink($out);
+    if ($conteudo === '') {
+        fail('Arquivo HEIC inválido ou corrompido.', 400);
+    }
+    header_remove('Content-Type');
+    header('Content-Type: image/jpeg');
+    header('Content-Length: ' . strlen($conteudo));
+    echo $conteudo;
+    exit;
 }
 
 function handle_rdo_upload_foto(PDO $pdo, array $config, array $authUser): never
