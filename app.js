@@ -93,9 +93,10 @@ function avisarFalha(contexto, mensagem) {
     showToast(mensagem, 5000);
   };
 }
-const APP_VERSION = "v1.45.2";
+const APP_VERSION = "v1.46.0";
 const APP_VERSION_DATE = "2026-08-11";
 const APP_CHANGELOG = [
+  "Diário de Obra — Gerar PDF agora BAIXA o arquivo: o botão deixou de abrir a tela de impressão do navegador e passa a baixar um PDF de verdade, direto na barra de downloads (RDO-numero-obra-data.pdf), pronto para arquivar ou mandar no WhatsApp. O documento é montado no servidor com todos os blocos — cabeçalho da empresa com logo, condição e clima, efetivo, equipamentos, atividades, ocorrências, disciplinas, TODAS as fotos com legenda e os blocos de assinatura com CPF. O relatório semanal continua no fluxo de impressão. Requer instalar a biblioteca dompdf no servidor (composer require dompdf/dompdf) — sem ela, o botão avisa exatamente o que instalar (v1.46.0).",
   "Correção: fotos saíam em branco no PDF do Diário de Obra. A tela de impressão era aberta no mesmo instante em que o documento era montado, sem esperar as fotos terminarem de carregar — fotos grandes (as de celular moderno, 12 megapixels) nunca chegavam a tempo e o PDF saía sem nenhuma imagem. Agora o sistema espera cada imagem estar pronta antes de abrir a impressão. A mesma proteção vale para o relatório semanal do RDO e para os demais documentos imprimíveis (contrato, pedido de compra, proposta) (v1.45.2).",
   "Diário de Obra — prévia real das fotos HEIC antes do envio: ao escolher fotos .heic/.heif, o quadro \"Prévia indisponível\" dá lugar à imagem de verdade — aparece \"Gerando prévia...\" por alguns segundos (o servidor converte a foto) e ela é exibida junto do campo de legenda, como as JPG. Nada é gravado no diário até você clicar em \"Enviar fotos\"; se a prévia falhar (sem rede, conversor ausente), o quadro antigo volta e o envio continua funcionando normalmente (v1.45.1).",
   "Diário de Obra — fotos HEIC do iPhone: o RDO passa a aceitar fotos .heic/.heif enviadas direto do iPhone ou transferidas para o computador. O servidor converte para JPEG no envio — na tela, no PDF e no relatório semanal a foto aparece como sempre. Como o navegador não exibe HEIC, a foto pendente mostra um quadro \"Prévia indisponível\" até o envio; legenda e remoção funcionam igual. Se o conversor não estiver instalado no servidor, o envio avisa exatamente o que instalar, sem afetar as fotos JPG/PNG/WEBP. Vídeos (MP4) seguem não aceitos — o diário registra imagens (v1.45.0).",
@@ -3715,6 +3716,9 @@ async function aguardarImagensDoc(box) {
   }));
 }
 
+// Baixa o PDF REAL gerado pelo servidor (endpoint rdo-pdf/dompdf) — molde do
+// exportSinapiExcel. O RDO individual não passa mais pela tela de impressão;
+// o relatório semanal continua no printStandaloneDocument.
 async function rdoGerarPdf(id) {
   let d = rdoUI.atual && sameId(rdoUI.atual.id, id) ? rdoUI.atual : null;
   try {
@@ -3722,33 +3726,25 @@ async function rdoGerarPdf(id) {
       const r = await apiRequest(`rdo-get?id=${id}`, { method: "GET" });
       d = r.data;
     }
-  } catch (e) {
-    return alert(`Erro ao gerar PDF: ${e.message}`);
-  }
-  const fotos = [];
-  for (const f of (d.fotos || [])) {
-    try {
-      const resp = await fetch(`${API_BASE}/rdo-foto?id=${f.id}`, { headers: authHeaders() });
-      if (resp.ok) fotos.push({ url: URL.createObjectURL(await resp.blob()), legenda: f.legenda });
-    } catch {
-      // ignora foto indisponível
+    const resp = await fetch(`${API_BASE}/rdo-pdf?id=${id}`, { headers: authHeaders() });
+    if (!resp.ok) {
+      let msg = `Erro ${resp.status}`;
+      try { const j = await resp.json(); msg = j.error || j.message || msg; } catch { /* corpo não-JSON */ }
+      throw new Error(msg);
     }
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    const obra = String(nameOf("projects", d.projectId) || "obra").replace(/[^A-Za-z0-9_-]+/g, "_");
+    a.download = `RDO-${d.numeroSequencial || d.id}-${obra}-${d.data || ""}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    showToast(`Erro ao gerar o PDF: ${e.message}`, { severity: "error" });
   }
-  let box = qs("rdoPrint");
-  if (!box) {
-    box = document.createElement("div");
-    box.id = "rdoPrint";
-    document.body.appendChild(box);
-  }
-  box.innerHTML = rdoPdfHtml(d, fotos);
-  await aguardarImagensDoc(box);
-  document.body.classList.add("rdo-printing");
-  const cleanup = () => {
-    document.body.classList.remove("rdo-printing");
-    window.removeEventListener("afterprint", cleanup);
-  };
-  window.addEventListener("afterprint", cleanup);
-  window.print();
 }
 
 // Miolo de UM dia de RDO (nº/condição/clima, efetivo, equipamentos, textos,
