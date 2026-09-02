@@ -240,3 +240,67 @@ Duas observações que valem mesmo sem as contagens: a biblioteca dos 27 serviç
 código (não registro em banco) — "quantos PES existem" mede procedimentos escritos, não a biblioteca;
 e o KPI atual "FVM aprovadas" do dashboard conta **fichas**, não materiais distintos — a contagem do
 painel (C7) é a correta para a meta do regimento, e os dois números vão divergir.
+
+---
+
+## 6. Adendo — 2026-09-02
+
+O pedido foi reemitido em 2026-09-02. O código não mudou desde a rodada anterior (HEAD de código
+continua v1.46.0 / 97c1401), então as seções 1-4 valem integralmente. O que muda está abaixo.
+
+### 6.1 Contagens reais (item 5) — ainda pendentes
+
+O servidor (192.168.1.100) respondeu ao ping nesta rodada, mas a sessão não obteve permissão para
+abrir SSH. As contagens continuam como SQL pronto (§5). Para rodar no servidor, no padrão já usado
+pelas outras revisões (100% leitura):
+
+```bash
+mysql -u financeiro_app -h 127.0.0.1 financeiro -e "<SQL do §5>"
+```
+
+Com as 13 linhas de resultado, a conversão para o percentual do painel é mecânica (§3.3):
+C3/C4/C5/C6/C7 proporcionais às metas 11/11/6/20/5, binários 0/1, manuais M1-M8 = 0 até serem
+confirmados. Os gates (C10 auditoria interna no ano, M2 análise crítica, C1 política) definem o selo
+"PRONTO / NÃO PRONTO" independentemente do número.
+
+### 6.2 Cruzamento com a auditoria independente de 2026-09-02
+
+Existe em `docs/revisao/2026-09-02-auditoria-pbqph-siac-obra-sync.md` (arquivo **não rastreado** no
+git ao escrever isto — não foi produzido por esta frente) uma auditoria de 110 controles, obra
+"Condomínio Atacama", com parecer "NÃO APTO como sistema de evidências do SiAC". Ela e este
+diagnóstico usam **réguas diferentes** e não se contradizem:
+
+- A auditoria mede o software como **repositório probatório** (imutabilidade, trilha before/after,
+  ACL por obra, FKs, recuperabilidade). O Anexo 3 do Nível B exige registros controlados, não banco
+  imutável nem ACL por obra. Este diagnóstico mede **o que o auditor do B pergunta** (§4).
+- Dos 10 P0 da auditoria, os que pesam no B são os já listados aqui: aprovação do PES (7.5),
+  versionamento do PQO, qualificação de fornecedor com histórico (8.4.1.1). Equipamentos de
+  calibração, ensaios, PIT, projetos controlados, ACL por obra e imutabilidade seguem como peso de
+  Nível A ou de governança de software — mantém-se o contraponto do §4, item 4.
+
+**Achados da auditoria confirmados no código hoje e que este diagnóstico NÃO tinha registrado** —
+entram na lista de lacunas com o peso que têm no B:
+
+| Achado (confirmado) | Onde | Efeito no Nível B | Proposta (tamanho) |
+|---|---|---|---|
+| `qualidade_validar_payload` só valida FVS e fechamento de NC. **FVM aceita resultado "Aprovado" com lote, NF, responsável e checklist vazios.** | index.php:7407-7441 | 8.5.2: a estrutura ATENDE, mas o registro pode ser vazio — C7 contaria ficha oca | No servidor: com `resultado` preenchido exigir `responsavelRecebimento` + `lote` (ou `notaFiscal`) + ≥1 item do checklist. **P**, mesmo pacote das 2 colunas do PES (7.5). Regra do painel: **C7 só conta FVM com lote E responsável** |
+| `comprasregistrar` marca o pedido como **Recebido** e gera NF + conta a pagar **sem FVM** | index.php:4676-4695 | 8.4/8.6: material controlado recebido sem inspeção registrada | **Aviso, não bloqueio** (a auditoria pede gate P0; para o B, bloquear compras por causa da FVM trava a operação): se o pedido tem item cujo nome bate com a lista de materiais do PQO da obra e não há FVM com `purchaseOrderId`, toast + alerta no dashboard. **P** — depende da biblioteca de materiais (§4, item 6) para o "bate" ser confiável |
+| Gate de etapa é **fail-open** quando a coluna `servicoSiacId` não existe (catch PDOException → não bloqueia) | index.php:7517-7519 | Só importa se a migration de cronograma não rodou no servidor — conferir uma vez | Nenhuma mudança de código; validar no servidor que a coluna existe (`SHOW COLUMNS FROM obra_cronograma_etapas LIKE 'servicoSiacId'`) |
+| **Zero testes automatizados** em `scripts/tests/` para qualquer `qualidade_*` | ls scripts/tests | Não é requisito do B; é risco do painel: cálculos C1-C12 sem teste viram número que ninguém confia | Os cálculos do painel nascem como função pura + teste JS, no molde do builder do RDO (`node --check` + teste próprio) |
+| `qualidade_*` sem nenhuma FOREIGN KEY; DELETE genérico é físico; `audit_log` expurgado em 12 meses | schema.sql:1862-2034; jobs.php:174-185 | 7.5 registros: o auditor de manutenção (ciclo anual) pode pedir histórico de mais de 12 meses; um DELETE de FVS apaga a evidência | Não fazer FKs agora (mexe em dados de produção — regra de intocabilidade). Barato: excluir `qualidade%` do expurgo do `audit_log` e bloquear DELETE de FVS/FVM/NC com `status` final (Aprovada/Reprovada/Fechada) → já listado no §4 item 8(b), sobe de "colateral" para "pacote 7.5" |
+
+**Sem efeito no painel de prontidão (§3)**: nenhum item novo calculável ou manual; só a regra de C7
+fica mais rígida (acima). Tamanho geral continua **M** em 2 etapas.
+
+**Ordem revisada das lacunas de código** (a ordem do auditor do §4 não muda; esta é a ordem do que
+construir, agora com os achados de hoje):
+
+1. Pacote 7.5 (P): `aprovadoPor`/`dataAprovacao` no PES + obrigatoriedade mínima da FVM no servidor
+   + bloqueio de DELETE de registros finais + checklist de auditoria com 9.1.x + obsoletar PQO antigo.
+2. Biblioteca de ~20 materiais (P) — destrava C6/C7, M6 e o aviso de recebimento sem FVM.
+3. Painel calculado, seção no `renderQualidadeDashboard` (P, com teste puro).
+4. Tabela `qualidade_requisitos` + upload para M1-M8 (M).
+5. Aviso de recebimento sem FVM (P, após o item 2).
+
+O achado de segurança do PDF do PES (§4, item 8a) continua fora desta fila: ciclo próprio, antes de
+qualquer um dos cinco.
