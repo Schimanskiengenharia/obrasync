@@ -304,3 +304,67 @@ construir, agora com os achados de hoje):
 
 O achado de segurança do PDF do PES (§4, item 8a) continua fora desta fila: ciclo próprio, antes de
 qualquer um dos cinco.
+
+### 6.3 Guia simplificado recebido — o que muda na classificação
+
+O guia ("PBQP-H: o que a certificação pede e como chegar lá", setembro/2026) chegou por chat em
+2026-09-02; **não está gravado no repo** (gravar em `docs/revisao/` é uma decisão do dono). A tabela
+dele reescreve o Quadro do Anexo 3 com a marca B / A / evolutivo — é o texto que faltava para
+fechar as classificações "confirmar no Anexo 3" deste doc. Resultado do cruzamento:
+
+| Req. | O guia diz para o B | Efeito neste diagnóstico |
+|---|---|---|
+| **7.1.5 Calibração** | "rastreabilidade de instrumentos de medição **só no A**" | **M8 (calibração) sai da lista manual.** Confirma o contraponto: equipamentos/calibração são peso de A |
+| **8.5.4 Preservação** | **exigido no B** ("material estocado e serviço executado são protegidos") | §2.2 dizia "baixo peso no B" — **errado**. Entra no lugar do M8: **M8 = procedimento de armazenamento/preservação** (documento + evidência: item "sem danos visíveis" da FVM já existe; falta o procedimento) |
+| **8.3 Projeto** | evolutivo: "basta analisar criticamente os projetos recebidos do cliente (**8.3.7**)" | §2.2 dizia "exclusão típica" — a exclusão é **parcial**: 8.3.7 fica. Vai para M5 (manual do SGQ) como registro simples de análise crítica dos projetos recebidos por obra; sem código |
+| **6.2 Objetivos** | evolutivo: 6.2.2 (planejamento) exigido, 6.2.1 (definição completa) evolutivo | Continua FALTA no sistema, mas o documento M1 pode ser curto: objetivos com indicador, prazo e responsável — sem exigir série histórica |
+| **9.3 Análise crítica** | evolutivo: reunião registrada exigida; "entradas completas" só no A | M2 mantido; a ata do B é mais simples que a da ISO |
+| **9.1 Satisfação** | evolutivo: pesquisa/reclamações; análise estatística só no A | M3 mantido; reforça o contraponto de **não** construir módulo |
+| **8.4 Aquisição** | "qualificar fornecedores **antes de comprar**" exigido; "avaliação de desempenho do fornecedor é do A" | Histórico de avaliações (`fornecedor_avaliacoes`) **sai do B**. O que pesa é a ordem: qualificação precede a compra → **aviso no pedido de compra quando `suppliers.pbqph_nivel` = não avaliado/suspenso** (P, mesmo molde do aviso de recebimento sem FVM do §6.2). M7 fica só com o critério documentado |
+| **10.2 Causa raiz** | evolutivo no B | 8.7/10.2 seguem ATENDE; `acaoCorretiva` + eficácia bastam |
+| **6.1, 6.3, 7.4, 8.1.2, 8.5.5/8.5.6, 10.3** | **não exigidos no B** | Linhas do §2.2 marcadas PARCIAL/FALTA para 10.3 e 8.5.x pós-entrega viram **N.E. no B** — zero trabalho |
+| **4.4, 5.1, 7.1, 8.2** | evolutivos (8.2.2 requisitos legais/do cliente exigido) | Sem mudança: documental (M5) + contrato/proposta existentes |
+
+**Correção de regra do painel (§3.1) — metas derivadas, não fixas.** O guia é explícito: os
+percentuais se aplicam **à lista que a empresa monta** (27 menos os serviços que ela não executa;
+20 é o mínimo de materiais) e o arredondamento é **sempre para cima** (Anexo 4). Logo as metas
+não podem ser a constante `QUALIDADE_METAS = {servicos: 11, materiais: 10}` (app.js:12472), que só
+vale para listas cheias de 27/20. Regra:
+
+```
+meta_proc_serv  = ceil(0.40 × |lista de serviços da empresa|)     27 → 11
+meta_reg_serv   = ceil(0.50 × meta_proc_serv)                      11 → 6
+meta_obs_serv   = ceil(0.25 × meta_proc_serv)                      11 → 3
+meta_proc_mat   = ceil(0.50 × |lista de materiais|)   (mín. 20)    20 → 10
+meta_reg_mat    = ceil(0.50 × meta_proc_mat)                       10 → 5
+meta_obs_mat    = ceil(0.25 × meta_proc_mat)                       10 → 3
+```
+
+Isso muda o desenho da **lista formal** (§4, item 6): hoje `servicosControlados` do PQO mistura
+"lista da empresa" com "os que têm procedimento" — o checkbox marcado significa "controlado nesta
+obra". O regimento distingue os dois conjuntos. A biblioteca proposta precisa de um flag
+**executa / não executa** por serviço (e por material); o tamanho do conjunto "executa" é o
+denominador das metas, e o PQO seleciona dentro dele. Continua constante de código na 1ª etapa.
+
+**Dois indicadores calculáveis novos**, saídos do guia:
+
+| # | Indicador | Regra | Meta |
+|---|---|---|---|
+| C13 | Serviços observáveis na obra | dos 3 serviços de mão de obra própria no Asilo (**cobertura em telhado, instalação elétrica, instalação hidrossanitária** — ids 18/24/25 da lista SiAC), quantos têm PES vigente **e** etapa no cronograma da obra com FVS (qualquer status) | 3 |
+| C14 | Meses de registro na obra | `hoje − MIN(qualidade_fvs.dataInspecao)` da obra-alvo | ≥ 2 (o guia pede 2-3 meses de registro antes da Fase 1; Fase 2 até 3 meses após a Fase 1) |
+
+C14 vira **gate** junto com C10/M2/C1: sem registro acumulado não há Fase 2 possível, seja qual for o %.
+
+**O guia está defasado em 3 linhas da tabela "O que o ObraSync já cobre"** — corrigir antes de
+levá-lo à direção, senão o painel vai contradizer o documento de referência:
+
+- 7.5: diz "não há versão, aprovação" → Política e PQO têm versão+aprovação; PES tem versão e PDF,
+  falta só aprovador (§2.1).
+- 8.4.1.1: diz "não há fluxo de qualificação" → as 13 colunas + modal de qualificação existem
+  (Fase 1); falta critério documentado e o aviso no pedido.
+- 8.5.2: diz "não há lote na entrada" → lote, fabricante, validade e local de aplicação existem na
+  FVM; o furo é preenchimento não obrigatório (§6.2).
+
+Balanço após o guia: lista manual continua com 8 itens (M8 trocou de calibração para preservação);
+calculáveis sobem para 14; tamanho segue **M**; a ordem de construção do §6.2 ganha o item
+"aviso de fornecedor não qualificado no pedido" colado ao item 5.
