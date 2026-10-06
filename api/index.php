@@ -2470,7 +2470,13 @@ function clean_payload(array $meta, array $payload): array
 {
     $payload = normalize_payload_aliases($payload);
     $clean = [];
+    // S1: colunas de caminho de arquivo nunca vêm do cliente — o CRUD genérico as
+    // ignora em silêncio (sem erro) e só o handler de upload correspondente grava.
+    $somenteUpload = campos_somente_upload()[$meta['table'] ?? ''] ?? [];
     foreach ($meta['fields'] as $field) {
+        if (in_array($field, $somenteUpload, true)) {
+            continue;
+        }
         if (array_key_exists($field, $payload)) {
             $value = normalize_value($payload[$field]);
             if ($field === 'password' && $value) {
@@ -3883,17 +3889,22 @@ function handle_contrato_download(PDO $pdo, int $contratoId, string $tipo): neve
         fail('Tipo de anexo inválido.', 400);
     }
     $col = $colByTipo[$tipo];
-    $stmt = $pdo->prepare("SELECT `{$col}` AS path FROM sales_contracts WHERE id = ?");
+    $stmt = $pdo->prepare("SELECT `{$col}` AS path, projectId FROM sales_contracts WHERE id = ?");
     $stmt->execute([$contratoId]);
     $row = $stmt->fetch();
-    if (!$row || empty($row['path']) || !is_file($row['path'])) {
+    if (!$row || empty($row['path'])) {
         fail('Anexo não encontrado.', 404);
     }
+    if (obra_arquivada_ou_inexistente($pdo, (int) ($row['projectId'] ?? 0))) {
+        fail('A obra deste contrato está arquivada.', 403);
+    }
+    // S1: caminho gravado só é servido dentro do upload_dir.
+    $real = resolver_arquivo_servido(load_config(), $row['path'], 'sales_contracts#' . $contratoId . '/' . $tipo);
     header_remove('Content-Type');
     header('Content-Type: application/pdf');
-    header('Content-Disposition: inline; filename="' . basename($row['path']) . '"');
-    header('Content-Length: ' . filesize($row['path']));
-    readfile($row['path']);
+    header('Content-Disposition: inline; filename="' . basename($real) . '"');
+    header('Content-Length: ' . filesize($real));
+    readfile($real);
     exit;
 }
 
@@ -4723,11 +4734,15 @@ function handle_cotacoes_module(PDO $pdo, string $method, array $query, array $c
             if (!$cot || empty($cot['arquivo_original'])) {
                 fail('Cotação sem anexo.', 404);
             }
-            // Proteção path-traversal: só serve arquivo dentro da pasta de cotações.
-            $base = realpath(rtrim($config['upload_dir'] ?? '/var/lib/financeiro/uploads', '/') . '/cotacoes');
-            $real = realpath((string) $cot['arquivo_original']);
-            if (!$base || !$real || strncmp($real, $base, strlen($base)) !== 0 || !is_file($real)) {
+            // Proteção path-traversal (S1): só serve arquivo dentro da pasta de cotações —
+            // mesma função dos demais downloads; fora → 403 + log, inexistente → 404.
+            if (!is_file((string) $cot['arquivo_original'])) {
                 fail('Anexo não encontrado no servidor.', 404);
+            }
+            $real = arquivo_confinado((string) $cot['arquivo_original'], upload_root($config) . '/cotacoes');
+            if ($real === null) {
+                error_log('[ObraSync S1][ref ' . obra_error_ref() . '] cotacao_fornecedor#' . (int) $cot['id'] . ': caminho fora de uploads/cotacoes recusado: ' . $cot['arquivo_original']);
+                fail('Arquivo fora da área de uploads. Acesso recusado.', 403);
             }
             $tipos = ['pdf' => 'application/pdf', 'xlsx' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'xls' => 'application/vnd.ms-excel', 'csv' => 'text/csv'];
             $ext = strtolower((string) (($cot['arquivo_tipo'] ?? '') ?: pathinfo($real, PATHINFO_EXTENSION)));
@@ -6416,18 +6431,28 @@ function handle_viabilidade_module(PDO $pdo, string $method, array $query, array
         if ($action === 'download_anexo') {
             require_method($method, ['GET']);
             $anexoId = (int) ($query['id'] ?? 0);
-            $stmt = $pdo->prepare('SELECT nome_arquivo, caminho, tipo_arquivo FROM viabilidade_anexos WHERE id = ?');
+            // S5 (opção 1): anexo só sai com item e análise pais existentes e obra não arquivada.
+            $stmt = $pdo->prepare('SELECT x.nome_arquivo, x.caminho, x.tipo_arquivo, a.obra_id
+                                     FROM viabilidade_anexos x
+                                     JOIN viabilidade_itens i ON i.id = x.item_id
+                                     JOIN viabilidade_analises a ON a.id = i.analise_id
+                                    WHERE x.id = ?');
             $stmt->execute([$anexoId]);
             $anexo = $stmt->fetch();
-            if (!$anexo || empty($anexo['caminho']) || !is_file($anexo['caminho'])) {
+            if (!$anexo || empty($anexo['caminho'])) {
                 fail('Anexo não encontrado.', 404);
             }
-            $mime = mime_content_type($anexo['caminho']) ?: 'application/octet-stream';
+            if (obra_arquivada_ou_inexistente($pdo, (int) ($anexo['obra_id'] ?? 0))) {
+                fail('A obra desta análise está arquivada.', 403);
+            }
+            // S1: caminho gravado só é servido dentro do upload_dir.
+            $real = resolver_arquivo_servido($config, $anexo['caminho'], 'viabilidade_anexos#' . $anexoId);
+            $mime = mime_content_type($real) ?: 'application/octet-stream';
             header_remove('Content-Type');
             header('Content-Type: ' . $mime);
             header('Content-Disposition: inline; filename="' . basename($anexo['nome_arquivo']) . '"');
-            header('Content-Length: ' . filesize($anexo['caminho']));
-            readfile($anexo['caminho']);
+            header('Content-Length: ' . filesize($real));
+            readfile($real);
             exit;
         }
 
@@ -10189,12 +10214,17 @@ function handle_rdo_delete_foto(PDO $pdo, array $authUser, int $id): never
 function handle_rdo_foto_download(PDO $pdo, int $id): never
 {
     ensure_rdo_tables($pdo);
-    $stmt = $pdo->prepare('SELECT caminho FROM obra_rdo_fotos WHERE id = ? LIMIT 1');
+    // S5 (opção 1): a foto só sai se o RDO pai existir e a obra não estiver arquivada.
+    $stmt = $pdo->prepare('SELECT f.caminho, r.projectId FROM obra_rdo_fotos f JOIN obra_rdo r ON r.id = f.rdoId WHERE f.id = ? LIMIT 1');
     $stmt->execute([$id]);
-    $path = $stmt->fetchColumn();
-    if ($path === false || !is_string($path) || !is_file($path)) {
+    $row = $stmt->fetch();
+    if (!$row || empty($row['caminho'])) {
         fail('Imagem não encontrada.', 404);
     }
+    if (obra_arquivada_ou_inexistente($pdo, (int) ($row['projectId'] ?? 0))) {
+        fail('A obra deste diário está arquivada.', 403);
+    }
+    $path = resolver_arquivo_servido(load_config(), $row['caminho'], 'obra_rdo_fotos#' . $id);
     $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
     $mime = ['jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'png' => 'image/png', 'webp' => 'image/webp'][$ext] ?? 'application/octet-stream';
     header_remove('Content-Type');
@@ -10245,17 +10275,19 @@ function handle_rh_doc_download(PDO $pdo, array $config): void
 {
     ensure_rh_tables($pdo);
     $docId = (int) ($_GET['id'] ?? 0);
-    $stmt = $pdo->prepare('SELECT arquivo_path, arquivo_nome FROM rh_documentos WHERE id = ?');
+    // S5 (opção 1): o documento só sai se o colaborador dono ainda existir.
+    $stmt = $pdo->prepare('SELECT d.arquivo_path, d.arquivo_nome FROM rh_documentos d JOIN rh_colaboradores c ON c.id = d.colaborador_id WHERE d.id = ?');
     $stmt->execute([$docId]);
     $doc = $stmt->fetch(PDO::FETCH_ASSOC);
-    if (!$doc || !$doc['arquivo_path'] || !is_file($doc['arquivo_path'])) {
+    if (!$doc || !$doc['arquivo_path']) {
         fail('Arquivo não encontrado.', 404);
     }
-    $ext = strtolower(pathinfo($doc['arquivo_path'], PATHINFO_EXTENSION));
+    $real = resolver_arquivo_servido($config, $doc['arquivo_path'], 'rh_documentos#' . $docId);
+    $ext = strtolower(pathinfo($real, PATHINFO_EXTENSION));
     $mimes = ['pdf' => 'application/pdf', 'jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'png' => 'image/png', 'webp' => 'image/webp'];
     header('Content-Type: ' . ($mimes[$ext] ?? 'application/octet-stream'));
-    header('Content-Disposition: inline; filename="' . rawurlencode((string) ($doc['arquivo_nome'] ?: basename($doc['arquivo_path']))) . '"');
-    readfile($doc['arquivo_path']);
+    header('Content-Disposition: inline; filename="' . rawurlencode((string) ($doc['arquivo_nome'] ?: basename($real))) . '"');
+    readfile($real);
     exit;
 }
 
@@ -11428,20 +11460,23 @@ function save_fiscal_document(PDO $pdo, array $meta, array $config, ?int $id = n
         mkdir($uploadDir, 0750, true);
     }
 
+    // S1: pdfPath/xmlPath são "somente upload" (clean_payload os ignora), então os
+    // caminhos recém-gravados vão por update_dynamic DEPOIS do registro — e um
+    // caminho antigo não é tocado quando não chega arquivo novo.
+    $arquivos = [];
     if (!empty($_FILES['pdfFile']['tmp_name'])) {
-        $data['pdfPath'] = store_upload($_FILES['pdfFile'], $uploadDir, ['pdf'], ['application/pdf']);
+        $arquivos['pdfPath'] = store_upload($_FILES['pdfFile'], $uploadDir, ['pdf'], ['application/pdf']);
     }
     if (!empty($_FILES['xmlFile']['tmp_name'])) {
-        $data['xmlPath'] = store_upload($_FILES['xmlFile'], $uploadDir, ['xml'], ['text/xml', 'application/xml', 'application/octet-stream']);
+        $arquivos['xmlPath'] = store_upload($_FILES['xmlFile'], $uploadDir, ['xml'], ['text/xml', 'application/xml', 'application/octet-stream']);
     }
 
-    if ($id) {
-        $existing = raw_record($pdo, $meta, $id);
-        if (empty($data['pdfPath']) && !empty($existing['pdfPath'])) $data['pdfPath'] = $existing['pdfPath'];
-        if (empty($data['xmlPath']) && !empty($existing['xmlPath'])) $data['xmlPath'] = $existing['xmlPath'];
-        return update_record($pdo, $meta, $id, $data);
+    $record = $id ? update_record($pdo, $meta, $id, $data) : create_record($pdo, $meta, $data);
+    if ($arquivos) {
+        update_dynamic($pdo, 'fiscal_documents', (int) $record['id'], $arquivos);
+        $record = get_record($pdo, $meta, (int) $record['id']);
     }
-    return create_record($pdo, $meta, $data);
+    return $record;
 }
 
 function store_upload(array $file, string $dir, array $extensions, array $mimes): string
@@ -11467,19 +11502,106 @@ function store_upload(array $file, string $dir, array $extensions, array $mimes)
     return $target;
 }
 
+// ─── S1 — confinamento dos arquivos servidos a partir de caminho gravado no banco ─
+// Todo download que lê um caminho de uma tabela (PES, contrato, foto do RDO,
+// documento de RH, NF, anexo de viabilidade, anexo de cotação) passa por aqui.
+// O caminho gravado NUNCA é confiável por si: as colunas podiam ser escritas pelo
+// PUT genérico (ver campos_somente_upload) e um realpath fora do upload_dir
+// significa leitura arbitrária de arquivo. Regra: dentro da base → serve; fora →
+// 403 + error_log; inexistente → 404.
+function upload_root(array $config): string
+{
+    return rtrim((string) ($config['upload_dir'] ?? '/var/lib/financeiro/uploads'), '/');
+}
+
+// Função PURA (sem banco): devolve o caminho REAL do arquivo se ele existir e
+// estiver dentro de $base após realpath nos dois lados (resolve ../, symlink e
+// barras); senão null. Testada em scripts/tests/php/test_arquivo_confinado.php.
+function arquivo_confinado(?string $caminho, string $base): ?string
+{
+    $caminho = trim((string) $caminho);
+    if ($caminho === '' || trim($base) === '') {
+        return null;
+    }
+    $baseReal = realpath($base);
+    if ($baseReal === false || !is_dir($baseReal)) {
+        return null;
+    }
+    $real = realpath($caminho);
+    if ($real === false || !is_file($real)) {
+        return null;
+    }
+    $prefixo = rtrim($baseReal, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR;
+    if (strncmp($real, $prefixo, strlen($prefixo)) !== 0) {
+        return null;
+    }
+    return $real;
+}
+
+// Resolve o caminho gravado para servir: 404 quando o arquivo não existe, 403 (com
+// linha no error_log) quando existe mas está fora do upload_dir.
+function resolver_arquivo_servido(array $config, ?string $caminho, string $contexto): string
+{
+    $caminho = trim((string) $caminho);
+    if ($caminho === '' || !is_file($caminho)) {
+        fail('Arquivo não encontrado.', 404);
+    }
+    $real = arquivo_confinado($caminho, upload_root($config));
+    if ($real === null) {
+        error_log('[ObraSync S1][ref ' . obra_error_ref() . '] ' . $contexto . ': caminho fora do upload_dir recusado: ' . $caminho);
+        fail('Arquivo fora da área de uploads. Acesso recusado.', 403);
+    }
+    return $real;
+}
+
+// Colunas de caminho de arquivo que SÓ o fluxo de upload correspondente grava
+// (sempre por update_dynamic/insert_dynamic, nunca pelo CRUD genérico). O PUT/POST
+// genérico as IGNORA em silêncio — o front pode continuar reenviando o registro
+// inteiro sem erro. Chave = nome da tabela (clean_payload conhece $meta['table']).
+function campos_somente_upload(): array
+{
+    return [
+        'qualidade_pes' => ['arquivoPdf', 'arquivoNome', 'arquivoData'],
+        'sales_contracts' => ['proposta_assinada_path', 'contrato_gerado_path', 'contrato_assinado_path'],
+        'fiscal_documents' => ['pdfPath', 'xmlPath'],
+    ];
+}
+
+// S5 (opção 1): obra arquivada (soft-delete G3) ou inexistente bloqueia o download
+// dos anexos ligados a ela. Sem a coluna (instalação antiga) não bloqueia.
+function obra_arquivada_ou_inexistente(PDO $pdo, ?int $projectId): bool
+{
+    if (!$projectId) {
+        return false;
+    }
+    if (!in_array('deletedAt', table_columns($pdo, 'projects'), true)) {
+        return false;
+    }
+    $stmt = $pdo->prepare('SELECT deletedAt FROM projects WHERE id = ? LIMIT 1');
+    $stmt->execute([$projectId]);
+    $row = $stmt->fetch();
+    if (!$row) {
+        return true;
+    }
+    return $row['deletedAt'] !== null && $row['deletedAt'] !== '';
+}
+
 function handle_fiscal_download(PDO $pdo, int $id, string $kind): never
 {
     $field = $kind === 'pdf' ? 'pdfPath' : ($kind === 'xml' ? 'xmlPath' : null);
     if (!$field) {
         fail('Arquivo inválido.', 404);
     }
-    $stmt = $pdo->prepare("SELECT `$field`, documentNumber FROM fiscal_documents WHERE id = ?");
+    $stmt = $pdo->prepare("SELECT `$field`, documentNumber, projectId FROM fiscal_documents WHERE id = ?");
     $stmt->execute([$id]);
     $record = $stmt->fetch();
-    if (!$record || empty($record[$field]) || !is_file($record[$field])) {
+    if (!$record || empty($record[$field])) {
         fail('Arquivo não encontrado.', 404);
     }
-    $path = $record[$field];
+    if (obra_arquivada_ou_inexistente($pdo, (int) ($record['projectId'] ?? 0))) {
+        fail('A obra desta nota está arquivada.', 403);
+    }
+    $path = resolver_arquivo_servido(load_config(), $record[$field], 'fiscal_documents#' . $id);
     header_remove('Content-Type');
     header('Content-Type: ' . ($kind === 'pdf' ? 'application/pdf' : 'application/xml'));
     header('Content-Disposition: inline; filename="' . basename($record['documentNumber'] . '.' . $kind) . '"');
@@ -11535,14 +11657,16 @@ function handle_pes_pdf_download(PDO $pdo, int $pesId): never
     $stmt = $pdo->prepare('SELECT arquivoPdf, arquivoNome FROM qualidade_pes WHERE id = ?');
     $stmt->execute([$pesId]);
     $row = $stmt->fetch();
-    if (!$row || empty($row['arquivoPdf']) || !is_file($row['arquivoPdf'])) {
+    if (!$row || empty($row['arquivoPdf'])) {
         fail('PDF do procedimento não encontrado.', 404);
     }
+    // S1/E0: o caminho gravado só é servido se estiver dentro do upload_dir.
+    $real = resolver_arquivo_servido(load_config(), $row['arquivoPdf'], 'qualidade_pes#' . $pesId);
     header_remove('Content-Type');
     header('Content-Type: application/pdf');
     header('Content-Disposition: inline; filename="' . basename($row['arquivoNome'] ?: 'procedimento.pdf') . '"');
-    header('Content-Length: ' . filesize($row['arquivoPdf']));
-    readfile($row['arquivoPdf']);
+    header('Content-Length: ' . filesize($real));
+    readfile($real);
     exit;
 }
 
