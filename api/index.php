@@ -10564,12 +10564,29 @@ function bearer_token(): string
     return '';
 }
 
+// S6 — decisão PURA do bypass de autenticação de desenvolvimento. Três condições
+// ao mesmo tempo: a flag auth.dev_bypass ligada, o ambiente EXPLICITAMENTE 'local'
+// (app_env no config; 'production' é o padrão) e a requisição vinda de localhost.
+// Em produção (app_env ausente ou 'production') a flag sozinha não liga nada —
+// antes, bastava a flag + localhost, e qualquer processo/proxy local virava admin.
+// Testada em scripts/tests/php/test_dev_bypass.php.
+function dev_bypass_permitido(array $config, string $remote): bool
+{
+    if (empty($config['auth']['dev_bypass'])) {
+        return false;
+    }
+    if (strtolower(trim((string) ($config['app_env'] ?? 'production'))) !== 'local') {
+        return false;
+    }
+    return in_array($remote, ['127.0.0.1', '::1'], true);
+}
+
 function authenticate_request(PDO $pdo, array $config): array
 {
-    $auth = $config['auth'] ?? [];
-    $remote = $_SERVER['REMOTE_ADDR'] ?? '';
-    if (!empty($auth['dev_bypass']) && in_array($remote, ['127.0.0.1', '::1'], true)) {
-        // Atalho exclusivo de desenvolvimento local; nunca habilite em produção.
+    $remote = (string) ($_SERVER['REMOTE_ADDR'] ?? '');
+    if (dev_bypass_permitido($config, $remote)) {
+        // Atalho exclusivo de desenvolvimento local; cada uso fica registrado.
+        error_log('[ObraSync auth] dev_bypass usado por ' . $remote . ' em ' . ($_SERVER['REQUEST_METHOD'] ?? '?') . ' ' . ($_SERVER['REQUEST_URI'] ?? ''));
         return ['id' => 0, 'username' => 'dev', 'role' => 'admin'];
     }
 
