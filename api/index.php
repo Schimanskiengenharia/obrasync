@@ -902,6 +902,12 @@ try {
 
     authorize_request($pdo, $authUser, $key, action_for_method($method));
 
+    // S2: DELETE de recurso crítico pelo CRUD genérico só para administrador
+    // (hoje: sinapiReferences — apagar a referência derruba a base SINAPI inteira).
+    if ($method === 'DELETE' && recurso_delete_so_admin($key)) {
+        require_admin($authUser);
+    }
+
     // Módulos novos criam as próprias tabelas sob demanda: dispensam migração manual.
     if ($key === 'viabilityAnalyses') {
         ensure_viability_table($pdo);
@@ -10747,14 +10753,48 @@ function action_for_method(string $method): string
 // 'delete'; atualizações (update*/early_settlement) exigem 'edit'; leituras
 // (list/get/download/export/status/…) exigem 'view'; o resto herda o método HTTP
 // (POST→create etc.). Em dúvida, escala para a permissão mais restritiva.
+// S2 — tokens de uma ação ?module=: separa camelCase, snake_case e kebab-case em
+// palavras minúsculas ('materialExcluir' → ['material','excluir'];
+// 'cancel_recurrence' → ['cancel','recurrence']; 'check-bloqueio' → ['check','bloqueio']).
+// Função PURA — testada em scripts/tests/php/test_autorizacao_acoes.php.
+function acao_tokens(string $action): array
+{
+    $action = trim($action);
+    if ($action === '') {
+        return [];
+    }
+    $espacado = (string) preg_replace('/([a-z0-9])([A-Z])/', '$1 $2', $action);
+    $espacado = (string) preg_replace('/[_\-\s]+/', ' ', $espacado);
+    return array_values(array_filter(explode(' ', strtolower($espacado)), fn ($t) => $t !== ''));
+}
+
+// Verbos que tornam a ação DESTRUTIVA (exigem 'delete'), casados como palavra
+// inteira entre os tokens — nunca por substring ('cancelamento' não é 'cancel').
+// 'reabrir' entra por decisão do dono (desfaz uma conclusão = mesma gravidade).
+function verbos_destrutivos(): array
+{
+    return ['delete', 'remove', 'remover', 'cancel', 'cancelar', 'excluir', 'reabrir', 'apagar'];
+}
+
+// Recursos cujo DELETE pelo CRUD genérico é exclusivo do administrador: apagar
+// uma referência SINAPI derruba a base inteira (FKs de sinapi_*), e alterar a
+// base já era admin-only no upload/import.
+function recurso_delete_so_admin(string $key): bool
+{
+    return in_array($key, ['sinapiReferences'], true);
+}
+
 function module_request_action(string $method, array $query): string
 {
-    $action = strtolower(trim((string) ($query['action'] ?? '')));
+    $raw = trim((string) ($query['action'] ?? ''));
+    $action = strtolower($raw);
     if ($action === '') {
         return action_for_method($method);
     }
-    if (str_starts_with($action, 'delete') || str_starts_with($action, 'remove')
-        || str_starts_with($action, 'cancel') || str_starts_with($action, 'excluir')) {
+    // S2: verbo destrutivo como PALAVRA INTEIRA (token camelCase/snake/kebab).
+    // Fecha 'materialExcluir'/'propostaExcluir'/'materialCancelar'/'materialReabrir',
+    // que caíam em POST → 'create' porque o verbo não era o prefixo.
+    if (array_intersect(acao_tokens($raw), verbos_destrutivos())) {
         return 'delete';
     }
     if (str_starts_with($action, 'update') || $action === 'early_settlement') {
