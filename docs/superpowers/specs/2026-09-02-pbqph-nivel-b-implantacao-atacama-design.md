@@ -4,6 +4,10 @@
 > fechada fora desta spec** (S1 da sessão de segurança, v1.47.0, commits `b308307`/`82c674a`,
 > validado em produção); **Seção 3 (E1) EXECUTADA** (commits `80da4fc`, `97153fe`, `8a74e78`,
 > aguardando validação do dono). **Seção 4 (E2) EXECUTADA** em 2026-10-07 (contagens reais sem nomes de materiais → biblioteca pela referência do SiAC, revisada pelo dono). Próxima: **Seção 5 (E3 — painel de prontidão)**.
+>
+> **Base:** `docs/revisao/2026-09-pbqph-nivel-b-diagnostico.md` (§1-§6.3) — este spec não repete o
+> diagnóstico; só desenha o que fazer. Guia simplificado do SiAC recebido em 2026-09-02 (não está
+> no repo).
 
 ## Decisões do dono — 2026-10-07 (E1)
 
@@ -65,10 +69,6 @@ Atacama: concreto de pilares/vigas/cintas em betoneira na obra; laje com concret
 - **Pendente do dono:** as duas escolhas (bloco, argamassa) via "não executa" no PQO; conferência
   das faixas no regimento; SELECT do orçamento do Atacama (se houver itens, reconferir os 10 pela
   Curva ABC).
->
-> **Base:** `docs/revisao/2026-09-pbqph-nivel-b-diagnostico.md` (§1-§6.3) — este spec não repete o
-> diagnóstico; só desenha o que fazer. Guia simplificado do SiAC recebido em 2026-09-02 (não está
-> no repo).
 
 ## Decisões já tomadas (2026-09-02)
 
