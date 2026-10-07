@@ -11459,10 +11459,33 @@ function ensure_password_reset_table(PDO $pdo): void
     $done = true;
 }
 
+// Endereço público do sistema. Fonte: mail.app_url do config.php; sem ele, deriva da
+// própria requisição (esquema + host + caminho antes de /api). Nenhum caminho fixo no
+// código — a mudança /financeiro → /obrasync é só Apache + config.php. Função PURA
+// (recebe o $server); testada em scripts/tests/php/test_app_public_url.php.
+function app_public_url(array $config, ?array $server = null): string
+{
+    $configurado = trim((string) ($config['mail']['app_url'] ?? $config['app_url'] ?? ''));
+    if ($configurado !== '') {
+        return rtrim($configurado, '/');
+    }
+    $server = $server ?? $_SERVER;
+    $host = (string) ($server['HTTP_HOST'] ?? '');
+    if ($host === '') {
+        return '';
+    }
+    $https = (($server['HTTPS'] ?? '') !== '' && ($server['HTTPS'] ?? '') !== 'off')
+        || (string) ($server['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https'
+        || (int) ($server['SERVER_PORT'] ?? 0) === 443;
+    $path = (string) (parse_url((string) ($server['REQUEST_URI'] ?? ''), PHP_URL_PATH) ?: '');
+    $pos = strpos($path, '/api');
+    $dir = $pos !== false ? substr($path, 0, $pos) : rtrim(dirname($path), '/\\');
+    return ($https ? 'https' : 'http') . '://' . $host . rtrim($dir, '/');
+}
+
 function reset_url(array $config, string $token): string
 {
-    $base = rtrim((string) ($config['mail']['app_url'] ?? 'https://schimanskiengenharia.com.br/financeiro'), '/');
-    return $base . '/#reset=' . urlencode($token);
+    return app_public_url($config) . '/#reset=' . urlencode($token);
 }
 
 function handle_request_password_reset(PDO $pdo, array $config, array $payload): never

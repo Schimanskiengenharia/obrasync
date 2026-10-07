@@ -1,6 +1,6 @@
 # STATUS — ObraSync
 
-> **Versão:** `v1.47.0` · 2026-10-06 · **Varredura:** 2026-10-06 (segurança S1–S7) · **Ambiente:** produção em `https://schimanskiengenharia.com.br/financeiro`
+> **Versão:** `v1.47.0` · 2026-10-06 · **Varredura:** 2026-10-06 (segurança S1–S7) · **Ambiente:** produção em `https://schimanskiengenharia.com.br/obrasync` (antes `/financeiro`)
 
 > ⚠️ **Leia com atenção à data.** O corpo deste documento (seções 1 a 7) foi escrito na época da
 > **v1.12–v1.19** e não foi reescrito a cada release. Ele descreve corretamente a base do sistema,
@@ -79,6 +79,26 @@ executa) — depende da saída dos blocos 4 e 5 do script de contagens.
 validar: salvar um PES como Vigente → aprovador/data aparecem e o "Exportar PDF" os imprime; editar
 o PQO vigente trocando a versão → painel "Histórico de versões" lista a anterior; tentar excluir uma
 FVS Aprovada → 422; excluir uma NC Aberta vinculada a FVS → etapa desbloqueia.
+
+## 0.0.2 Infraestrutura — caminho público /financeiro → /obrasync (2026-10-07)
+
+Diretório `/var/www/financeiro`, banco, `/etc/financeiro/config.php` e uploads NÃO mudam. Reconferência:
+o front deriva `API_BASE` de `location.pathname`, o backend descarta tudo antes de `/api/` em
+`route_segments()`, `api/.htaccess` não tem `RewriteBase`, o plugin usa URL relativa, não há cookie
+(token em `localStorage`, por origem — sessões sobrevivem), não há manifest/service worker. Sobravam
+**4 fallbacks fixos** (`app.js` seed/sampleValue/novo link/`trackingUrlForProject` e `reset_url` em
+`api/index.php`) + `config.sample.php`: trocados por `appPublicBase()` (front) e `app_public_url()`
+(backend: `mail.app_url` do config ou derivação da requisição). Teste `test_app_public_url.php`.
+
+**Etapas no servidor (você):** (A) `Alias /obrasync /var/www/financeiro` com o mesmo `<Directory>`,
+os dois caminhos juntos; `config.php` `mail.app_url` → `/obrasync`; (B) GitHub → Webhooks → Payload
+URL `https://schimanskiengenharia.com.br/obrasync/deploy.php` (o GitHub não segue 301);
+(C) `RedirectMatch 301 ^/financeiro(/.*)?$ /obrasync$1` no lugar do Alias antigo.
+
+**Dados:** links de acompanhamento (`obra_links_acompanhamento.url`) e mensagens de WhatsApp já
+enviadas (`obra_notificacoes.message/generatedLink`) carregam `/financeiro` e dependem do 301;
+`scripts/sql/2026-10-07-infra-links-financeiro-auditoria.sql` conta (somente leitura). UPDATE dos
+links de acompanhamento: decisão pendente do dono (notificações já enviadas ficam como histórico).
 
 ## 0. Varredura de 2026-07-28 (v1.38.1 → v1.38.3)
 

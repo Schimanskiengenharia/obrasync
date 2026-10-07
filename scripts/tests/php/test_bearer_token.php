@@ -26,7 +26,7 @@ t_assert(bearer_token() === 'tok-x', 'X-Auth-Token e aceito (trim)');
 // 3. ?token= na query NUNCA e aceito — inclusive no download de NF por GET.
 limpar_ambiente();
 $_GET['token'] = 'vazou';
-$_SERVER['REQUEST_URI'] = '/financeiro/api/notas-fiscais/7/pdf';
+$_SERVER['REQUEST_URI'] = '/obrasync/api/notas-fiscais/7/pdf';
 $_SERVER['PATH_INFO'] = '/notas-fiscais/7/pdf';
 $_GET['path'] = 'notas-fiscais/7/pdf';
 t_assert(bearer_token() === '', '?token= na query do download de NF e ignorado');

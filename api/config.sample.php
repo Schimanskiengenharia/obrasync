@@ -27,8 +27,10 @@ return [
         // Endereço de envio dos emails de redefinição de senha.
         'from_email' => 'noreply@schimanskiengenharia.com.br',
         'from_name'  => 'ObraSync',
-        // URL pública do sistema (sem barra final) — usada no link do email.
-        'app_url'    => 'https://schimanskiengenharia.com.br/financeiro',
+        // URL pública do sistema (sem barra final) — usada no link do email de senha e
+        // como base dos links externos. Se ausente, a API deriva da própria requisição
+        // (app_public_url). O caminho mudou de /financeiro para /obrasync em 2026-10.
+        'app_url'    => 'https://schimanskiengenharia.com.br/obrasync',
         // Configurações SMTP. Deixe smtp_host vazio para usar php mail() com relay do servidor.
         'smtp_host'  => '',        // Ex.: 'smtp.gmail.com' ou 'smtp.sendgrid.net'
         'smtp_port'  => 587,       // 587 = STARTTLS  |  465 = SSL implícito

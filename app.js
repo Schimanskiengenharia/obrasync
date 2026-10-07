@@ -6,6 +6,14 @@ const API_BASE = (() => {
   const dir = location.pathname.replace(/\/[^/]*$/, '') || '/';
   return location.origin + dir + '/api';
 })();
+// Endereço público do sistema derivado da própria URL (mesmo cálculo do API_BASE,
+// sem o /api). Usado nos links de acompanhamento de obra enviados ao cliente —
+// nunca mais um caminho fixo no código: a mudança /financeiro → /obrasync (e
+// qualquer outra) passa a ser só Apache + config.php.
+function appPublicBase() {
+  const dir = location.pathname.replace(/\/[^/]*$/, '') || '';
+  return location.origin + dir.replace(/\/$/, '');
+}
 // Ambiente de execução: "file" (arquivo aberto direto), "local" (desenvolvimento) ou "production".
 const APP_ENV = (() => {
   if (location.protocol === "file:") return "file";
@@ -1888,7 +1896,7 @@ const seed = {
   ],
   projectNotifications: [],
   projectTrackingLinks: [
-    { id: "lk1", projectId: "ob1", token: "interno-ob1", url: "https://schimanskiengenharia.com.br/financeiro", visibility: "Cliente/Investidor", status: "Ativo", notes: "Link interno temporário até criação do portal do cliente." },
+    { id: "lk1", projectId: "ob1", token: "interno-ob1", url: appPublicBase(), visibility: "Cliente/Investidor", status: "Ativo", notes: "Link interno temporário até criação do portal do cliente." },
   ],
   purchaseOrders: [
     { id: "pcp1", number: "PC-2026-001", date: "2026-06-03", projectId: "ob1", supplierId: "f1", costCenterId: "cc2", categoryId: "cat3", amount: 4850, expectedDate: "2026-06-20", status: "Aprovado", notes: "Materiais elétricos para obra." },
@@ -2415,7 +2423,7 @@ function placeholderFor(field, label = "", key = "") {
   if (field === "milestoneName") return "Fundação concluída";
   if (field === "milestoneMessage" || field === "defaultMessage") return "Marco concluído conforme cronograma da obra.";
   if (field === "token") return "token-seguro-futuro";
-  if (field === "url") return "https://schimanskiengenharia.com.br/financeiro";
+  if (field === "url") return appPublicBase();
   if (field === "notes") return "Observações importantes do cadastro.";
   if (field === "address") return "Rua, número, bairro e cidade";
   if (field === "responsible") return "Nome do responsável";
@@ -9187,7 +9195,7 @@ async function saveForm(event) {
   }
   if (editing.key === "projectTrackingLinks") {
     if (!data.token) data.token = `obra-${data.projectId || "link"}-${Date.now()}`;
-    if (!data.url) data.url = "https://schimanskiengenharia.com.br/financeiro";
+    if (!data.url) data.url = appPublicBase();
   }
   // Item 10: sanitizar campos de texto antes de salvar
   (configs[editing.key]?.fields || []).filter(([, , t]) => ["text", "email", "textarea"].includes(t)).forEach(([f]) => { if (data[f]) data[f] = sanitizeInput(data[f]); });
@@ -10938,7 +10946,7 @@ async function updateProjectNotification(id, data) {
 
 function trackingUrlForProject(projectId) {
   const link = (db.projectTrackingLinks || []).find((row) => sameId(row.projectId, projectId) && row.status === "Ativo");
-  return link?.url || "https://schimanskiengenharia.com.br/financeiro";
+  return link?.url || appPublicBase();
 }
 
 function whatsappPhone(value) {
