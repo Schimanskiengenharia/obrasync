@@ -62,4 +62,47 @@ t_assert(str_contains($fonte, 'function ensure_pqo_versoes_table'), 'ensure_pqo_
 t_assert(is_file(__DIR__ . '/../../../migrations/2026-10-07-pbqph-e1-pqo-versoes.sql'), 'migration aditiva do historico do PQO existe');
 t_assert(str_contains((string) file_get_contents(__DIR__ . '/../../../schema.sql'), 'CREATE TABLE IF NOT EXISTS qualidade_pqo_versoes'), 'schema.sql tem qualidade_pqo_versoes');
 
+// ── E1-caronas: DELETE de registros finais bloqueado; gate recalculado ───────────
+t_assert(qualidade_delete_bloqueado('qualidadeFvs', ['status' => 'Aprovada']) !== null, 'FVS Aprovada nao pode ser excluida');
+t_assert(qualidade_delete_bloqueado('qualidadeFvs', ['status' => 'Reprovada']) !== null, 'FVS Reprovada nao pode ser excluida');
+t_assert(qualidade_delete_bloqueado('qualidadeFvs', ['status' => 'Pendente']) === null, 'FVS Pendente pode ser excluida');
+t_assert(qualidade_delete_bloqueado('qualidadeFvm', ['status' => 'Aprovada']) !== null, 'FVM Aprovada nao pode ser excluida');
+t_assert(qualidade_delete_bloqueado('qualidadeFvm', ['status' => 'Pendente']) === null, 'FVM Pendente pode ser excluida');
+t_assert(qualidade_delete_bloqueado('qualidadeNc', ['status' => 'Fechada']) !== null, 'NC Fechada nao pode ser excluida');
+t_assert(qualidade_delete_bloqueado('qualidadeNc', ['status' => 'Aberta']) === null, 'NC Aberta pode ser excluida (gate recalculado)');
+t_assert(qualidade_delete_bloqueado('qualidadePes', ['status' => 'Vigente']) === null, 'PES nao entra na regra de status final');
+t_assert(str_contains((string) qualidade_delete_bloqueado('qualidadeNc', ['status' => 'Fechada']), '7.5'), 'mensagem cita o SiAC 7.5');
+
+t_assert(qualidade_gate_estado([], 0) === 0, 'sem FVS e sem NC: gate liberado (conclusao volta a exigir FVS)');
+t_assert(qualidade_gate_estado([['id' => 9, 'status' => 'Reprovada']], 0) === 1, 'ultima FVS reprovada: bloqueia');
+t_assert(qualidade_gate_estado([['id' => 9, 'status' => 'Aprovada'], ['id' => 8, 'status' => 'Reprovada']], 0) === 0, 'ultima FVS aprovada (anterior reprovada): libera');
+t_assert(qualidade_gate_estado([['id' => 9, 'status' => 'Aprovada']], 2) === 1, 'NC aberta vinculada: bloqueia mesmo com FVS aprovada');
+t_assert(qualidade_gate_estado([['id' => 9, 'status' => 'Pendente']], 0) === 0, 'FVS pendente sem NC: libera (ainda nao ha reprovacao)');
+
+// Rota genérica aplica a regra e recalcula o gate.
+t_assert(str_contains($fonte, "\$recusa = qualidade_delete_bloqueado(\$key, \$registro);") && str_contains($fonte, 'qualidade_recalcular_gate($pdo, $etapaAfetada);'), 'DELETE generico bloqueia registro final e recalcula o gate');
+
+// criar_nc_automatica: data pelo PHP, nunca CURDATE().
+$iNc = strpos($fonte, 'function criar_nc_automatica(');
+$corpoNc = substr($fonte, $iNc, 2200);
+t_assert(!str_contains($corpoNc, 'CURDATE()') && str_contains($corpoNc, "date('Y-m-d')"), 'criar_nc_automatica usa date(Y-m-d) do PHP');
+
+// Permissões: engenharia/gestor_obra veem Política e Auditorias; operador vê o que edita.
+$view = default_role_view_modules();
+$edit = default_role_edit_modules();
+foreach (['engenharia', 'gestor_obra'] as $r) {
+    t_assert(in_array('qualidadePolitica', $view[$r], true) && in_array('qualidadeAuditorias', $view[$r], true), "{$r} ve Politica e Auditorias");
+    t_assert(!in_array('qualidadePolitica', $edit[$r], true) && !in_array('qualidadeAuditorias', $edit[$r], true), "{$r} nao edita Politica/Auditorias (so view)");
+}
+foreach ($edit as $papel => $modulos) {
+    if ($papel === 'gerente') {
+        continue;
+    }
+    foreach ($modulos as $m) {
+        if (str_starts_with($m, 'qualidade')) {
+            t_assert(in_array($m, $view[$papel] ?? [], true), "{$papel}: edit em {$m} implica view");
+        }
+    }
+}
+
 t_resumo('test_qualidade_regras');

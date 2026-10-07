@@ -444,11 +444,11 @@ const roleModules = {
     "reports", "reportFinancial", "reportClient", "reportSupplier", "reportCostCenter", "reportProject", "exports", "systemVersion", "qualidadeDashboard",
   ],
   comercial: ["dashboard", "clients", "projects", "projectSchedule", "agenda", "kanban", "workBudgets", "abcCurve", "viabilityAnalyses", "viabilidadeObra", "budgets", "proposals", "proposalModels", "sales", "reportClient", "systemVersion"],
-  engenharia: ["dashboard", "rdo", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "viabilityAnalyses", "viabilidadeObra", "purchaseOrders", "cotacoes", "compras", "fiscalDocuments", "technicalReports", "projectReport", "proposals", "reportProject", "systemVersion", "qualidadeDashboard", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
+  engenharia: ["dashboard", "rdo", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "viabilityAnalyses", "viabilidadeObra", "purchaseOrders", "cotacoes", "compras", "fiscalDocuments", "technicalReports", "projectReport", "proposals", "reportProject", "systemVersion", "qualidadeDashboard", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos", "qualidadePolitica", "qualidadeAuditorias"],
   // RH/Pessoal (Fase 1) — decisão LGPD: as 3 keys ficam SÓ em gestor_obra (espelho
   // exato do backend/Task 1; admin/gerente/visualizador herdam tudo automaticamente
   // abaixo).
-  gestor_obra: ["dashboard", "rdo", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "viabilityAnalyses", "viabilidadeObra", "purchaseOrders", "cotacoes", "compras", "fiscalDocuments", "technicalReports", "projectReport", "proposals", "reportProject", "systemVersion", "qualidadeDashboard", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos", "rhColaboradores", "rhVencimentos", "rhTiposDocumento"],
+  gestor_obra: ["dashboard", "rdo", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "abcCurve", "viabilityAnalyses", "viabilidadeObra", "purchaseOrders", "cotacoes", "compras", "fiscalDocuments", "technicalReports", "projectReport", "proposals", "reportProject", "systemVersion", "qualidadeDashboard", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos", "qualidadePolitica", "qualidadeAuditorias", "rhColaboradores", "rhVencimentos", "rhTiposDocumento"],
   equipe_campo: ["dashboard", "projectReport", "systemVersion"],
   cliente_obra: ["dashboard", "projectReport", "projectSchedule", "technicalReports", "systemVersion"],
   fornecedor_terceiro: ["dashboard", "systemVersion"],
@@ -12465,6 +12465,10 @@ const CHECKLIST_SIAC_NIVEL_B = [
   { clausula: "8.5.1", desc: "Execução controlada — PES implementados na obra" },
   { clausula: "8.5.2", desc: "Identificação e rastreabilidade nos serviços controlados" },
   { clausula: "8.7", desc: "Saídas não conformes (NC) identificadas e tratadas" },
+  // E1: 9.1.x estava ausente — ponto cego duplo da satisfação do cliente (diagnóstico §2.1).
+  { clausula: "9.1.1", desc: "Monitoramento e medição do SGQ definidos (o quê, como, quando)" },
+  { clausula: "9.1.2", desc: "Satisfação do cliente monitorada (pesquisa/reclamações por obra entregue)" },
+  { clausula: "9.1.3", desc: "Análise e avaliação dos dados de monitoramento realizadas" },
   { clausula: "9.2", desc: "Auditoria interna realizada conforme programa" },
   { clausula: "9.3", desc: "Análise crítica pela direção realizada" },
   { clausula: "10.2", desc: "NC e ação corretiva — processo implementado" },
@@ -12732,6 +12736,14 @@ function renderQualidadeDashboard() {
 
 // ── Política da Qualidade ────────────────────────────────────────────────────
 
+// E1: próxima versão sugerida da Política. Versão não numérica ("v2", "") virava
+// "NaN" no campo; o fallback é 1 → sugere 1.1. Função pura (teste em test_qualidade_front.js).
+function qProximaVersao(versaoVigente) {
+  const n = parseFloat(versaoVigente);
+  const base = Number.isFinite(n) ? n : 1;
+  return (base + 0.1).toFixed(1);
+}
+
 function renderQualidadePolitica() {
   const key = "qualidadePolitica";
   const editable = canEditModule(key);
@@ -12743,7 +12755,7 @@ function renderQualidadePolitica() {
     <section class="panel import-panel">
       <h3>${qualidadeEdit.id ? "Editar versão" : "Nova versão da Política da Qualidade"}</h3>
       <div class="form-grid">
-        <label>Versão<input id="qPolVersao" value="${svgText(row.versao || (vigente ? `${(parseFloat(vigente.versao) + 0.1).toFixed(1)}` : "1.0"))}"></label>
+        <label>Versão<input id="qPolVersao" value="${svgText(row.versao || (vigente ? qProximaVersao(vigente.versao) : "1.0"))}"></label>
         <label>Status<select id="qPolStatus">${["Rascunho", "Vigente", "Obsoleto"].map((s) => `<option ${(row.status || "Rascunho") === s ? "selected" : ""}>${s}</option>`).join("")}</select></label>
         <label>Aprovado por<input id="qPolAprovadoPor" value="${svgText(row.aprovadoPor || "")}"></label>
         <label>Data de aprovação<input id="qPolDataAprovacao" type="date" value="${svgText(row.dataAprovacao || "")}"></label>

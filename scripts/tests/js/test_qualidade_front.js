@@ -84,5 +84,39 @@ const iPqo = src.indexOf("function renderQualidadePqo()");
 const corpoPqo = src.slice(iPqo, src.indexOf("\n}\n", iPqo));
 t_assert("tela do PQO usa qPqoPrintHtml e inclui o historico", corpoPqo.includes("qualidadePrint(qPqoPrintHtml(pqo))") && corpoPqo.includes("${qPqoHistoricoHtml(rows)}"));
 
+// ── E1-caronas: checklist com 9.1.x, versão da Política sem NaN, permissões ────
+const ctx2 = {};
+vm.createContext(ctx2);
+const iCk = src.indexOf("const CHECKLIST_SIAC_NIVEL_B = [");
+const fCk = src.indexOf("];", iCk) + 2;
+vm.runInContext(src.slice(iCk, fCk) + "\nthis.CK = CHECKLIST_SIAC_NIVEL_B;", ctx2);
+const clausulas = ctx2.CK.map((c) => c.clausula);
+t_assert("checklist tem 9.1.1, 9.1.2 e 9.1.3", ["9.1.1", "9.1.2", "9.1.3"].every((c) => clausulas.includes(c)));
+t_assert("9.1.x vem entre 8.7 e 9.2 (ordem das clausulas)", clausulas.indexOf("8.7") < clausulas.indexOf("9.1.1") && clausulas.indexOf("9.1.3") < clausulas.indexOf("9.2"));
+t_assert("checklist sem clausula duplicada", new Set(clausulas).size === clausulas.length);
+t_assert("26 clausulas no total", clausulas.length === 26);
+
+vm.runInContext(extrairFuncao("qProximaVersao") + "\nthis.qProximaVersao = qProximaVersao;", ctx2);
+t_assert("1.0 -> 1.1", ctx2.qProximaVersao("1.0") === "1.1");
+t_assert("2.3 -> 2.4", ctx2.qProximaVersao("2.3") === "2.4");
+t_assert("versao nao numerica: fallback 1 -> 1.1 (sem NaN)", ctx2.qProximaVersao("v2") === "1.1" && ctx2.qProximaVersao("") === "1.1" && ctx2.qProximaVersao(undefined) === "1.1");
+t_assert("tela da Politica usa qProximaVersao", src.includes("qProximaVersao(vigente.versao)") && !src.includes("(parseFloat(vigente.versao) + 0.1)"));
+
+const ctx3 = {};
+vm.createContext(ctx3);
+const iM = src.indexOf("const modules = [");
+const fM = src.indexOf("const moduleLabels = Object.fromEntries(modules);");
+vm.runInContext(src.slice(iM, fM) + "\nthis.r = roleModules; this.e = EDITABLE_BY_ROLE;", ctx3);
+for (const papel of ["engenharia", "gestor_obra"]) {
+  t_assert(papel + " ve qualidadePolitica e qualidadeAuditorias", ctx3.r[papel].includes("qualidadePolitica") && ctx3.r[papel].includes("qualidadeAuditorias"));
+  t_assert(papel + " nao edita Politica/Auditorias", !ctx3.e[papel].includes("qualidadePolitica") && !ctx3.e[papel].includes("qualidadeAuditorias"));
+}
+for (const [papel, mods] of Object.entries(ctx3.e)) {
+  if (papel === "gerente") continue;
+  for (const m of mods) {
+    if (m.startsWith("qualidade")) t_assert(`${papel}: edit em ${m} implica view (front)`, ctx3.r[papel].includes(m));
+  }
+}
+
 console.log(`test_qualidade_front: ${ok}/${ok + falhas} ok`);
 process.exit(falhas > 0 ? 1 : 0);

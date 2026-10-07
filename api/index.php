@@ -1358,10 +1358,24 @@ try {
     }
 
     if ($method === 'DELETE') {
+        // E1 (decisão 4): registro de qualidade com status final não sai; no DELETE
+        // permitido de FVS/NC, o gate da etapa é recalculado (sem bloqueio órfão).
+        $etapaAfetada = null;
+        if (str_starts_with($key, 'qualidade')) {
+            $registro = raw_record($pdo, $resources[$key], (int) $id);
+            $recusa = qualidade_delete_bloqueado($key, $registro);
+            if ($recusa !== null) {
+                fail($recusa, 422);
+            }
+            $etapaAfetada = qualidade_etapa_do_registro($pdo, $key, $registro);
+        }
         try {
             delete_record($pdo, $resources[$key], (int) $id);
         } catch (PDOException $e) {
             fail_if_integrity_violation($e, 'delete');
+        }
+        if ($etapaAfetada) {
+            qualidade_recalcular_gate($pdo, $etapaAfetada);
         }
         server_audit($pdo, $authUser, 'delete', $key, $id);
         respond(['ok' => true]);
@@ -7623,8 +7637,8 @@ function criar_nc_automatica(PDO $pdo, int $projectId, ?int $pqoId, string $orig
         try {
             $pdo->prepare("INSERT INTO qualidade_nc
                     (projectId, pqoId, numero, origem, fvsId, fvmId, descricaoNC, servicoSiacId, servicoNome, localObra, grau, dataDeteccao, status)
-                VALUES (?,?,?,?,?,?,?,?,?,?,'Menor',CURDATE(),'Aberta')")
-                ->execute([$projectId, $pqoId, $numero, $origem, $fvsId, $fvmId, $descricao, $servicoSiacId, $servicoNome, $localObra]);
+                VALUES (?,?,?,?,?,?,?,?,?,?,'Menor',?,'Aberta')")
+                ->execute([$projectId, $pqoId, $numero, $origem, $fvsId, $fvmId, $descricao, $servicoSiacId, $servicoNome, $localObra, date('Y-m-d')]); // E1: data do PHP (M10), nunca a data do MySQL
             break;
         } catch (PDOException $error) {
             if ((int) ($error->errorInfo[1] ?? 0) === 1062 && $attempt < 2) {
@@ -7642,6 +7656,79 @@ function criar_nc_automatica(PDO $pdo, int $projectId, ?int $pqoId, string $orig
         }
     }
     return $numero;
+}
+
+// E1 (decisão 4 = opção a) — DELETE de registros de qualidade.
+// Função PURA: registro com status FINAL é evidência do SiAC 7.5 e não pode ser
+// apagado (FVS/FVM Aprovada ou Reprovada; NC Fechada). Devolve a mensagem de
+// recusa ou null quando o DELETE é permitido. Testada em test_qualidade_regras.php.
+function qualidade_delete_bloqueado(string $key, array $record): ?string
+{
+    $status = (string) ($record['status'] ?? '');
+    $finais = [
+        'qualidadeFvs' => ['Aprovada', 'Reprovada'],
+        'qualidadeFvm' => ['Aprovada', 'Reprovada'],
+        'qualidadeNc' => ['Fechada'],
+    ];
+    if (!isset($finais[$key]) || !in_array($status, $finais[$key], true)) {
+        return null;
+    }
+    $nome = ['qualidadeFvs' => 'FVS', 'qualidadeFvm' => 'FVM', 'qualidadeNc' => 'Não Conformidade'][$key];
+    return "{$nome} com status {$status} é registro controlado (SiAC 7.5) e não pode ser excluída. Se foi um engano, edite o registro ou abra uma nova ficha.";
+}
+
+// Função PURA: estado do gate da etapa a partir das FVS restantes (mais recente
+// primeiro) e das NCs abertas vinculadas. Bloqueia se a FVS mais recente está
+// Reprovada ou se há NC aberta; libera nos demais casos (inclusive sem FVS —
+// aí qualidade_bloqueio_etapa volta a exigir a ficha na conclusão).
+function qualidade_gate_estado(array $fvsDaEtapaMaisRecentePrimeiro, int $ncsAbertas): int
+{
+    if ($ncsAbertas > 0) {
+        return 1;
+    }
+    $ultima = $fvsDaEtapaMaisRecentePrimeiro[0] ?? null;
+    if ($ultima && (string) ($ultima['status'] ?? '') === 'Reprovada') {
+        return 1;
+    }
+    return 0;
+}
+
+// Etapa do cronograma afetada por um registro de qualidade (FVS direta; NC via a FVS).
+function qualidade_etapa_do_registro(PDO $pdo, string $key, array $record): ?int
+{
+    if ($key === 'qualidadeFvs') {
+        return (int) ($record['etapaId'] ?? 0) ?: null;
+    }
+    if ($key === 'qualidadeNc' && !empty($record['fvsId'])) {
+        $stmt = $pdo->prepare('SELECT etapaId FROM qualidade_fvs WHERE id = ?');
+        $stmt->execute([(int) $record['fvsId']]);
+        return (int) $stmt->fetchColumn() ?: null;
+    }
+    return null;
+}
+
+// Recalcula o gate da etapa depois de um DELETE permitido: nunca deixa
+// qualidadeBloqueada=1 órfão (apontando para FVS/NC que não existe mais).
+function qualidade_recalcular_gate(PDO $pdo, int $etapaId): void
+{
+    $stmt = $pdo->prepare('SELECT id, status FROM qualidade_fvs WHERE etapaId = ? ORDER BY id DESC');
+    $stmt->execute([$etapaId]);
+    $fvs = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $ncsAbertas = 0;
+    if ($fvs) {
+        $ids = array_map(static fn ($f) => (int) $f['id'], $fvs);
+        $in = implode(',', array_fill(0, count($ids), '?'));
+        $nc = $pdo->prepare("SELECT COUNT(*) FROM qualidade_nc WHERE status <> 'Fechada' AND fvsId IN ({$in})");
+        $nc->execute($ids);
+        $ncsAbertas = (int) $nc->fetchColumn();
+    }
+    $bloqueada = qualidade_gate_estado($fvs, $ncsAbertas);
+    try {
+        $pdo->prepare('UPDATE obra_cronograma_etapas SET qualidadeBloqueada = ?, fvsId = ? WHERE id = ?')
+            ->execute([$bloqueada, $fvs ? (int) $fvs[0]['id'] : null, $etapaId]);
+    } catch (PDOException $error) {
+        // Colunas de qualidade ausentes: nada a recalcular.
+    }
 }
 
 // Bloqueio de conclusão de etapa de serviço controlado: sem FVS aprovada (e sem
@@ -11229,13 +11316,13 @@ function default_role_view_modules(): array
     return [
         'financeiro' => ['dashboard', 'clients', 'suppliers', 'categories', 'costCenters', 'bankAccounts', 'projects', 'projectSchedule', 'agenda', 'kanban', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'sinapiLabor', 'sinapiFamilies', 'sinapiMaintenances', 'sinapiSettings', 'ownCompositions', 'quotes', 'abcCurve', 'viabilityAnalyses', 'fiscalDocuments', 'receivable', 'payable', 'cashMoves', 'cashFlow', 'reconciliation', 'proposals', 'sales', 'chartAccounts', 'journalEntries', 'dre', 'taxDocuments', 'taxes', 'reports', 'reportFinancial', 'reportClient', 'reportSupplier', 'reportCostCenter', 'reportProject', 'exports', 'systemVersion', 'plugins', 'qualidadeDashboard'],
         'comercial' => ['dashboard', 'clients', 'projects', 'projectSchedule', 'agenda', 'kanban', 'workBudgets', 'abcCurve', 'viabilityAnalyses', 'budgets', 'proposals', 'proposalModels', 'proposalAreas', 'proposalActionTypes', 'proposalServiceSubtypes', 'sales', 'reportClient', 'systemVersion', 'plugins'],
-        'engenharia' => ['dashboard', 'rdo', 'projects', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban', 'projectNotifications', 'projectTrackingLinks', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'sinapiLabor', 'sinapiFamilies', 'sinapiMaintenances', 'ownCompositions', 'quotes', 'abcCurve', 'viabilityAnalyses', 'purchaseOrders', 'fiscalDocuments', 'technicalReports', 'projectReport', 'proposals', 'reportProject', 'systemVersion', 'plugins', 'qualidadeDashboard', 'qualidadePes', 'qualidadePqo', 'qualidadeFvs', 'qualidadeFvm', 'qualidadeNc', 'qualidadeTreinamentos'],
-        'gestor_obra' => ['dashboard', 'rdo', 'projects', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban', 'projectNotifications', 'projectTrackingLinks', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'sinapiLabor', 'sinapiFamilies', 'sinapiMaintenances', 'ownCompositions', 'quotes', 'abcCurve', 'viabilityAnalyses', 'purchaseOrders', 'fiscalDocuments', 'technicalReports', 'projectReport', 'proposals', 'reportProject', 'systemVersion', 'plugins', 'qualidadeDashboard', 'qualidadePes', 'qualidadePqo', 'qualidadeFvs', 'qualidadeFvm', 'qualidadeNc', 'qualidadeTreinamentos', 'rhColaboradores', 'rhTiposDocumento'],
+        'engenharia' => ['dashboard', 'rdo', 'projects', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban', 'projectNotifications', 'projectTrackingLinks', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'sinapiLabor', 'sinapiFamilies', 'sinapiMaintenances', 'ownCompositions', 'quotes', 'abcCurve', 'viabilityAnalyses', 'purchaseOrders', 'fiscalDocuments', 'technicalReports', 'projectReport', 'proposals', 'reportProject', 'systemVersion', 'plugins', 'qualidadeDashboard', 'qualidadePes', 'qualidadePqo', 'qualidadeFvs', 'qualidadeFvm', 'qualidadeNc', 'qualidadeTreinamentos', 'qualidadePolitica', 'qualidadeAuditorias'],
+        'gestor_obra' => ['dashboard', 'rdo', 'projects', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban', 'projectNotifications', 'projectTrackingLinks', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'sinapiLabor', 'sinapiFamilies', 'sinapiMaintenances', 'ownCompositions', 'quotes', 'abcCurve', 'viabilityAnalyses', 'purchaseOrders', 'fiscalDocuments', 'technicalReports', 'projectReport', 'proposals', 'reportProject', 'systemVersion', 'plugins', 'qualidadeDashboard', 'qualidadePes', 'qualidadePqo', 'qualidadeFvs', 'qualidadeFvm', 'qualidadeNc', 'qualidadeTreinamentos', 'qualidadePolitica', 'qualidadeAuditorias', 'rhColaboradores', 'rhTiposDocumento'],
         'equipe_campo' => ['dashboard', 'projectReport', 'systemVersion', 'plugins'],
         'cliente_obra' => ['dashboard', 'projectReport', 'projectSchedule', 'technicalReports', 'systemVersion', 'plugins'],
         'fornecedor_terceiro' => ['dashboard', 'systemVersion', 'plugins'],
         'consulta' => ['dashboard', 'projectReport', 'cashFlow', 'dre', 'reports', 'reportFinancial', 'reportClient', 'reportSupplier', 'reportCostCenter', 'reportProject', 'exports', 'plugins', 'qualidadeDashboard'],
-        'operador' => ['dashboard', 'rdo', 'clients', 'suppliers', 'products', 'services', 'categories', 'costCenters', 'bankAccounts', 'projects', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'ownCompositions', 'quotes', 'abcCurve', 'fiscalDocuments', 'receivable', 'payable', 'cashMoves', 'cashFlow', 'reconciliation', 'budgets', 'proposals', 'sales', 'purchaseOrders', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban', 'projectReport', 'reports', 'reportFinancial', 'reportClient', 'reportSupplier', 'reportCostCenter', 'reportProject', 'myProfile', 'plugins'],
+        'operador' => ['dashboard', 'rdo', 'clients', 'suppliers', 'products', 'services', 'categories', 'costCenters', 'bankAccounts', 'projects', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'ownCompositions', 'quotes', 'abcCurve', 'fiscalDocuments', 'receivable', 'payable', 'cashMoves', 'cashFlow', 'reconciliation', 'budgets', 'proposals', 'sales', 'purchaseOrders', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban', 'projectReport', 'reports', 'reportFinancial', 'reportClient', 'reportSupplier', 'reportCostCenter', 'reportProject', 'myProfile', 'plugins', 'qualidadeDashboard', 'qualidadeFvs', 'qualidadeFvm', 'qualidadeNc'],
         'visualizador' => visualizador_view_modules(),
     ];
 }
