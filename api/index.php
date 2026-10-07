@@ -7778,6 +7778,17 @@ function qualidade_pos_gravacao(PDO $pdo, string $key, array $record, ?array $pr
     // Apenas um documento Vigente por vez (política da empresa e PES por serviço).
     if ($key === 'qualidadePolitica' && ($record['status'] ?? '') === 'Vigente') {
         $pdo->prepare("UPDATE qualidade_politica SET status = 'Obsoleto' WHERE id <> ? AND status = 'Vigente'")->execute([$id]);
+        // E1-fix (padronização): a Política usa a MESMA regra do PES — aprovador = nome
+        // completo do usuário da sessão ao entrar em Vigente, data do PHP; sem digitação
+        // (a Política antiga tinha gravado o username "alef" pelo campo livre).
+        $nomeUsuario = rdo_user_fullname($pdo, (int) ($authUser['id'] ?? 0) ?: null)
+            ?: trim((string) ($authUser['username'] ?? ''));
+        $aprovacao = qualidade_pes_aprovacao_plano($record, $previous, $nomeUsuario, date('Y-m-d'));
+        if ($aprovacao !== null) {
+            update_dynamic($pdo, 'qualidade_politica', $id, $aprovacao);
+            $record = array_merge($record, $aprovacao);
+            $notes[] = 'Política aprovada por ' . $aprovacao['aprovadoPor'] . ' em ' . $aprovacao['dataAprovacao'] . '.';
+        }
     }
     if ($key === 'qualidadePes' && ($record['status'] ?? '') === 'Vigente') {
         $stmt = $pdo->prepare("UPDATE qualidade_pes SET status = 'Obsoleto' WHERE servicoSiacId = ? AND id <> ? AND status = 'Vigente'");
@@ -11874,6 +11885,8 @@ function campos_somente_upload(): array
 {
     return [
         'qualidade_pes' => ['arquivoPdf', 'arquivoNome', 'arquivoData'],
+        // E1-fix: aprovação da Política vem do backend (nome completo da sessão), como no PES.
+        'qualidade_politica' => ['aprovadoPor', 'dataAprovacao'],
         'sales_contracts' => ['proposta_assinada_path', 'contrato_gerado_path', 'contrato_assinado_path'],
         'fiscal_documents' => ['pdfPath', 'xmlPath'],
     ];

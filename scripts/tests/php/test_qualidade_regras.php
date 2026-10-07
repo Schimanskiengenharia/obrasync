@@ -105,4 +105,13 @@ foreach ($edit as $papel => $modulos) {
     }
 }
 
+// ── E1-fix: Política padronizada com o PES (aprovador = nome completo pelo backend) ──
+$polMeta = $mapa['qualidadePolitica'];
+$limpoPol = clean_payload($polMeta, ['conteudo' => 'x', 'versao' => '1.1', 'status' => 'Vigente', 'aprovadoPor' => 'alef', 'dataAprovacao' => '2026-07-05']);
+t_assert(!isset($limpoPol['aprovadoPor']) && !isset($limpoPol['dataAprovacao']) && $limpoPol['versao'] === '1.1', 'Politica: aprovadoPor/dataAprovacao ignorados no CRUD (so o backend grava)');
+$iPol = strpos($fonte, "if (\$key === 'qualidadePolitica' && (\$record['status'] ?? '') === 'Vigente') {");
+$corpoPol = substr($fonte, $iPol, 1200);
+t_assert(str_contains($corpoPol, "qualidade_pes_aprovacao_plano(\$record, \$previous, \$nomeUsuario, date('Y-m-d'))") && str_contains($corpoPol, "update_dynamic(\$pdo, 'qualidade_politica', \$id, \$aprovacao)"), 'Politica usa a mesma decisao pura do PES ao entrar em Vigente');
+t_assert(is_file(__DIR__ . '/../../../scripts/sql/2026-10-07-pbqph-politica-aprovadoPor-nome-completo.sql'), 'script (nao executado) para alinhar a Politica existente');
+
 t_resumo('test_qualidade_regras');

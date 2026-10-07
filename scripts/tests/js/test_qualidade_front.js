@@ -118,5 +118,12 @@ for (const [papel, mods] of Object.entries(ctx3.e)) {
   }
 }
 
+// ── E1-fix: Política sem digitação de aprovador (padronizada com o PES) ─────────
+const iPol = src.indexOf("function renderQualidadePolitica()");
+const corpoPol = src.slice(iPol, src.indexOf("\n}\n", iPol));
+t_assert("form da Politica nao tem input de aprovadoPor/dataAprovacao", !/id="qPolAprovadoPor"|id="qPolDataAprovacao"/.test(corpoPol));
+t_assert("form da Politica mostra a aprovacao como texto", corpoPol.includes('id="qPolAprovacaoInfo"'));
+t_assert("qSalvar da Politica nao envia aprovadoPor", !/aprovadoPor:\s*qVal/.test(corpoPol));
+
 console.log(`test_qualidade_front: ${ok}/${ok + falhas} ok`);
 process.exit(falhas > 0 ? 1 : 0);

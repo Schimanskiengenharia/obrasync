@@ -12757,8 +12757,7 @@ function renderQualidadePolitica() {
       <div class="form-grid">
         <label>Versão<input id="qPolVersao" value="${svgText(row.versao || (vigente ? qProximaVersao(vigente.versao) : "1.0"))}"></label>
         <label>Status<select id="qPolStatus">${["Rascunho", "Vigente", "Obsoleto"].map((s) => `<option ${(row.status || "Rascunho") === s ? "selected" : ""}>${s}</option>`).join("")}</select></label>
-        <label>Aprovado por<input id="qPolAprovadoPor" value="${svgText(row.aprovadoPor || "")}"></label>
-        <label>Data de aprovação<input id="qPolDataAprovacao" type="date" value="${svgText(row.dataAprovacao || "")}"></label>
+        <label>Aprovação (SiAC 5.2 / 7.5)<span class="muted" id="qPolAprovacaoInfo">${row.aprovadoPor ? `${svgText(row.aprovadoPor)} em ${svgText(asDate(row.dataAprovacao))}` : "Preenchida automaticamente, com o seu nome e a data de hoje, ao salvar como Vigente"}</span></label>
         <label class="full">Conteúdo da política<textarea id="qPolConteudo" rows="10">${svgText(row.conteudo || vigente?.conteudo || "")}</textarea></label>
       </div>
       <div class="actions">
@@ -12799,8 +12798,6 @@ function renderQualidadePolitica() {
     await qSalvar(key, {
       conteudo,
       versao: qVal("qPolVersao") || "1.0",
-      aprovadoPor: qVal("qPolAprovadoPor"),
-      dataAprovacao: qVal("qPolDataAprovacao") || null,
       status: qVal("qPolStatus") || "Rascunho",
     }, qualidadeEdit?.id || null);
   });
