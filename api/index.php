@@ -10557,18 +10557,10 @@ function bearer_token(): string
     if ($token !== '') {
         return $token;
     }
-    // Fallback ?token= RESTRITO ao download de notas fiscais aberto por
-    // navegação direta (GET /fiscalDocuments/{id}/pdf|xml) — único caso em que
-    // o navegador não envia headers. Nas demais rotas, aceitar o token na
-    // query string o deixaria gravado nos access logs do Apache.
-    if (($_SERVER['REQUEST_METHOD'] ?? '') === 'GET') {
-        $segments = route_segments();
-        $isFiscalDownload = in_array($segments[0] ?? '', ['fiscalDocuments', 'notas-fiscais', 'documentos-fiscais-obra'], true)
-            && isset($segments[1], $segments[2]);
-        if ($isFiscalDownload) {
-            return trim((string) ($_GET['token'] ?? ''));
-        }
-    }
+    // S4: o token de sessão NUNCA é aceito na query string (?token=) — ficaria
+    // nos access logs do Apache e no histórico do navegador. O antigo fallback
+    // para o download de NF era código morto: o front baixa NF por fetch com
+    // authHeaders() + blob (downloadFiscalFile) desde a remoção do ?token= no app.js.
     return '';
 }
 
