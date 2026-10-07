@@ -427,6 +427,12 @@ const roleLabels = {
   visualizador: "Visualizador",
 };
 
+// S3 — administração do sistema: só o admin vê (menu) e usa (endpoints já eram
+// require_admin). Gerente e visualizador não recebem mais esses itens.
+const MODULOS_SO_ADMIN = ["users", "permissions", "backupLocal", "migration", "auditLog"];
+// S3 — vedados ao visualizador: administração + RH/Pessoal (LGPD).
+const MODULOS_VEDADOS_VISUALIZADOR = [...MODULOS_SO_ADMIN, "rhColaboradores", "rhVencimentos", "rhTiposDocumento"];
+
 const roleModules = {
   admin: modules.map(([key]) => key),
   financeiro: [
@@ -446,9 +452,12 @@ const roleModules = {
   cliente_obra: ["dashboard", "projectReport", "projectSchedule", "technicalReports", "systemVersion"],
   fornecedor_terceiro: ["dashboard", "systemVersion"],
   consulta: ["dashboard", "projectReport", "cashFlow", "dre", "reports", "reportFinancial", "reportClient", "reportSupplier", "reportCostCenter", "reportProject", "exports", "qualidadeDashboard"],
-  gerente: modules.map(([key]) => key).filter((k) => !["users", "permissions"].includes(k)),
+  gerente: modules.map(([key]) => key).filter((k) => !MODULOS_SO_ADMIN.includes(k)),
   operador: ["dashboard", "rdo", "clients", "suppliers", "products", "services", "categories", "costCenters", "bankAccounts", "projects", "projectCosts", "projectRevenues", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "ownCompositions", "quotes", "abcCurve", "fiscalDocuments", "receivable", "payable", "cashMoves", "cashFlow", "reconciliation", "budgets", "proposals", "sales", "purchaseOrders", "cotacoes", "compras", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectReport", "reports", "reportFinancial", "reportClient", "reportSupplier", "reportCostCenter", "reportProject", "myProfile", "qualidadeDashboard", "qualidadeFvs", "qualidadeFvm", "qualidadeNc"],
-  visualizador: modules.map(([key]) => key),
+  // S3: o papel só-leitura deixa de ver "tudo" — lista explícita = todos os
+  // módulos menos administração do sistema e RH/Pessoal (LGPD). Espelha
+  // visualizador_view_modules()/modulos_vedados_ao_visualizador() do backend.
+  visualizador: modules.map(([key]) => key).filter((k) => !MODULOS_VEDADOS_VISUALIZADOR.includes(k)),
 };
 
 // Mutação por papel (espelho de default_role_edit_modules no servidor). Fonte
@@ -459,7 +468,7 @@ const EDITABLE_BY_ROLE = {
   comercial: ["clients", "budgets", "proposals", "agenda", "kanban", "viabilityAnalyses", "viabilidadeObra"],
   engenharia: ["rdo", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "purchaseOrders", "cotacoes", "compras", "fiscalDocuments", "technicalReports", "viabilidadeObra", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos"],
   gestor_obra: ["rdo", "projects", "projectSchedule", "projectMilestones", "agenda", "kanban", "projectNotifications", "projectTrackingLinks", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "sinapiCompositionItems", "sinapiLabor", "sinapiFamilies", "sinapiMaintenances", "ownCompositions", "quotes", "purchaseOrders", "cotacoes", "compras", "fiscalDocuments", "technicalReports", "viabilidadeObra", "qualidadePes", "qualidadePqo", "qualidadeFvs", "qualidadeFvm", "qualidadeNc", "qualidadeTreinamentos", "rhColaboradores"],
-  gerente: modules.map(([k]) => k).filter((k) => !["users", "permissions"].includes(k)),
+  gerente: modules.map(([k]) => k).filter((k) => !MODULOS_SO_ADMIN.includes(k)),
   operador: ["rdo", "clients", "suppliers", "products", "services", "categories", "costCenters", "bankAccounts", "projects", "projectCosts", "projectRevenues", "workBudgets", "workBudgetItems", "sinapiReferences", "sinapiInputs", "sinapiCompositions", "ownCompositions", "quotes", "fiscalDocuments", "receivable", "payable", "cashMoves", "reconciliation", "budgets", "proposals", "sales", "purchaseOrders", "cotacoes", "compras", "projectSchedule", "projectMilestones", "agenda", "kanban", "qualidadeFvs", "qualidadeFvm", "qualidadeNc"],
 };
 
@@ -19619,6 +19628,11 @@ function renderSystemVersion() {
 }
 
 function renderBackupLocal() {
+  // S3: o dump é o banco inteiro (inclusive usuários) — só o administrador.
+  if (!isAdmin()) {
+    qs("content").innerHTML = `<section class="panel"><p>Acesso restrito ao administrador.</p></section>`;
+    return;
+  }
   qs("content").innerHTML = `
     <section class="module-head">
       <div>
@@ -19673,6 +19687,11 @@ async function importBackup() {
 }
 
 function renderMigration() {
+  // S3: importa dados no banco — só o administrador (endpoint já era require_admin).
+  if (!isAdmin()) {
+    qs("content").innerHTML = `<section class="panel"><p>Acesso restrito ao administrador.</p></section>`;
+    return;
+  }
   const legacy = safeLocalGet(STORE_KEY);
   let parsed = null;
   try {

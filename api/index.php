@@ -3166,10 +3166,22 @@ function bootstrap_data(PDO $pdo, array $resources, ?array $authUser = null, boo
     $data = [];
     foreach ($resources as $key => $meta) {
         if (!role_can($pdo, $role, permission_module_key($key), 'view')) {
-            // Todos os perfis recebem a lista básica de usuários para exibir vínculos por nome.
+            // Perfis INTERNOS recebem a lista básica de usuários (sem email/senha) para
+            // exibir vínculos por nome. S3: perfis EXTERNOS (cliente_obra, fornecedor_
+            // terceiro, equipe_campo) recebem só id+fullName de quem está referenciado
+            // nas obras (gestor/comercial/financeiro) — o suficiente para o dashboard
+            // por obra e o relatório da obra resolverem nomes.
             if ($key === 'users') {
                 try {
-                    $stmt = $pdo->query('SELECT id, username, fullName, role, status FROM system_users ORDER BY id DESC');
+                    if (papel_externo($role)) {
+                        $stmt = $pdo->query('SELECT id, fullName FROM system_users
+                                              WHERE id IN (SELECT projectManagerId FROM projects WHERE projectManagerId IS NOT NULL
+                                                           UNION SELECT commercialUserId FROM projects WHERE commercialUserId IS NOT NULL
+                                                           UNION SELECT financialUserId FROM projects WHERE financialUserId IS NOT NULL)
+                                              ORDER BY id DESC');
+                    } else {
+                        $stmt = $pdo->query('SELECT id, username, fullName, role, status FROM system_users ORDER BY id DESC');
+                    }
                     $data[$key] = $stmt->fetchAll();
                 } catch (PDOException $error) {
                     $data[$key] = [];
@@ -11038,6 +11050,38 @@ function role_can(PDO $pdo, string $role, string $module, string $action): bool
     return $allowed === '*' || in_array($module, (array) $allowed, true);
 }
 
+// S3 — papéis EXTERNOS à empresa (cliente da obra, fornecedor/terceiro, equipe de
+// campo): não recebem a lista básica de usuários no bootstrap; só id+fullName de
+// quem está referenciado nas obras (gestor/comercial/financeiro), para o front
+// resolver nomes no dashboard por obra e no relatório da obra.
+function papel_externo(string $role): bool
+{
+    return in_array($role, ['cliente_obra', 'fornecedor_terceiro', 'equipe_campo'], true);
+}
+
+// S3 — o que o papel só-leitura NÃO enxerga: administração do sistema (usuários,
+// permissões, backup, migração, auditoria) e RH/Pessoal (LGPD: CPF e documentos
+// pessoais; a spec do RH só registrou que '*' o incluía "por design", sem decisão
+// de incluir — decisão do dono em 2026-10-06: sai). rhDocumentos mapeia para
+// rhColaboradores em permission_module_key, mas fica listado por clareza.
+function modulos_vedados_ao_visualizador(): array
+{
+    return ['users', 'permissions', 'backupLocal', 'migration', 'auditLog', 'rhColaboradores', 'rhTiposDocumento', 'rhVencimentos', 'rhDocumentos'];
+}
+
+// S3 — lista EXPLÍCITA de consulta do visualizador (substitui o '*'): todos os
+// recursos do resource_map (mapeados ao módulo-pai) mais os módulos autorizados
+// por nome fora do CRUD (dashboard, rdo, reconciliation), menos os vedados.
+function visualizador_view_modules(): array
+{
+    $vedados = modulos_vedados_ao_visualizador();
+    $keys = array_map('permission_module_key', array_keys(resource_map()));
+    $keys = array_merge($keys, ['dashboard', 'rdo', 'reconciliation']);
+    $keys = array_values(array_unique(array_filter($keys, fn ($k) => !in_array($k, $vedados, true))));
+    sort($keys);
+    return $keys;
+}
+
 // Espelha roleModules do app.js (visualização por perfil quando não há linha em role_permissions).
 function default_role_view_modules(): array
 {
@@ -11051,7 +11095,7 @@ function default_role_view_modules(): array
         'fornecedor_terceiro' => ['dashboard', 'systemVersion', 'plugins'],
         'consulta' => ['dashboard', 'projectReport', 'cashFlow', 'dre', 'reports', 'reportFinancial', 'reportClient', 'reportSupplier', 'reportCostCenter', 'reportProject', 'exports', 'plugins', 'qualidadeDashboard'],
         'operador' => ['dashboard', 'rdo', 'clients', 'suppliers', 'products', 'services', 'categories', 'costCenters', 'bankAccounts', 'projects', 'workBudgets', 'sinapiReferences', 'sinapiInputs', 'sinapiCompositions', 'ownCompositions', 'quotes', 'abcCurve', 'fiscalDocuments', 'receivable', 'payable', 'cashMoves', 'cashFlow', 'reconciliation', 'budgets', 'proposals', 'sales', 'purchaseOrders', 'projectSchedule', 'projectMilestones', 'agenda', 'kanban', 'projectReport', 'reports', 'reportFinancial', 'reportClient', 'reportSupplier', 'reportCostCenter', 'reportProject', 'myProfile', 'plugins'],
-        'visualizador' => '*',
+        'visualizador' => visualizador_view_modules(),
     ];
 }
 
