@@ -1,7 +1,38 @@
 # Implantação PBQP-H Nível B no Condomínio Atacama — desenho (EM ANDAMENTO)
 
-> **Data:** 2026-09-02 · **Status:** rascunho em construção — **Seção 1 aprovada** pelo dono;
-> seções 2 a 7 ainda não apresentadas. Retomar pela Seção 2.
+> **Data:** 2026-09-02 · **Atualizado:** 2026-10-07 · **Status:** Seção 1 aprovada; **Seção 2 (E0)
+> fechada fora desta spec** (S1 da sessão de segurança, v1.47.0, commits `b308307`/`82c674a`,
+> validado em produção); **Seção 3 (E1) EXECUTADA** (commits `80da4fc`, `97153fe`, `8a74e78`,
+> aguardando validação do dono). Próxima: **Seção 4 (E2)**, que depende da saída do script
+> `scripts/sql/2026-10-07-pbqph-contagens-reais.sql` (blocos 4 e 5) para a biblioteca de materiais.
+
+## Decisões do dono — 2026-10-07 (E1)
+
+| # | Pergunta | Decisão |
+|---|---|---|
+| 1 | Onde o PES exibe aprovador e data (não havia PDF gerado do PES) | **(a)** "Exportar PDF" do PES via `qualidadePrint`, molde de Política/PQO, com bloco "Aprovado por / em" |
+| 2 | Histórico do PQO com `uk_pqo_project` (uma linha por obra) | **(a)** tabela aditiva `qualidade_pqo_versoes` com snapshot JSON do estado anterior; UNIQUE intacto; só o backend grava; recurso somente leitura |
+| 3 | Origem da biblioteca de ~20 materiais | **(b) ajustada:** proposta cruzando a lista de referência do SiAC com os nomes reais já digitados (blocos 4 e 5 do script de contagens), indicando quais têm procedimento e a origem das faixas 40/50/25%; o dono revisa antes do commit. É E2, não bloqueia E1 |
+| 4 | DELETE de FVS/NC deixando `qualidadeBloqueada=1` órfão | **(a)** bloquear DELETE de registro com status final (FVS/FVM Aprovada/Reprovada, NC Fechada); no DELETE permitido, recalcular o gate da etapa |
+| E1-PES | Quem aprova | `aprovadoPor` = **nome do usuário logado** que torna o PES Vigente, gravado no backend (padrão da assinatura do RDO), sem campo de digitação; `dataAprovacao` = `date('Y-m-d')` do PHP; VARCHAR por consistência com Política/PQO |
+
+## Seção 3. E1 — Pacote 7.5 (EXECUTADA em 2026-10-07)
+
+- **PES:** `aprovadoPor`/`dataAprovacao` (migration `2026-10-07-pbqph-e1-pes-aprovacao.sql` +
+  `ensure_pes_aprovacao_columns`), decisão pura `qualidade_pes_aprovacao_plano()`; form mostra a
+  aprovação como texto; lista com as duas colunas; "Exportar PDF" (`qPesPrintHtml`, pura).
+- **PQO:** `qualidade_pqo_versoes` (migration `2026-10-07-pbqph-e1-pqo-versoes.sql` +
+  `ensure_pqo_versoes_table`), decisão pura `qualidade_pqo_snapshot_necessario()` (anterior
+  Vigente e versão mudou ou saiu de Vigente), painel "Histórico de versões" com impressão do
+  snapshot (`qPqoPrintHtml` compartilhada).
+- **Caronas:** 9.1.1/9.1.2/9.1.3 no `CHECKLIST_SIAC_NIVEL_B` (26 cláusulas); `qProximaVersao()`
+  (fallback 1 → 1.1); `criar_nc_automatica` com data do PHP; `qualidade_delete_bloqueado()` +
+  `qualidade_recalcular_gate()`/`qualidade_gate_estado()`; engenharia/gestor_obra com view em
+  Política e Auditorias; operador com view em FVS/FVM/NC no backend.
+- **Fora do E1 (fica para E5, como a spec previa):** campos mínimos obrigatórios da FVM no
+  servidor (lote, responsável, `fornecedorId`) — o dono os colocou no E5.
+- **Testes:** `test_qualidade_regras.php` (60) e `test_qualidade_front.js` (47) — primeiros do módulo.
+- **Servidor:** rodar as 2 migrations (o `ensure_*` cobre, mas rodar dá consistência).
 >
 > **Base:** `docs/revisao/2026-09-pbqph-nivel-b-diagnostico.md` (§1-§6.3) — este spec não repete o
 > diagnóstico; só desenha o que fazer. Guia simplificado do SiAC recebido em 2026-09-02 (não está

@@ -50,6 +50,36 @@ commit por item, sem migration, sem push (push e deploy só a pedido do dono).
 6. Com papel sem `canDelete` em Pedidos de compra (grade por usuário), tentar excluir/cancelar/reabrir uma cotação por material: deve responder 403.
 7. Rodar `bash scripts/tests/run-all.sh` no servidor (a asserção de symlink do S1 só roda em Linux).
 
+## 0.0.1 PBQP-H Nível B — E1 (pacote 7.5) executado em 2026-10-07
+
+Setor Qualidade PBQP-H, única frente descongelada (prazo: canteiro do Condomínio Atacama). Spec:
+`docs/superpowers/specs/2026-09-02-pbqph-nivel-b-implantacao-atacama-design.md` (decisões 1-4 e
+Seção 3 registradas lá). E0 já estava fechado pelo S1 (v1.47.0).
+
+| Commit | Entrega |
+|---|---|
+| `5d907c7` | `scripts/sql/2026-10-07-pbqph-contagens-reais.sql` — contagens reais (só SELECT, COLLATE explícito); o dono roda no servidor |
+| `80da4fc` | E1-PES: `aprovadoPor`/`dataAprovacao` gravados pelo backend ao tornar Vigente (nome da sessão + data do PHP), sem digitação; "Exportar PDF" do PES |
+| `97153fe` | E1-PQO: `qualidade_pqo_versoes` (snapshot da vigente anterior; UNIQUE por obra intacto); histórico na tela com impressão |
+| `8a74e78` | E1-caronas: 9.1.x no checklist; versão da Política sem NaN; NC automática com data do PHP; DELETE de registro final bloqueado + gate recalculado; permissões (engenharia/gestor veem Política e Auditorias; operador vê FVS/FVM/NC) |
+
+**Reconferência prévia (código atual):** JÁ FECHADO = migration fase0 das tabelas
+(`2026-06-27-pbqph-fase0-qualidade-base.sql`, G4). DIFERENTE = gate fail-open (só se a coluna
+faltar; bloco 0 do script confere), operador (menu tinha, backend não), obsolescência do PQO
+(UNIQUE impedia versões). Demais itens: ABERTO e fechados acima.
+
+**Testes:** `test_qualidade_regras.php` (60) e `test_qualidade_front.js` (47) — primeiros testes do
+módulo `qualidade_*`. Suíte: 31/31 blocos.
+
+**Próximo:** E2 (biblioteca de ~20 materiais + metas por `ceil` 40/50/25% + flag executa/não
+executa) — depende da saída dos blocos 4 e 5 do script de contagens.
+
+**Depende de servidor:** rodar `migrations/2026-10-07-pbqph-e1-pes-aprovacao.sql` e
+`migrations/2026-10-07-pbqph-e1-pqo-versoes.sql` (o `ensure_*` cobre, mas rodar dá consistência);
+validar: salvar um PES como Vigente → aprovador/data aparecem e o "Exportar PDF" os imprime; editar
+o PQO vigente trocando a versão → painel "Histórico de versões" lista a anterior; tentar excluir uma
+FVS Aprovada → 422; excluir uma NC Aberta vinculada a FVS → etapa desbloqueia.
+
 ## 0. Varredura de 2026-07-28 (v1.38.1 → v1.38.3)
 
 Leitura completa do código e verificação de estabilidade. Resultado: **estável**, com um bug

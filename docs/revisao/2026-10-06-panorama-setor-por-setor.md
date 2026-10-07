@@ -144,7 +144,7 @@
 
 **Etapas de código previstas na spec (ordem):**
 - **E0** — segurança do PDF do PES: **FECHADO em 2026-10-06 pelo S1 (v1.47.0)** — download confinado ao `upload_dir`, `arquivoPdf/arquivoNome/arquivoData` fora do PUT genérico. A spec do Atacama pode pular a Seção 2 e retomar pela Seção 3 (E1).
-- **E1** — pacote 7.5: `aprovadoPor`/`dataAprovacao` no PES (2 colunas aditivas), obsolescência do PQO.
+- **E1** — pacote 7.5: **EXECUTADO em 2026-10-07** (commits `80da4fc`, `97153fe`, `8a74e78`; STATUS §0.0.1) — aprovação do PES pelo backend + "Exportar PDF", histórico do PQO em `qualidade_pqo_versoes`, 9.1.x no checklist, Política sem NaN, NC com data do PHP, DELETE de registro final bloqueado com gate recalculado, permissões. Aguarda validação do dono e as 2 migrations no servidor.
 - **E2** — biblioteca de ~20 materiais como constante (molde dos 27 serviços) + metas **derivadas por ceil** (40/50/25%) no lugar de `QUALIDADE_METAS` 11/10 + flag executa/não executa.
 - **E3** — painel de prontidão (C1–C14 calculáveis) como seção do `renderQualidadeDashboard`, não tela nova; observáveis pelas etapas em andamento.
 - **E4** — tabela `qualidade_requisitos` para 8 confirmações manuais com anexo (M1–M8; M8 = preservação 8.5.4).
