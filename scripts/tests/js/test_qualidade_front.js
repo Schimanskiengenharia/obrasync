@@ -57,5 +57,32 @@ t_assert("lista do PES mostra aprovadoPor e dataAprovacao", corpoPes.includes('"
 t_assert("botao Exportar PDF por PES", corpoPes.includes("data-q-print-pes") && corpoPes.includes("qualidadePrint(qPesPrintHtml(pes))"));
 t_assert("qSalvar do PES nao envia aprovadoPor", !/aprovadoPor:\s*qVal/.test(corpoPes));
 
+// ── E1-PQO: documento do PQO (vigente ou snapshot) e painel de histórico ───────
+ctx.db.projects = [{ id: 7, name: "Condomínio Atacama" }];
+ctx.db.qualidadePqoVersoes = [{ id: 1, pqoId: 3, versao: "1.0", statusAnterior: "Vigente", motivo: "Substituída pela v1.1", aprovadoPor: "RT", dataAprovacao: "2026-09-01", arquivadoPor: "Alef", arquivadoEm: "2026-10-07 10:00:00", snapshotJson: JSON.stringify({ projectId: 7, versao: "1.0", status: "Vigente", servicosControlados: "[4,5]", materiaisControlados: '[{"nome":"Cimento CP II","especificacao":"32","norma":"NBR 16697"}]' }) }];
+ctx.byId = (col, id) => (ctx.db[col] || []).find((r) => String(r.id) === String(id));
+ctx.sameId = (a, b) => String(a) === String(b);
+ctx.escapeHtml = ctx.svgText;
+ctx.qjson = (v, fb) => { try { return v ? JSON.parse(v) : fb; } catch { return fb; } };
+ctx.servicoSiac = (id) => ({ 4: { nome: "Execução de fôrma" }, 5: { nome: "Montagem de armadura" } }[id]);
+ctx.qPesVigente = (id) => (id === 4 ? { versao: "1.0" } : null);
+vm.runInContext(extrairFuncao("qPqoPrintHtml") + "\n" + extrairFuncao("qPqoHistoricoHtml") + "\nthis.qPqoPrintHtml = qPqoPrintHtml; this.qPqoHistoricoHtml = qPqoHistoricoHtml;", ctx);
+
+const pqo = { id: 3, projectId: 7, versao: "1.1", status: "Vigente", responsavelTecnico: "Eng. RT", crea: "123", servicosControlados: "[4,5]", materiaisControlados: '[{"nome":"Cimento CP II"}]', aprovadoPor: "Dir.", dataAprovacao: "2026-10-05" };
+const hPqo = ctx.qPqoPrintHtml(pqo);
+t_assert("PQO vigente: titulo com versao e obra", hPqo.includes("Plano da Qualidade da Obra — v1.1") && hPqo.includes("Obra: Condomínio Atacama"));
+t_assert("PQO vigente: servicos com PES vigente marcado", hPqo.includes("4 — Execução de fôrma (PES v1.0)") && hPqo.includes("5 — Montagem de armadura (sem PES vigente)"));
+t_assert("PQO vigente: sem carimbo de versao arquivada", !hPqo.includes("VERSÃO ARQUIVADA"));
+const snap = ctx.qjson(ctx.db.qualidadePqoVersoes[0].snapshotJson, null);
+const hSnap = ctx.qPqoPrintHtml(snap, { historico: ctx.db.qualidadePqoVersoes[0] });
+t_assert("snapshot imprime a versao antiga com carimbo", hSnap.includes("— v1.0") && hSnap.includes("VERSÃO ARQUIVADA") && hSnap.includes("Substituída pela v1.1") && hSnap.includes("arquivada por Alef"));
+t_assert("snapshot preserva materiais da epoca", hSnap.includes("Cimento CP II") && hSnap.includes("NBR 16697"));
+const painel = ctx.qPqoHistoricoHtml([pqo]);
+t_assert("painel de historico lista a versao com botao de impressao", painel.includes("Histórico de versões") && painel.includes('data-q-print-pqo-versao="1"') && painel.includes("v1.0 (Vigente)"));
+t_assert("painel vazio sem historico", ctx.qPqoHistoricoHtml([{ id: 99, projectId: 7, versao: "1.0" }]) === "");
+const iPqo = src.indexOf("function renderQualidadePqo()");
+const corpoPqo = src.slice(iPqo, src.indexOf("\n}\n", iPqo));
+t_assert("tela do PQO usa qPqoPrintHtml e inclui o historico", corpoPqo.includes("qualidadePrint(qPqoPrintHtml(pqo))") && corpoPqo.includes("${qPqoHistoricoHtml(rows)}"));
+
 console.log(`test_qualidade_front: ${ok}/${ok + falhas} ok`);
 process.exit(falhas > 0 ? 1 : 0);

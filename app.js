@@ -13034,6 +13034,7 @@ function renderQualidadePqo() {
     ${formHtml}
     ${table("Planos da Qualidade", listRows, ["projectId", "versao", "responsavelTecnico", "servicosQtd", "materiaisQtd", "status"], editable, key)}
     ${rows.length ? `<section class="panel"><div class="actions">${rows.map((r) => `<button class="secondary" type="button" data-q-print-pqo="${r.id}">🖨️ PQO — ${svgText(byId("projects", r.projectId)?.name || r.projectId)}</button>`).join("")}</div></section>` : ""}
+    ${qPqoHistoricoHtml(rows)}
   `;
   qWire(key);
   const atualizarContadores = () => {
@@ -13085,24 +13086,53 @@ function renderQualidadePqo() {
   }
   qs("content").querySelectorAll("[data-q-print-pqo]").forEach((b) => b.addEventListener("click", () => {
     const pqo = byId(key, b.dataset.qPrintPqo);
-    if (!pqo) return;
-    const servicos = qjson(pqo.servicosControlados, []);
-    const materiais = qjson(pqo.materiaisControlados, []);
-    qualidadePrint(`
-      <h1>Plano da Qualidade da Obra — v${svgText(pqo.versao)}</h1>
-      <p class="q-print-sub">Obra: ${svgText(byId("projects", pqo.projectId)?.name || "")} — PBQP-H SiAC Nível B</p>
-      <p><strong>Responsável técnico:</strong> ${svgText(pqo.responsavelTecnico || "—")} (CREA ${svgText(pqo.crea || "—")}) — <strong>Período:</strong> ${svgText(pqo.dataInicioPrevisto || "—")} a ${svgText(pqo.dataFimPrevisto || "—")}</p>
-      <h2>Escopo</h2><div class="q-print-body">${svgText(pqo.escopo || "—").replaceAll("\n", "<br>")}</div>
-      <h2>Serviços controlados (${servicos.length}/27)</h2>
-      <ol>${servicos.map((idS) => `<li>${svgText(`${idS} — ${servicoSiac(idS)?.nome || ""}`)}${qPesVigente(idS) ? ` (PES v${svgText(qPesVigente(idS).versao)})` : " (sem PES vigente)"}</li>`).join("")}</ol>
-      <h2>Materiais controlados (${materiais.length})</h2>
-      <table border="1" cellspacing="0" cellpadding="6" width="100%"><tr><th>Material</th><th>Especificação</th><th>Norma</th></tr>
-        ${materiais.map((m) => `<tr><td>${svgText(m.nome || "")}</td><td>${svgText(m.especificacao || "")}</td><td>${svgText(m.norma || "")}</td></tr>`).join("")}
-      </table>
-      <h2>Metas da qualidade</h2><div class="q-print-body">${svgText(pqo.metasQualidade || "—").replaceAll("\n", "<br>")}</div>
-      <p>Aprovado por: ${svgText(pqo.aprovadoPor || "____________")} — Data: ${svgText(pqo.dataAprovacao || "____/____/____")}</p>
-    `);
+    if (pqo) qualidadePrint(qPqoPrintHtml(pqo));
   }));
+  // E1 (decisão 2): histórico de versões — snapshots guardados pelo backend ao
+  // substituir a vigente; qualquer versão antiga pode ser impressa do snapshot.
+  qs("content").querySelectorAll("[data-q-print-pqo-versao]").forEach((b) => b.addEventListener("click", () => {
+    const versao = byId("qualidadePqoVersoes", b.dataset.qPrintPqoVersao);
+    const snapshot = versao ? qjson(versao.snapshotJson, null) : null;
+    if (snapshot) qualidadePrint(qPqoPrintHtml(snapshot, { historico: versao }));
+  }));
+}
+
+// E1 — documento imprimível do PQO (função pura a partir do registro ou de um
+// snapshot do histórico). Compartilhado pela versão vigente e pelas arquivadas.
+function qPqoPrintHtml(pqo, { historico = null } = {}) {
+  const servicos = qjson(pqo.servicosControlados, []);
+  const materiais = qjson(pqo.materiaisControlados, []);
+  const carimbo = historico
+    ? `<p class="q-print-sub"><strong>VERSÃO ARQUIVADA</strong> — ${svgText(historico.motivo || "substituída")} — arquivada por ${svgText(historico.arquivadoPor || "—")} em ${svgText(historico.arquivadoEm ? asDate(historico.arquivadoEm) : "—")}</p>`
+    : "";
+  return `
+    <h1>Plano da Qualidade da Obra — v${svgText(pqo.versao || "")}</h1>
+    <p class="q-print-sub">Obra: ${svgText(byId("projects", pqo.projectId)?.name || "")} — PBQP-H SiAC Nível B — Status: ${svgText(pqo.status || "")}</p>
+    ${carimbo}
+    <p><strong>Responsável técnico:</strong> ${svgText(pqo.responsavelTecnico || "—")} (CREA ${svgText(pqo.crea || "—")}) — <strong>Período:</strong> ${svgText(pqo.dataInicioPrevisto || "—")} a ${svgText(pqo.dataFimPrevisto || "—")}</p>
+    <h2>Escopo</h2><div class="q-print-body">${svgText(pqo.escopo || "—").replaceAll("\n", "<br>")}</div>
+    <h2>Serviços controlados (${servicos.length}/27)</h2>
+    <ol>${servicos.map((idS) => `<li>${svgText(`${idS} — ${servicoSiac(idS)?.nome || ""}`)}${qPesVigente(idS) ? ` (PES v${svgText(qPesVigente(idS).versao)})` : " (sem PES vigente)"}</li>`).join("")}</ol>
+    <h2>Materiais controlados (${materiais.length})</h2>
+    <table border="1" cellspacing="0" cellpadding="6" width="100%"><tr><th>Material</th><th>Especificação</th><th>Norma</th></tr>
+      ${materiais.map((m) => `<tr><td>${svgText(m.nome || "")}</td><td>${svgText(m.especificacao || "")}</td><td>${svgText(m.norma || "")}</td></tr>`).join("")}
+    </table>
+    <h2>Metas da qualidade</h2><div class="q-print-body">${svgText(pqo.metasQualidade || "—").replaceAll("\n", "<br>")}</div>
+    <p>Aprovado por: ${svgText(pqo.aprovadoPor || "____________")} — Data: ${svgText(pqo.dataAprovacao || "____/____/____")}</p>
+  `;
+}
+
+// E1 — painel do histórico de versões do PQO (somente leitura).
+function qPqoHistoricoHtml(rows) {
+  const versoes = (db.qualidadePqoVersoes || []);
+  if (!versoes.length) return "";
+  const porPqo = rows.map((pqo) => {
+    const lista = versoes.filter((v) => sameId(v.pqoId, pqo.id)).sort((a, b) => String(b.arquivadoEm || "").localeCompare(String(a.arquivadoEm || "")));
+    if (!lista.length) return "";
+    return `<h4 class="q-subhead">${svgText(byId("projects", pqo.projectId)?.name || pqo.projectId)} — vigente v${svgText(pqo.versao || "")}</h4>
+      <ul class="q-alertas">${lista.map((v) => `<li>v${svgText(v.versao)} (${svgText(v.statusAnterior)}) — ${svgText(v.motivo || "")} — aprovada por ${svgText(v.aprovadoPor || "—")}${v.dataAprovacao ? " em " + svgText(asDate(v.dataAprovacao)) : ""} — arquivada por ${svgText(v.arquivadoPor || "—")} em ${svgText(v.arquivadoEm ? asDate(v.arquivadoEm) : "—")} <button class="secondary" type="button" data-q-print-pqo-versao="${escapeHtml(v.id)}">🖨️ Imprimir</button></li>`).join("")}</ul>`;
+  }).join("");
+  return porPqo ? `<section class="panel"><h3>Histórico de versões (SiAC 7.5)</h3>${porPqo}</section>` : "";
 }
 
 // ── FVS / FVM — fichas de verificação ───────────────────────────────────────

@@ -45,4 +45,21 @@ t_assert(str_contains($fonte, "qualidade_pes_aprovacao_plano(\$record, \$previou
 t_assert(str_contains($fonte, 'function ensure_pes_aprovacao_columns'), 'ensure_pes_aprovacao_columns existe');
 t_assert(is_file(__DIR__ . '/../../../migrations/2026-10-07-pbqph-e1-pes-aprovacao.sql'), 'migration aditiva da aprovacao do PES existe');
 
+// ── E1-PQO: obsolescência com histórico (snapshot da vigente anterior) ─────────
+$vig = ['status' => 'Vigente', 'versao' => '1.0', 'projectId' => 7];
+t_assert(qualidade_pqo_snapshot_necessario(null, $vig) === null, 'criacao nao gera historico');
+t_assert(qualidade_pqo_snapshot_necessario(['status' => 'Rascunho', 'versao' => '1.0'], $vig) === null, 'Rascunho -> Vigente nao gera historico (nada a preservar)');
+t_assert(qualidade_pqo_snapshot_necessario($vig, ['status' => 'Vigente', 'versao' => '1.0', 'escopo' => 'texto editado']) === null, 'editar a vigente sem trocar a versao nao gera historico');
+t_assert(qualidade_pqo_snapshot_necessario($vig, ['status' => 'Vigente', 'versao' => '1.1']) === 'Substituída pela v1.1', 'nova versao vigente guarda a anterior');
+t_assert(qualidade_pqo_snapshot_necessario($vig, ['status' => 'Encerrado', 'versao' => '1.0']) === 'Vigente v1.0 passou a Encerrado', 'sair de Vigente guarda a anterior');
+t_assert(qualidade_pqo_snapshot_necessario(['status' => 'Encerrado', 'versao' => '1.0'], ['status' => 'Vigente', 'versao' => '2.0']) === null, 'anterior nao vigente nao gera historico');
+// Recurso de histórico: existe, mapeia para a permissão do PQO e é somente leitura.
+$mapa = resource_map();
+t_assert(isset($mapa['qualidadePqoVersoes']) && $mapa['qualidadePqoVersoes']['table'] === 'qualidade_pqo_versoes', 'resource qualidadePqoVersoes existe');
+t_assert(permission_module_key('qualidadePqoVersoes') === 'qualidadePqo', 'historico herda a permissao do PQO');
+t_assert(str_contains($fonte, "\$key === 'qualidadePqoVersoes' && \$method !== 'GET'"), 'rota generica recusa escrita no historico');
+t_assert(str_contains($fonte, 'function ensure_pqo_versoes_table'), 'ensure_pqo_versoes_table existe');
+t_assert(is_file(__DIR__ . '/../../../migrations/2026-10-07-pbqph-e1-pqo-versoes.sql'), 'migration aditiva do historico do PQO existe');
+t_assert(str_contains((string) file_get_contents(__DIR__ . '/../../../schema.sql'), 'CREATE TABLE IF NOT EXISTS qualidade_pqo_versoes'), 'schema.sql tem qualidade_pqo_versoes');
+
 t_resumo('test_qualidade_regras');

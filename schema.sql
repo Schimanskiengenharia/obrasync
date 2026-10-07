@@ -1915,6 +1915,25 @@ CREATE TABLE IF NOT EXISTS qualidade_pqo (
   UNIQUE KEY uk_pqo_project (projectId)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- E1 (2026-10-07): histórico de versões do PQO — snapshot do estado anterior ao substituir
+-- a vigente (uk_pqo_project continua: uma linha por obra = a vigente). Só o backend grava.
+CREATE TABLE IF NOT EXISTS qualidade_pqo_versoes (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  pqoId BIGINT UNSIGNED NOT NULL,
+  projectId BIGINT UNSIGNED NOT NULL,
+  versao VARCHAR(20) NOT NULL DEFAULT '',
+  statusAnterior VARCHAR(20) NOT NULL DEFAULT '',
+  aprovadoPor VARCHAR(120) NULL,
+  dataAprovacao DATE NULL,
+  motivo VARCHAR(200) NULL,
+  snapshotJson LONGTEXT NULL,
+  arquivadoPor VARCHAR(120) NULL,
+  arquivadoEm DATETIME NULL,
+  createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_pqo_versoes_pqo (pqoId),
+  KEY idx_pqo_versoes_project (projectId)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS qualidade_fvs (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   pqoId BIGINT UNSIGNED NULL,

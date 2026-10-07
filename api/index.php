@@ -908,6 +908,11 @@ try {
         require_admin($authUser);
     }
 
+    // E1: o histórico do PQO é evidência (SiAC 7.5) — só o backend grava, ninguém edita/apaga.
+    if ($key === 'qualidadePqoVersoes' && $method !== 'GET') {
+        fail('O histórico de versões do PQO é somente leitura.', 405);
+    }
+
     // Módulos novos criam as próprias tabelas sob demanda: dispensam migração manual.
     if ($key === 'viabilityAnalyses') {
         ensure_viability_table($pdo);
@@ -2333,6 +2338,8 @@ function resource_map(): array
         'qualidadePolitica' => r('qualidade_politica', ['qualidade-politica','politica-qualidade'], ['conteudo','versao','aprovadoPor','dataAprovacao','status'], ['versao']),
         'qualidadePes' => r('qualidade_pes', ['qualidade-pes','procedimentos-execucao'], ['servicoSiacId','servicoNome','servicoGrupo','versao','objetivo','materiaisNecessarios','equipamentosEpi','procedimento','criteriosAceitacao','normasReferencia','responsavelElaboracao','dataElaboracao','status','arquivoPdf','arquivoNome','arquivoData'], ['servicoSiacId','versao']),
         'qualidadePqo' => r('qualidade_pqo', ['qualidade-pqo','plano-qualidade-obra'], ['projectId','versao','responsavelTecnico','crea','dataInicioPrevisto','dataFimPrevisto','escopo','servicosControlados','materiaisControlados','metasQualidade','status','dataAprovacao','aprovadoPor'], ['projectId']),
+        // E1: histórico do PQO — SOMENTE LEITURA pelo CRUD (a rota genérica recusa POST/PUT/DELETE); só o backend grava.
+        'qualidadePqoVersoes' => r('qualidade_pqo_versoes', ['qualidade-pqo-versoes','historico-pqo'], ['pqoId','projectId','versao','statusAnterior','aprovadoPor','dataAprovacao','motivo','snapshotJson','arquivadoPor','arquivadoEm'], ['pqoId','versao']),
         'qualidadeFvs' => r('qualidade_fvs', ['qualidade-fvs','fichas-verificacao-servico'], ['pqoId','projectId','etapaId','pesId','servicoSiacId','servicoNome','dataExecucao','localObra','responsavelExecucao','responsavelInspecao','itensVerificacao','resultado','observacoes','acaoCorretiva','dataInspecao','assinaturaExecutor','assinaturaInspetor','status'], ['projectId','servicoSiacId','dataExecucao','localObra']),
         'qualidadeFvm' => r('qualidade_fvm', ['qualidade-fvm','fichas-verificacao-material'], ['pqoId','projectId','materialNome','materialCodigo','fornecedor','notaFiscal','quantidade','unidade','dataRecebimento','responsavelRecebimento','itensVerificacao','resultado','observacoes','status','lote','fabricante','dataFabricacao','validade','localAplicacao','certificadoQualidade','purchaseOrderId'], ['projectId','materialNome','notaFiscal','dataRecebimento']),
         'qualidadeNc' => r('qualidade_nc', ['qualidade-nc','nao-conformidades'], ['projectId','pqoId','numero','origem','fvsId','fvmId','descricaoNC','servicoSiacId','servicoNome','localObra','grau','responsavelDeteccao','dataDeteccao','prazoAcao','acaoCorretiva','responsavelAcao','dataAcao','verificacaoEficacia','responsavelVerificacao','dataVerificacao','status'], ['numero']),
@@ -7442,7 +7449,57 @@ function ensure_qualidade_tables(PDO $pdo): void
     ensure_pes_arquivo_columns($pdo);
     // PBQP-H Nível B — E1 (pacote 7.5): aprovação do PES e histórico do PQO.
     ensure_pes_aprovacao_columns($pdo);
+    ensure_pqo_versoes_table($pdo);
     $done = true;
+}
+
+// PBQP-H E1 (decisão 2 = opção a): histórico do PQO em tabela ADITIVA. O UNIQUE
+// uk_pqo_project (uma linha por obra = a vigente) fica intacto; ao substituir a
+// versão vigente, o estado ANTERIOR vai inteiro para cá (snapshot JSON). Só o
+// backend grava; o recurso é somente leitura pelo CRUD (ver rota genérica).
+function ensure_pqo_versoes_table(PDO $pdo): void
+{
+    try {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS qualidade_pqo_versoes (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            pqoId BIGINT UNSIGNED NOT NULL,
+            projectId BIGINT UNSIGNED NOT NULL,
+            versao VARCHAR(20) NOT NULL DEFAULT '',
+            statusAnterior VARCHAR(20) NOT NULL DEFAULT '',
+            aprovadoPor VARCHAR(120) NULL,
+            dataAprovacao DATE NULL,
+            motivo VARCHAR(200) NULL,
+            snapshotJson LONGTEXT NULL,
+            arquivadoPor VARCHAR(120) NULL,
+            arquivadoEm DATETIME NULL,
+            createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            KEY idx_pqo_versoes_pqo (pqoId),
+            KEY idx_pqo_versoes_project (projectId)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+    } catch (Throwable $error) {
+        error_log('[ObraSync] ensure_pqo_versoes_table: ' . $error->getMessage());
+    }
+}
+
+// Função PURA: decide se a gravação do PQO substitui uma versão vigente (e por quê).
+// Snapshot quando o estado ANTERIOR era Vigente e (a versão mudou OU deixou de ser
+// Vigente). Editar texto da vigente sem trocar a versão NÃO gera histórico.
+// Devolve o motivo (string) ou null. Testada em test_qualidade_regras.php.
+function qualidade_pqo_snapshot_necessario(?array $previous, array $record): ?string
+{
+    if ($previous === null || (string) ($previous['status'] ?? '') !== 'Vigente') {
+        return null;
+    }
+    $versaoAntes = trim((string) ($previous['versao'] ?? ''));
+    $versaoDepois = trim((string) ($record['versao'] ?? ''));
+    $statusDepois = (string) ($record['status'] ?? '');
+    if ($statusDepois !== 'Vigente') {
+        return 'Vigente v' . $versaoAntes . ' passou a ' . ($statusDepois !== '' ? $statusDepois : 'outro status');
+    }
+    if ($versaoDepois !== $versaoAntes) {
+        return 'Substituída pela v' . $versaoDepois;
+    }
+    return null;
 }
 
 // PBQP-H E1 (SiAC 7.5 — controle de documentos): quem aprovou o PES e quando.
@@ -7650,6 +7707,29 @@ function qualidade_pos_gravacao(PDO $pdo, string $key, array $record, ?array $pr
             update_dynamic($pdo, 'qualidade_pes', $id, $aprovacao);
             $record = array_merge($record, $aprovacao);
             $notes[] = 'PES aprovado por ' . $aprovacao['aprovadoPor'] . ' em ' . $aprovacao['dataAprovacao'] . '.';
+        }
+    }
+
+    // E1 (decisão 2): obsolescência do PQO com histórico — ao substituir a versão
+    // vigente da obra, o estado anterior inteiro vai para qualidade_pqo_versoes.
+    if ($key === 'qualidadePqo') {
+        $motivo = qualidade_pqo_snapshot_necessario($previous, $record);
+        if ($motivo !== null) {
+            $arquivadoPor = rdo_user_fullname($pdo, (int) ($authUser['id'] ?? 0) ?: null)
+                ?: trim((string) ($authUser['username'] ?? ''));
+            insert_dynamic($pdo, 'qualidade_pqo_versoes', [
+                'pqoId' => $id,
+                'projectId' => (int) ($previous['projectId'] ?? $record['projectId'] ?? 0),
+                'versao' => mb_substr((string) ($previous['versao'] ?? ''), 0, 20),
+                'statusAnterior' => mb_substr((string) ($previous['status'] ?? ''), 0, 20),
+                'aprovadoPor' => $previous['aprovadoPor'] ?? null,
+                'dataAprovacao' => $previous['dataAprovacao'] ?? null,
+                'motivo' => mb_substr($motivo, 0, 200),
+                'snapshotJson' => json_encode($previous, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                'arquivadoPor' => $arquivadoPor !== '' ? mb_substr($arquivadoPor, 0, 120) : null,
+                'arquivadoEm' => date('Y-m-d H:i:s'),
+            ]);
+            $notes[] = 'Versão anterior do PQO (v' . ($previous['versao'] ?? '') . ') guardada no histórico.';
         }
     }
 
@@ -10902,6 +10982,7 @@ function permission_module_key(string $key): string
         'checklistItems' => 'checklists',
         'customFieldValues' => 'customFields',
         'rhDocumentos' => 'rhColaboradores',
+        'qualidadePqoVersoes' => 'qualidadePqo',
     ][$key] ?? $key;
 }
 
