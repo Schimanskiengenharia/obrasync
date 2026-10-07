@@ -55,7 +55,7 @@
 
 **Decidido:** DEP2/DEP6 contestadas (não fazer); DEP4 (migrations automáticas) só com guarda de aditividade; API1–8 e Gantt completo ficam na Onda E; plataforma única de notificações (AG5+KB9+FIN6) na Onda D.
 
-**Candidatos de mudança:** (P) fechar E0 do PES e revisar os 5 achados de segurança da revisão geral no código atual; (P) guarda de método HTTP nos `?module=` (um ponto em `authorize_request`); (M) frente collation; (M) Onda B L2.
+**Candidatos de mudança:** (P) decidir o padrão de delete por papel (`role_can` sem grade); (M) frente collation; (M) Onda B L2; (M/G) ACL por obra como frente própria com spec.
 
 ---
 
@@ -279,7 +279,7 @@
 A ordem respeita as decisões vigentes (PBQP-H descongelada; o resto depende de o dono reabrir a fila) e começa pelo que é pequeno, verificado hoje e sem dependência de servidor:
 
 1. **Qualidade PBQP-H** — retomar a spec pela Seção 2 (E0), push dos docs, contagens. É a frente com prazo (canteiro do Atacama).
-2. **Transversal + Configurações** — limpeza de menus/permissões + os 5 achados de segurança (um ciclo P/M, só código, elimina a maior parte dos "duplicados" e "mortos" de 5 setores).
+2. ~~**Transversal + Configurações** — os achados de segurança~~ **FEITO em 2026-10-06 (v1.47.0, S1–S7)**. Resta a limpeza de menus/permissões (duplicados e telas mortas de 5 setores), ciclo P.
 3. **Dashboard** — pacote dos 5 itens já diagnosticados (P).
 4. **Planejamento** — frente marco → conta a receber (aprovada, 4 itens) + KB6/AG2/AG3.
 5. **Financeiro** — FIN3/FIN7/FIN9 (Onda B L5) e, com o dado dos 243, Duplicadas/E3-B.
