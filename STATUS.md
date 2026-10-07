@@ -2,6 +2,10 @@
 
 > **Versão:** `v1.47.0` · 2026-10-06 · **Varredura:** 2026-10-06 (segurança S1–S7) · **Ambiente:** produção em `https://schimanskiengenharia.com.br/obrasync` (antes `/financeiro`)
 
+> **➜ RETOMADA:** leia primeiro `docs/revisao/2026-10-07-handoff-sessao.md` — onde a sessão
+> 2026-10-06/07 parou (segurança S1–S7 fechada; PBQP-H E1/E2 entregues; E3 NÃO iniciado),
+> pendências de servidor para marcar, troca de endereço /obrasync, decisões de produto.
+
 > ⚠️ **Leia com atenção à data.** O corpo deste documento (seções 1 a 7) foi escrito na época da
 > **v1.12–v1.19** e não foi reescrito a cada release. Ele descreve corretamente a base do sistema,
 > mas **não reflete** as entregas de v1.20 em diante (Cotações por material, RH/Pessoal, Modo
@@ -74,6 +78,14 @@ faltar; bloco 0 do script confere), operador (menu tinha, backend não), obsoles
 módulo `qualidade_*`. Suíte: 31/31 blocos.
 
 **Contagens reais (rodadas em 2026-10-07):** Política v1.0 Vigente; 1 PES Vigente (SPDA, sem PDF); PQO, FVS, FVM, NC, treinamentos e auditorias zerados; 7 fornecedores, nenhum avaliado; 0 etapas com `servicoSiacId`; blocos 4/5 vazios (sem nomes reais de materiais → biblioteca pela referência do SiAC). Gate fail-open encerrado (colunas existem).
+
+**Instrução de operação (Atacama, sem código):** no PQO, fechar em **exatamente 20 materiais
+executados**, marcando "não executa" no bloco não usado (cerâmico 6 ou concreto 7), na argamassa/cal
+não usada (industrializada 8 ou cal 11) e em **uma reserva** não usada (21 gesso, 22 vidro ou 23
+aditivos/graute). Motivo: a meta de materiais com procedimento é `ceil(0,5 × executados)` — com 21
+executados ela sobe para 11 e a obra só terá 10; com 20 fica em 10. Confirmado em `qMetasNivelB`
+(20 → 10/5/3; 21 → 11/6/3; 23 → 12/6/3); o contador do PQO mostra "N executados · M controlados
+(meta X)" e o selo "Faltam X" quando os controlados ficam abaixo da meta.
 
 **Próximo:** E3 (painel de prontidão C1–C14 como seção do dashboard de Qualidade, função pura + teste). Pendente do dono: escolha bloco cerâmico × concreto e argamassa em obra × industrializada (marcar "não executa" no PQO do Atacama); confirmar as faixas no Anexo da Portaria nº 75/2021; SELECT do orçamento do Atacama (se houver itens, reconferir os 10 com procedimento pela Curva ABC).
 
