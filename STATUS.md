@@ -1,6 +1,6 @@
 # STATUS — ObraSync
 
-> **Versão:** `v1.44.0` · 2026-08-02 · **Varredura:** 2026-07-28 · **Ambiente:** produção em `https://schimanskiengenharia.com.br/financeiro`
+> **Versão:** `v1.47.0` · 2026-10-06 · **Varredura:** 2026-10-06 (segurança S1–S7) · **Ambiente:** produção em `https://schimanskiengenharia.com.br/financeiro`
 
 > ⚠️ **Leia com atenção à data.** O corpo deste documento (seções 1 a 7) foi escrito na época da
 > **v1.12–v1.19** e não foi reescrito a cada release. Ele descreve corretamente a base do sistema,
@@ -14,6 +14,41 @@
 > Para o schema real: `schema.sql` + `migrations/` + os `ensure_*` do `api/index.php`.
 
 ---
+
+## 0.0 Sessão de segurança de 2026-10-06 (v1.47.0) — Transversal + Configurações
+
+Primeiro setor trabalhado a partir do panorama (`docs/revisao/2026-10-06-panorama-setor-por-setor.md`).
+Regra da sessão: **reconferir no código antes de mexer** — cada achado dos diagnósticos antigos foi
+classificado como ABERTO / JÁ FECHADO / DIFERENTE DO DESCRITO com `arquivo:linha`. Sete itens, um
+commit por item, sem migration, sem push (push e deploy só a pedido do dono).
+
+| Item | Reconferência | O que foi feito | Commit |
+|---|---|---|---|
+| S1 PDF do PES sem confinamento (E0 da PBQP-H) + 5 outros downloads | ABERTO (só cotações e logo estavam certos) | `arquivo_confinado()`/`resolver_arquivo_servido()` nos 7 downloads; colunas de caminho fora do CRUD genérico (`campos_somente_upload()`); registro-pai obrigatório; NF e contrato baixáveis com obra arquivada, RDO e viabilidade não. Auditoria SQL somente leitura rodada em produção: **0 caminhos fora da base** (276 fotos de RDO, 9 XML de NF, 4 cotações, 1 viabilidade ok). | `b308307`, `713f497`, `82c674a` |
+| S2 POST de delete/cancel autorizado como create | DIFERENTE — `module_request_action` já existia por prefixo; sobravam 4 ações de cotações | Verbo destrutivo por token inteiro (`acao_tokens()`); `materialExcluir/propostaExcluir/materialCancelar/materialReabrir` → `delete`; `sinapiReferences` DELETE só admin. 110 combinações avaliadas, 4 mudam. | `eb1ebc7` |
+| S3 `visualizador = '*'` | ABERTO (endpoints de backup/migrate/audit já eram admin) | Lista explícita no backend (69 chaves) e no front (101 módulos, todos com chave correspondente); sai administração + RH (LGPD, sem decisão prévia de incluir); gerente perde backup/migração/auditoria do menu; papéis externos sem lista de usuários. | `9d7d186` |
+| S4 token na query string | DIFERENTE — front já usava header; backend mantinha fallback morto | Fallback `?token=` removido. | `231e0d6` |
+| S5 IDOR em anexos | DIFERENTE — não existe escopo por registro no backend | Opção 1 (integridade do vínculo) entrou no S1. Opção 2 (ACL por obra) = frente própria, ver panorama. | — |
+| S6 `dev_bypass` | DIFERENTE — exigia flag + localhost, sem ambiente nem log | `dev_bypass_permitido()`: flag + `app_env='local'` + localhost; uso logado. | `bc576b1` |
+| S7 exceção vazando ao cliente | ABERTO (1 em 500, 4 em 400) | Mensagem genérica + detalhe no log; guarda em `static-checks.sh`. | `af0978f` |
+
+**Testes novos (6):** `test_arquivo_confinado.php` 33 · `test_autorizacao_acoes.php` 38 ·
+`test_papeis_visualizador.php` 121 · `test_bearer_token.php` 8 · `test_dev_bypass.php` 14 ·
+`test_role_modules.js` 38. **Suíte: 29/29 blocos.**
+
+**Ficou aberto, registrado no panorama (sem código):**
+- `role_can` sem linha em `role_permissions`/`user_permissions` trata delete como edit — papéis sem grade preenchida seguem podendo excluir com permissão de edição.
+- ACL por obra para papéis externos (S5 opção 2, P0 da auditoria PBQP-H) — frente própria com spec; base do futuro portal de cliente/comprador.
+- Gerente continua com view em RH/Pessoal — decisão pendente do dono.
+
+**Depende de servidor (após o push, quando o dono pedir):**
+1. `cd /var/www/financeiro && git pull origin main` (deploy via webhook) e **Ctrl+Shift+R** no navegador (`?v=1819`).
+2. Confirmar no `config.php`: `'app_env' => 'production'` (ou ausente) e `'auth' => ['dev_bypass' => false]`.
+3. Validar com um usuário **visualizador**: menu sem Usuários/Permissões/Backup/Migração/Auditoria/RH; `GET /api/usuarios` responde 403; `GET /api/backup/export` responde 403.
+4. Validar com um usuário **gerente**: menu sem Backup/Migração/Auditoria; RH visível.
+5. Baixar um PDF do PES, uma foto do RDO, um documento de RH e o PDF/XML de uma NF (devem abrir); conferir `/var/lib/financeiro/logs/php-error.log` sem linhas `[ObraSync S1]`.
+6. Com papel sem `canDelete` em Pedidos de compra (grade por usuário), tentar excluir/cancelar/reabrir uma cotação por material: deve responder 403.
+7. Rodar `bash scripts/tests/run-all.sh` no servidor (a asserção de symlink do S1 só roda em Linux).
 
 ## 0. Varredura de 2026-07-28 (v1.38.1 → v1.38.3)
 

@@ -1,6 +1,6 @@
 # ObraSync
 
-> Versão `v1.46.0` · 2026-08-11
+> Versão `v1.47.0` · 2026-10-06
 
 ObraSync é uma aplicação web em HTML, CSS, JavaScript puro, PHP e MariaDB/MySQL para gestão integrada de obras, financeiro, comercial e contabilidade gerencial. O frontend fica em `/var/www/financeiro`, a URL pública é `https://schimanskiengenharia.com.br/financeiro`, os dados persistentes ficam no banco e os arquivos de dados ficam fora da pasta pública.
 
@@ -12,8 +12,8 @@ Antes de atualizar em produção, faça backup do banco e de `/var/lib/financeir
 
 Esta seção orienta qualquer pessoa — ou outra IA — que precise continuar o trabalho sem se perder.
 
-- **Versão atual:** `v1.46.0` (2026-08-11). A versão fica em **dois lugares que devem andar juntos**: a constante `APP_VERSION`/`APP_VERSION_DATE` no topo de `app.js` (com `APP_CHANGELOG`) e o cabeçalho deste README. O painel "Versão" em Configurações lê de `APP_VERSION`.
-- **Cache busting:** sempre que `app.js` ou `styles.css` mudarem, **incremente o `?v=NNNN`** das tags correspondentes em `index.html` (hoje `app.js?v=1818`, `styles.css?v=1818`). Sem isso o navegador serve a versão velha.
+- **Versão atual:** `v1.47.0` (2026-10-06). A versão fica em **dois lugares que devem andar juntos**: a constante `APP_VERSION`/`APP_VERSION_DATE` no topo de `app.js` (com `APP_CHANGELOG`) e o cabeçalho deste README. O painel "Versão" em Configurações lê de `APP_VERSION`.
+- **Cache busting:** sempre que `app.js` ou `styles.css` mudarem, **incremente o `?v=NNNN`** das tags correspondentes em `index.html` (hoje `app.js?v=1819`, `styles.css?v=1819`). Sem isso o navegador serve a versão velha.
 - **Estado de saúde (2026-06-28):** em produção e estável. A leva **v1.15→v1.18** entregou o fluxo **Orçamento → Proposta com base SINAPI** (múltiplos orçamentos, BDI flexível, licitação, hierarquia por disciplina, modelos), **SINAPI no PDF + export Excel**, **contrato a partir da proposta** (template 13 cláusulas + anexos assinados), **CEP autofill universal** (corrigindo a regressão do CSP), **endereço próprio da obra** e a **exclusão de análise de viabilidade**; além do **fix do asDate** (Viabilidade travando). Ver o changelog abaixo e `STATUS.md` para o que está FEITO vs PENDENTE.
 - **Arquitetura:** SPA sem build. Todo o frontend está em `app.js` (arquivo único, ~15 mil linhas) + `index.html` (shell) + `styles.css`. Todo o backend está em `api/index.php` (arquivo único, ~8,7 mil linhas). O banco é MariaDB/MySQL (`financeiro`).
 - **Convenções do backend (siga-as):** respostas via `respond(['ok' => true, 'data' => ...])` e erros via `fail($msg, $status)`; INSERT/UPDATE genéricos via `insert_dynamic()`/`update_dynamic()` (descartam colunas inexistentes — toleram diferenças de schema); auditoria via `server_audit()`. Muitas tabelas novas são criadas sob demanda por funções `ensure_*` no próprio `index.php` (além das migrations).
@@ -26,6 +26,16 @@ Esta seção orienta qualquer pessoa — ou outra IA — que precise continuar o
 ## Histórico de Versões
 
 Mapa de cada marco do produto, do mais novo ao mais antigo, com as features e as tabelas/arquivos envolvidos. Use-o para entender *o que existe e por quê* antes de mexer.
+
+### v1.47.0 — 2026-10-06 · Segurança: downloads confinados, permissões de exclusão, visualizador explícito
+
+Sete correções de segurança no setor Transversal + Configurações, uma por commit (S1–S7), reconferidas no código antes de mexer:
+
+- **S1 — downloads confinados ao upload_dir.** PES, contrato, foto do RDO, documento de RH, NF (pdf/xml), anexo de viabilidade e anexo de cotação passam por `resolver_arquivo_servido()` (realpath nos dois lados; fora da base = 403 + log com código; inexistente = 404). As colunas de caminho (`qualidade_pes.arquivoPdf*`, `sales_contracts.*_path`, `fiscal_documents.pdfPath/xmlPath`) entram em `campos_somente_upload()` e o CRUD genérico as ignora em silêncio. O download exige o registro-pai vivo; NF e contrato continuam baixáveis com a obra arquivada, foto de RDO e anexo de viabilidade não. Auditoria somente leitura em `scripts/sql/2026-10-06-S1-auditoria-caminhos-anexos.sql` (rodada em produção: 0 caminhos fora da base).
+- **S2 — ações destrutivas exigem `delete`.** `module_request_action` casa o verbo (`delete`, `remove`, `cancel`, `excluir`, `reabrir`, `apagar`) como palavra inteira nos tokens da ação: `materialExcluir`, `propostaExcluir`, `materialCancelar` e `materialReabrir` (cotações, POST) saem de `create` para `delete`; nenhuma outra das 110 combinações muda. `DELETE` de `sinapiReferences` pelo CRUD genérico é só do admin.
+- **S3 — visualizador com lista explícita.** `'*'` substituído por `visualizador_view_modules()` (recursos do `resource_map` menos `modulos_vedados_ao_visualizador()`: users, permissions, backupLocal, migration, auditLog e RH/Pessoal). No front, `MODULOS_SO_ADMIN` tira backup/migração/auditoria do gerente e do visualizador; Backup e Migração têm guarda `isAdmin()`. Papéis externos recebem só id+fullName dos responsáveis pelas obras no bootstrap. Regra permanente no CLAUDE.md: módulo novo com dado pessoal entra nas duas listas no mesmo commit.
+- **S4** — `bearer_token()` não aceita mais `?token=` (o front já baixava NF por header). **S6** — `dev_bypass_permitido()`: flag + `app_env='local'` + localhost, com log por uso. **S7** — `enviarParaOrcamento` e leitura de XLSX não devolvem a exceção ao cliente; guarda em `static-checks.sh`.
+- Testes novos: `test_arquivo_confinado.php` (33), `test_autorizacao_acoes.php` (38), `test_papeis_visualizador.php` (121), `test_bearer_token.php` (8), `test_dev_bypass.php` (14), `test_role_modules.js` (38). Suíte: 29/29 blocos. Sem migration.
 
 ### v1.46.0 — 2026-08-11 · RDO: Gerar PDF baixa arquivo real
 
