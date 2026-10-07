@@ -10357,7 +10357,7 @@ function handle_nfse_preview(PDO $pdo, array $config): never
     try {
         $nfses = parse_nfse_abrasf($content, company_cnpj($pdo, $config));
     } catch (RuntimeException $error) {
-        fail($error->getMessage(), 400);
+        fail($error->getMessage(), 400); // S7-ok: mensagem PRÓPRIA do parser NFS-e (acionável), não de biblioteca
     }
 
     // Guarda o XML em uploads/notas-fiscais (DEPOIS de ler o conteúdo: o
@@ -12840,7 +12840,9 @@ function handle_ia_depara_upload(PDO $pdo, array $config, array $authUser): neve
         }
     } catch (Throwable $error) {
         @unlink($path);
-        sinapi_module_respond(false, [], 'Não foi possível ler a planilha: ' . $error->getMessage(), 400);
+        // S7: a mensagem da PhpSpreadsheet pode carregar caminho/classe interna — fica no log.
+        error_log('[ObraSync ia upload][ref ' . obra_error_ref() . '] leitura da planilha: ' . $error->getMessage());
+        sinapi_module_respond(false, [], 'Não foi possível ler a planilha. Confira se o arquivo é um .xlsx/.xls/.csv válido.', 400);
     }
     if (!$sheetsData) {
         @unlink($path);
@@ -13580,7 +13582,9 @@ function handle_ia_compara_upload(PDO $pdo, array $config, array $authUser): nev
         }
     } catch (Throwable $error) {
         @unlink($path);
-        sinapi_module_respond(false, [], 'Não foi possível ler a planilha: ' . $error->getMessage(), 400);
+        // S7: a mensagem da PhpSpreadsheet pode carregar caminho/classe interna — fica no log.
+        error_log('[ObraSync ia upload][ref ' . obra_error_ref() . '] leitura da planilha: ' . $error->getMessage());
+        sinapi_module_respond(false, [], 'Não foi possível ler a planilha. Confira se o arquivo é um .xlsx/.xls/.csv válido.', 400);
     }
     if (!$rows) {
         @unlink($path);
@@ -14340,7 +14344,9 @@ function handle_ia_enviar_para_orcamento(PDO $pdo, array $payload, ?array $authU
         if ($pdo->inTransaction()) {
             $pdo->rollBack();
         }
-        sinapi_module_respond(false, [], 'Falha ao criar o orçamento de obra: ' . $error->getMessage(), 500);
+        // S7: detalhe (SQL, tabela, caminho) só no log, ligado pelo código de correlação (E4).
+        error_log('[ObraSync ia enviarParaOrcamento][ref ' . obra_error_ref() . '] ' . $error->getMessage() . ' em ' . $error->getFile() . ':' . $error->getLine());
+        sinapi_module_respond(false, [], 'Falha ao criar o orçamento de obra.', 500);
     }
 
     server_audit($pdo, $authUser, 'create', 'workBudgets', (string) $workBudgetId,
@@ -15381,7 +15387,9 @@ function read_xlsx_sheets(string $path, ?int $maxRows = null, bool $calculateFor
             : \PhpOffice\PhpSpreadsheet\IOFactory::createReaderForFile($path);
         $reader->setReadDataOnly(true); // ignora formatação → corta memória
     } catch (Throwable $error) {
-        fail('Não foi possível abrir o arquivo XLSX: ' . $error->getMessage(), 400);
+        // S7: detalhe da PhpSpreadsheet só no log.
+        error_log('[ObraSync xlsx][ref ' . obra_error_ref() . '] abrir XLSX: ' . $error->getMessage());
+        fail('Não foi possível abrir o arquivo XLSX. Confira se o arquivo não está corrompido ou protegido.', 400);
     }
 
     if ($maxRows !== null && $maxRows > 0) {
@@ -15389,7 +15397,9 @@ function read_xlsx_sheets(string $path, ?int $maxRows = null, bool $calculateFor
         try {
             $spreadsheet = $reader->load($path);
         } catch (Throwable $error) {
-            fail('Não foi possível abrir o arquivo XLSX: ' . $error->getMessage(), 400);
+            // S7: detalhe da PhpSpreadsheet só no log.
+        error_log('[ObraSync xlsx][ref ' . obra_error_ref() . '] abrir XLSX: ' . $error->getMessage());
+        fail('Não foi possível abrir o arquivo XLSX. Confira se o arquivo não está corrompido ou protegido.', 400);
         }
         $sheets = [];
         foreach ($spreadsheet->getWorksheetIterator() as $sheet) {
