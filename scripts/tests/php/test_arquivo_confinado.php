@@ -86,6 +86,20 @@ foreach ($protegidos as $tabela => $campos) {
     }
 }
 
+// 8. S1-fix — política de obra arquivada por origem (S5 opção 1):
+//    NF (pdf/xml) e contrato continuam baixáveis com a obra arquivada (só exigem o
+//    registro-pai); foto de RDO e anexo de viabilidade ficam bloqueados.
+t_assert(download_bloqueia_obra_arquivada('fiscal_documents') === false, 'NF (pdf/xml) baixavel com obra arquivada');
+t_assert(download_bloqueia_obra_arquivada('sales_contracts') === false, 'contrato baixavel com obra arquivada');
+t_assert(download_bloqueia_obra_arquivada('obra_rdo_fotos') === true, 'foto de RDO bloqueada com obra arquivada');
+t_assert(download_bloqueia_obra_arquivada('viabilidade_anexos') === true, 'anexo de viabilidade bloqueado com obra arquivada');
+t_assert(download_bloqueia_obra_arquivada('qualidade_pes') === false, 'PES nao tem obra: nunca bloqueia por arquivamento');
+// Os 4 handlers consultam a política (senão a regra vira letra morta).
+$fonte = (string) file_get_contents(__DIR__ . '/../../../api/index.php');
+foreach (['fiscal_documents', 'sales_contracts', 'obra_rdo_fotos', 'viabilidade_anexos'] as $origem) {
+    t_assert(str_contains($fonte, "download_bloqueia_obra_arquivada('{$origem}')"), "handler de {$origem} consulta download_bloqueia_obra_arquivada");
+}
+
 // Limpeza.
 foreach ([$link, $valido, $segredo, $enganoso . DIRECTORY_SEPARATOR . 'x.pdf'] as $f) {
     if (is_file($f) || is_link($f)) {

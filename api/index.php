@@ -3895,7 +3895,7 @@ function handle_contrato_download(PDO $pdo, int $contratoId, string $tipo): neve
     if (!$row || empty($row['path'])) {
         fail('Anexo não encontrado.', 404);
     }
-    if (obra_arquivada_ou_inexistente($pdo, (int) ($row['projectId'] ?? 0))) {
+    if (download_bloqueia_obra_arquivada('sales_contracts') && obra_arquivada_ou_inexistente($pdo, (int) ($row['projectId'] ?? 0))) {
         fail('A obra deste contrato está arquivada.', 403);
     }
     // S1: caminho gravado só é servido dentro do upload_dir.
@@ -6442,7 +6442,7 @@ function handle_viabilidade_module(PDO $pdo, string $method, array $query, array
             if (!$anexo || empty($anexo['caminho'])) {
                 fail('Anexo não encontrado.', 404);
             }
-            if (obra_arquivada_ou_inexistente($pdo, (int) ($anexo['obra_id'] ?? 0))) {
+            if (download_bloqueia_obra_arquivada('viabilidade_anexos') && obra_arquivada_ou_inexistente($pdo, (int) ($anexo['obra_id'] ?? 0))) {
                 fail('A obra desta análise está arquivada.', 403);
             }
             // S1: caminho gravado só é servido dentro do upload_dir.
@@ -10221,7 +10221,7 @@ function handle_rdo_foto_download(PDO $pdo, int $id): never
     if (!$row || empty($row['caminho'])) {
         fail('Imagem não encontrada.', 404);
     }
-    if (obra_arquivada_ou_inexistente($pdo, (int) ($row['projectId'] ?? 0))) {
+    if (download_bloqueia_obra_arquivada('obra_rdo_fotos') && obra_arquivada_ou_inexistente($pdo, (int) ($row['projectId'] ?? 0))) {
         fail('A obra deste diário está arquivada.', 403);
     }
     $path = resolver_arquivo_servido(load_config(), $row['caminho'], 'obra_rdo_fotos#' . $id);
@@ -11567,8 +11567,19 @@ function campos_somente_upload(): array
     ];
 }
 
+// S5 (opção 1) — política PURA de quem bloqueia download com obra arquivada.
+// Decisão do dono (S1-fix): documentos FISCAIS e CONTRATUAIS continuam baixáveis
+// com a obra arquivada (obrigação legal de guarda; só exigem o registro-pai);
+// foto de RDO e anexo de viabilidade são operacionais e ficam bloqueados.
+// Testada em scripts/tests/php/test_arquivo_confinado.php.
+function download_bloqueia_obra_arquivada(string $origem): bool
+{
+    return in_array($origem, ['obra_rdo_fotos', 'viabilidade_anexos'], true);
+}
+
 // S5 (opção 1): obra arquivada (soft-delete G3) ou inexistente bloqueia o download
-// dos anexos ligados a ela. Sem a coluna (instalação antiga) não bloqueia.
+// dos anexos ligados a ela (ver download_bloqueia_obra_arquivada). Sem a coluna
+// (instalação antiga) não bloqueia.
 function obra_arquivada_ou_inexistente(PDO $pdo, ?int $projectId): bool
 {
     if (!$projectId) {
@@ -11598,7 +11609,7 @@ function handle_fiscal_download(PDO $pdo, int $id, string $kind): never
     if (!$record || empty($record[$field])) {
         fail('Arquivo não encontrado.', 404);
     }
-    if (obra_arquivada_ou_inexistente($pdo, (int) ($record['projectId'] ?? 0))) {
+    if (download_bloqueia_obra_arquivada('fiscal_documents') && obra_arquivada_ou_inexistente($pdo, (int) ($record['projectId'] ?? 0))) {
         fail('A obra desta nota está arquivada.', 403);
     }
     $path = resolver_arquivo_servido(load_config(), $record[$field], 'fiscal_documents#' . $id);
