@@ -3,8 +3,7 @@
 > **Data:** 2026-09-02 · **Atualizado:** 2026-10-07 · **Status:** Seção 1 aprovada; **Seção 2 (E0)
 > fechada fora desta spec** (S1 da sessão de segurança, v1.47.0, commits `b308307`/`82c674a`,
 > validado em produção); **Seção 3 (E1) EXECUTADA** (commits `80da4fc`, `97153fe`, `8a74e78`,
-> aguardando validação do dono). Próxima: **Seção 4 (E2)**, que depende da saída do script
-> `scripts/sql/2026-10-07-pbqph-contagens-reais.sql` (blocos 4 e 5) para a biblioteca de materiais.
+> aguardando validação do dono). **Seção 4 (E2) EXECUTADA** em 2026-10-07 (contagens reais sem nomes de materiais → biblioteca pela referência do SiAC, revisada pelo dono). Próxima: **Seção 5 (E3 — painel de prontidão)**.
 
 ## Decisões do dono — 2026-10-07 (E1)
 
@@ -33,6 +32,39 @@
   servidor (lote, responsável, `fornecedorId`) — o dono os colocou no E5.
 - **Testes:** `test_qualidade_regras.php` (60) e `test_qualidade_front.js` (47) — primeiros do módulo.
 - **Servidor:** rodar as 2 migrations (o `ensure_*` cobre, mas rodar dá consistência).
+
+## Seção 4. E2 — Biblioteca de materiais + metas derivadas + lista da empresa (EXECUTADA em 2026-10-07)
+
+Decisão 3 (opção b ajustada): sem nomes reais nos blocos 4/5 do script de contagens (não há FVM nem
+PQO), a biblioteca saiu da referência do SiAC e foi revisada pelo dono (sistema construtivo do
+Atacama: concreto de pilares/vigas/cintas em betoneira na obra; laje com concreto usinado).
+
+- **`MATERIAIS_SIAC`** (app.js, constante como os 27 serviços): 23 materiais com nome padronizado,
+  unidade, norma e `procedimento`. **12 com procedimento:** cimento, aço CA-50/60, areia, brita,
+  concreto dosado em central, bloco cerâmico, bloco de concreto, argamassa industrializada, madeira
+  e compensado de fôrma, tubos/conexões PVC, cal hidratada, fios e cabos. Os pares em aberto (bloco
+  cerâmico × concreto; argamassa em obra/cal × industrializada) ficaram **todos** com procedimento —
+  o dono marca "não executa" no PQO do Atacama para o que não usa, e a contagem da obra fecha em 10.
+  Reservas 21–23 (gesso, vidro, aditivos/graute) garantem ≥ 20 executados (Atacama: 23 − 2 = 21).
+- **Metas derivadas** (`qMetasNivelB(servicosExecutados, materiaisExecutados)`, pura): faixas em
+  constantes nomeadas `SIAC_B_FAIXA_*` (0,40 / 0,50 / 0,25 / 0,50) e `SIAC_B_MINIMO_MATERIAIS` (20),
+  `ceil` em tudo, meta de materiais calculada sobre `max(executados, 20)` e flag
+  `abaixoDoMinimo` que vira alerta (toast no PQO e aviso no dashboard). **Fonte secundária:** guia
+  simplificado transcrito no diagnóstico §6.3 (Anexo 3 + Anexo 4 do Regimento SiAC 2021) —
+  **conferir no Anexo da Portaria nº 75/2021**; divergência corrige só as constantes.
+  `QUALIDADE_METAS` 11/10 removido (8 pontos: dashboard, legendas, contadores, validação do Vigente).
+- **Lista da empresa por obra:** `qualidade_pqo.listaEmpresaJson` (migration aditiva
+  `2026-10-07-pbqph-e2-pqo-lista-empresa.sql` + `ensure_pqo_lista_empresa_column`) guarda só as
+  exceções `{servicosNaoExecuta, materiaisNaoExecuta}`; item novo nasce executado. No PQO cada
+  serviço e material tem "Executa" e "Controlado nesta obra" (desmarcar Executa desliga Controlado).
+- **PQO seleciona da biblioteca:** materiais gravados casam por nome normalizado
+  (`materialSiacPorNome`: igualdade ou "biblioteca contém o digitado" com ≥ 5 letras); sem casamento
+  ficam como linha livre (legado, editável). `materiaisControlados` mantém o formato
+  `[{materialId?, nome, especificacao, norma}]` — C6/C7 e a impressão não mudam.
+- **Testes:** +30 em `test_qualidade_front.js` (77) e +4 em `test_qualidade_regras.php` (67).
+- **Pendente do dono:** as duas escolhas (bloco, argamassa) via "não executa" no PQO; conferência
+  das faixas no regimento; SELECT do orçamento do Atacama (se houver itens, reconferir os 10 pela
+  Curva ABC).
 >
 > **Base:** `docs/revisao/2026-09-pbqph-nivel-b-diagnostico.md` (§1-§6.3) — este spec não repete o
 > diagnóstico; só desenha o que fazer. Guia simplificado do SiAC recebido em 2026-09-02 (não está

@@ -61,6 +61,8 @@ Seção 3 registradas lá). E0 já estava fechado pelo S1 (v1.47.0).
 | `5d907c7` | `scripts/sql/2026-10-07-pbqph-contagens-reais.sql` — contagens reais (só SELECT, COLLATE explícito); o dono roda no servidor |
 | `80da4fc` | E1-PES: `aprovadoPor`/`dataAprovacao` gravados pelo backend ao tornar Vigente (nome da sessão + data do PHP), sem digitação; "Exportar PDF" do PES |
 | `97153fe` | E1-PQO: `qualidade_pqo_versoes` (snapshot da vigente anterior; UNIQUE por obra intacto); histórico na tela com impressão |
+| `0249622` | E1-fix: Política passa a gravar `aprovadoPor` pelo backend com o nome completo (padrão do PES); script `scripts/sql/2026-10-07-pbqph-politica-aprovadoPor-nome-completo.sql` para a linha existente (não executado) |
+| E2 | Biblioteca `MATERIAIS_SIAC` (23 materiais, 12 com procedimento — os 4 pares em aberto incluídos), `qMetasNivelB()` pura com faixas 40/50/25% em constantes nomeadas (fonte: diagnóstico §6.3; conferir no Anexo da Portaria nº 75/2021), flag executa/não executa por serviço e material em `qualidade_pqo.listaEmpresaJson` (migration `2026-10-07-pbqph-e2-pqo-lista-empresa.sql`), PQO seleciona da biblioteca com legado aceito, alerta de lista abaixo de 20; `QUALIDADE_METAS` 11/10 removido |
 | `8a74e78` | E1-caronas: 9.1.x no checklist; versão da Política sem NaN; NC automática com data do PHP; DELETE de registro final bloqueado + gate recalculado; permissões (engenharia/gestor veem Política e Auditorias; operador vê FVS/FVM/NC) |
 
 **Reconferência prévia (código atual):** JÁ FECHADO = migration fase0 das tabelas
@@ -71,11 +73,12 @@ faltar; bloco 0 do script confere), operador (menu tinha, backend não), obsoles
 **Testes:** `test_qualidade_regras.php` (60) e `test_qualidade_front.js` (47) — primeiros testes do
 módulo `qualidade_*`. Suíte: 31/31 blocos.
 
-**Próximo:** E2 (biblioteca de ~20 materiais + metas por `ceil` 40/50/25% + flag executa/não
-executa) — depende da saída dos blocos 4 e 5 do script de contagens.
+**Contagens reais (rodadas em 2026-10-07):** Política v1.0 Vigente; 1 PES Vigente (SPDA, sem PDF); PQO, FVS, FVM, NC, treinamentos e auditorias zerados; 7 fornecedores, nenhum avaliado; 0 etapas com `servicoSiacId`; blocos 4/5 vazios (sem nomes reais de materiais → biblioteca pela referência do SiAC). Gate fail-open encerrado (colunas existem).
 
-**Depende de servidor:** rodar `migrations/2026-10-07-pbqph-e1-pes-aprovacao.sql` e
-`migrations/2026-10-07-pbqph-e1-pqo-versoes.sql` (o `ensure_*` cobre, mas rodar dá consistência);
+**Próximo:** E3 (painel de prontidão C1–C14 como seção do dashboard de Qualidade, função pura + teste). Pendente do dono: escolha bloco cerâmico × concreto e argamassa em obra × industrializada (marcar "não executa" no PQO do Atacama); confirmar as faixas no Anexo da Portaria nº 75/2021; SELECT do orçamento do Atacama (se houver itens, reconferir os 10 com procedimento pela Curva ABC).
+
+**Depende de servidor:** rodar `migrations/2026-10-07-pbqph-e1-pes-aprovacao.sql`,
+`migrations/2026-10-07-pbqph-e1-pqo-versoes.sql` e `migrations/2026-10-07-pbqph-e2-pqo-lista-empresa.sql` (o `ensure_*` cobre, mas rodar dá consistência);
 validar: salvar um PES como Vigente → aprovador/data aparecem e o "Exportar PDF" os imprime; editar
 o PQO vigente trocando a versão → painel "Histórico de versões" lista a anterior; tentar excluir uma
 FVS Aprovada → 422; excluir uma NC Aberta vinculada a FVS → etapa desbloqueia.

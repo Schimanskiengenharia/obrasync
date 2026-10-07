@@ -125,5 +125,63 @@ t_assert("form da Politica nao tem input de aprovadoPor/dataAprovacao", !/id="qP
 t_assert("form da Politica mostra a aprovacao como texto", corpoPol.includes('id="qPolAprovacaoInfo"'));
 t_assert("qSalvar da Politica nao envia aprovadoPor", !/aprovadoPor:\s*qVal/.test(corpoPol));
 
+// ── E2: biblioteca de materiais, metas derivadas (ceil 40/50/25%), lista da empresa ───
+const ctx4 = { qjson: (v, fb) => { try { return v ? JSON.parse(v) : fb; } catch { return fb; } } };
+vm.createContext(ctx4);
+const iServ = src.indexOf("const SERVICOS_SIAC = [");
+const iMat = src.indexOf("const MATERIAIS_SIAC = [");
+const fMetas = src.indexOf("\n}\n", src.indexOf("function qMetasDoPqo(")) + 2;
+vm.runInContext(src.slice(iServ, src.indexOf("];", iServ) + 2) + "\n" + src.slice(iMat, fMetas)
+  + "\nthis.M = MATERIAIS_SIAC; this.metas = qMetasNivelB; this.norm = qNormalizarNome; this.porNome = materialSiacPorNome; this.lista = qListaEmpresa; this.metasPqo = qMetasDoPqo; this.MIN = SIAC_B_MINIMO_MATERIAIS;", ctx4);
+
+// Constantes de faixa nomeadas, com a fonte e a instrução de conferência no Anexo da Portaria.
+const iFaixa = src.indexOf("const SIAC_B_FAIXA_SERVICOS_PROCEDIMENTO");
+t_assert("faixas sao constantes nomeadas (0.40 / 0.50 / 0.25 / 0.50 / 20)", /SIAC_B_FAIXA_SERVICOS_PROCEDIMENTO = 0\.40/.test(src) && /SIAC_B_FAIXA_REGISTRO = 0\.50/.test(src) && /SIAC_B_FAIXA_OBSERVAVEL = 0\.25/.test(src) && /SIAC_B_FAIXA_MATERIAIS_PROCEDIMENTO = 0\.50/.test(src) && /SIAC_B_MINIMO_MATERIAIS = 20/.test(src));
+const comentarioFaixas = src.slice(iFaixa - 900, iFaixa);
+t_assert("comentario cita a fonte (diagnostico §6.3) e manda conferir no Anexo da Portaria 75/2021", comentarioFaixas.includes("§6.3") && comentarioFaixas.toUpperCase().includes("PORTARIA Nº 75/2021"));
+
+// Metas: 27/20 reproduz os numeros do guia (11/6/3 e 10/5/3).
+const m27 = ctx4.metas(27, 20);
+t_assert("27 servicos -> 11 proc / 6 registro / 3 observaveis", m27.servicos.procedimento === 11 && m27.servicos.registro === 6 && m27.servicos.observaveis === 3);
+t_assert("20 materiais -> 10 proc / 5 registro / 3 observados", m27.materiais.procedimento === 10 && m27.materiais.registro === 5 && m27.materiais.observaveis === 3 && !m27.materiais.abaixoDoMinimo);
+// Lista menor: ceil sempre para cima.
+const m25 = ctx4.metas(25, 23);
+t_assert("25 servicos -> ceil(10) = 10 / 5 / 3 (ceil de 2.5)", m25.servicos.procedimento === 10 && m25.servicos.registro === 5 && m25.servicos.observaveis === 3);
+t_assert("23 materiais -> ceil(11.5) = 12 / 6 / 3", m25.materiais.procedimento === 12 && m25.materiais.registro === 6 && m25.materiais.observaveis === 3);
+// Abaixo do minimo de 20: alerta e meta calculada sobre 20.
+const m18 = ctx4.metas(27, 18);
+t_assert("18 materiais executados -> abaixoDoMinimo e meta sobre 20 (10)", m18.materiais.abaixoDoMinimo === true && m18.materiais.procedimento === 10 && m18.materiais.minimo === 20);
+t_assert("entrada invalida nao quebra", ctx4.metas(undefined, null).servicos.procedimento === 0);
+
+// Biblioteca: 23 itens, ids unicos, nomes normalizados unicos, 12 com procedimento (4 pares em aberto incluidos).
+t_assert("biblioteca com 23 materiais", ctx4.M.length === 23);
+t_assert("ids unicos e sequenciais", ctx4.M.every((m, i) => m.id === i + 1));
+t_assert("nomes normalizados unicos", new Set(ctx4.M.map((m) => ctx4.norm(m.nome))).size === 23);
+t_assert("12 com procedimento (10 fixos + cal e bloco de concreto, decisao do dono)", ctx4.M.filter((m) => m.procedimento).length === 12 && [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].every((id) => ctx4.M[id - 1].procedimento));
+t_assert("reservas 21-23 sem procedimento", [21, 22, 23].every((id) => !ctx4.M[id - 1].procedimento));
+t_assert("Atacama: 23 executados - 2 nao usados = 21 >= 20", 23 - 2 >= ctx4.MIN);
+
+// Casamento por nome normalizado (legado do PQO/FVM).
+t_assert("'cimento' casa com Cimento Portland (contem)", ctx4.porNome("cimento")?.id === 1);
+t_assert("'Cimento CP-II' (grafia livre antiga) NAO casa por igualdade nem por contem -> legado", ctx4.porNome("Cimento CP-II") === null);
+t_assert("'AÇO CA-50 / CA-60 (barras e fios)' casa por igualdade sem acento/caixa", ctx4.porNome("AÇO CA-50 / CA-60 (barras e fios)")?.id === 2);
+t_assert("'tijolo' nao casa (vira legado)", ctx4.porNome("tijolo") === null);
+t_assert("texto curto nao casa por 'contem'", ctx4.porNome("cal") === null || ctx4.porNome("cal")?.id === 11);
+
+// Lista da empresa: so excecoes; sem JSON = tudo executado.
+t_assert("PQO sem listaEmpresaJson executa 27 servicos e 23 materiais", ctx4.lista({}).servicosExecutados === 27 && ctx4.lista({}).materiaisExecutados === 23);
+const le = ctx4.lista({ listaEmpresaJson: JSON.stringify({ servicosNaoExecuta: [24, 25], materiaisNaoExecuta: [7, 8] }) });
+t_assert("excecoes reduzem o denominador", le.servicosExecutados === 25 && le.materiaisExecutados === 21);
+const mp = ctx4.metasPqo({ listaEmpresaJson: JSON.stringify({ servicosNaoExecuta: [24, 25], materiaisNaoExecuta: [7, 8] }) });
+t_assert("metas do PQO do Atacama (25 serv / 21 mat): 10/5/3 e 11/6/3", mp.servicos.procedimento === 10 && mp.materiais.procedimento === 11 && !mp.materiais.abaixoDoMinimo);
+t_assert("sem PQO: metas padrao 27/20", ctx4.metasPqo(null).servicos.procedimento === 11 && ctx4.metasPqo(null).materiais.procedimento === 10);
+
+// QUALIDADE_METAS fixo sumiu; os pontos usam as metas derivadas.
+t_assert("QUALIDADE_METAS nao existe mais", !src.includes("QUALIDADE_METAS"));
+const corpoPqo2 = src.slice(iPqo, src.indexOf("\n}\n", iPqo));
+t_assert("PQO grava listaEmpresaJson", corpoPqo2.includes("listaEmpresaJson: JSON.stringify({ servicosNaoExecuta: draftFinal.servicosNaoExecuta, materiaisNaoExecuta: draftFinal.materiaisNaoExecuta })"));
+t_assert("form do PQO: executa/controlado por servico e por material da biblioteca", corpoPqo2.includes("data-q-servico-exec") && corpoPqo2.includes("data-q-mat-exec") && corpoPqo2.includes("data-q-mat-ctrl") && corpoPqo2.includes("MATERIAIS_SIAC.map"));
+t_assert("dashboard usa qMetasDoPqo", src.includes("const metas = qMetasDoPqo(pqo);"));
+
 console.log(`test_qualidade_front: ${ok}/${ok + falhas} ok`);
 process.exit(falhas > 0 ? 1 : 0);

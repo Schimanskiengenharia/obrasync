@@ -12491,7 +12491,101 @@ const FVM_CHECKLIST_PADRAO = [
   "Certificado do fabricante presente",
 ];
 
-const QUALIDADE_METAS = { servicos: 11, materiais: 10 };
+// E2 — Biblioteca de materiais controlados (constante, como SERVICOS_SIAC). Nomes
+// padronizados: o PQO seleciona daqui e casa por nome normalizado com o que já foi
+// digitado (legado continua aceito). `procedimento` = tem procedimento de inspeção
+// na lista da empresa; a flag executa/não executa é POR OBRA (PQO, listaEmpresaJson).
+// Revisão do dono em 2026-10-07: os 4 pares em aberto (bloco cerâmico × concreto,
+// argamassa em obra × industrializada) ficam todos com procedimento — a obra marca
+// "não executa" no que não usa. 21–23 são reservas para a lista de uma obra não
+// ficar abaixo do mínimo de 20 executados.
+const MATERIAIS_SIAC = [
+  { id: 1, nome: "Cimento Portland (CP II / CP IV / CP V-ARI)", unidade: "sc 50 kg", norma: "NBR 16697", procedimento: true },
+  { id: 2, nome: "Aço CA-50 / CA-60 (barras e fios)", unidade: "kg", norma: "NBR 7480", procedimento: true },
+  { id: 3, nome: "Areia (fina / média / grossa)", unidade: "m³", norma: "NBR 7211", procedimento: true },
+  { id: 4, nome: "Brita (0 / 1 / 2)", unidade: "m³", norma: "NBR 7211", procedimento: true },
+  { id: 5, nome: "Concreto dosado em central", unidade: "m³", norma: "NBR 7212 / NBR 12655", procedimento: true },
+  { id: 6, nome: "Bloco cerâmico de vedação", unidade: "un", norma: "NBR 15270", procedimento: true },
+  { id: 7, nome: "Bloco de concreto (vedação / estrutural)", unidade: "un", norma: "NBR 6136", procedimento: true },
+  { id: 8, nome: "Argamassa industrializada (assentamento / revestimento)", unidade: "sc", norma: "NBR 13281", procedimento: true },
+  { id: 9, nome: "Madeira serrada e compensado para fôrma", unidade: "m² / m³", norma: "NBR 7190 / NBR 9532", procedimento: true },
+  { id: 10, nome: "Tubos e conexões de PVC (água fria e esgoto)", unidade: "un", norma: "NBR 5648 / NBR 5688", procedimento: true },
+  { id: 11, nome: "Cal hidratada (argamassa feita em obra)", unidade: "sc", norma: "NBR 7175", procedimento: true },
+  { id: 12, nome: "Fios e cabos elétricos", unidade: "m", norma: "NBR NM 247-3 / NBR 7286", procedimento: true },
+  { id: 13, nome: "Eletrodutos e caixas", unidade: "un", norma: "NBR 15465", procedimento: false },
+  { id: 14, nome: "Telha cerâmica ou de concreto", unidade: "un", norma: "NBR 15310 / NBR 13858", procedimento: false },
+  { id: 15, nome: "Manta asfáltica e impermeabilizante", unidade: "m² / kg", norma: "NBR 9952 / NBR 9574", procedimento: false },
+  { id: 16, nome: "Placa cerâmica para revestimento (piso e parede)", unidade: "m²", norma: "NBR 13818", procedimento: false },
+  { id: 17, nome: "Argamassa colante e rejunte", unidade: "sc", norma: "NBR 14081 / NBR 14992", procedimento: false },
+  { id: 18, nome: "Esquadrias (porta de madeira, janela de alumínio)", unidade: "un", norma: "NBR 15930 / NBR 10821", procedimento: false },
+  { id: 19, nome: "Tinta (látex / acrílica) e selador", unidade: "lata", norma: "NBR 15079", procedimento: false },
+  { id: 20, nome: "Louças e metais sanitários", unidade: "un", norma: "NBR 15097 / NBR 10281", procedimento: false },
+  { id: 21, nome: "Gesso (forro e revestimento)", unidade: "sc", norma: "NBR 13207", procedimento: false },
+  { id: 22, nome: "Vidro plano (comum e temperado)", unidade: "m²", norma: "NBR 7199 / NBR 14698", procedimento: false },
+  { id: 23, nome: "Aditivos para concreto e graute", unidade: "kg / l", norma: "NBR 11768 / NBR 15961", procedimento: false },
+];
+
+// Nome normalizado para casar material digitado com a biblioteca (legado do PQO/FVM).
+function qNormalizarNome(texto) {
+  return String(texto || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+function materialSiac(id) {
+  return MATERIAIS_SIAC.find((m) => Number(m.id) === Number(id)) || null;
+}
+// Casa por igualdade do nome normalizado, ou por "a biblioteca contém o digitado" quando o
+// digitado tem ≥ 5 caracteres (ex.: "cimento" → "Cimento Portland (…)"). Sem casamento → null.
+function materialSiacPorNome(nome) {
+  const alvo = qNormalizarNome(nome);
+  if (!alvo) return null;
+  return MATERIAIS_SIAC.find((m) => qNormalizarNome(m.nome) === alvo)
+    || (alvo.length >= 5 ? MATERIAIS_SIAC.find((m) => qNormalizarNome(m.nome).includes(alvo)) : null)
+    || null;
+}
+
+// E2 — Metas do Nível B DERIVADAS da lista que a empresa executa (não mais 11/10 fixos).
+// FONTE (secundária): guia simplificado do SiAC recebido em 2026-09-02, transcrito em
+// docs/revisao/2026-09-pbqph-nivel-b-diagnostico.md §6.3 — reescreve o Anexo 3 do
+// Regimento SiAC 2021 (quadro de requisitos do Nível B, subsetor Edificações) e o Anexo 4
+// (arredondamento sempre para cima). CONFERIR NO ANEXO DA PORTARIA Nº 75/2021: se o
+// regimento disser outra coisa, a correção é SÓ nestas constantes. Função pura
+// (teste em scripts/tests/js/test_qualidade_front.js).
+const SIAC_B_FAIXA_SERVICOS_PROCEDIMENTO = 0.40; // serviços com procedimento = 40% da lista executada
+const SIAC_B_FAIXA_REGISTRO = 0.50;              // com registro = 50% dos que têm procedimento
+const SIAC_B_FAIXA_OBSERVAVEL = 0.25;            // observáveis na auditoria = 25% dos que têm procedimento
+const SIAC_B_FAIXA_MATERIAIS_PROCEDIMENTO = 0.50; // materiais com procedimento = 50% da lista
+const SIAC_B_MINIMO_MATERIAIS = 20;              // a lista de materiais da obra tem no mínimo 20
+function qMetasNivelB(servicosExecutados, materiaisExecutados) {
+  const nServ = Math.max(0, Number(servicosExecutados) || 0);
+  const nMat = Math.max(0, Number(materiaisExecutados) || 0);
+  const servProc = Math.ceil(SIAC_B_FAIXA_SERVICOS_PROCEDIMENTO * nServ);
+  const baseMat = Math.max(nMat, SIAC_B_MINIMO_MATERIAIS);
+  const matProc = Math.ceil(SIAC_B_FAIXA_MATERIAIS_PROCEDIMENTO * baseMat);
+  return {
+    servicos: { lista: nServ, procedimento: servProc, registro: Math.ceil(SIAC_B_FAIXA_REGISTRO * servProc), observaveis: Math.ceil(SIAC_B_FAIXA_OBSERVAVEL * servProc) },
+    materiais: {
+      lista: nMat, minimo: SIAC_B_MINIMO_MATERIAIS, abaixoDoMinimo: nMat < SIAC_B_MINIMO_MATERIAIS,
+      procedimento: matProc, registro: Math.ceil(SIAC_B_FAIXA_REGISTRO * matProc), observaveis: Math.ceil(SIAC_B_FAIXA_OBSERVAVEL * matProc),
+    },
+  };
+}
+// Lista da empresa por obra (PQO.listaEmpresaJson): guarda só as EXCEÇÕES ("não executa"),
+// então item novo na biblioteca nasce como executado. Devolve os executados.
+function qListaEmpresa(pqo) {
+  const j = qjson(pqo?.listaEmpresaJson, {}) || {};
+  const servNao = (j.servicosNaoExecuta || []).map(Number);
+  const matNao = (j.materiaisNaoExecuta || []).map(Number);
+  return {
+    servicosNaoExecuta: servNao,
+    materiaisNaoExecuta: matNao,
+    servicosExecutados: SERVICOS_SIAC.filter((s) => !servNao.includes(s.id)).length,
+    materiaisExecutados: MATERIAIS_SIAC.filter((m) => !matNao.includes(m.id)).length,
+  };
+}
+function qMetasDoPqo(pqo) {
+  if (!pqo) return qMetasNivelB(SERVICOS_SIAC.length, SIAC_B_MINIMO_MATERIAIS);
+  const le = qListaEmpresa(pqo);
+  return qMetasNivelB(le.servicosExecutados, le.materiaisExecutados);
+}
 
 let qualidadeObraFiltro = "";
 let qualidadeEdit = null; // { key, id } — formulário aberto no módulo de qualidade atual
@@ -12678,7 +12772,9 @@ function renderQualidadeDashboard() {
   const fvmAprovadas = fvm.filter((f) => f.status === "Aprovada").length;
   const ncsAbertas = ncs.filter((n) => n.status !== "Fechada");
   const ncsVencidas = ncsAbertas.filter((n) => n.prazoAcao && n.prazoAcao < hoje);
-  const metaServicosOk = obraId && servicosControlados.length >= QUALIDADE_METAS.servicos;
+  // E2: metas derivadas da lista que a obra executa (PQO.listaEmpresaJson); sem obra, 27/20.
+  const metas = qMetasDoPqo(pqo);
+  const metaServicosOk = obraId && servicosControlados.length >= metas.servicos.procedimento;
 
   const ncPorStatus = ["Aberta", "Em andamento", "Verificando", "Fechada"].map((status) => [status, ncs.filter((n) => n.status === status).length]);
   const fvsPorResultado = ["Aprovado", "Aprovado com ressalvas", "Reprovado"].map((resultado) => [resultado.replace("Aprovado com ressalvas", "C/ ressalvas"), fvs.filter((f) => f.resultado === resultado).length]);
@@ -12718,16 +12814,16 @@ function renderQualidadeDashboard() {
     <section class="module-head">
       <div>
         <h2>Qualidade PBQP-H — Nível B</h2>
-        <p>Visão consolidada do SGQ: FVS, FVM, NCs e metas do SiAC Nível B (mín. ${QUALIDADE_METAS.servicos} serviços e ${QUALIDADE_METAS.materiais} materiais controlados por obra).</p>
+        <p>Visão consolidada do SGQ: FVS, FVM, NCs e metas do SiAC Nível B derivadas da lista que a obra executa (${metas.servicos.lista} serviços → ${metas.servicos.procedimento} com procedimento, ${metas.servicos.registro} com registro, ${metas.servicos.observaveis} observáveis; ${metas.materiais.lista} materiais → ${metas.materiais.procedimento} com procedimento, ${metas.materiais.registro} com registro, ${metas.materiais.observaveis} observados).${metas.materiais.abaixoDoMinimo ? ` ⚠️ A lista de materiais executados está abaixo do mínimo de ${metas.materiais.minimo}.` : ""}</p>
       </div>
       <label>Obra ${qObraSelectHtml("qFiltroObraQualidade", obraId, { optional: true })}</label>
     </section>
     <section class="q-kpis">
       ${qKpiCard("FVS aprovadas", `${fvsAprovadas.length}/${fvs.length || 0}`, obraId ? `${servicosComFvs} de ${servicosControlados.length || "—"} serviços com FVS aprovada` : `${servicosComFvs} serviço(s)/obra com FVS aprovada`, fvsAprovadas.length ? "ok" : "neutro")}
-      ${qKpiCard("FVM aprovadas", `${fvmAprovadas}/${fvm.length || 0}`, obraId ? `Meta Nível B: ${QUALIDADE_METAS.materiais} materiais controlados` : "Fichas de material aprovadas", fvmAprovadas >= QUALIDADE_METAS.materiais ? "ok" : "neutro")}
+      ${qKpiCard("FVM aprovadas", `${fvmAprovadas}/${fvm.length || 0}`, obraId ? `Meta Nível B: ${metas.materiais.procedimento} materiais controlados (${metas.materiais.registro} com registro)` : "Fichas de material aprovadas", fvmAprovadas >= metas.materiais.registro ? "ok" : "neutro")}
       ${qKpiCard("NCs abertas", String(ncsAbertas.length), `${ncsVencidas.length} com prazo vencido`, ncsVencidas.length ? "ruim" : ncsAbertas.length ? "atencao" : "ok")}
       ${obraId
-        ? qKpiCard("Serviços controlados", `${servicosControlados.length}/27`, metaServicosOk ? "✅ Meta do Nível B atingida" : `Mínimo Nível B: ${QUALIDADE_METAS.servicos}`, metaServicosOk ? "ok" : "atencao")
+        ? qKpiCard("Serviços controlados", `${servicosControlados.length}/${metas.servicos.lista}`, metaServicosOk ? "✅ Meta do Nível B atingida" : `Mínimo Nível B: ${metas.servicos.procedimento} (40% dos ${metas.servicos.lista} executados)`, metaServicosOk ? "ok" : "atencao")
         : qKpiCard("PQOs vigentes", String(qrows("qualidadePqo").filter((p) => p.status === "Vigente").length), `${qrows("qualidadePqo").length} plano(s) no total`, "neutro")}
     </section>
     <div class="q-grid-2">
@@ -12961,7 +13057,15 @@ function qPqoDraft(row) {
     dataAprovacao: row?.dataAprovacao || "",
     aprovadoPor: row?.aprovadoPor || "",
     servicos: qjson(row?.servicosControlados, []).map(Number),
-    materiais: qjson(row?.materiaisControlados, []),
+    // E2: materiais já gravados casam com a biblioteca por nome normalizado; sem
+    // casamento ficam como linha livre (legado aceito).
+    materiais: qjson(row?.materiaisControlados, []).map((m) => {
+      const lib = m.materialId ? materialSiac(m.materialId) : materialSiacPorNome(m.nome);
+      return lib ? { ...m, materialId: lib.id, nome: lib.nome, norma: m.norma || lib.norma } : { ...m, materialId: null };
+    }),
+    // E2: exceções "não executa" por obra (lista da empresa).
+    servicosNaoExecuta: qListaEmpresa(row).servicosNaoExecuta,
+    materiaisNaoExecuta: qListaEmpresa(row).materiaisNaoExecuta,
   };
 }
 
@@ -12978,12 +13082,26 @@ function qPqoCollect() {
   draft.status = qVal("qPqoStatus") || "Rascunho";
   draft.aprovadoPor = qVal("qPqoAprovadoPor");
   draft.dataAprovacao = qVal("qPqoDataAprovacao");
-  draft.servicos = [...qs("content").querySelectorAll("[data-q-servico]:checked")].map((c) => Number(c.dataset.qServico));
-  draft.materiais = [...qs("content").querySelectorAll("[data-q-material-row]")].map((tr) => ({
+  // E2: "não executa" (exceções da lista da empresa) e "controlado nesta obra".
+  draft.servicosNaoExecuta = [...qs("content").querySelectorAll("[data-q-servico-exec]")].filter((c) => !c.checked).map((c) => Number(c.dataset.qServicoExec));
+  draft.servicos = [...qs("content").querySelectorAll("[data-q-servico]:checked")].map((c) => Number(c.dataset.qServico)).filter((id) => !draft.servicosNaoExecuta.includes(id));
+  draft.materiaisNaoExecuta = [...qs("content").querySelectorAll("[data-q-mat-exec]")].filter((c) => !c.checked).map((c) => Number(c.dataset.qMatExec));
+  const daBiblioteca = [...qs("content").querySelectorAll("[data-q-mat-ctrl]:checked")]
+    .map((c) => materialSiac(c.dataset.qMatCtrl))
+    .filter((lib) => lib && !draft.materiaisNaoExecuta.includes(lib.id))
+    .map((lib) => ({
+      materialId: lib.id,
+      nome: lib.nome,
+      especificacao: qs("content").querySelector(`[data-q-mat-espec-lib="${lib.id}"]`)?.value.trim() || "",
+      norma: lib.norma,
+    }));
+  const legado = [...qs("content").querySelectorAll("[data-q-material-row]")].map((tr) => ({
+    materialId: null,
     nome: tr.querySelector("[data-q-mat-nome]").value.trim(),
     especificacao: tr.querySelector("[data-q-mat-espec]").value.trim(),
     norma: tr.querySelector("[data-q-mat-norma]").value.trim(),
   })).filter((m) => m.nome);
+  draft.materiais = [...daBiblioteca, ...legado];
   return draft;
 }
 
@@ -13013,28 +13131,48 @@ function renderQualidadePqo() {
         <label class="full">Metas da qualidade<textarea id="qPqoMetas" rows="2">${svgText(draft.metasQualidade)}</textarea></label>
       </div>
       <fieldset class="q-fieldset">
-        <legend>Serviços controlados (mín. ${QUALIDADE_METAS.servicos} para o Nível B) — <span id="qPqoContadorServicos"></span></legend>
+        <legend>Serviços — lista da empresa (executa?) e controlados nesta obra — <span id="qPqoContadorServicos"></span></legend>
+        <p class="muted">"Executa" define a lista da empresa (denominador das metas do Nível B); "Controlado" é o serviço com procedimento nesta obra. Metas derivadas por arredondamento para cima: 40% com procedimento, 50% destes com registro, 25% observáveis.</p>
         ${Object.entries(grupos).map(([grupo, list]) => `
           <div class="q-servico-grupo"><strong>${svgText(grupo)}</strong>
             ${list.map((s) => {
               const pes = qPesVigente(s.id);
-              return `<label class="q-check"><input type="checkbox" data-q-servico="${s.id}" ${draft.servicos.includes(s.id) ? "checked" : ""}> ${s.id} — ${svgText(s.nome)} ${pes ? qBadge(`PES v${pes.versao}`, "ok") : qBadge("Sem PES vigente — crie antes de usar", "atencao")}</label>`;
+              const executa = !draft.servicosNaoExecuta.includes(s.id);
+              return `<label class="q-check"><input type="checkbox" data-q-servico-exec="${s.id}" ${executa ? "checked" : ""} title="Executa"> <input type="checkbox" data-q-servico="${s.id}" ${draft.servicos.includes(s.id) && executa ? "checked" : ""} ${executa ? "" : "disabled"} title="Controlado nesta obra"> ${s.id} — ${svgText(s.nome)} ${pes ? qBadge(`PES v${pes.versao}`, "ok") : qBadge("Sem PES vigente — crie antes de usar", "atencao")}${executa ? "" : " " + qBadge("não executa", "neutro")}</label>`;
             }).join("")}
           </div>`).join("")}
       </fieldset>
       <fieldset class="q-fieldset">
-        <legend>Materiais controlados (mín. ${QUALIDADE_METAS.materiais} para o Nível B) — <span id="qPqoContadorMateriais"></span></legend>
+        <legend>Materiais — biblioteca da empresa (executa?) e controlados nesta obra — <span id="qPqoContadorMateriais"></span></legend>
+        <p class="muted">Lista mínima de ${SIAC_B_MINIMO_MATERIAIS} materiais executados por obra; metas: 50% com procedimento, 50% destes com registro, 25% observados. Nomes padronizados vêm da biblioteca; linhas livres antigas aparecem como legado.</p>
+        <table class="q-mat-table"><thead><tr><th>Executa</th><th>Controlado</th><th>Material (biblioteca)</th><th>Un.</th><th>Norma</th><th>Proced.</th><th>Especificação nesta obra</th></tr></thead>
+          <tbody>${MATERIAIS_SIAC.map((lib) => {
+            const executa = !draft.materiaisNaoExecuta.includes(lib.id);
+            const sel = draft.materiais.find((m) => Number(m.materialId) === lib.id);
+            return `<tr>
+              <td><input type="checkbox" data-q-mat-exec="${lib.id}" ${executa ? "checked" : ""}></td>
+              <td><input type="checkbox" data-q-mat-ctrl="${lib.id}" ${sel && executa ? "checked" : ""} ${executa ? "" : "disabled"}></td>
+              <td>${lib.id} — ${svgText(lib.nome)}${executa ? "" : " " + qBadge("não executa", "neutro")}</td>
+              <td>${svgText(lib.unidade)}</td><td>${svgText(lib.norma)}</td>
+              <td>${lib.procedimento ? qBadge("Sim", "ok") : qBadge("Não", "neutro")}</td>
+              <td><input data-q-mat-espec-lib="${lib.id}" value="${svgText(sel?.especificacao || "")}" placeholder="Ex.: CP II-Z-32"></td>
+            </tr>`;
+          }).join("")}
+          </tbody>
+        </table>
+        ${draft.materiais.some((m) => !m.materialId) ? `
+        <h4 class="q-subhead">Materiais fora da biblioteca (legado — texto livre)</h4>
         <table class="q-mat-table"><thead><tr><th>Material</th><th>Especificação</th><th>Norma</th><th></th></tr></thead>
-          <tbody>${(draft.materiais.length ? draft.materiais : [{}]).map((m, i) => `
+          <tbody>${draft.materiais.map((m, i) => !m.materialId ? `
             <tr data-q-material-row>
               <td><input data-q-mat-nome value="${svgText(m.nome || "")}"></td>
               <td><input data-q-mat-espec value="${svgText(m.especificacao || "")}"></td>
               <td><input data-q-mat-norma value="${svgText(m.norma || "")}"></td>
               <td><button class="secondary" type="button" data-q-mat-remove="${i}">×</button></td>
-            </tr>`).join("")}
+            </tr>` : "").join("")}
           </tbody>
-        </table>
-        <button class="secondary" type="button" id="qPqoAddMaterial">+ Adicionar material</button>
+        </table>` : ""}
+        <button class="secondary" type="button" id="qPqoAddMaterial">+ Material fora da biblioteca</button>
       </fieldset>
       <div class="actions">
         <button class="primary" type="button" id="qPqoSalvar">Salvar PQO</button>
@@ -13054,37 +13192,55 @@ function renderQualidadePqo() {
     ${qPqoHistoricoHtml(rows)}
   `;
   qWire(key);
+  // E2: metas derivadas da lista executada (qMetasNivelB), recalculadas a cada clique.
   const atualizarContadores = () => {
-    const marcados = qs("content").querySelectorAll("[data-q-servico]:checked").length;
-    const materiais = [...qs("content").querySelectorAll("[data-q-mat-nome]")].filter((i) => i.value.trim()).length;
+    const execServ = qs("content").querySelectorAll("[data-q-servico-exec]:checked").length;
+    const execMat = qs("content").querySelectorAll("[data-q-mat-exec]:checked").length;
+    const marcados = qs("content").querySelectorAll("[data-q-servico]:checked:not(:disabled)").length;
+    const materiais = qs("content").querySelectorAll("[data-q-mat-ctrl]:checked:not(:disabled)").length
+      + [...qs("content").querySelectorAll("[data-q-mat-nome]")].filter((i) => i.value.trim()).length;
+    const metas = qMetasNivelB(execServ, execMat);
     const elS = qs("qPqoContadorServicos");
     const elM = qs("qPqoContadorMateriais");
-    if (elS) elS.innerHTML = `${marcados} de 27 selecionados ${marcados >= QUALIDADE_METAS.servicos ? qBadge("Meta OK", "ok") : qBadge(`Faltam ${QUALIDADE_METAS.servicos - marcados}`, "atencao")}`;
-    if (elM) elM.innerHTML = `${materiais} informado(s) ${materiais >= QUALIDADE_METAS.materiais ? qBadge("Meta OK", "ok") : qBadge(`Faltam ${QUALIDADE_METAS.materiais - materiais}`, "atencao")}`;
+    if (elS) elS.innerHTML = `${execServ} executados · ${marcados} controlados (meta ${metas.servicos.procedimento}; registro ${metas.servicos.registro}; observáveis ${metas.servicos.observaveis}) ${marcados >= metas.servicos.procedimento ? qBadge("Meta OK", "ok") : qBadge(`Faltam ${metas.servicos.procedimento - marcados}`, "atencao")}`;
+    if (elM) elM.innerHTML = `${execMat} executados · ${materiais} controlados (meta ${metas.materiais.procedimento}; registro ${metas.materiais.registro}; observados ${metas.materiais.observaveis}) ${materiais >= metas.materiais.procedimento ? qBadge("Meta OK", "ok") : qBadge(`Faltam ${metas.materiais.procedimento - materiais}`, "atencao")}${metas.materiais.abaixoDoMinimo ? " " + qBadge(`Lista com ${execMat} executados — o Nível B exige ${metas.materiais.minimo}`, "ruim") : ""}`;
   };
   if (editing) {
     atualizarContadores();
-    qs("content").querySelectorAll("[data-q-servico]").forEach((c) => c.addEventListener("change", atualizarContadores));
+    qs("content").querySelectorAll("[data-q-servico], [data-q-mat-ctrl]").forEach((c) => c.addEventListener("change", atualizarContadores));
     qs("content").querySelectorAll("[data-q-mat-nome]").forEach((i) => i.addEventListener("input", atualizarContadores));
+    // "Executa" desmarcado desliga e desabilita o "Controlado" do mesmo item (re-render pelo rascunho).
+    qs("content").querySelectorAll("[data-q-servico-exec], [data-q-mat-exec]").forEach((c) => c.addEventListener("change", () => {
+      qPqoCollect();
+      render();
+    }));
     qs("qPqoAddMaterial")?.addEventListener("click", () => {
-      qPqoCollect().materiais.push({ nome: "", especificacao: "", norma: "" });
+      qPqoCollect().materiais.push({ materialId: null, nome: "", especificacao: "", norma: "" });
       render();
     });
     qs("content").querySelectorAll("[data-q-mat-remove]").forEach((b) => b.addEventListener("click", () => {
+      const idx = Number(b.dataset.qMatRemove);
       qPqoCollect();
-      qualidadeDraft.materiais.splice(Number(b.dataset.qMatRemove), 1);
+      // O índice é da lista do rascunho ANTES do collect (biblioteca + legado); remove pelo nome do legado.
+      const legadoNaTela = [...qs("content").querySelectorAll("[data-q-material-row]")];
+      const alvo = legadoNaTela.findIndex((tr) => tr.querySelector(`[data-q-mat-remove="${idx}"]`));
+      const legados = qualidadeDraft.materiais.filter((m) => !m.materialId);
+      if (alvo >= 0 && legados[alvo]) qualidadeDraft.materiais = qualidadeDraft.materiais.filter((m) => m !== legados[alvo]);
       render();
     }));
     qs("qPqoSalvar")?.addEventListener("click", async () => {
       const draftFinal = qPqoCollect();
       if (!draftFinal.projectId) return alert("Selecione a obra.");
       if (!draftFinal.id && qPqoDaObra(draftFinal.projectId)) return alert("Esta obra já possui PQO — edite o existente.");
+      const metas = qMetasNivelB(SERVICOS_SIAC.length - draftFinal.servicosNaoExecuta.length, MATERIAIS_SIAC.length - draftFinal.materiaisNaoExecuta.length);
+      if (metas.materiais.abaixoDoMinimo) showToast(`Atenção: a obra executa ${metas.materiais.lista} materiais da biblioteca — o Nível B exige lista mínima de ${metas.materiais.minimo}.`, { severity: "warning" });
       if (draftFinal.status === "Vigente") {
         if (!draftFinal.responsavelTecnico) return alert("Informe o responsável técnico para tornar o PQO vigente.");
-        if (draftFinal.servicos.length < QUALIDADE_METAS.servicos) return alert(`Selecione ao menos ${QUALIDADE_METAS.servicos} serviços controlados (Nível B).`);
-        if (draftFinal.materiais.length < QUALIDADE_METAS.materiais) return alert(`Informe ao menos ${QUALIDADE_METAS.materiais} materiais controlados (Nível B).`);
+        if (draftFinal.servicos.length < metas.servicos.procedimento) return alert(`Selecione ao menos ${metas.servicos.procedimento} serviços controlados (40% dos ${metas.servicos.lista} executados, Nível B).`);
+        if (draftFinal.materiais.length < metas.materiais.procedimento) return alert(`Informe ao menos ${metas.materiais.procedimento} materiais controlados (50% da lista, Nível B).`);
       }
       await qSalvar(key, {
+        listaEmpresaJson: JSON.stringify({ servicosNaoExecuta: draftFinal.servicosNaoExecuta, materiaisNaoExecuta: draftFinal.materiaisNaoExecuta }),
         projectId: draftFinal.projectId,
         versao: draftFinal.versao,
         responsavelTecnico: draftFinal.responsavelTecnico,

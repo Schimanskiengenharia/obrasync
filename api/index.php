@@ -2351,7 +2351,7 @@ function resource_map(): array
         // Campos JSON (itensVerificacao, servicosControlados, checklistSiac) trafegam como string.
         'qualidadePolitica' => r('qualidade_politica', ['qualidade-politica','politica-qualidade'], ['conteudo','versao','aprovadoPor','dataAprovacao','status'], ['versao']),
         'qualidadePes' => r('qualidade_pes', ['qualidade-pes','procedimentos-execucao'], ['servicoSiacId','servicoNome','servicoGrupo','versao','objetivo','materiaisNecessarios','equipamentosEpi','procedimento','criteriosAceitacao','normasReferencia','responsavelElaboracao','dataElaboracao','status','arquivoPdf','arquivoNome','arquivoData'], ['servicoSiacId','versao']),
-        'qualidadePqo' => r('qualidade_pqo', ['qualidade-pqo','plano-qualidade-obra'], ['projectId','versao','responsavelTecnico','crea','dataInicioPrevisto','dataFimPrevisto','escopo','servicosControlados','materiaisControlados','metasQualidade','status','dataAprovacao','aprovadoPor'], ['projectId']),
+        'qualidadePqo' => r('qualidade_pqo', ['qualidade-pqo','plano-qualidade-obra'], ['projectId','versao','responsavelTecnico','crea','dataInicioPrevisto','dataFimPrevisto','escopo','servicosControlados','materiaisControlados','metasQualidade','status','dataAprovacao','aprovadoPor','listaEmpresaJson'], ['projectId']),
         // E1: histórico do PQO — SOMENTE LEITURA pelo CRUD (a rota genérica recusa POST/PUT/DELETE); só o backend grava.
         'qualidadePqoVersoes' => r('qualidade_pqo_versoes', ['qualidade-pqo-versoes','historico-pqo'], ['pqoId','projectId','versao','statusAnterior','aprovadoPor','dataAprovacao','motivo','snapshotJson','arquivadoPor','arquivadoEm'], ['pqoId','versao']),
         'qualidadeFvs' => r('qualidade_fvs', ['qualidade-fvs','fichas-verificacao-servico'], ['pqoId','projectId','etapaId','pesId','servicoSiacId','servicoNome','dataExecucao','localObra','responsavelExecucao','responsavelInspecao','itensVerificacao','resultado','observacoes','acaoCorretiva','dataInspecao','assinaturaExecutor','assinaturaInspetor','status'], ['projectId','servicoSiacId','dataExecucao','localObra']),
@@ -7464,7 +7464,20 @@ function ensure_qualidade_tables(PDO $pdo): void
     // PBQP-H Nível B — E1 (pacote 7.5): aprovação do PES e histórico do PQO.
     ensure_pes_aprovacao_columns($pdo);
     ensure_pqo_versoes_table($pdo);
+    ensure_pqo_lista_empresa_column($pdo);
     $done = true;
+}
+
+// PBQP-H E2 — lista da empresa por obra: exceções "não executa" de serviços e materiais
+// ({servicosNaoExecuta:[ids], materiaisNaoExecuta:[ids]}), denominador das metas do Nível B
+// (40/50/25%) calculadas no front (qMetasNivelB). Coluna JSON aditiva.
+function ensure_pqo_lista_empresa_column(PDO $pdo): void
+{
+    try {
+        $pdo->exec('ALTER TABLE qualidade_pqo ADD COLUMN IF NOT EXISTS listaEmpresaJson LONGTEXT NULL');
+    } catch (Throwable $error) {
+        error_log('[ObraSync] ensure_pqo_lista_empresa_column: ' . $error->getMessage());
+    }
 }
 
 // PBQP-H E1 (decisão 2 = opção a): histórico do PQO em tabela ADITIVA. O UNIQUE

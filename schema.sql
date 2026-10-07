@@ -1910,6 +1910,7 @@ CREATE TABLE IF NOT EXISTS qualidade_pqo (
   status VARCHAR(20) NOT NULL DEFAULT 'Rascunho',
   dataAprovacao DATE NULL,
   aprovadoPor VARCHAR(120) NULL,
+  listaEmpresaJson LONGTEXT NULL COMMENT 'E2: {servicosNaoExecuta:[ids], materiaisNaoExecuta:[ids]} — lista da empresa por obra',
   createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updatedAt TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
   UNIQUE KEY uk_pqo_project (projectId)

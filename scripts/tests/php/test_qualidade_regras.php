@@ -114,4 +114,10 @@ $corpoPol = substr($fonte, $iPol, 1200);
 t_assert(str_contains($corpoPol, "qualidade_pes_aprovacao_plano(\$record, \$previous, \$nomeUsuario, date('Y-m-d'))") && str_contains($corpoPol, "update_dynamic(\$pdo, 'qualidade_politica', \$id, \$aprovacao)"), 'Politica usa a mesma decisao pura do PES ao entrar em Vigente');
 t_assert(is_file(__DIR__ . '/../../../scripts/sql/2026-10-07-pbqph-politica-aprovadoPor-nome-completo.sql'), 'script (nao executado) para alinhar a Politica existente');
 
+// ── E2: lista da empresa por obra (coluna JSON aditiva no PQO) ──────────────────
+t_assert(in_array('listaEmpresaJson', $mapa['qualidadePqo']['fields'], true), 'qualidadePqo grava listaEmpresaJson');
+t_assert(str_contains($fonte, 'function ensure_pqo_lista_empresa_column') && str_contains($fonte, 'ensure_pqo_lista_empresa_column($pdo);'), 'ensure da coluna existe e e chamado');
+t_assert(is_file(__DIR__ . '/../../../migrations/2026-10-07-pbqph-e2-pqo-lista-empresa.sql'), 'migration aditiva da lista da empresa existe');
+t_assert(str_contains((string) file_get_contents(__DIR__ . '/../../../schema.sql'), 'listaEmpresaJson LONGTEXT NULL'), 'schema.sql tem listaEmpresaJson');
+
 t_resumo('test_qualidade_regras');
