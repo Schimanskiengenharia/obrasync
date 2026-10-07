@@ -1888,6 +1888,8 @@ CREATE TABLE IF NOT EXISTS qualidade_pes (
   createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updatedAt TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
   arquivoPdf VARCHAR(500) NULL COMMENT 'Caminho do PDF do procedimento',
+  aprovadoPor VARCHAR(120) NULL COMMENT 'E1 (SiAC 7.5): nome do usuario da sessao que tornou o PES Vigente — gravado pelo backend',
+  dataAprovacao DATE NULL COMMENT 'E1: data da aprovacao, pelo PHP (America/Campo_Grande)',
   arquivoNome VARCHAR(200) NULL,
   arquivoData TIMESTAMP NULL,
   KEY idx_pes_servico (servicoSiacId)

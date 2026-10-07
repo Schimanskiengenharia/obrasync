@@ -967,7 +967,7 @@ try {
             ? qualidade_criar_nc_registro($pdo, $resources[$key], $payload)
             : create_record($pdo, $resources[$key], $payload);
         try {
-            $record = qualidade_pos_gravacao($pdo, $key, $record, null) ?? $record;
+            $record = qualidade_pos_gravacao($pdo, $key, $record, null, $authUser) ?? $record;
         } catch (Throwable $error) {
             error_log('[ObraSync] Automação de qualidade (create) falhou: ' . $error->getMessage());
         }
@@ -1032,7 +1032,7 @@ try {
         qualidade_validar_payload($pdo, $key, $payload, $previous, $authUser);
         $record = update_record($pdo, $resources[$key], (int) $id, $payload);
         try {
-            $record = qualidade_pos_gravacao($pdo, $key, $record, $previous) ?? $record;
+            $record = qualidade_pos_gravacao($pdo, $key, $record, $previous, $authUser) ?? $record;
         } catch (Throwable $error) {
             error_log('[ObraSync] Automação de qualidade (update) falhou: ' . $error->getMessage());
         }
@@ -7440,7 +7440,48 @@ function ensure_qualidade_tables(PDO $pdo): void
     // PBQP-H Fase 1: rastreabilidade de lote na FVM e anexo PDF no PES (auto-cura).
     ensure_fvm_rastreabilidade_columns($pdo);
     ensure_pes_arquivo_columns($pdo);
+    // PBQP-H Nível B — E1 (pacote 7.5): aprovação do PES e histórico do PQO.
+    ensure_pes_aprovacao_columns($pdo);
     $done = true;
+}
+
+// PBQP-H E1 (SiAC 7.5 — controle de documentos): quem aprovou o PES e quando.
+// Preenchido SÓ pelo backend ao tornar o PES Vigente (ver qualidade_pes_aprovacao_plano);
+// as colunas ficam fora de `fields` do resource_map de propósito — sem digitação livre.
+// VARCHAR por consistência com qualidade_politica/qualidade_pqo.
+function ensure_pes_aprovacao_columns(PDO $pdo): void
+{
+    try {
+        $pdo->exec(
+            "ALTER TABLE qualidade_pes
+                ADD COLUMN IF NOT EXISTS aprovadoPor VARCHAR(120) NULL,
+                ADD COLUMN IF NOT EXISTS dataAprovacao DATE NULL"
+        );
+    } catch (Throwable $error) {
+        error_log('[ObraSync] ensure_pes_aprovacao_columns: ' . $error->getMessage());
+    }
+}
+
+// Função PURA: decide o que gravar na aprovação do PES. Regra: ao ENTRAR em
+// Vigente (criação já Vigente, ou transição de outro status), ou se está Vigente
+// sem aprovador registrado, grava o nome do usuário da sessão e a data de HOJE
+// (pelo PHP, America/Campo_Grande — nunca CURDATE()). Sair de Vigente (Obsoleto)
+// preserva a aprovação histórica. Testada em scripts/tests/php/test_qualidade_regras.php.
+function qualidade_pes_aprovacao_plano(array $record, ?array $previous, string $nomeUsuario, string $hoje): ?array
+{
+    if ((string) ($record['status'] ?? '') !== 'Vigente') {
+        return null;
+    }
+    $eraVigente = $previous !== null && (string) ($previous['status'] ?? '') === 'Vigente';
+    $jaAprovado = trim((string) ($record['aprovadoPor'] ?? '')) !== '';
+    if ($eraVigente && $jaAprovado) {
+        return null;
+    }
+    $nome = trim($nomeUsuario);
+    if ($nome === '') {
+        return null;
+    }
+    return ['aprovadoPor' => mb_substr($nome, 0, 120), 'dataAprovacao' => $hoje];
 }
 
 // Regras de integridade do SGQ aplicadas no SERVIDOR (não confiar só no frontend,
@@ -7585,7 +7626,7 @@ function qualidade_bloqueio_etapa(PDO $pdo, int $etapaId, array $payload): ?stri
 
 // Automações após gravar registros de qualidade. Devolve o registro atualizado
 // (ou null quando nada mudou) e anota em $record['automation'] o que foi feito.
-function qualidade_pos_gravacao(PDO $pdo, string $key, array $record, ?array $previous): ?array
+function qualidade_pos_gravacao(PDO $pdo, string $key, array $record, ?array $previous, ?array $authUser = null): ?array
 {
     $id = (int) ($record['id'] ?? 0);
     $notes = [];
@@ -7599,6 +7640,16 @@ function qualidade_pos_gravacao(PDO $pdo, string $key, array $record, ?array $pr
         $stmt->execute([(int) $record['servicoSiacId'], $id]);
         if ($stmt->rowCount() > 0) {
             $notes[] = 'Versões anteriores do PES deste serviço marcadas como obsoletas.';
+        }
+        // E1 (7.5): aprovação registrada pelo backend — nome do usuário da sessão
+        // (mesmo padrão da assinatura do RDO) e data do PHP; o payload não escolhe.
+        $nomeUsuario = rdo_user_fullname($pdo, (int) ($authUser['id'] ?? 0) ?: null)
+            ?: trim((string) ($authUser['username'] ?? ''));
+        $aprovacao = qualidade_pes_aprovacao_plano($record, $previous, $nomeUsuario, date('Y-m-d'));
+        if ($aprovacao !== null) {
+            update_dynamic($pdo, 'qualidade_pes', $id, $aprovacao);
+            $record = array_merge($record, $aprovacao);
+            $notes[] = 'PES aprovado por ' . $aprovacao['aprovadoPor'] . ' em ' . $aprovacao['dataAprovacao'] . '.';
         }
     }
 

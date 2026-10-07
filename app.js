@@ -12809,6 +12809,7 @@ function renderQualidadePes() {
         <label>Serviço SiAC${qServicoSelectHtml("qPesServico", row.servicoSiacId)}</label>
         <label>Versão<input id="qPesVersao" value="${svgText(row.versao || "1.0")}"></label>
         <label>Status<select id="qPesStatus">${["Rascunho", "Vigente", "Obsoleto"].map((s) => `<option ${(row.status || "Rascunho") === s ? "selected" : ""}>${s}</option>`).join("")}</select></label>
+        <label>Aprovação (SiAC 7.5)<span class="muted" id="qPesAprovacaoInfo">${row.aprovadoPor ? `${svgText(row.aprovadoPor)} em ${svgText(asDate(row.dataAprovacao))}` : "Preenchida automaticamente, com o seu nome e a data de hoje, ao salvar como Vigente"}</span></label>
         <label>Responsável pela elaboração<input id="qPesResponsavel" value="${svgText(row.responsavelElaboracao || "")}"></label>
         <label>Data de elaboração<input id="qPesData" type="date" value="${svgText(row.dataElaboracao || qHoje())}"></label>
         <label>Normas de referência<input id="qPesNormas" value="${svgText(row.normasReferencia || "")}" placeholder="NBR..."></label>
@@ -12835,11 +12836,18 @@ function renderQualidadePes() {
     </section>` : "";
   const listRows = rows.map((r) => ({ ...r, servico: `${r.servicoSiacId} — ${r.servicoNome}` }));
   qs("content").innerHTML = `
-    ${qualidadeHead(key, "Procedimentos de Execução de Serviço (PES)", "Biblioteca reutilizável dos 27 serviços controlados do SiAC. Ao salvar um PES Vigente, as versões anteriores do mesmo serviço ficam obsoletas.")}
+    ${qualidadeHead(key, "Procedimentos de Execução de Serviço (PES)", "Biblioteca reutilizável dos 27 serviços controlados do SiAC. Ao salvar um PES Vigente, as versões anteriores do mesmo serviço ficam obsoletas e a aprovação (quem e quando) é registrada automaticamente.")}
     ${formHtml}
-    ${table("PES cadastrados", listRows, ["servico", "servicoGrupo", "versao", "responsavelElaboracao", "dataElaboracao", "status"], editable, key)}
+    ${table("PES cadastrados", listRows, ["servico", "servicoGrupo", "versao", "responsavelElaboracao", "dataElaboracao", "aprovadoPor", "dataAprovacao", "status"], editable, key)}
+    ${rows.length ? `<section class="panel"><div class="actions">${rows.map((r) => `<button class="secondary" type="button" data-q-print-pes="${r.id}">🖨️ PES ${svgText(String(r.servicoSiacId))} — ${svgText(r.servicoNome || "")} v${svgText(r.versao || "")}</button>`).join("")}</div></section>` : ""}
   `;
   qWire(key);
+  // E1 (decisão 1): "Exportar PDF" do PES via qualidadePrint, no molde de Política e PQO,
+  // com o bloco "Aprovado por / em" vindo do backend.
+  qs("content").querySelectorAll("[data-q-print-pes]").forEach((b) => b.addEventListener("click", () => {
+    const pes = byId(key, b.dataset.qPrintPes);
+    if (pes) qualidadePrint(qPesPrintHtml(pes));
+  }));
   qs("qPesSalvar")?.addEventListener("click", async () => {
     const servicoId = Number(qVal("qPesServico"));
     const servico = servicoSiac(servicoId);
@@ -12864,6 +12872,28 @@ function renderQualidadePes() {
   });
   qs("qPesVerPdf")?.addEventListener("click", () => qPesAbrirPdf(qualidadeEdit?.id));
   qs("qPesUpPdf")?.addEventListener("click", () => qPesUploadPdf(qualidadeEdit?.id));
+}
+
+// E1 — documento imprimível do PES (função pura: HTML a partir do registro).
+// Mesmo molde do PQO/Política; o bloco de aprovação exibe o que o backend gravou
+// ao tornar o PES Vigente (SiAC 7.5), nunca um campo digitado.
+function qPesPrintHtml(pes) {
+  const bloco = (titulo, texto) => `<h2>${titulo}</h2><div class="q-print-body">${svgText(texto || "—").replaceAll("\n", "<br>")}</div>`;
+  const criterios = String(pes.criteriosAceitacao || "").split("\n").map((l) => l.trim()).filter(Boolean);
+  return `
+    <h1>PES ${svgText(String(pes.servicoSiacId || ""))} — ${svgText(pes.servicoNome || "")} — v${svgText(pes.versao || "")}</h1>
+    <p class="q-print-sub">${svgText((db.companySettings || [])[0]?.name || "ObraSync")} — Procedimento de Execução de Serviço — PBQP-H SiAC Nível B — ${svgText(pes.servicoGrupo || "")} — Status: ${svgText(pes.status || "")}</p>
+    ${bloco("Objetivo", pes.objetivo)}
+    ${bloco("Materiais necessários", pes.materiaisNecessarios)}
+    ${bloco("Equipamentos e EPIs", pes.equipamentosEpi)}
+    ${bloco("Procedimento de execução", pes.procedimento)}
+    <h2>Critérios de aceitação (itens da FVS)</h2>
+    ${criterios.length ? `<ol>${criterios.map((c) => `<li>${svgText(c)}</li>`).join("")}</ol>` : '<div class="q-print-body">—</div>'}
+    ${bloco("Normas de referência", pes.normasReferencia)}
+    <p>Elaborado por: ${svgText(pes.responsavelElaboracao || "____________")} — Data: ${svgText(pes.dataElaboracao ? asDate(pes.dataElaboracao) : "____/____/____")}</p>
+    <p><strong>Aprovado por:</strong> ${svgText(pes.aprovadoPor || "pendente (aprovação registrada ao tornar o PES Vigente)")} — <strong>em:</strong> ${svgText(pes.dataAprovacao ? asDate(pes.dataAprovacao) : "____/____/____")}</p>
+    ${pes.arquivoNome ? `<p class="muted">PDF anexado: ${svgText(pes.arquivoNome)}</p>` : ""}
+  `;
 }
 
 // PBQP-H Fase 1 — upload/visualização do PDF do procedimento (PES).
